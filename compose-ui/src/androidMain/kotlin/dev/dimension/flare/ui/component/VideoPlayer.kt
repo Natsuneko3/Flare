@@ -45,6 +45,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.compose.PlayerSurface
+import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
+import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.modifiers.resizeWithContentScale
 import androidx.media3.ui.compose.state.rememberPresentationState
 import compose.icons.FontAwesomeIcons
@@ -209,7 +211,13 @@ public fun VideoPlayer(
                         .let { if (onClick != null) it.combinedClickable(onClick = onClick, onLongClick = onLongClick) else it }
                         .let { if (keepScreenOn) it.keepScreenOn() else it }
                         .let { if (aspectRatio != null && presentation.videoSizeDp == null) it.aspectRatio(aspectRatio) else it }
-                PlayerSurface(player = player, modifier = playerModifier)
+                PlayerSurface(
+                    player = player,
+                    modifier = playerModifier,
+                    // Timeline cards resize and are recycled while the shared player changes video.
+                    // Keep their video in the view hierarchy so scaling and clipping stay in sync.
+                    surfaceType = if (showControls) SURFACE_TYPE_SURFACE_VIEW else SURFACE_TYPE_TEXTURE_VIEW,
+                )
                 if (presentation.coverSurface) {
                     Box(Modifier.fillMaxSize()) { loadingPlaceholder() }
                 } else if (remainingTimeContent != null) {

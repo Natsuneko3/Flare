@@ -1,5 +1,6 @@
 package dev.dimension.flare.ui.screen.home
 
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
@@ -124,9 +125,14 @@ internal fun HomeScreen(afterInit: () -> Unit) {
                 afterInit.invoke()
             }
             val layoutType =
-                NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(
-                    currentWindowAdaptiveInfoV2(),
-                )
+                if (Build.MODEL.startsWith("SM-F966")) {
+                    // Keep Fold7 navigation at the bottom on both cover and unfolded displays.
+                    NavigationSuiteType.NavigationBar
+                } else {
+                    NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(
+                        currentWindowAdaptiveInfoV2(),
+                    )
+                }
             Box {
                 NavigationSuiteScaffold2(
                     wideNavigationRailState = state.wideNavigationRailState,
