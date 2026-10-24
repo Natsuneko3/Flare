@@ -524,11 +524,18 @@ internal open class TimelineRemoteMediator(
                 database.pagingTimelineDao().getByPagingKeyAndStatusIds(pagingKey, it)
             }.associateBy { it._id }
 
-    private suspend fun cachedItemKeys(items: List<UiTimelineV2>): Set<String> {
+    internal suspend fun cachedItemKeys(items: List<UiTimelineV2>): Set<String> {
         if (items.isEmpty()) return emptySet()
-        val mapped = TimelinePagingMapper.toDb(items, pagingKey)
-        val existing = existingRows(mapped)
-        return items.filterIndexed { index, _ -> mapped[index].timeline._id in existing }.mapTo(hashSetOf()) { it.stableItemKey }
+        // Membership needs neither serialized post graphs nor the stored notification message.
+        val identities = items.map { TimelinePagingMapper.identity(it, pagingKey) }
+        val existing =
+            identities
+                .map { it.timelineId }
+                .distinct()
+                .chunked(500)
+                .flatMap { database.pagingTimelineDao().getTimelineItemIdentities(it) }
+                .toHashSet()
+        return items.filterIndexed { index, _ -> identities[index] in existing }.mapTo(hashSetOf()) { it.stableItemKey }
     }
 
     private suspend fun savePreservingOrder(

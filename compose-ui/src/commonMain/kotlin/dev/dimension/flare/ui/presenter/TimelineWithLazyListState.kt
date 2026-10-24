@@ -219,15 +219,16 @@ internal fun rememberTimelineWithLazyListState(
                     // new indices may arrive before the grid preserves its position.
                     // A measured item's key also excludes any leading header cards.
                     val pagingState = currentPagingState
-                    val postIndex =
-                        if (key == null) {
-                            index
-                        } else {
-                            (0 until pagingState.itemCount).indexOfFirst { pagingState.peek(it)?.itemKey == key }
+                    newPostCount =
+                        remainingNewPostsCount(
+                            newPostCount = newPostCount,
+                            visibleIndex = index,
+                            visibleKey = key,
+                            leadingItemCount = currentLeadingItemCount,
+                            itemCount = pagingState.itemCount,
+                        ) {
+                            pagingState.peek(it)?.itemKey
                         }
-                    if (postIndex >= 0) {
-                        newPostCount = minOf(newPostCount, postIndex)
-                    }
                 }
         }
     }
@@ -292,6 +293,33 @@ internal fun rememberTimelineWithLazyListState(
             }
         }
     }
+}
+
+internal inline fun remainingNewPostsCount(
+    newPostCount: Int,
+    visibleIndex: Int,
+    visibleKey: Any?,
+    leadingItemCount: Int,
+    itemCount: Int,
+    itemKeyAt: (Int) -> String?,
+): Int {
+    if (newPostCount == 0) return 0
+    if (visibleKey == null) {
+        return if (visibleIndex >= 0) minOf(newPostCount, visibleIndex) else newPostCount
+    }
+
+    val hintedPostIndex = visibleIndex - leadingItemCount
+    if (hintedPostIndex in 0 until itemCount && itemKeyAt(hintedPostIndex) == visibleKey) {
+        return minOf(newPostCount, hintedPostIndex)
+    }
+
+    // Paging may have changed before the grid updates its measured indices. Only
+    // a key inside the unread prefix can reduce the count, so avoid scanning the
+    // rest of a deep timeline while those snapshots temporarily disagree.
+    for (index in 0 until minOf(newPostCount, itemCount)) {
+        if (itemKeyAt(index) == visibleKey) return index
+    }
+    return newPostCount
 }
 
 private data class GapScrollAnchor(

@@ -16,6 +16,7 @@ import dev.dimension.flare.data.database.cache.model.TranslationDisplayOptions
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.ClickEvent
+import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.render.toUi
@@ -38,6 +39,116 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalPagingApi::class)
 class TimelineStartupTest {
+    @Test
+    fun cacheIdentityPreservesPersistedPostAndNotificationKeysAcrossAccounts() {
+        val accounts =
+            listOf(
+                AccountType.Guest to "guest",
+                AccountType.GuestHost("server.invalid") to "guest_server.invalid",
+                AccountType.Specific(MicroBlogKey("account", "server.invalid")) to "specific_account@server.invalid",
+            )
+        accounts.forEach { (account, storedAccount) ->
+            val target = post(1).copy(accountType = account, itemKey = "display-only-key")
+            val wrapped = UiTimelineV2.TimelinePostItem(target)
+            val notification =
+                wrapped.copy(
+                    presentation = UiTimelineV2.PostPresentation(notificationKey = MicroBlogKey("notice", "example.invalid")),
+                )
+            for (item in listOf(target, wrapped, notification)) {
+                val identity = TimelinePagingMapper.identity(item, "home")
+                assertEquals("${storedAccount}_1@example.invalid", identity.statusId)
+                assertEquals(
+                    if (item === notification) {
+                        "4:homenotification:${storedAccount}_notice@example.invalid"
+                    } else {
+                        "4:home${storedAccount}_1@example.invalid"
+                    },
+                    identity.timelineId,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun cachedItemLookupReadsOnlyIdentitiesAndKeepsNotificationsIndependent() =
+        runBlocking {
+            val path = Files.createTempFile("flare-cached-identities", ".db")
+            val driver = CountingDriver()
+            val db =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = path.toString())
+                    .setDriver(driver)
+                    .setQueryCoroutineContext(Dispatchers.IO)
+                    .build()
+            try {
+                val home = mediator(db, true)
+                val target = post(1)
+
+                fun notification(id: String) =
+                    UiTimelineV2.TimelinePostItem(
+                        target,
+                        UiTimelineV2.PostPresentation(
+                            notificationKey = MicroBlogKey(id, "example.invalid"),
+                            message =
+                                UiTimelineV2.Message(
+                                    statusKey = MicroBlogKey(id, "example.invalid"),
+                                    icon = UiIcon.Like,
+                                    type = UiTimelineV2.Message.Type.Raw("notification content ".repeat(200)),
+                                    createdAt = target.createdAt,
+                                    clickEvent = ClickEvent.Noop,
+                                    accountType = target.accountType,
+                                ),
+                        ),
+                    )
+                val cachedNotification = notification("cached")
+                val missingNotification = notification("missing")
+                db.connect {
+                    saveToDatabase(db, TimelinePagingMapper.toDb(listOf(target, cachedNotification), home.pagingKey))
+                    saveToDatabase(db, TimelinePagingMapper.toDb(listOf(missingNotification), "other-timeline"))
+                }
+                driver.reset()
+
+                val cached = home.cachedItemKeys(listOf(target, cachedNotification, missingNotification, post(2), target))
+
+                assertEquals(setOf(target.stableItemKey, cachedNotification.stableItemKey), cached)
+                assertEquals(emptySet(), home.cachedItemKeys(listOf(cachedNotification.copy(post = post(3)))))
+                assertEquals(0L, driver.blobs.get(), "Checking membership must not decode notification message or status content")
+            } finally {
+                db.close()
+                listOf("", "-wal", "-shm").forEach { Files.deleteIfExists(path.resolveSibling(path.fileName.toString() + it)) }
+            }
+        }
+
+    @Test
+    fun cachedItemLookupBatchesDistinctCandidatesAcrossTheSqlParameterLimit() =
+        runBlocking {
+            val path = Files.createTempFile("flare-cached-identity-batches", ".db")
+            val driver = CountingDriver()
+            val db =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = path.toString())
+                    .setDriver(driver)
+                    .setQueryCoroutineContext(Dispatchers.IO)
+                    .build()
+            try {
+                val home = mediator(db, true)
+                val candidates = (0 until 600).map(::post)
+                db.connect { saveToDatabase(db, TimelinePagingMapper.toDb(candidates.take(550), home.pagingKey)) }
+                driver.reset()
+                assertEquals(emptySet(), home.cachedItemKeys(emptyList()))
+                assertEquals(0L, driver.membershipQueries.get())
+
+                val cached = home.cachedItemKeys(candidates + candidates)
+
+                assertEquals(candidates.take(550).mapTo(hashSetOf()) { it.stableItemKey }, cached)
+                assertEquals(2L, driver.membershipQueries.get(), "Duplicate candidates must not add lookup queries")
+                assertEquals(0L, driver.blobs.get())
+            } finally {
+                db.close()
+                listOf("", "-wal", "-shm").forEach { Files.deleteIfExists(path.resolveSibling(path.fileName.toString() + it)) }
+            }
+        }
+
     @Test
     fun cachedHomeInitializeDoesNotReadContinuation() =
         runBlocking {
@@ -311,6 +422,7 @@ class TimelineStartupTest {
         val anchorLookups = AtomicLong()
         val rootQueries = AtomicLong()
         val subsetRangeScans = AtomicLong()
+        val membershipQueries = AtomicLong()
 
         fun reset() {
             blobs.set(0)
@@ -318,6 +430,7 @@ class TimelineStartupTest {
             anchorLookups.set(0)
             rootQueries.set(0)
             subsetRangeScans.set(0)
+            membershipQueries.set(0)
         }
 
         override fun open(fileName: String): SQLiteConnection {
@@ -326,12 +439,14 @@ class TimelineStartupTest {
                 override fun prepare(sql: String): SQLiteStatement {
                     if (sql.startsWith("SELECT COUNT(*) FROM DbPagingTimeline")) anchorLookups.incrementAndGet()
                     val isRootQuery = "DbStatus.content AS status_content" in sql
+                    val isMembershipQuery = "SELECT _id AS timelineId, statusId FROM DbPagingTimeline" in sql
                     val statement = connection.prepare(sql)
                     return object : SQLiteStatement by statement {
                         private var firstStep = true
 
                         override fun step(): Boolean {
                             if (firstStep && isRootQuery) rootQueries.incrementAndGet()
+                            if (firstStep && isMembershipQuery) membershipQueries.incrementAndGet()
                             if (firstStep && isRootQuery && "._id IN (" in sql) {
                                 connection.prepare("EXPLAIN QUERY PLAN $sql").use { plan ->
                                     while (plan.step()) {

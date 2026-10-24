@@ -39,6 +39,11 @@ internal data class DbTimelinePageIdentity(
     val timelineId: String = statusId,
 )
 
+internal data class DbTimelineItemIdentity(
+    val timelineId: String,
+    val statusId: String,
+)
+
 internal data class DbPagingTimelineVersion(
     val pagingKey: String,
     val statusId: String,
@@ -442,6 +447,9 @@ internal interface PagingTimelineDao {
         pagingKey: String,
         statusIds: List<String>,
     ): List<DbPagingTimeline>
+
+    @Query("SELECT _id AS timelineId, statusId FROM DbPagingTimeline WHERE _id IN (:timelineIds)")
+    suspend fun getTimelineItemIdentities(timelineIds: List<String>): List<DbTimelineItemIdentity>
 
     @Query(
         "SELECT pagingKey, statusId, sortId, messageRenderHash, semanticReferenceSignature, " +

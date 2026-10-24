@@ -1,6 +1,7 @@
 package dev.dimension.flare.data.datasource.microblog.paging
 
 import dev.dimension.flare.common.SnowflakeIdGenerator
+import dev.dimension.flare.data.database.cache.dao.DbTimelineItemIdentity
 import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbPagingTimelineWithStatus
 import dev.dimension.flare.data.database.cache.model.DbStatus
@@ -23,6 +24,23 @@ import dev.dimension.flare.ui.model.withItemKey
 import kotlinx.collections.immutable.toImmutableList
 
 internal object TimelinePagingMapper {
+    fun identity(
+        data: UiTimelineV2,
+        pagingKey: String,
+    ): DbTimelineItemIdentity {
+        val accountType = data.accountType as DbAccountType
+        val statusId = DbStatus.createId(accountType, data.statusKey)
+        val notificationKey = (data as? UiTimelineV2.TimelinePostItem)?.presentation?.notificationKey
+        return DbTimelineItemIdentity(
+            timelineId =
+                DbPagingTimeline.createId(
+                    pagingKey,
+                    notificationKey?.let { "notification:${DbStatus.createId(accountType, it)}" } ?: statusId,
+                ),
+            statusId = statusId,
+        )
+    }
+
     suspend fun toDb(
         data: UiTimelineV2,
         pagingKey: String,
@@ -66,13 +84,7 @@ internal object TimelinePagingMapper {
         val timelineItem = data.asTimelinePostItem()
         val presentation = timelineItem?.presentation
         val rootStatus = context.status(root)
-        val timelineId =
-            DbPagingTimeline.createId(
-                pagingKey,
-                presentation?.notificationKey?.let {
-                    "notification:${DbStatus.createId(root.accountType as DbAccountType, it)}"
-                } ?: rootStatus.data.id,
-            )
+        val timelineId = identity(data, pagingKey).timelineId
         val semanticReferences =
             when (root) {
                 is UiTimelineV2.Post -> collectPostReferences(root, presentation, rootStatus.data.id, context)
