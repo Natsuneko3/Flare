@@ -86,6 +86,9 @@ import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.CaretDown
 import compose.icons.fontawesomeicons.solid.CaretUp
 import compose.icons.fontawesomeicons.solid.Pen
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import dev.dimension.flare.R
 import dev.dimension.flare.data.model.BottomBarBehavior
 import dev.dimension.flare.data.model.BottomBarStyle
@@ -110,6 +113,7 @@ fun NavigationSuiteScaffold2(
     wideNavigationRailState: WideNavigationRailState,
     modifier: Modifier = Modifier,
     bottomBarAutoHideEnabled: Boolean = true,
+    navigationVisible: Boolean = true,
     showFab: Boolean = true,
     onFabClicked: () -> Unit = {},
     layoutType: NavigationSuiteType =
@@ -121,6 +125,7 @@ fun NavigationSuiteScaffold2(
     footerItems: NavigationSuiteScope2.() -> Unit = {},
     content: @Composable () -> Unit = {},
 ) {
+    val hazeState = rememberHazeState()
     var isPodcastShowing by remember { mutableStateOf(false) }
     var isBottomBarExpanded by remember { mutableStateOf(true) }
     val bottomBarStyle = LocalGlobalAppearance.current.bottomBarStyle
@@ -213,79 +218,82 @@ fun NavigationSuiteScaffold2(
         val secondaryScope by rememberStateOfItems(secondaryItems)
 
         Row {
-            ModalWideNavigationRail(
-                hideOnCollapse = layoutType == NavigationSuiteType.NavigationBar,
-                state = wideNavigationRailState,
-                colors =
-                    navigationSuiteColors.wideNavigationRailColors
-                        .copy(
-                            containerColor = Color.Transparent,
-                            modalContainerColor = MaterialTheme.colorScheme.background,
-                            modalContentColor = contentColorFor(MaterialTheme.colorScheme.background),
-                        ),
-                contentPadding = PaddingValues(vertical = 16.dp),
-            ) {
-                val actualLayoutType =
-                    if (layoutType == NavigationSuiteType.NavigationBar) {
-                        NavigationSuiteType.NavigationDrawer
-                    } else if (layoutType == NavigationSuiteType.NavigationRail) {
-                        if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
-                            NavigationSuiteType.WideNavigationRailExpanded
-                        } else {
-                            NavigationSuiteType.WideNavigationRailCollapsed
-                        }
-                    } else {
-                        layoutType
-                    }
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxHeight()
-                            .verticalScroll(rememberScrollState()),
-                    verticalArrangement =
-                        Arrangement.spacedBy(
-                            if (layoutType == NavigationSuiteType.NavigationBar) {
-                                0.dp
-                            } else {
-                                8.dp
-                            },
-                        ),
+            if (navigationVisible) {
+                ModalWideNavigationRail(
+                    hideOnCollapse = layoutType == NavigationSuiteType.NavigationBar,
+                    state = wideNavigationRailState,
+                    colors =
+                        navigationSuiteColors.wideNavigationRailColors
+                            .copy(
+                                containerColor = Color.Transparent,
+                                modalContainerColor = MaterialTheme.colorScheme.background,
+                                modalContentColor = contentColorFor(MaterialTheme.colorScheme.background),
+                            ),
+                    contentPadding = PaddingValues(vertical = 16.dp),
                 ) {
-                    railHeader?.invoke(this)
-                    if (layoutType != NavigationSuiteType.NavigationBar) {
-                        NavigationSuiteItemGroup(
-                            provider = scope,
-                            layoutType = layoutType,
-                            actualLayoutType = actualLayoutType,
-                        )
-                    }
-                    if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
-                        NavigationSuiteItemGroup(
-                            provider = secondaryScope,
-                            layoutType = layoutType,
-                            actualLayoutType = actualLayoutType,
-                        )
+                    val actualLayoutType =
                         if (layoutType == NavigationSuiteType.NavigationBar) {
-                            Spacer(modifier = Modifier.height(16.dp))
+                            NavigationSuiteType.NavigationDrawer
+                        } else if (layoutType == NavigationSuiteType.NavigationRail) {
+                            if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
+                                NavigationSuiteType.WideNavigationRailExpanded
+                            } else {
+                                NavigationSuiteType.WideNavigationRailCollapsed
+                            }
+                        } else {
+                            layoutType
                         }
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                        verticalArrangement =
+                            Arrangement.spacedBy(
+                                if (layoutType == NavigationSuiteType.NavigationBar) {
+                                    0.dp
+                                } else {
+                                    8.dp
+                                },
+                            ),
+                    ) {
+                        railHeader?.invoke(this)
+                        if (layoutType != NavigationSuiteType.NavigationBar) {
+                            NavigationSuiteItemGroup(
+                                provider = scope,
+                                layoutType = layoutType,
+                                actualLayoutType = actualLayoutType,
+                            )
+                        }
+                        if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
+                            NavigationSuiteItemGroup(
+                                provider = secondaryScope,
+                                layoutType = layoutType,
+                                actualLayoutType = actualLayoutType,
+                            )
+                            if (layoutType == NavigationSuiteType.NavigationBar) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        NavigationSuiteItemGroup(
+                            provider = footerScope,
+                            layoutType = layoutType,
+                            actualLayoutType = actualLayoutType,
+                        )
                     }
-                    Spacer(modifier = Modifier.weight(1f))
-                    NavigationSuiteItemGroup(
-                        provider = footerScope,
-                        layoutType = layoutType,
-                        actualLayoutType = actualLayoutType,
-                    )
                 }
             }
             Box {
                 CompositionLocalProvider(
                     LocalBottomBarHeight provides
-                        if (isPodcastShowing) {
+                        if (navigationVisible && isPodcastShowing) {
                             bottomBarHeight
                         } else {
                             0.dp
                         } +
                         if (
+                            navigationVisible &&
                             scope.itemList.any { item ->
                                 item is NavigationSuiteItem.DefaultItem && item.selected
                             } && layoutType == NavigationSuiteType.NavigationBar
@@ -304,9 +312,12 @@ fun NavigationSuiteScaffold2(
                                 ).getBottom(this)
                                 .toDp()
                         },
-                    LocalBottomBarShowing provides (layoutType == NavigationSuiteType.NavigationBar),
+                    LocalBottomBarShowing provides (navigationVisible && layoutType == NavigationSuiteType.NavigationBar),
                 ) {
-                    content.invoke()
+                    // Only screen content is captured: the glass must never sample itself.
+                    Box(Modifier.hazeSource(hazeState)) {
+                        content.invoke()
+                    }
                 }
 
                 val isFloating =
@@ -329,111 +340,115 @@ fun NavigationSuiteScaffold2(
                             BottomBarState.ClassicHidden -> true
                         }
                     }
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .windowInsetsPadding(
-                                WindowInsets.systemBars.only(
-                                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-                                ),
-                            ).let {
-                                if (!isHidden) {
-                                    if (isFloating) {
-                                        it.padding(bottom = bottomBarHeight)
-                                    } else {
-                                        it.padding(bottom = bottomBarHeight + 24.dp, end = bottomBarHeight)
-                                    }
-                                } else {
-                                    it
-                                }
-                            }.animateContentSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Bottom,
-                ) {
-                    PodcastFAB(
-                        onVisibilityChanged = {
-                            isPodcastShowing = it
-                        },
+                if (navigationVisible) {
+                    Column(
                         modifier =
                             Modifier
-                                .let {
-                                    if (layoutType == NavigationSuiteType.NavigationBar) {
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .windowInsetsPadding(
+                                    WindowInsets.systemBars.only(
+                                        WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                                    ),
+                                ).let {
+                                    if (!isHidden) {
+                                        if (isFloating) {
+                                            it.padding(bottom = bottomBarHeight)
+                                        } else {
+                                            it.padding(bottom = bottomBarHeight + 24.dp, end = bottomBarHeight)
+                                        }
+                                    } else {
                                         it
-                                    } else {
-                                        it.windowInsetsPadding(
-                                            WindowInsets.systemBars.only(
-                                                WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-                                            ),
-                                        )
                                     }
-                                },
-                    )
-                }
+                                }.animateContentSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom,
+                    ) {
+                        PodcastFAB(
+                            onVisibilityChanged = {
+                                isPodcastShowing = it
+                            },
+                            modifier =
+                                Modifier
+                                    .let {
+                                        if (layoutType == NavigationSuiteType.NavigationBar) {
+                                            it
+                                        } else {
+                                            it.windowInsetsPadding(
+                                                WindowInsets.systemBars.only(
+                                                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                                                ),
+                                            )
+                                        }
+                                    },
+                        )
+                    }
 
-                androidx.compose.animation.AnimatedVisibility(
-                    layoutType == NavigationSuiteType.NavigationBar &&
-                        scope.itemList.any { item -> item is NavigationSuiteItem.DefaultItem && item.selected } &&
-                        (
-                            bottomBarState != BottomBarState.FloatingHidden &&
-                                bottomBarState != BottomBarState.ClassicHidden
-                        ),
-                    enter = slideInVertically { it },
-                    exit = slideOutVertically { it },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter),
-                ) {
-                    Box(
+                    androidx.compose.animation.AnimatedVisibility(
+                        layoutType == NavigationSuiteType.NavigationBar &&
+                            scope.itemList.any { item -> item is NavigationSuiteItem.DefaultItem && item.selected } &&
+                            (
+                                bottomBarState != BottomBarState.FloatingHidden &&
+                                    bottomBarState != BottomBarState.ClassicHidden
+                            ),
+                        enter = slideInVertically { it },
+                        exit = slideOutVertically { it },
                         modifier =
                             Modifier
-                                .fillMaxWidth(),
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter),
                     ) {
-                        SharedTransitionLayout(
-                            modifier = Modifier.align(Alignment.BottomStart),
-                        ) {
-                            AnimatedContent(
-                                bottomBarState,
-                            ) { bottomBarState ->
-                                BottomBar(
-                                    state = bottomBarState,
-                                    provider = scope,
-                                    animatedVisibilityScope = this@AnimatedContent,
-                                    showBottomBarLabels = showBottomBarLabels,
-                                )
-                            }
-                        }
-                        androidx.compose.animation.AnimatedVisibility(
-                            showFab,
+                        Box(
                             modifier =
-                                Modifier.align(
-                                    if (bottomBarStyle == BottomBarStyle.Classic) {
-                                        Alignment.BottomEnd
-                                    } else {
-                                        Alignment.CenterEnd
-                                    },
-                                ),
-                            enter =
-                                materialElevationScaleIn(
-                                    initialAlpha = 0f,
-                                ),
-                            exit =
-                                materialElevationScaleOut(
-                                    targetAlpha = 0f,
-                                ),
+                                Modifier
+                                    .fillMaxWidth(),
                         ) {
-                            SharedTransitionLayout {
+                            SharedTransitionLayout(
+                                modifier = Modifier.align(Alignment.BottomStart),
+                            ) {
                                 AnimatedContent(
                                     bottomBarState,
                                 ) { bottomBarState ->
-                                    BottomFab(
+                                    BottomBar(
+                                        hazeState = hazeState,
                                         state = bottomBarState,
-                                        bottomBarHeight = bottomBarHeight,
+                                        provider = scope,
                                         animatedVisibilityScope = this@AnimatedContent,
-                                        onFabClicked = onFabClicked,
+                                        showBottomBarLabels = showBottomBarLabels,
                                     )
+                                }
+                            }
+                            androidx.compose.animation.AnimatedVisibility(
+                                showFab,
+                                modifier =
+                                    Modifier.align(
+                                        if (bottomBarStyle == BottomBarStyle.Classic) {
+                                            Alignment.BottomEnd
+                                        } else {
+                                            Alignment.CenterEnd
+                                        },
+                                    ),
+                                enter =
+                                    materialElevationScaleIn(
+                                        initialAlpha = 0f,
+                                    ),
+                                exit =
+                                    materialElevationScaleOut(
+                                        targetAlpha = 0f,
+                                    ),
+                            ) {
+                                SharedTransitionLayout {
+                                    AnimatedContent(
+                                        bottomBarState,
+                                    ) { bottomBarState ->
+                                        BottomFab(
+                                            hazeState = hazeState,
+                                            state = bottomBarState,
+                                            bottomBarHeight = bottomBarHeight,
+                                            animatedVisibilityScope = this@AnimatedContent,
+                                            onFabClicked = onFabClicked,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -455,6 +470,7 @@ enum class BottomBarState {
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun SharedTransitionScope.BottomFab(
+    hazeState: HazeState,
     state: BottomBarState,
     animatedVisibilityScope: AnimatedVisibilityScope,
     onFabClicked: () -> Unit,
@@ -481,12 +497,12 @@ private fun SharedTransitionScope.BottomFab(
                 BottomBarState.ClassicHidden -> true
             }
         }
-    Glassify(
+    GlassNavigationSurface(
+        hazeState = hazeState,
         onClick = onFabClicked,
         shape = CircleShape,
-        shadowElevation = 8.dp,
-        tonalElevation = 8.dp,
-        color = MaterialTheme.colorScheme.primaryContainer,
+        tint = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         modifier =
             modifier
                 .sharedElement(
@@ -526,6 +542,7 @@ private fun SharedTransitionScope.BottomFab(
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun SharedTransitionScope.BottomBar(
+    hazeState: HazeState,
     state: BottomBarState,
     provider: NavigationSuiteItemProvider,
     animatedVisibilityScope: AnimatedVisibilityScope,
@@ -538,8 +555,8 @@ private fun SharedTransitionScope.BottomBar(
                 BottomBarState.FloatingNormal -> RoundedCornerShape(50)
                 BottomBarState.FloatingMinimized -> RoundedCornerShape(50)
                 BottomBarState.FloatingHidden -> RoundedCornerShape(50)
-                BottomBarState.ClassicNormal -> RoundedCornerShape(0)
-                BottomBarState.ClassicHidden -> RoundedCornerShape(0)
+                BottomBarState.ClassicNormal -> RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                BottomBarState.ClassicHidden -> RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             }
         }
     val isFloating =
@@ -563,10 +580,9 @@ private fun SharedTransitionScope.BottomBar(
             }
         }
 
-    Glassify(
+    GlassNavigationSurface(
+        hazeState = hazeState,
         shape = containerShape,
-        shadowElevation = 8.dp,
-        tonalElevation = 8.dp,
         modifier =
             modifier
                 .sharedElement(

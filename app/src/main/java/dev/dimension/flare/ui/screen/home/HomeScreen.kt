@@ -86,6 +86,7 @@ import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.settings.AiAgentEnabledPresenter
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.Router
+import dev.dimension.flare.ui.route.hasVisibleMediaViewer
 import dev.dimension.flare.ui.screen.splash.SplashScreen
 import kotlinx.coroutines.launch
 import moe.tlaster.precompose.molecule.producePresenter
@@ -138,6 +139,11 @@ internal fun HomeScreen(afterInit: () -> Unit) {
                     wideNavigationRailState = state.wideNavigationRailState,
                     modifier = Modifier.fillMaxSize(),
                     layoutType = layoutType,
+                    navigationVisible =
+                        state.topLevelBackStack
+                            .takeSuccess()
+                            ?.backStack
+                            ?.hasVisibleMediaViewer() != true,
                     showFab =
                         state.canComposeState.takeSuccess() == true &&
                             state.topLevelBackStack.takeSuccess()?.currentKey is Route.Home,

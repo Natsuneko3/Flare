@@ -1,4 +1,5 @@
 [versions]
+haze = "2.0.1"
 adaptiveNavigation3 = "1.3.0"
 collection = "1.7.0"
 compileSdk = "37"
@@ -73,6 +74,8 @@ qrose = "1.3.1"
 
 
 [libraries]
+haze = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
+haze-glass = { module = "dev.chrisbanes.haze:haze-glass", version.ref = "haze" }
 adaptive-navigation3 = { module = "org.jetbrains.compose.material3.adaptive:adaptive-navigation3", version.ref = "adaptiveNavigation3" }
 androidx-collection = { module = "androidx.collection:collection", version.ref = "collection" }
 bluesky-lexicons = { module = "sh.christian.ozone:lexicons", version.ref = "blueskyLexicons" }

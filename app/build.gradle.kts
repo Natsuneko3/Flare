@@ -150,6 +150,8 @@ dependencies {
     implementation(libs.materialKolor)
     implementation(libs.colorpicker.compose)
     implementation(libs.material.motion.compose)
+    implementation(libs.haze)
+    implementation(libs.haze.glass)
     implementation(libs.nestedScrollView)
     implementation(libs.precompose.molecule)
     implementation(libs.webkit)
