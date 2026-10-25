@@ -39,6 +39,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FloatingToolbarDefaults.floatingToolbarVerticalNestedScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItemColors
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalWideNavigationRail
@@ -74,6 +75,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -95,6 +97,8 @@ import dev.dimension.flare.data.model.BottomBarStyle
 import dev.dimension.flare.ui.theme.segmentedShapes2
 import soup.compose.material.motion.animation.materialElevationScaleIn
 import soup.compose.material.motion.animation.materialElevationScaleOut
+
+private val LocalGlassNavigationMenu = staticCompositionLocalOf { false }
 
 val LocalBottomBarHeight = androidx.compose.runtime.staticCompositionLocalOf<Dp> { 0.dp }
 val LocalBottomBarShowing = androidx.compose.runtime.staticCompositionLocalOf<Boolean> { false }
@@ -219,68 +223,83 @@ fun NavigationSuiteScaffold2(
 
         Row {
             if (navigationVisible) {
-                ModalWideNavigationRail(
-                    hideOnCollapse = layoutType == NavigationSuiteType.NavigationBar,
-                    state = wideNavigationRailState,
-                    colors =
-                        navigationSuiteColors.wideNavigationRailColors
-                            .copy(
-                                containerColor = Color.Transparent,
-                                modalContainerColor = MaterialTheme.colorScheme.background,
-                                modalContentColor = contentColorFor(MaterialTheme.colorScheme.background),
-                            ),
-                    contentPadding = PaddingValues(vertical = 16.dp),
-                ) {
-                    val actualLayoutType =
-                        if (layoutType == NavigationSuiteType.NavigationBar) {
-                            NavigationSuiteType.NavigationDrawer
-                        } else if (layoutType == NavigationSuiteType.NavigationRail) {
-                            if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
-                                NavigationSuiteType.WideNavigationRailExpanded
-                            } else {
-                                NavigationSuiteType.WideNavigationRailCollapsed
-                            }
-                        } else {
-                            layoutType
-                        }
-                    Column(
+                val useGlassMenu =
+                    layoutType == NavigationSuiteType.NavigationBar ||
+                        wideNavigationRailState.isAnimating ||
+                        wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded ||
+                        wideNavigationRailState.targetValue == WideNavigationRailValue.Expanded
+                val menuShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
+                CompositionLocalProvider(LocalGlassNavigationMenu provides useGlassMenu) {
+                    ModalWideNavigationRail(
                         modifier =
-                            Modifier
-                                .fillMaxHeight()
-                                .verticalScroll(rememberScrollState()),
-                        verticalArrangement =
-                            Arrangement.spacedBy(
-                                if (layoutType == NavigationSuiteType.NavigationBar) {
-                                    0.dp
-                                } else {
-                                    8.dp
-                                },
-                            ),
+                            if (useGlassMenu) {
+                                Modifier.navigationGlass(hazeState, menuShape, dispersion = true)
+                            } else {
+                                Modifier
+                            },
+                        expandedShape = menuShape,
+                        hideOnCollapse = layoutType == NavigationSuiteType.NavigationBar,
+                        state = wideNavigationRailState,
+                        colors =
+                            navigationSuiteColors.wideNavigationRailColors
+                                .copy(
+                                    containerColor = Color.Transparent,
+                                    modalContainerColor = Color.Transparent,
+                                    modalContentColor = contentColorFor(MaterialTheme.colorScheme.background),
+                                ),
+                        contentPadding = PaddingValues(vertical = 16.dp),
                     ) {
-                        railHeader?.invoke(this)
-                        if (layoutType != NavigationSuiteType.NavigationBar) {
-                            NavigationSuiteItemGroup(
-                                provider = scope,
-                                layoutType = layoutType,
-                                actualLayoutType = actualLayoutType,
-                            )
-                        }
-                        if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
-                            NavigationSuiteItemGroup(
-                                provider = secondaryScope,
-                                layoutType = layoutType,
-                                actualLayoutType = actualLayoutType,
-                            )
+                        val actualLayoutType =
                             if (layoutType == NavigationSuiteType.NavigationBar) {
-                                Spacer(modifier = Modifier.height(16.dp))
+                                NavigationSuiteType.NavigationDrawer
+                            } else if (layoutType == NavigationSuiteType.NavigationRail) {
+                                if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
+                                    NavigationSuiteType.WideNavigationRailExpanded
+                                } else {
+                                    NavigationSuiteType.WideNavigationRailCollapsed
+                                }
+                            } else {
+                                layoutType
                             }
+                        Column(
+                            modifier =
+                                Modifier
+                                    .fillMaxHeight()
+                                    .verticalScroll(rememberScrollState()),
+                            verticalArrangement =
+                                Arrangement.spacedBy(
+                                    if (layoutType == NavigationSuiteType.NavigationBar) {
+                                        0.dp
+                                    } else {
+                                        8.dp
+                                    },
+                                ),
+                        ) {
+                            railHeader?.invoke(this)
+                            if (layoutType != NavigationSuiteType.NavigationBar) {
+                                NavigationSuiteItemGroup(
+                                    provider = scope,
+                                    layoutType = layoutType,
+                                    actualLayoutType = actualLayoutType,
+                                )
+                            }
+                            if (wideNavigationRailState.currentValue == WideNavigationRailValue.Expanded) {
+                                NavigationSuiteItemGroup(
+                                    provider = secondaryScope,
+                                    layoutType = layoutType,
+                                    actualLayoutType = actualLayoutType,
+                                )
+                                if (layoutType == NavigationSuiteType.NavigationBar) {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                }
+                            }
+                            Spacer(modifier = Modifier.weight(1f))
+                            NavigationSuiteItemGroup(
+                                provider = footerScope,
+                                layoutType = layoutType,
+                                actualLayoutType = actualLayoutType,
+                            )
                         }
-                        Spacer(modifier = Modifier.weight(1f))
-                        NavigationSuiteItemGroup(
-                            provider = footerScope,
-                            layoutType = layoutType,
-                            actualLayoutType = actualLayoutType,
-                        )
                     }
                 }
             }
@@ -818,6 +837,17 @@ private fun ColumnScope.NavigationSuiteSegmentedItem(
 }
 
 @Composable
+private fun navigationMenuItemColors(): ListItemColors =
+    if (LocalGlassNavigationMenu.current) {
+        ListItemDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.12f),
+            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.58f),
+        )
+    } else {
+        ListItemDefaults.colors()
+    }
+
+@Composable
 private fun NavigationSuiteSegmentedDefaultItem(
     item: NavigationSuiteItem.DefaultItem,
     index: Int,
@@ -825,6 +855,7 @@ private fun NavigationSuiteSegmentedDefaultItem(
     contentPadding: PaddingValues = ListItemDefaults.ContentPadding,
 ) {
     SegmentedListItem(
+        colors = navigationMenuItemColors(),
         content = {
             item.label?.invoke()
         },
@@ -852,6 +883,7 @@ private fun ColumnScope.NavigationSuiteSegmentedExpandableItem(
     onExpandedChange: (Boolean) -> Unit,
 ) {
     SegmentedListItem(
+        colors = navigationMenuItemColors(),
         checked = expanded,
         onCheckedChange = onExpandedChange,
         shapes =
