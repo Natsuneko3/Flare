@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
@@ -49,6 +50,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Surface
+import androidx.compose.material3.WideNavigationRailDefaults
 import androidx.compose.material3.WideNavigationRailState
 import androidx.compose.material3.WideNavigationRailValue
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
@@ -230,25 +232,8 @@ fun NavigationSuiteScaffold2(
                         wideNavigationRailState.targetValue == WideNavigationRailValue.Expanded
                 val menuShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
                 CompositionLocalProvider(LocalGlassNavigationMenu provides useGlassMenu) {
-                    ModalWideNavigationRail(
-                        modifier =
-                            if (useGlassMenu) {
-                                Modifier.navigationGlass(hazeState, menuShape, dispersion = true)
-                            } else {
-                                Modifier
-                            },
-                        expandedShape = menuShape,
-                        hideOnCollapse = layoutType == NavigationSuiteType.NavigationBar,
-                        state = wideNavigationRailState,
-                        colors =
-                            navigationSuiteColors.wideNavigationRailColors
-                                .copy(
-                                    containerColor = Color.Transparent,
-                                    modalContainerColor = Color.Transparent,
-                                    modalContentColor = contentColorFor(MaterialTheme.colorScheme.background),
-                                ),
-                        contentPadding = PaddingValues(vertical = 16.dp),
-                    ) {
+                    val isStandaloneMenu = layoutType == NavigationSuiteType.NavigationBar
+                    val menuContent: @Composable () -> Unit = {
                         val actualLayoutType =
                             if (layoutType == NavigationSuiteType.NavigationBar) {
                                 NavigationSuiteType.NavigationDrawer
@@ -265,7 +250,13 @@ fun NavigationSuiteScaffold2(
                             modifier =
                                 Modifier
                                     .fillMaxHeight()
-                                    .verticalScroll(rememberScrollState()),
+                                    .then(
+                                        if (!isStandaloneMenu && useGlassMenu) {
+                                            Modifier.navigationGlass(hazeState, menuShape, dispersion = true)
+                                        } else {
+                                            Modifier
+                                        },
+                                    ).verticalScroll(rememberScrollState()),
                             verticalArrangement =
                                 Arrangement.spacedBy(
                                     if (layoutType == NavigationSuiteType.NavigationBar) {
@@ -299,6 +290,46 @@ fun NavigationSuiteScaffold2(
                                 layoutType = layoutType,
                                 actualLayoutType = actualLayoutType,
                             )
+                        }
+                    }
+                    ModalWideNavigationRail(
+                        expandedShape = menuShape,
+                        hideOnCollapse = isStandaloneMenu,
+                        state = wideNavigationRailState,
+                        colors =
+                            navigationSuiteColors.wideNavigationRailColors
+                                .copy(
+                                    containerColor = Color.Transparent,
+                                    modalContainerColor = Color.Transparent,
+                                    modalContentColor = contentColorFor(MaterialTheme.colorScheme.background),
+                                ),
+                        windowInsets =
+                            if (isStandaloneMenu) WindowInsets(0, 0, 0, 0) else WideNavigationRailDefaults.windowInsets,
+                        contentPadding = PaddingValues(vertical = if (isStandaloneMenu) 0.dp else 16.dp),
+                        header =
+                            if (isStandaloneMenu) {
+                                {
+                                    // The header is inside the rail's slide/drag and predictive-back
+                                    // transforms. A glass modifier on the rail itself stays outside
+                                    // those transforms and leaves a stationary pane during dismissal.
+                                    // Use the full-width slot so the optics also cover the pane insets.
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .navigationGlass(hazeState, menuShape, dispersion = true)
+                                            .windowInsetsPadding(WideNavigationRailDefaults.windowInsets)
+                                            .padding(vertical = 16.dp),
+                                    ) {
+                                        menuContent()
+                                    }
+                                }
+                            } else {
+                                null
+                            },
+                    ) {
+                        if (!isStandaloneMenu) {
+                            // Keep the permanent rail's original measurement and movable content.
+                            menuContent()
                         }
                     }
                 }
