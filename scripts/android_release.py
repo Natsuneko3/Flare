@@ -227,19 +227,36 @@ def sdk_tool(name):
     return candidates[-1]
 
 
+def parse_badging(badging):
+    package_lines = [line for line in badging.splitlines() if line.startswith("package:")]
+    if len(package_lines) != 1:
+        raise ValueError("APK has no unambiguous package metadata")
+    package = dict(re.findall(r"([A-Za-z]+)='([^']*)'", package_lines[0]))
+    if not package.get("name") or not package.get("versionName") or not re.fullmatch(r"[1-9][0-9]*", package.get("versionCode", "")):
+        raise ValueError("APK package metadata has no valid name/version")
+    sdk_lines = [line.strip() for line in badging.splitlines()
+                 if line.strip().startswith(("sdkVersion:", "minSdkVersion:"))]
+    minimums = []
+    for line in sdk_lines:
+        match = re.fullmatch(r"(?:sdkVersion|minSdkVersion):'([0-9]+)'", line)
+        if not match or not 0 < int(match.group(1)) <= 2 ** 31 - 1:
+            raise ValueError("APK has an invalid minSdk")
+        minimums.append(int(match.group(1)))
+    if not minimums:
+        raise ValueError("APK has no valid minSdk")
+    if len(set(minimums)) != 1:
+        raise ValueError("APK has conflicting minSdk values")
+    return dict(applicationId=package["name"], versionCode=int(package["versionCode"]),
+                versionName=package["versionName"], minSdk=minimums[0])
+
+
 def inspect_apk(apk, config):
     validate_apk_size(apk.stat().st_size)
     badging = run([sdk_tool("aapt2"), "dump", "badging", apk]).stdout
-    package_line = next((line for line in badging.splitlines() if line.startswith("package:")), "")
-    package = dict(re.findall(r"([A-Za-z]+)='([^']*)'", package_line))
-    minimum = re.search(r"^sdkVersion:'([0-9]+)'", badging, re.MULTILINE)
-    if not minimum:
-        raise ValueError("APK has no valid minSdk")
+    metadata = parse_badging(badging)
     with zipfile.ZipFile(apk) as archive:
-        abis = sorted({entry.split("/")[1] for entry in archive.namelist()
-                       if entry.startswith("lib/") and entry.endswith(".so")})
-    metadata = dict(applicationId=package.get("name"), versionCode=int(package.get("versionCode", "0")),
-                    versionName=package.get("versionName"), minSdk=int(minimum.group(1)), abis=abis)
+        metadata["abis"] = sorted({entry.split("/")[1] for entry in archive.namelist()
+                                   if entry.startswith("lib/") and entry.endswith(".so")})
     validate_metadata(metadata, config)
     verification = run([sdk_tool("apksigner"), "verify", "--verbose", "--print-certs", apk]).stdout
     signers = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$",

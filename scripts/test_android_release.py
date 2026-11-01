@@ -164,6 +164,40 @@ class ReleaseContractTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.release.validate_metadata({**meta, key: value}, config)
 
+    def test_badging_reads_real_build_tools_37_package_and_min_sdk(self):
+        badging = (
+            "package: name='dev.dimension.flare.videofix' versionCode='1781' "
+            "versionName='1.7.8-custom.1' platformBuildVersionName='Baklava' "
+            "platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='Baklava'\n"
+            "minSdkVersion:'26'\ntargetSdkVersion:'36'\n"
+        )
+        self.assertEqual(self.release.parse_badging(badging), {
+            "applicationId": "dev.dimension.flare.videofix", "versionCode": 1781,
+            "versionName": "1.7.8-custom.1", "minSdk": 26,
+        })
+
+    def test_badging_reads_legacy_sdk_version_and_accepts_consistent_duplicates(self):
+        package = "package: name='dev.dimension.flare.videofix' versionCode='1781' versionName='1.7.8-custom.1'\n"
+        for sdk in ("sdkVersion:'26'\n", "sdkVersion:'26'\nminSdkVersion:'26'\n",
+                    "minSdkVersion:'26'\nminSdkVersion:'26'\n"):
+            with self.subTest(sdk=sdk):
+                self.assertEqual(self.release.parse_badging(package + sdk)["minSdk"], 26)
+
+    def test_badging_rejects_missing_bad_or_conflicting_min_sdk(self):
+        package = "package: name='dev.dimension.flare.videofix' versionCode='1781' versionName='1.7.8-custom.1'\n"
+        for sdk in ("", "targetSdkVersion:'36'\n", "minSdkVersion:'0'\n", "minSdkVersion:'-1'\n",
+                    "minSdkVersion:'Baklava'\n", "sdkVersion:'26x'\n", "minSdkVersion:26\n",
+                    "minSdkVersion:'2147483648'\n", "sdkVersion:'26'\nminSdkVersion:'27'\n",
+                    "minSdkVersion:'26'\nsdkVersion:'bad'\n"):
+            with self.subTest(sdk=sdk), self.assertRaisesRegex(ValueError, "minSdk"):
+                self.release.parse_badging(package + sdk)
+
+    def test_badging_rejects_missing_or_malformed_package_version(self):
+        for package in ("", "package: name='dev.dimension.flare.videofix' versionName='1.7.8-custom.1'\n",
+                        "package: name='dev.dimension.flare.videofix' versionCode='oops' versionName='1.7.8-custom.1'\n"):
+            with self.subTest(package=package), self.assertRaises(ValueError):
+                self.release.parse_badging(package + "minSdkVersion:'26'\n")
+
     def test_receipt_rejects_tampered_apk_or_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
