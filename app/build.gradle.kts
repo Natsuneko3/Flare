@@ -20,9 +20,13 @@ plugins {
     id("kotlin-parcelize")
 }
 
+val androidReleaseProperties = Properties().apply {
+    rootProject.file("android-release.properties").inputStream().use(::load)
+}
+
 flare {
     namespace = "dev.dimension.flare"
-    applicationId = "dev.dimension.flare"
+    applicationId = androidReleaseProperties.getProperty("applicationId")
 }
 
 // START Non-FOSS component
@@ -39,16 +43,12 @@ kotlin {
 }
 
 android {
-    val fdroid = rootProject.file("fdroid.properties")
-    val fdroidProp = Properties()
-    fdroidProp.load(fdroid.inputStream())
-
     defaultConfig {
-        versionCode =
-            System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: fdroidProp.getProperty("versionCode")
-                ?.toIntOrNull() ?: 1
-        versionName =
-            System.getenv("BUILD_VERSION") ?: fdroidProp.getProperty("versionName") ?: "0.0.0"
+        versionCode = androidReleaseProperties.getProperty("versionCode").toInt()
+        versionName = androidReleaseProperties.getProperty("versionName")
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     val file = rootProject.file("signing.properties")
@@ -88,7 +88,11 @@ android {
             if (hasSigningProps) {
                 signingConfig = signingConfigs.getByName("flare")
             } else {
-                signingConfig = signingConfigs.getByName("debug")
+                val existingDebugSigning = signingConfigs.getByName("debug")
+                check(existingDebugSigning.storeFile?.isFile == true) {
+                    "The existing Android signing keystore is missing. Restore it; do not generate a new key."
+                }
+                signingConfig = existingDebugSigning
             }
         }
     }

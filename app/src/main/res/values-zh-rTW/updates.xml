@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_update_check">檢查更新</string>
+    <string name="app_update_current">目前版本：%1$s</string>
+    <string name="app_update_checking">正在檢查新版本…</string>
+    <string name="app_update_latest">已是最新版本（%1$s）。</string>
+    <string name="app_update_available">發現新版本：%1$s</string>
+    <string name="app_update_no_notes">此版本未提供更新說明。</string>
+    <string name="app_update_downloading">正在下載並驗證更新…</string>
+    <string name="app_update_ready">版本 %1$s 已準備就緒。確認安裝後更新 Flare，保留帳號與設定。</string>
+    <string name="app_update_download">下載更新</string>
+    <string name="app_update_install">安裝更新</string>
+    <string name="app_update_retry">重試</string>
+    <string name="app_update_done">完成</string>
+    <string name="app_update_cancel">取消</string>
+    <string name="app_update_permission_required">請允許 Flare 安裝應用程式，然後重試。</string>
+    <string name="app_update_invalid_package">更新套件驗證失敗，未進行安裝。請稍後重試。</string>
+    <string name="app_update_no_release">目前沒有已發佈的更新。</string>
+    <string name="app_update_incompatible">此更新需要較新版本的 Android。</string>
+    <string name="app_update_storage_error">無法儲存更新套件，請檢查剩餘儲存空間後重試。</string>
+    <string name="app_update_network_error">無法連線至更新服務，請檢查網路後重試。</string>
+</resources>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_update_check">Check for updates</string>
+    <string name="app_update_current">Current version: %1$s</string>
+    <string name="app_update_checking">Checking for a new version…</string>
+    <string name="app_update_latest">You are up to date (%1$s).</string>
+    <string name="app_update_available">New version: %1$s</string>
+    <string name="app_update_no_notes">No release notes provided.</string>
+    <string name="app_update_downloading">Downloading and verifying update…</string>
+    <string name="app_update_ready">Version %1$s is ready. Confirm installation to update Flare and keep your accounts and settings.</string>
+    <string name="app_update_download">Download update</string>
+    <string name="app_update_install">Install update</string>
+    <string name="app_update_retry">Try again</string>
+    <string name="app_update_done">Done</string>
+    <string name="app_update_cancel">Cancel</string>
+    <string name="app_update_permission_required">Allow Flare to install apps, then try again.</string>
+    <string name="app_update_invalid_package">The update could not be verified. Nothing was installed. Please try again later.</string>
+    <string name="app_update_no_release">No update has been published yet.</string>
+    <string name="app_update_incompatible">This update requires a newer Android version.</string>
+    <string name="app_update_storage_error">The update could not be saved. Check your available storage and try again.</string>
+    <string name="app_update_network_error">Could not reach the update service. Check your connection and try again.</string>
+</resources>

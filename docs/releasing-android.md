@@ -1,0 +1,103 @@
+# Android fork releases
+
+This fork upgrades the installed `dev.dimension.flare.videofix` application in place. Its first managed release is `1.7.8-custom.1` / version code `1781`, following the installed `1.7.8-local-glass-animation` / `1780` build. Android requires the same package ID and signing certificate and a higher version code. Do not uninstall the existing app to work around a signing error: uninstalling removes its local data.
+
+The authoritative version and package identity are committed in `android-release.properties`. `BUILD_NUMBER` and `BUILD_VERSION` environment variables no longer override them. The Android release includes `arm64-v8a` native libraries; the tool inspects the APK and uses the actual ABI set in its filename.
+
+## Prerequisites
+
+- Python 3.9+, Git, the repository's Java/Gradle toolchain, and Android SDK build-tools containing `aapt2` and `apksigner`.
+- `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or the existing ignored `local.properties` must locate the SDK.
+- GitHub CLI (`gh`) authenticated to GitHub with permission to push and create releases in the public `Natsuneko3/Flare` repository. The tool only checks authentication; it never retrieves passwords, logs in for you, or embeds tokens in the APK. Run `gh auth login` yourself when needed.
+- The **existing** signing keystore. The expected certificate SHA-256 is `f000d6ac91b2617d0112fa8aa112ef049c43b1367dc4f0929fa3ad3a1dc27584`. The current setup uses the existing Android debug keystore. If it is missing, the release Gradle configuration fails instead of creating a new key. Keep a private backup of that existing keystore. Never generate a replacement for this application ID.
+
+An ignored root `signing.properties` can later point to a stable copy of that same keystore using the already-supported `storeFile`, `storePassword`, `keyAlias`, and `keyPassword` keys. Do not commit that file, any keystore, credentials, or personal machine paths. The release script verifies the APK certificate against the configured fingerprint regardless of the signing configuration used. It does not read signing passwords. `GH_TOKEN` and related GitHub token variables are removed from the Gradle subprocess environment.
+
+## Release in one command
+
+1. Finish the source changes. For releases after `custom.1`, increment both version fields:
+
+   ```console
+   python3 -B scripts/android_release.py --bump-version
+   ```
+
+   This changes `custom.1` / `1781` to `custom.2` / `1782`, and checks Android's maximum version code. When intentionally moving to a new upstream base, edit `versionName` to its `MAJOR.MINOR.PATCH-custom.1` value and continue increasing `versionCode` globally.
+
+2. Write UTF-8 release notes, then commit all source and version changes. Keep notes outside the repository or commit them too. The tool rejects tracked changes and untracked files; ignored build outputs are allowed.
+
+3. From the repository root, run:
+
+   ```console
+   python3 -B scripts/android_release.py --notes-file /path/to/release-notes.md
+   ```
+
+The command checks GitHub authentication, runs the release tool's tests and `:app:testDebugUnitTest`, builds `:app:assembleRelease`, and verifies the APK package ID, version, minimum SDK and signing certificate. Existing generated release APK output is moved into `build/android-release/.previous-apks/`, so an old APK cannot satisfy a failed or skipped build. Source content and the Git commit are checked before and after building.
+
+The prepared files are stored under `build/android-release/android-v1.7.8-custom.1/` (using the configured version). The folder contains the APK, `flare-update.json`, release notes and `build-receipt.json`. The receipt binds the commit, source content and file hashes to the successful test/build run. Do not hand-edit the manifest or receipt.
+
+Only after successful local preparation does the tool push the current branch and its annotated tag, create a **draft** GitHub Release, upload the APK and manifest, and download both assets to compare their hashes. It then publishes the release and marks it latest. The public unauthenticated manifest is checked after publishing. Existing published releases are never overwritten; a matching draft can be resumed. If an upload or verification fails, the draft stays unpublished, and the previous latest release remains usable.
+
+The script rejects version codes that do not advance beyond the current public manifest. The initial fork release has no previous manifest and is required to exceed the installed baseline `1780`.
+
+## Prepare, inspect, then publish
+
+Preparing is local and does not require GitHub authentication:
+
+```console
+python3 -B scripts/android_release.py --prepare-only --notes-file /path/to/release-notes.md
+```
+
+After reviewing or installing the prepared APK, publish exactly that verified build:
+
+```console
+python3 -B scripts/android_release.py --publish-existing build/android-release/android-v1.7.8-custom.1
+```
+
+Publishing rechecks the source commit, clean tree, source fingerprint, APK hash, manifest hash, APK metadata and certificate. If the source or version changes after preparation, commit and rebuild. To deliberately rebuild the same unpublished version, move its existing prepared folder aside first. Generated backups can be reviewed and removed manually when no longer needed.
+
+A machine-specific Gradle network initialization script can be passed without committing its path:
+
+```console
+FLARE_GRADLE_INIT_SCRIPT=/path/to/local-network.init.gradle python3 -B scripts/android_release.py --prepare-only --notes-file /path/to/release-notes.md
+```
+
+Optional safe Gradle options can be repeated, for example `--gradle-arg=--offline` or `--gradle-arg=-Dorg.gradle.workers.max=2`. The repository's KMP plugin compatibility diagnostic has a known false positive; only this exact task exclusion is supported:
+
+```console
+python3 -B scripts/android_release.py --prepare-only --notes-file /path/to/release-notes.md --gradle-arg=--exclude-task=kmpPartiallyResolvedDependenciesChecker
+```
+
+This bypasses only that diagnostic; `:app:testDebugUnitTest` and `:app:assembleRelease` still run. All other task exclusions, dry runs and debug logging are rejected. A Gradle init script is trusted local build configuration; do not use one that suppresses tests or rewrites release metadata.
+
+## Update manifest contract
+
+The client always checks this public URL without credentials:
+
+`https://github.com/Natsuneko3/Flare/releases/latest/download/flare-update.json`
+
+Example (hash and size come from the actual APK):
+
+```json
+{
+  "schemaVersion": 1,
+  "applicationId": "dev.dimension.flare.videofix",
+  "versionCode": 1781,
+  "versionName": "1.7.8-custom.1",
+  "minSdk": 26,
+  "apkFileName": "Flare-1.7.8-custom.1-arm64-v8a.apk",
+  "sha256": "<64 lowercase hexadecimal characters>",
+  "sizeBytes": 12345678,
+  "releaseTag": "android-v1.7.8-custom.1",
+  "releaseNotes": "Release notes shown in the app"
+}
+```
+
+The APK URL is derived from the fixed repository, `releaseTag`, and `apkFileName`: `https://github.com/Natsuneko3/Flare/releases/download/<releaseTag>/<apkFileName>`. A multi-ABI or ABI-independent APK uses `universal` in its filename. Neither the manifest nor the APK needs a GitHub token to download.
+
+The publisher applies the same limits as the Android client: the complete UTF-8 JSON document, including formatting and release notes, must be at most 64 KiB; the APK must contain at least one byte and be at most 256 MiB; `releaseTag` and `apkFileName` must each be safe ASCII path segments of at most 128 characters. `versionName` is limited to 256 UTF-16 code units. A violation stops preparation or publication. Existing public and prepared manifests are also read with the 64 KiB limit.
+
+Run the standalone release-tool checks without invoking Gradle or contacting GitHub:
+
+```console
+python3 -B scripts/test_android_release.py
+```

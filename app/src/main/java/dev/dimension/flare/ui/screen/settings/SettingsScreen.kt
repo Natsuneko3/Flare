@@ -139,6 +139,7 @@ internal fun SettingsScreen(
                     Text(text = stringResource(id = R.string.settings_accounts_subtitle))
                 },
             )
+            AppUpdateSetting()
             Column(
                 verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
             ) {
