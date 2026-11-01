@@ -250,6 +250,30 @@ def parse_badging(badging):
                 versionName=package["versionName"], minSdk=minimums[0])
 
 
+def validate_signers(verification, expected):
+    counts = re.findall(r"^Number of signers: ([1-9][0-9]*)$", verification, re.MULTILINE)
+    if len(counts) != 1:
+        raise ValueError("APK signer count is missing or ambiguous")
+    count = int(counts[0])
+    groups = {}
+    for line in verification.splitlines():
+        if "certificate SHA-256 digest:" not in line:
+            continue
+        match = re.fullmatch(
+            r"(?:(Signer) #([1-9][0-9]*)|(V[12]|V3(?:\.[012])?) Signer:) "
+            r"certificate SHA-256 digest: ([0-9a-fA-F]{64})", line)
+        if not match:
+            raise ValueError("Unknown APK signer certificate output; refusing release")
+        legacy, index, scheme, digest = match.groups()
+        if digest.lower() != expected.lower():
+            raise ValueError("APK signing certificate is different from the installed app; refusing release")
+        groups.setdefault(legacy or scheme, []).append(int(index) if index else None)
+    if not groups or any(len(signers) != count for signers in groups.values()):
+        raise ValueError("APK signer certificate data is missing or inconsistent")
+    if "Signer" in groups and sorted(groups["Signer"]) != list(range(1, count + 1)):
+        raise ValueError("APK signer certificate indices are missing or duplicated")
+
+
 def inspect_apk(apk, config):
     validate_apk_size(apk.stat().st_size)
     badging = run([sdk_tool("aapt2"), "dump", "badging", apk]).stdout
@@ -259,10 +283,7 @@ def inspect_apk(apk, config):
                                    if entry.startswith("lib/") and entry.endswith(".so")})
     validate_metadata(metadata, config)
     verification = run([sdk_tool("apksigner"), "verify", "--verbose", "--print-certs", apk]).stdout
-    signers = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$",
-                         verification, re.MULTILINE)
-    if len(signers) != 1 or signers[0].lower() != config["expectedSignerSha256"]:
-        raise ValueError("APK signing certificate is different from the installed app; refusing release")
+    validate_signers(verification, config["expectedSignerSha256"])
     return metadata
 
 

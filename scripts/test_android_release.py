@@ -198,6 +198,32 @@ class ReleaseContractTests(unittest.TestCase):
             with self.subTest(package=package), self.assertRaises(ValueError):
                 self.release.parse_badging(package + "minSdkVersion:'26'\n")
 
+    def test_signer_parser_accepts_sdk37_and_legacy_certificate_labels(self):
+        expected = "f0" * 32
+        for label in ("Signer #1", "V1 Signer:", "V2 Signer:", "V3 Signer:", "V3.0 Signer:", "V3.1 Signer:"):
+            with self.subTest(label=label):
+                self.release.validate_signers(
+                    f"Verifies\nNumber of signers: 1\n{label} certificate SHA-256 digest: {expected}\n", expected)
+        self.release.validate_signers(
+            f"Number of signers: 1\nV1 Signer: certificate SHA-256 digest: {expected}\n"
+            f"V2 Signer: certificate SHA-256 digest: {expected}\n", expected)
+
+    def test_signer_parser_checks_every_signer_and_rejects_unknown_or_missing_data(self):
+        expected = "f0" * 32
+        first = f"Signer #1 certificate SHA-256 digest: {expected}\n"
+        self.release.validate_signers(
+            "Number of signers: 2\n" + first + f"Signer #2 certificate SHA-256 digest: {expected}\n", expected)
+        for output in (
+            "", first, "Number of signers: 1\n", "Number of signers: 2\n" + first,
+            "Number of signers: 1\nMystery Signer: certificate SHA-256 digest: " + expected,
+            "Number of signers: 1\nV2 Signer: certificate SHA-256 digest: bad\n",
+            "Number of signers: 2\n" + first + "Signer #2 certificate SHA-256 digest: " + "ab" * 32,
+            "Number of signers: 1\n" + first + "V2 Signer: certificate SHA-256 digest: " + "ab" * 32,
+            "Number of signers: 1\n" + first + f"Unknown Signer: certificate SHA-256 digest: {expected}\n",
+        ):
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                self.release.validate_signers(output, expected)
+
     def test_receipt_rejects_tampered_apk_or_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
