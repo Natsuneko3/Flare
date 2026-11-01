@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="for_you_no_new_recommendations">No new recommendations right now.</string>
+    <string name="for_you_refresh_failed">Could not refresh recommendations. Your current feed is unchanged.</string>
+</resources>

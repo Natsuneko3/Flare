@@ -21,6 +21,14 @@ public class TimelineItemPresenter(
     public interface State {
         public val listState: PagingState<UiTimelineV2>
         public val reading: TimelineReadingState? get() = null
+        public val supportsRecommendationRefresh: Boolean get() = false
+
+        public suspend fun refreshForPull(): dev.dimension.flare.ui.presenter.home.RecommendationRefreshOutcome? {
+            refreshSuspend()
+            return null
+        }
+
+        public fun markRecommendationsViewed(items: List<UiTimelineV2>) { }
 
         public fun refreshSync()
 
@@ -40,7 +48,12 @@ public class TimelineItemPresenter(
         return object : State {
             override val listState = state.listState
             override val reading = state.reading
-            override val isRefreshing = listState.isRefreshing
+            override val isRefreshing = listState.isRefreshing || state.isRecommendationRefreshing
+            override val supportsRecommendationRefresh = state.supportsRecommendationRefresh
+
+            override suspend fun refreshForPull() = state.refreshForPull()
+
+            override fun markRecommendationsViewed(items: List<UiTimelineV2>) = state.markRecommendationsViewed(items)
 
             override fun refreshSync() {
                 scope.launch {

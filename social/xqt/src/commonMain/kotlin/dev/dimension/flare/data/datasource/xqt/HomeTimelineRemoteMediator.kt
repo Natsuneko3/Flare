@@ -7,7 +7,9 @@ import dev.dimension.flare.data.database.cache.mapper.tweets
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
+import dev.dimension.flare.data.datasource.microblog.paging.RecommendationRefreshSource
 import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.TweetApi
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.mapper.render
@@ -74,9 +76,34 @@ internal class HomeTimelineRemoteMediator(
 
 @OptIn(ExperimentalPagingApi::class)
 internal class FeaturedTimelineRemoteMediator(
-    private val service: XQTService,
+    private val service: TweetApi,
     private val accountKey: MicroBlogKey,
-) : CacheableRemoteLoader<UiTimelineV2> {
+) : RecommendationRefreshSource {
+    override suspend fun loadRecommendations(
+        pageSize: Int,
+        cursor: String?,
+        seenPostIds: List<String>,
+    ): PagingResult<UiTimelineV2> {
+        val response =
+            service.getHomeTimeline(
+                variables =
+                    HomeTimelineRequest(
+                        count = pageSize.toLong(),
+                        cursor = cursor,
+                        seenTweetIds = seenPostIds.takeLast(100),
+                    ).encodeJson(),
+            )
+        check(response.isSuccessful) { "Unable to request recommendations" }
+        val body = checkNotNull(response.body()) { "The recommendation response is missing its timeline" }
+        check(body.errors.isNullOrEmpty()) { "The recommendation response contains errors" }
+        val timeline = body.data.home.homeTimelineUrt
+        return PagingResult(
+            data = timeline.tweets().mapNotNull { it.render(accountKey) },
+            // A page may contain only unsupported/promoted items but still have a useful continuation.
+            nextKey = timeline.instructions.cursor(),
+        )
+    }
+
     override val pagingKey: String = "featured_$accountKey"
     override val refreshGapOncePerSession = true
 

@@ -21,12 +21,15 @@ import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.ReferenceType
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asTimelinePostItem
+import dev.dimension.flare.ui.presenter.home.RecommendationRefreshOutcome
 import dev.dimension.flare.ui.render.toUi
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -58,6 +61,57 @@ internal open class TimelineRemoteMediator(
         database = database,
     ),
     RemoteLoader<DbPagingTimelineWithStatus> {
+    private val recommendationMutex = Mutex()
+
+    /** Explicit pull only: normal refresh continues to use its existing history policy. */
+    internal suspend fun refreshRecommendations(
+        pageSize: Int = 20,
+        accept: (UiTimelineV2) -> Boolean = { true },
+        isCurrent: () -> Boolean = { true },
+    ): RecommendationRefreshOutcome =
+        recommendationMutex.withLock {
+            val session = refreshSession
+            if (session != null) {
+                session.mutex.withLock { replaceRecommendations(pageSize, accept, isCurrent) }
+            } else {
+                replaceRecommendations(pageSize, accept, isCurrent)
+            }
+        }
+
+    private suspend fun replaceRecommendations(
+        pageSize: Int,
+        accept: (UiTimelineV2) -> Boolean,
+        isCurrent: () -> Boolean,
+    ): RecommendationRefreshOutcome {
+        val recommendations = loader as? RecommendationBatchLoader ?: return RecommendationRefreshOutcome.NoNew
+        if (!isCurrent()) throw CancellationException("Recommendation source is no longer active")
+        val dao = database.pagingTimelineDao()
+        val before = dao.getPagingKeyMetadata(pagingKey)
+        val result = recommendations.loadFresh(pageSize, accept) ?: return RecommendationRefreshOutcome.NoNew
+        val mapped = TimelinePagingMapper.toDb(result.data, pagingKey)
+        val requestContext = currentCoroutineContext()
+        withContext(NonCancellable) {
+            database.connect {
+                requestContext.ensureActive()
+                if (!isCurrent()) throw CancellationException("Recommendation source changed")
+                check(dao.getPagingKeyMetadata(pagingKey) == before) { "Timeline changed while loading; retry" }
+                if (before == null) dao.insertPagingKey(DbPagingKey(pagingKey, accountKeys = Json.encodeToString(accountKeys)))
+                onSaveCache(PagingRequest.Refresh, mapped)
+                dao.updatePage(
+                    pagingKey = pagingKey,
+                    nextKey = result.nextKey,
+                    keepNextKey = false,
+                    prevKey = null,
+                    sourceHeads = Json.encodeToString(mapOf(pagingKey to result.data.map { it.stableItemKey })),
+                    accountKeys = Json.encodeToString(accountKeys),
+                )
+                requestContext.ensureActive()
+            }
+            refreshSession?.refreshedSources?.remove(pagingKey)
+        }
+        return RecommendationRefreshOutcome.Updated
+    }
+
     private var suppressInitialPrepend = false
     private var refreshSharedHomeOnPrepend = false
     private val ordersByTime = (loader as? MixedRemoteMediator)?.pageLoader()?.ordersByTime == true
@@ -92,6 +146,16 @@ internal open class TimelineRemoteMediator(
     }
 
     override suspend fun doLoad(
+        loadType: LoadType,
+        state: PagingState<OffsetFromStartPagingKey, TimelinePageItem>,
+    ): MediatorResult =
+        if (loader is RecommendationBatchLoader) {
+            recommendationMutex.withLock { loadOrdinaryPage(loadType, state) }
+        } else {
+            loadOrdinaryPage(loadType, state)
+        }
+
+    private suspend fun loadOrdinaryPage(
         loadType: LoadType,
         state: PagingState<OffsetFromStartPagingKey, TimelinePageItem>,
     ): MediatorResult {

@@ -38,6 +38,7 @@ import dev.dimension.flare.data.datasource.microblog.paging.OffsetFromStartPagin
 import dev.dimension.flare.data.datasource.microblog.paging.OffsetFromStartPagingSource
 import dev.dimension.flare.data.datasource.microblog.paging.PostContextLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PostContextRemoteMediator
+import dev.dimension.flare.data.datasource.microblog.paging.RecommendationBatchLoader
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.TimelineDbPageCache
 import dev.dimension.flare.data.datasource.microblog.paging.TimelineDbPageLoader
@@ -69,8 +70,11 @@ import dev.dimension.flare.ui.presenter.TimelineReadingState
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,7 +91,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
 public class TimelinePresenterOptions(
@@ -128,6 +134,29 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
     private val homeMediator = MutableStateFlow<TimelineRemoteMediator?>(null)
     private val gapActivity = MutableStateFlow<Map<String, LoadState>>(emptyMap())
     private val startupRefresh = MutableStateFlow(false)
+
+    private data class RecommendationContext(
+        val source: RecommendationBatchLoader,
+        val mediator: TimelineRemoteMediator,
+        val scope: CoroutineScope,
+    )
+
+    private class RecommendationPagerRebuild(
+        val source: RecommendationBatchLoader,
+        val generation: Long,
+    ) {
+        private val consumed = MutableStateFlow(false)
+
+        fun consumeFor(loader: RemoteLoader<UiTimelineV2>): Boolean =
+            consumed.compareAndSet(expect = false, update = true) && source === loader
+    }
+
+    private val recommendations = MutableStateFlow<RecommendationContext?>(null)
+    private val recommendationRefreshing = MutableStateFlow(false)
+    private val recommendationPagerRebuild = MutableStateFlow<RecommendationPagerRebuild?>(null)
+    private val recommendationPullMutex = Mutex()
+    private var recommendationJob: Job? = null
+
     internal var sourceActive: Flow<Boolean> = flowOf(true)
     internal var sourceAccounts: Set<dev.dimension.flare.model.MicroBlogKey> = emptySet()
 
@@ -180,10 +209,13 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                     enabled
             }.combine(sourceActive) { (source, enabled), active -> (if (active) source else notSupported()) to enabled }
             .combine(database.timelineResets) { source, _ -> source }
-            .flatMapLatest { (remoteLoader, enabled) ->
+            .combine(recommendationPagerRebuild) { (source, enabled), rebuild -> Triple(source, enabled, rebuild) }
+            .flatMapLatest { (remoteLoader, enabled, rebuild) ->
                 flow {
                     coroutineScope {
                         val sourceScope = this
+                        // Only this successful pull skips initialization; later source/settings changes refresh normally.
+                        val useRecommendationCache = rebuild?.consumeFor(remoteLoader) == true
                         val visibility =
                             combine(
                                 filterFlow,
@@ -193,6 +225,9 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                             ) { filters, config, mxgaEnabled, snapshot ->
                                 TimelineVisibility(filters, config, mxgaEnabled, snapshot, platformRegistry)
                             }.shareIn(sourceScope, SharingStarted.Lazily, replay = 1)
+                        recommendationJob?.cancel()
+                        recommendations.value = null
+                        recommendationRefreshing.value = false
                         viewport.value?.deactivate()
                         viewport.value = null
                         gapActivity.value = emptyMap()
@@ -210,6 +245,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                                         loader = remoteLoader,
                                         scope = sourceScope,
                                         rememberPosition = isHomeTimeline && timelineTabItemId != null && enabled,
+                                        useRecommendationCache = useRecommendationCache,
                                     ).cachedIn(sourceScope).flatMapLatest { pagingData ->
                                         translationSettingsFlow
                                             .combine(gapActivity) { translationDisplayOptions, activity ->
@@ -259,6 +295,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
         loader: CacheableRemoteLoader<UiTimelineV2>,
         scope: CoroutineScope,
         rememberPosition: Boolean,
+        useRecommendationCache: Boolean,
     ): Flow<PagingData<TimelinePageItem>> =
         flow {
             val allowLongText = allowLongTextTranslationDisplay(loader)
@@ -295,7 +332,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                                 null
                             },
                         refreshOnInitialize = {
-                            !rememberPosition &&
+                            !useRecommendationCache && !rememberPosition &&
                                 shouldRefreshTimelineOnInitialize(isHomeTimeline) {
                                     settingsRepository.appSettings.first().refreshHomeTimelineOnLaunch
                                 }
@@ -303,6 +340,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                     )
                 }
             homeMediator.value = mediator
+            recommendations.value = (loader as? RecommendationBatchLoader)?.let { RecommendationContext(it, mediator, scope) }
             val reading =
                 if (rememberPosition) {
                     TimelineViewport(
@@ -315,8 +353,14 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                 } else {
                     null
                 }
+            if (useRecommendationCache) {
+                // A replacement has no relationship to the previous batch's saved reading index.
+                reading?.showLatest()
+                reading?.restorationFinished(reading.target.value)
+            }
             viewport.value = reading
-            startupRefresh.value = reading != null && settingsRepository.appSettings.first().refreshHomeTimelineOnLaunch
+            startupRefresh.value =
+                !useRecommendationCache && reading != null && settingsRepository.appSettings.first().refreshHomeTimelineOnLaunch
             var source: OffsetFromStartPagingSource<TimelinePageItem>? = null
             try {
                 emitAll(
@@ -349,6 +393,10 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                     ).flow,
                 )
             } finally {
+                if (recommendations.value?.mediator === mediator) {
+                    recommendationJob?.cancel()
+                    recommendations.value = null
+                }
                 source?.invalidate()
             }
         }
@@ -421,6 +469,64 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun refreshRecommendationBatch(context: RecommendationContext): RecommendationRefreshOutcome? {
+        if (recommendations.value !== context || !context.scope.isActive || !recommendationPullMutex.tryLock()) return null
+        // The source owns the write and Pager reset; cancellation of the UI's await must not split them.
+        val request =
+            context.scope.async(start = CoroutineStart.LAZY) {
+                try {
+                    val visibility =
+                        combine(
+                            filterFlow,
+                            timelineFilterConfigFlow,
+                            mxgaEnabledFlow,
+                            mxgaRepository.snapshot,
+                        ) { filters, config, enabled, snapshot ->
+                            TimelineVisibility(filters, config, enabled, snapshot, platformRegistry)
+                        }.first()
+                    val outcome =
+                        withContext(PlatformDispatchers.IO) {
+                            context.mediator.refreshRecommendations(
+                                accept = visibility::isVisible,
+                                isCurrent = { recommendations.value === context && context.scope.isActive },
+                            )
+                        }
+                    if (recommendations.value !== context) return@async null
+                    if (outcome == RecommendationRefreshOutcome.Updated) viewport.value?.showLatest()
+                    outcome
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (error is LoginExpiredException) inAppNotification.onError(Message.LoginExpired, error)
+                    RecommendationRefreshOutcome.Failed
+                }
+            }
+        recommendationJob = request
+        recommendationRefreshing.value = true
+        request.invokeOnCompletion { error ->
+            // Also runs if the source is cancelled before this lazy request starts.
+            recommendationJob = null
+            recommendationRefreshing.value = false
+            try {
+                if (error == null &&
+                    request.getCompleted() == RecommendationRefreshOutcome.Updated &&
+                    recommendations.value === context && context.scope.isActive
+                ) {
+                    // Room invalidation cannot clear the previous Pager's remote append completion/error state.
+                    // The request is complete before disposing its source scope can cancel it.
+                    recommendationPagerRebuild.update { previous ->
+                        RecommendationPagerRebuild(context.source, (previous?.generation ?: 0) + 1)
+                    }
+                }
+            } finally {
+                recommendationPullMutex.unlock()
+            }
+        }
+        request.start()
+        return request.await()
+    }
+
     protected open suspend fun transform(data: UiTimelineV2): UiTimelineV2 = options.transform(data)
 
     private fun networkPager(loader: RemoteLoader<UiTimelineV2>): Flow<PagingData<UiTimelineV2>> =
@@ -443,6 +549,8 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
             contextMediator.flatMapLatest { it?.loadStates ?: flowOf(null) }
         }.collectAsState(null)
         val reading by viewport.collectAsState()
+        val recommendationContext by recommendations.collectAsState()
+        val isRecommendationRefreshing by recommendationRefreshing.collectAsState()
         val target by remember(reading) { reading?.target ?: flowOf(null) }.collectAsState(null)
         val newContent by remember(reading) { reading?.hasNewContent ?: flowOf(false) }.collectAsState(false)
         val atLatest by remember(reading) { reading?.isAtLatest ?: flowOf(true) }.collectAsState(true)
@@ -481,6 +589,24 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
         val listState = items.toPagingState(contextLoadStates, retry)
         return object : TimelineState {
             override val listState = listState
+            override val supportsRecommendationRefresh = recommendationContext != null
+            override val isRecommendationRefreshing = isRecommendationRefreshing
+
+            override fun markRecommendationsViewed(items: List<UiTimelineV2>) {
+                val context = recommendationContext ?: return
+                if (context === recommendations.value && context.scope.isActive) context.source.markViewed(items)
+            }
+
+            override suspend fun refreshForPull(): RecommendationRefreshOutcome? {
+                val context = recommendationContext
+                return if (context == null) {
+                    refresh()
+                    null
+                } else {
+                    refreshRecommendationBatch(context)
+                }
+            }
+
             override val reading =
                 reading?.let { value ->
                     object : TimelineReadingState {
@@ -535,6 +661,16 @@ internal suspend fun shouldRefreshTimelineOnInitialize(
 
 @Immutable
 public interface TimelineState {
+    public val supportsRecommendationRefresh: Boolean get() = false
+    public val isRecommendationRefreshing: Boolean get() = false
+
+    public fun markRecommendationsViewed(items: List<UiTimelineV2>) { }
+
+    public suspend fun refreshForPull(): RecommendationRefreshOutcome? {
+        refresh()
+        return null
+    }
+
     public val reading: TimelineReadingState? get() = null
     public val listState: PagingState<UiTimelineV2>
 

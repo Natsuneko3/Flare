@@ -1,5 +1,6 @@
 package dev.dimension.flare.ui.screen.home
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -55,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -124,7 +126,9 @@ import dev.dimension.flare.ui.presenter.HomeTimelineWithTabsPresenter
 import dev.dimension.flare.ui.presenter.home.DeepLinkPresenter
 import dev.dimension.flare.ui.presenter.home.LoggedInPresenter
 import dev.dimension.flare.ui.presenter.home.LoggedInState
+import dev.dimension.flare.ui.presenter.home.RecommendationRefreshOutcome
 import dev.dimension.flare.ui.presenter.invoke
+import dev.dimension.flare.ui.presenter.refreshTimelineFromPull
 import dev.dimension.flare.ui.presenter.rememberTimelineItemPresenterWithLazyListState
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.Router
@@ -567,15 +571,19 @@ internal fun TimelineItemContent(
             start = contentPadding.calculateStartPadding(layoutDirection),
             end = contentPadding.calculateEndPadding(layoutDirection),
         )
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val state =
         rememberTimelineItemPresenterWithLazyListState(
             item = item,
             isHomeTimeline = isHomeTimeline,
+            isCurrentlyVisible = isCurrentlyVisible && lifecycleState == Lifecycle.State.RESUMED,
             lazyStaggeredGridState = lazyStaggeredGridState,
             leadingItemCount = if (changeLogState?.changeLog != null && changeLogState.shouldShowChangeLog.takeSuccessOr(false)) 1 else 0,
         )
     val latestState by rememberUpdatedState(state)
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val latestVisibility by rememberUpdatedState(isCurrentlyVisible)
+    val latestSourceKey by rememberUpdatedState(item.id to item.contentSourceKey)
     DisposableEffect(lifecycleOwner) {
         val observer =
             androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -612,10 +620,34 @@ internal fun TimelineItemContent(
         )
     }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     RefreshContainer(
         modifier = modifier,
         onRefresh = {
-            state.refreshSync()
+            val sourceKey = item.id to item.contentSourceKey
+            scope.launch {
+                state.refreshTimelineFromPull(
+                    onRecommendationsUpdated = {
+                        if (latestSourceKey == sourceKey) {
+                            latestState.onNewTootsShown()
+                            latestState.reading?.showLatest()
+                            latestState.lazyListState.scrollToItem(0)
+                        }
+                    },
+                    onRecommendationOutcome = { outcome ->
+                        if (latestSourceKey == sourceKey && latestVisibility &&
+                            lifecycleOwner.lifecycle.currentState == Lifecycle.State.RESUMED
+                        ) {
+                            val message =
+                                when (outcome) {
+                                    RecommendationRefreshOutcome.NoNew -> R.string.for_you_no_new_recommendations
+                                    else -> R.string.for_you_refresh_failed
+                                }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
+            }
             changeLogState?.dismissChangeLog()
         },
         isRefreshing = state.isRefreshing,

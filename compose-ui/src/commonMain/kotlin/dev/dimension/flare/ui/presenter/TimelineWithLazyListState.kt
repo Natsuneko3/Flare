@@ -15,13 +15,18 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalDensity
+import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.data.model.tab.UiTimelineTabItem
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.asTimelinePostItem
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import moe.tlaster.precompose.molecule.producePresenter
 import kotlin.math.roundToInt
+import kotlin.time.TimeSource
 
 @Immutable
 public interface TimelineWithLazyListState : TimelineItemPresenter.State {
@@ -51,11 +56,19 @@ public fun rememberTimelineItemPresenterWithLazyListState(
     isHomeTimeline: Boolean = false,
     lazyStaggeredGridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
     leadingItemCount: Int = 0,
+    isCurrentlyVisible: Boolean = true,
 ): TimelineWithLazyListState {
     val baseState by producePresenter("timeline_${item.id}_${item.contentSourceKey}_$isHomeTimeline") {
         remember(item.id, item.contentSourceKey, isHomeTimeline) { TimelineItemPresenter(item, isHomeTimeline) }.invoke()
     }
-    return rememberTimelineWithLazyListState(baseState, lazyStaggeredGridState, leadingItemCount, LocalDensity.current.density)
+    return rememberTimelineWithLazyListState(
+        baseState,
+        lazyStaggeredGridState,
+        leadingItemCount,
+        LocalDensity.current.density,
+        isCurrentlyVisible,
+        item.id to item.contentSourceKey,
+    )
 }
 
 @Composable
@@ -64,9 +77,45 @@ internal fun rememberTimelineWithLazyListState(
     lazyListState: LazyStaggeredGridState,
     leadingItemCount: Int = 0,
     density: Float = 1f,
+    isCurrentlyVisible: Boolean = true,
+    recommendationScopeKey: Any? = null,
 ): TimelineWithLazyListState {
+    val latestBaseState by rememberUpdatedState(baseState)
     val latestReading by rememberUpdatedState(baseState.reading)
     val currentLeadingItemCount by rememberUpdatedState(leadingItemCount)
+    LaunchedEffect(lazyListState, baseState.supportsRecommendationRefresh, isCurrentlyVisible, recommendationScopeKey) {
+        if (!baseState.supportsRecommendationRefresh || !isCurrentlyVisible) return@LaunchedEffect
+        val clock = TimeSource.Monotonic.markNow()
+        val exposure = RecommendationExposureTracker<UiTimelineV2>()
+        snapshotFlow {
+            val paging = latestBaseState.listState as? PagingState.Success<UiTimelineV2>
+            val layout = lazyListState.layoutInfo
+            if (paging == null) {
+                emptyMap()
+            } else {
+                recommendationVisibleItems(
+                    measuredItems =
+                        layout.visibleItemsInfo.map {
+                            RecommendationViewportItem(it.index, it.key, it.offset.y, it.offset.y + it.size.height)
+                        },
+                    viewportStart = maxOf(0, layout.viewportStartOffset),
+                    viewportEnd = layout.viewportEndOffset,
+                    leadingItemCount = currentLeadingItemCount,
+                    itemCount = paging.itemCount,
+                    peek = paging::peek,
+                    postKey = { item -> item.stableItemKey.takeIf { item.asTimelinePostItem() != null } },
+                ).associateBy { it.stableItemKey }
+            }
+        }.collectLatest { visible ->
+            while (true) {
+                val now = clock.elapsedNow().inWholeMilliseconds
+                val viewed = exposure.update(visible, now)
+                if (viewed.isNotEmpty()) latestBaseState.markRecommendationsViewed(viewed)
+                val remaining = exposure.nextDelay(now) ?: break
+                delay(remaining.coerceAtLeast(1))
+            }
+        }
+    }
     var restoring by remember { mutableStateOf(false) }
     var scrollingByUser by remember { mutableStateOf(false) }
     var gapAnchor by remember { mutableStateOf<GapScrollAnchor?>(null) }

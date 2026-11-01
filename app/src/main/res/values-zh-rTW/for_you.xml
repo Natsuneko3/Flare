@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="for_you_no_new_recommendations">暫無新推薦</string>
+    <string name="for_you_refresh_failed">重新整理失敗，已保留目前內容</string>
+</resources>

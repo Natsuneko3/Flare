@@ -767,7 +767,7 @@ internal class TimelinePresenterFactory(
             } else {
                 TimelinePresenter(
                     tabId = item.id,
-                    loader = timelineResolver.resolveLoader(item),
+                    loader = timelineResolver.resolveLoader(item).map { item.withRecommendationRefresh(it) },
                     isHomeTimeline = isHomeTimeline,
                 )
             }
