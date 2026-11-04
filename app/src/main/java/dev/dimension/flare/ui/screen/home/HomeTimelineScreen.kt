@@ -37,7 +37,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -65,7 +64,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -129,6 +127,7 @@ import dev.dimension.flare.ui.presenter.home.LoggedInState
 import dev.dimension.flare.ui.presenter.home.RecommendationRefreshOutcome
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.refreshTimelineFromPull
+import dev.dimension.flare.ui.presenter.rememberHomeTimelinePagerState
 import dev.dimension.flare.ui.presenter.rememberTimelineItemPresenterWithLazyListState
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.Router
@@ -151,6 +150,14 @@ internal fun HomeTimelineScreen(
         timelinePresenter()
     }
     val scope = rememberCoroutineScope()
+    val pagerStateResult =
+        state.tabState.map { tabs ->
+            rememberHomeTimelinePagerState(
+                tabIds = tabs.map { it.id },
+                initialSelectedTabId = state.initialSelectedTabId,
+                onSelectedTab = state::selectTab,
+            )
+        }
 
     if (LocalGlobalAppearance.current.deckMode && isBigScreen()) {
         LazyRow(
@@ -271,7 +278,7 @@ internal fun HomeTimelineScreen(
                                 }
                             }.orEmpty()
                     }
-                val pagerState = state.pagerState.takeSuccess()
+                val pagerState = pagerStateResult.takeSuccess()
                 val color by remember(pagerState, tabBackgroundColors, backgroundColor) {
                     derivedStateOf {
                         if (pagerState == null || tabBackgroundColors.isEmpty()) {
@@ -299,7 +306,7 @@ internal fun HomeTimelineScreen(
                             actionIconContentColor = MaterialTheme.colorScheme.primary,
                         ),
                     title = {
-                        state.pagerState.onSuccess { pagerState ->
+                        pagerStateResult.onSuccess { pagerState ->
                             state.tabState.onSuccess { tabs ->
                                 if (tabs.any()) {
                                     if (isCompatScreen() && tabs.size > MAX_SCROLLABLE_HOME_TABS) {
@@ -433,7 +440,7 @@ internal fun HomeTimelineScreen(
             },
             modifier = Modifier.nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
         ) { contentPadding ->
-            state.pagerState.onSuccess { pagerState ->
+            pagerStateResult.onSuccess { pagerState ->
                 state.tabState.onSuccess { tabState ->
                     LaunchedEffect(pagerState.currentPage >= tabState.size) {
                         if (pagerState.currentPage >= tabState.size) {
@@ -771,26 +778,10 @@ private fun timelinePresenter() =
         val state = remember { HomeTimelineWithTabsPresenter() }.invoke()
         val loginState = remember { LoggedInPresenter() }.invoke()
 
-        val pagerState =
-            state.tabState.map { tabs ->
-                val pager =
-                    rememberPagerState(
-                        initialPage = tabs.indexOfFirst { it.id == state.initialSelectedTabId }.coerceAtLeast(0),
-                    ) { tabs.size }
-                LaunchedEffect(pager, tabs) {
-                    snapshotFlow { pager.settledPage }.collect { index ->
-                        tabs.getOrNull(index)?.let { state.selectTab(it.id) }
-                    }
-                }
-                pager
-            }
-
         val changeLogState = changeLogPresenter()
 
         object :
             HomeTimelineWithTabsPresenter.State by state,
             LoggedInState by loginState,
-            ChangeLogState by changeLogState {
-            val pagerState = pagerState
-        }
+            ChangeLogState by changeLogState { }
     }
