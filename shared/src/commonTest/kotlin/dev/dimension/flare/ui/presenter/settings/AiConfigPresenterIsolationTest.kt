@@ -1,13 +1,17 @@
 package dev.dimension.flare.ui.presenter.settings
 
+import androidx.datastore.core.DataStoreFactory
 import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
 import dev.dimension.flare.RobolectricTest
 import dev.dimension.flare.common.OnDeviceAI
+import dev.dimension.flare.common.protobufSerializer
 import dev.dimension.flare.createTestFileSystem
 import dev.dimension.flare.createTestRootPath
 import dev.dimension.flare.data.datastore.AppDataStore
+import dev.dimension.flare.data.datastore.createDataStoreStorage
 import dev.dimension.flare.data.datastore.model.AppSettings
+import dev.dimension.flare.data.datastore.model.OpenAIConfigDefaults
 import dev.dimension.flare.data.io.OkioFileStorage
 import dev.dimension.flare.data.network.ai.OpenAIService
 import dev.dimension.flare.deleteTestRootPath
@@ -23,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -45,6 +50,117 @@ class AiConfigPresenterIsolationTest : RobolectricTest() {
 
     @Test
     fun twoPresenterCompositionsKeepIndependentState() = checkIsolation(sharedComposition = false)
+
+    @Test
+    fun defaultModelsCanBeSelectedWithoutApiKeyOrHttpRequests() = checkOfflineModels()
+
+    @Test
+    fun blankLegacySettingsMigrateBeforeOfflineModelSelection() =
+        checkOfflineModels(
+            AppSettings(
+                version = "legacy",
+                language = "zh-CN",
+                aiConfig =
+                    AppSettings.AiConfig(
+                        type = AppSettings.AiConfig.Type.OpenAI("", "", ""),
+                        agent = false,
+                        tldr = true,
+                        translatePrompt = "custom translate",
+                        tldrPrompt = "custom summarize",
+                    ),
+            ),
+        )
+
+    private fun checkOfflineModels(legacySettings: AppSettings? = null) =
+        runTest {
+            Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            var scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+            val engine = MockEngine { respond("""{"data":[]}""") }
+            val service = OpenAIService { HttpClient(engine) }
+            val dataStore = AppDataStore(fileStorage)
+            startKoin {
+                modules(
+                    module {
+                        testSingle { dataStore }
+                        testSingle { service }
+                        testSingle<OnDeviceAI> {
+                            object : OnDeviceAI {
+                                override suspend fun isAvailable() = false
+
+                                override suspend fun translate(
+                                    source: String,
+                                    targetLanguage: String,
+                                    prompt: String,
+                                ): String? = error("Unused")
+
+                                override suspend fun tldr(
+                                    source: String,
+                                    targetLanguage: String,
+                                    prompt: String,
+                                ): String? = error("Unused")
+                            }
+                        }
+                    },
+                )
+            }
+            try {
+                if (legacySettings != null) {
+                    val seedJob = Job(backgroundScope.coroutineContext[Job])
+                    try {
+                        val seedStore =
+                            DataStoreFactory.create(
+                                storage =
+                                    createDataStoreStorage(
+                                        name = "app_settings.pb",
+                                        serializer = protobufSerializer(AppSettings(version = "")),
+                                        fileStorage = fileStorage,
+                                    ),
+                                scope = CoroutineScope(backgroundScope.coroutineContext + seedJob),
+                            )
+                        seedStore.updateData { legacySettings }
+                    } finally {
+                        seedJob.cancelAndJoin()
+                    }
+                }
+                val original = legacySettings ?: AppSettings(version = "")
+                val defaults = OpenAIConfigDefaults.create()
+                val expected = original.copy(aiConfig = original.aiConfig.copy(type = defaults))
+                assertEquals(expected, dataStore.appSettingsStore.data.first())
+
+                val presenter = AiConfigPresenter()
+                var states = moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.stateIn(scope)
+                val initial = states.first { it.hasConfig(defaults) && it.hasOfflineModels() }
+                assertEquals("", initial.openAIApiKey)
+                assertEquals(0, engine.requestHistory.size)
+
+                val selectedModel = OpenAIConfigDefaults.MODELS.last()
+                assertTrue(selectedModel != defaults.model)
+                initial.setOpenAIModel(selectedModel)
+                val selectedConfig = defaults.copy(model = selectedModel)
+                states.first { it.hasConfig(selectedConfig) && it.hasOfflineModels() }
+                val stored = dataStore.appSettingsStore.data.first()
+                assertEquals(expected.copy(aiConfig = expected.aiConfig.copy(type = selectedConfig)), stored)
+                assertEquals("", (stored.aiConfig.type as AppSettings.AiConfig.Type.OpenAI).apiKey)
+                assertNull(stored.aiConfig.agentType)
+                assertFalse(stored.aiConfig.isAgentEnabled)
+
+                scope.coroutineContext[Job]!!.cancelAndJoin()
+                scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+                val reopenedPresenter = AiConfigPresenter()
+                states = moleculeFlow(RecompositionMode.Immediate) { reopenedPresenter.body() }.stateIn(scope)
+                val restored = states.first { it.hasConfig(selectedConfig) && it.hasOfflineModels() }
+                assertEquals("", restored.openAIApiKey)
+                assertEquals(0, engine.requestHistory.size)
+            } finally {
+                scope.coroutineContext[Job]!!.cancelAndJoin()
+                engine.close()
+                stopKoin()
+                Dispatchers.resetMain()
+                deleteTestRootPath(root)
+            }
+        }
 
     private fun checkIsolation(sharedComposition: Boolean) =
         runTest {
@@ -219,4 +335,6 @@ class AiConfigPresenterIsolationTest : RobolectricTest() {
     private fun AiConfigPresenter.State.hasModels(config: AppSettings.AiConfig.Type.OpenAI) =
         (openAIModels as? UiState.Success)?.data ==
             listOf("${config.serverUrl.removePrefix("https://").removeSuffix("/")}:Bearer ${config.apiKey}")
+
+    private fun AiConfigPresenter.State.hasOfflineModels() = (openAIModels as? UiState.Success)?.data == OpenAIConfigDefaults.MODELS
 }

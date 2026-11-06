@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 internal data class PinnedTimelinesManagementSheetResponse(
     val data: PinnedTimelinesManagementSheetResponseData? = null,
+    val errors: List<Error>? = null,
 ) {
     val tagPinnedTimelines: List<TagPinnedTimeline>
         get() =
@@ -14,6 +15,7 @@ internal data class PinnedTimelinesManagementSheetResponse(
                 ?.items
                 .orEmpty()
                 .mapNotNull(PinnableTimeline::asTagPinnedTimeline)
+                .distinctBy(TagPinnedTimeline::tag)
 }
 
 @Serializable
@@ -25,13 +27,13 @@ internal data class PinnedTimelinesManagementSheetResponseData(
 @Serializable
 internal data class PinnableTimelines(
     @SerialName("pinnable_timelines")
-    val items: List<PinnableTimeline> = emptyList(),
+    val items: List<PinnableTimeline>? = null,
 )
 
 @Serializable
 internal data class PinnableTimeline(
     @SerialName("__typename")
-    val typeName: String,
+    val typeName: String? = null,
     @SerialName("icon_name")
     val iconName: String? = null,
     val name: String? = null,
@@ -44,8 +46,8 @@ internal data class PinnableTimeline(
         if (typeName != TAG_PINNED_TIMELINE_TYPE) {
             return null
         }
-        val tag = tag ?: return null
-        val name = name ?: tabLabel ?: return null
+        val tag = tag?.takeIf(String::isNotBlank) ?: return null
+        val name = name?.takeIf(String::isNotBlank) ?: tabLabel?.takeIf(String::isNotBlank) ?: return null
         return TagPinnedTimeline(
             iconName = iconName,
             name = name,

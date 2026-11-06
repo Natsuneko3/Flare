@@ -6,7 +6,7 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import dev.dimension.flare.data.datasource.microblog.pagingConfig
 import dev.dimension.flare.data.model.tab.TimelineCandidate
-import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.PinnableTimelineApi
 import dev.dimension.flare.data.network.xqt.model.TagPinnedTimeline
 import dev.dimension.flare.data.platform.XqtPlatformSpec
 import dev.dimension.flare.data.platform.XqtTagTimelineData
@@ -17,17 +17,19 @@ import dev.dimension.flare.ui.model.asType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 
-internal fun XQTService.pinnableTagTimelines(accountKey: MicroBlogKey): Flow<PagingData<TimelineCandidate<*>>> =
+internal fun PinnableTimelineApi.pinnableTagTimelines(accountKey: MicroBlogKey): Flow<PagingData<TimelineCandidate<*>>> =
     Pager(
         config = pagingConfig,
         pagingSourceFactory = {
             XQTPinnableTimelinePagingSource(
                 accountKey = accountKey,
                 loadTimelines = {
-                    getPinnedTimelinesManagementSheet()
-                        .body()
-                        ?.tagPinnedTimelines
-                        .orEmpty()
+                    val response = getPinnedTimelinesManagementSheet()
+                    check(response.isSuccessful) { "Unable to load X category timelines" }
+                    val body = checkNotNull(response.body()) { "The X category response is missing its data" }
+                    check(body.errors.isNullOrEmpty()) { "The X category response contains errors" }
+                    checkNotNull(body.data?.pinnableTimelines?.items) { "The X category response is missing its timelines" }
+                    body.tagPinnedTimelines
                 },
             )
         },

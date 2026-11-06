@@ -6,7 +6,7 @@ import dev.dimension.flare.data.database.cache.mapper.tweets
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
-import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.PinnableTimelineApi
 import dev.dimension.flare.data.network.xqt.model.TagTimelineRequest
 import dev.dimension.flare.data.network.xqt.model.TagTimelineVariables
 import dev.dimension.flare.model.MicroBlogKey
@@ -16,7 +16,7 @@ import dev.dimension.flare.ui.model.mapper.render
 @OptIn(ExperimentalPagingApi::class)
 internal class TagTimelineRemoteMediator(
     private val tag: String,
-    private val service: XQTService,
+    private val service: PinnableTimelineApi,
     private val accountKey: MicroBlogKey,
 ) : CacheableRemoteLoader<UiTimelineV2> {
     override val pagingKey: String = "tag_${tag}_$accountKey"
@@ -39,7 +39,7 @@ internal class TagTimelineRemoteMediator(
                     return PagingResult(endOfPaginationReached = true)
                 }
             }
-        val timeline =
+        val response =
             service
                 .postTagTimeline(
                     request =
@@ -51,17 +51,18 @@ internal class TagTimelineRemoteMediator(
                                     tag = tag,
                                 ),
                         ),
-                ).body()
-                ?.data
-                ?.home
-                ?.homeTimelineUrt
-        val instructions = timeline?.instructions.orEmpty()
+                )
+        check(response.isSuccessful) { "Unable to load the X category timeline" }
+        val body = checkNotNull(response.body()) { "The X category response is missing its timeline" }
+        check(body.errors.isNullOrEmpty()) { "The X category timeline response contains errors" }
+        val instructions = body.data.home.homeTimelineUrt.instructions
         val tweets = instructions.tweets()
+        val nextKey = instructions.cursor()
 
         return PagingResult(
-            endOfPaginationReached = tweets.isEmpty(),
+            endOfPaginationReached = nextKey == null,
             data = tweets.mapNotNull { it.render(accountKey) },
-            nextKey = instructions.cursor(),
+            nextKey = nextKey,
         )
     }
 }

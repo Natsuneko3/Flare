@@ -1,5 +1,6 @@
 package dev.dimension.flare.data.datastore
 
+import androidx.datastore.core.DataMigration
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.core.okio.OkioSerializer
@@ -9,6 +10,7 @@ import dev.dimension.flare.data.datastore.model.AppSettings
 import dev.dimension.flare.data.datastore.model.ComposeConfigData
 import dev.dimension.flare.data.datastore.model.FlareConfig
 import dev.dimension.flare.data.datastore.model.HomeTimelinePreferences
+import dev.dimension.flare.data.datastore.model.OpenAIConfigDefaults
 import dev.dimension.flare.data.datastore.model.PlatformOAuthPendingData
 import dev.dimension.flare.data.io.FileStorage
 import org.koin.core.annotation.Single
@@ -47,6 +49,7 @@ internal class AppDataStore(
         createDataStore(
             name = "app_settings.pb",
             serializer = protobufSerializer(AppSettings(version = "")),
+            migrations = listOf(DefaultAiConfigMigration),
         )
     }
 
@@ -60,8 +63,10 @@ internal class AppDataStore(
     private fun <T> createDataStore(
         name: String,
         serializer: OkioSerializer<T>,
+        migrations: List<DataMigration<T>> = emptyList(),
     ): DataStore<T> =
         DataStoreFactory.create(
+            migrations = migrations,
             storage =
                 createDataStoreStorage(
                     name = name,
@@ -69,4 +74,14 @@ internal class AppDataStore(
                     fileStorage = fileStorage,
                 ),
         )
+}
+
+private object DefaultAiConfigMigration : DataMigration<AppSettings> {
+    override suspend fun shouldMigrate(currentData: AppSettings): Boolean =
+        OpenAIConfigDefaults.applyToUnconfigured(currentData.aiConfig) != currentData.aiConfig
+
+    override suspend fun migrate(currentData: AppSettings): AppSettings =
+        currentData.copy(aiConfig = OpenAIConfigDefaults.applyToUnconfigured(currentData.aiConfig))
+
+    override suspend fun cleanUp() = Unit
 }

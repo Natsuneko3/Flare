@@ -45,6 +45,10 @@ kotlin {
 }
 
 android {
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     defaultConfig {
         versionCode = androidReleaseProperties.getProperty("versionCode").toInt()
         versionName = androidReleaseProperties.getProperty("versionName")

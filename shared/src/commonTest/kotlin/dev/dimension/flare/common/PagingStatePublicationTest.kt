@@ -8,23 +8,30 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.PagingSource
+import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
 import dev.dimension.flare.RobolectricTest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
@@ -32,6 +39,92 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PagingStatePublicationTest : RobolectricTest() {
+    @Test
+    fun fastRefreshCompletesWhenItemsDoNotChange() = checkFastRefresh(listOf("main"))
+
+    @Test
+    fun fastRefreshCompletesForEmptyResults() = checkFastRefresh(emptyList())
+
+    private fun checkFastRefresh(result: List<String>) =
+        withRefreshableItems { fixture, items ->
+            fixture.load = { PagingSource.LoadResult.Page(result, null, null) }
+            repeat(5) { refreshIndex ->
+                val waiting = async { items.refreshSuspend() }
+                runCurrent()
+                advanceTimeBy(2)
+                runCurrent()
+                withTimeout(1_000) { waiting.await() }
+                assertEquals(refreshIndex + 2, fixture.requests)
+                assertEquals(result, items.itemSnapshotList.items)
+                assertTrue(items.loadState.isIdle)
+            }
+        }
+
+    @Test
+    fun refreshWaitsUntilSlowLoadCompletes() =
+        withRefreshableItems { fixture, items ->
+            val started = CompletableDeferred<Unit>()
+            val finish = CompletableDeferred<Unit>()
+            fixture.load = {
+                started.complete(Unit)
+                finish.await()
+                PagingSource.LoadResult.Page(listOf("updated"), null, null)
+            }
+            val waiting = async { items.refreshSuspend() }
+            runCurrent()
+            assertTrue(started.isCompleted)
+            assertTrue(items.loadState.refresh is LoadState.Loading)
+            advanceTimeBy(10_000)
+            runCurrent()
+            assertFalse(waiting.isCompleted)
+            assertEquals(listOf("main"), items.itemSnapshotList.items)
+
+            finish.complete(Unit)
+            runCurrent()
+            advanceTimeBy(2)
+            runCurrent()
+            withTimeout(1_000) { waiting.await() }
+            assertEquals(2, fixture.requests)
+            assertEquals(listOf("updated"), items.itemSnapshotList.items)
+            assertTrue(items.loadState.isIdle)
+        }
+
+    @Test
+    fun refreshReturnsWhenLoadFailsAndKeepsExistingItems() =
+        withRefreshableItems { fixture, items ->
+            val failure = IllegalStateException("refresh failed")
+            fixture.load = { PagingSource.LoadResult.Error(failure) }
+            val waiting = async { items.refreshSuspend() }
+            runCurrent()
+            advanceTimeBy(2)
+            runCurrent()
+            withTimeout(1_000) { waiting.await() }
+            assertEquals(failure, (items.loadState.refresh as LoadState.Error).error)
+            assertEquals(listOf("main"), items.itemSnapshotList.items)
+            assertEquals(2, fixture.requests)
+        }
+
+    @Test
+    fun cancellingRefreshWaitLeavesPagingCollectionUsable() =
+        withRefreshableItems { fixture, items ->
+            val finish = CompletableDeferred<Unit>()
+            fixture.load = {
+                finish.await()
+                PagingSource.LoadResult.Page(listOf("updated"), null, null)
+            }
+            val waiting = async { items.refreshSuspend() }
+            runCurrent()
+            assertEquals(2, fixture.requests)
+            assertTrue(items.loadState.refresh is LoadState.Loading)
+            waiting.cancelAndJoin()
+            assertFailsWith<CancellationException> { waiting.await() }
+
+            finish.complete(Unit)
+            runCurrent()
+            assertEquals(listOf("updated"), items.itemSnapshotList.items)
+            assertTrue(items.loadState.isIdle)
+        }
+
     @Test
     fun publishedItemKeysSurviveAShorterPagingGeneration() =
         withPagingStates { pages, states ->
@@ -252,6 +345,49 @@ class PagingStatePublicationTest : RobolectricTest() {
                 assertTrue(states.last().appendState is LoadState.Error)
                 states.last().retry()
                 assertEquals(2, retries)
+            } finally {
+                job.cancelAndJoin()
+                Dispatchers.resetMain()
+            }
+        }
+
+    private class RefreshFixture {
+        var requests = 0
+        var load: suspend () -> PagingSource.LoadResult<Int, String> = {
+            PagingSource.LoadResult.Page(listOf("main"), null, null)
+        }
+        val pager =
+            Pager(PagingConfig(pageSize = 20, enablePlaceholders = false)) {
+                object : PagingSource<Int, String>() {
+                    override fun getRefreshKey(state: androidx.paging.PagingState<Int, String>): Int? = null
+
+                    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, String> {
+                        requests++
+                        return this@RefreshFixture.load()
+                    }
+                }
+            }
+    }
+
+    private fun withRefreshableItems(block: suspend TestScope.(RefreshFixture, LazyPagingItems<String>) -> Unit) =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val fixture = RefreshFixture()
+            var items: LazyPagingItems<String>? = null
+            val job =
+                launch {
+                    moleculeFlow(RecompositionMode.Immediate) {
+                        val pagingItems = fixture.pager.flow.collectAsLazyPagingItems()
+                        pagingItems to pagingItems.toPagingState()
+                    }.collect { (pagingItems, _) -> items = pagingItems }
+                }
+            try {
+                runCurrent()
+                val pagingItems = checkNotNull(items)
+                assertEquals(1, fixture.requests)
+                assertEquals(listOf("main"), pagingItems.itemSnapshotList.items)
+                assertTrue(pagingItems.loadState.isIdle)
+                block(fixture, pagingItems)
             } finally {
                 job.cancelAndJoin()
                 Dispatchers.resetMain()

@@ -1,5 +1,6 @@
 package dev.dimension.flare.ui.screen.compose
 
+import android.app.Application
 import android.net.Uri
 import dev.dimension.flare.data.datasource.microblog.ComposeConfig
 import kotlinx.coroutines.CompletableDeferred
@@ -18,7 +19,7 @@ import java.io.File
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], manifest = Config.NONE)
+@Config(sdk = [35], manifest = Config.NONE, application = Application::class)
 class ComposeMediaStateTest {
     @Test
     fun addingTooManyImagesKeepsExistingAttachmentsAndAltText() =

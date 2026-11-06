@@ -13,6 +13,7 @@ import androidx.compose.runtime.snapshotFlow
 import dev.dimension.flare.common.OnDeviceAI
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
+import dev.dimension.flare.data.datastore.model.OpenAIConfigDefaults
 import dev.dimension.flare.data.network.ai.OpenAIService
 import dev.dimension.flare.data.translation.canonicalTranslationLanguage
 import dev.dimension.flare.di.koinInject
@@ -195,7 +196,7 @@ public class AiConfigPresenter(
                 .debounce(666L)
                 .collectLatest { (serverUrl, apiKey) ->
                     if (serverUrl.isBlank() || apiKey.isBlank()) {
-                        openAIModels = UiState.Success(persistentListOf())
+                        openAIModels = UiState.Success(openAIModelPresets(serverUrl))
                     } else {
                         openAIModels = UiState.Loading()
                         openAIModels =
@@ -558,7 +559,7 @@ internal fun AppSettings.AiConfig.withAgentConfigInheritance(value: Boolean): Ap
             if (value) {
                 null
             } else {
-                agentType ?: (type as? AppSettings.AiConfig.Type.OpenAI) ?: AppSettings.AiConfig.Type.OpenAI("", "", "")
+                agentType ?: (type as? AppSettings.AiConfig.Type.OpenAI) ?: OpenAIConfigDefaults.create()
             },
     )
 
@@ -566,7 +567,7 @@ internal fun AppSettings.AiConfig.updateOpenAIConfig(
     agentConfig: Boolean,
     update: AppSettings.AiConfig.Type.OpenAI.() -> AppSettings.AiConfig.Type.OpenAI,
 ): AppSettings.AiConfig {
-    val current = editingType(agentConfig) as? AppSettings.AiConfig.Type.OpenAI ?: AppSettings.AiConfig.Type.OpenAI("", "", "")
+    val current = editingType(agentConfig) as? AppSettings.AiConfig.Type.OpenAI ?: OpenAIConfigDefaults.create()
     val updated = current.update()
     return if (agentConfig) copy(agentType = updated) else copy(type = updated)
 }
@@ -604,7 +605,7 @@ internal fun normalizeExcludedLanguages(languages: List<String>): List<String> =
 
 internal val AI_SERVER_SUGGESTIONS =
     persistentListOf(
-        "https://api.openai.com/v1/",
+        OpenAIConfigDefaults.SERVER_URL,
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         "https://openrouter.ai/api/v1/",
         "https://api.x.ai/v1/",
@@ -618,3 +619,10 @@ internal val AI_SERVER_SUGGESTIONS =
         "https://api.deepseek.com/v1/",
         "https://api.fireworks.ai/inference/v1/",
     )
+
+internal fun openAIModelPresets(serverUrl: String): ImmutableList<String> =
+    if (serverUrl.trim().trimEnd('/') == OpenAIConfigDefaults.SERVER_URL.trimEnd('/')) {
+        OpenAIConfigDefaults.MODELS
+    } else {
+        persistentListOf()
+    }

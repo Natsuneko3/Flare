@@ -30,8 +30,10 @@ import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.CircleMinus
 import compose.icons.fontawesomeicons.solid.CirclePlus
 import compose.icons.fontawesomeicons.solid.Plus
+import compose.icons.fontawesomeicons.solid.TableList
 import dev.dimension.flare.Res
 import dev.dimension.flare.add_rss_source
+import dev.dimension.flare.common.onError
 import dev.dimension.flare.data.model.tab.UiTimelineTabItem
 import dev.dimension.flare.ok
 import dev.dimension.flare.rss_title
@@ -39,10 +41,12 @@ import dev.dimension.flare.tab_settings_add
 import dev.dimension.flare.tab_settings_remove
 import dev.dimension.flare.ui.common.itemsIndexed
 import dev.dimension.flare.ui.component.AvatarComponent
+import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
 import dev.dimension.flare.ui.component.listCard
+import dev.dimension.flare.ui.component.status.ListEmptyView
 import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.onSuccess
 import dev.dimension.flare.ui.screen.settings.AllTabsPresenter
@@ -53,6 +57,7 @@ import io.github.composefluent.component.CardExpanderItem
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.LiteFilter
 import io.github.composefluent.component.PillButton
+import io.github.composefluent.component.ProgressRing
 import io.github.composefluent.component.SubtleButton
 import io.github.composefluent.component.Text
 import kotlinx.collections.immutable.ImmutableList
@@ -252,7 +257,30 @@ internal fun AddTabDialog(
                                         LazyColumn(
                                             verticalArrangement = Arrangement.spacedBy(2.dp),
                                         ) {
-                                            itemsIndexed(section.data) { index, totalCount, item ->
+                                            itemsIndexed(
+                                                state = section.data,
+                                                emptyContent = {
+                                                    ListEmptyView(
+                                                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                        icon = FontAwesomeIcons.Solid.TableList,
+                                                    )
+                                                },
+                                                errorContent = { error ->
+                                                    ErrorContent(
+                                                        error = error,
+                                                        onRetry = { section.data.onError { onRetry() } },
+                                                    )
+                                                },
+                                                loadingCount = 1,
+                                                loadingContent = { _, _ ->
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                        contentAlignment = Alignment.Center,
+                                                    ) {
+                                                        ProgressRing()
+                                                    }
+                                                },
+                                            ) { index, totalCount, item ->
                                                 TabItem(
                                                     item,
                                                     modifier =

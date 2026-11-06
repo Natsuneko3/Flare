@@ -1,6 +1,8 @@
 package dev.dimension.flare.data.network.xqt.model
 
 import dev.dimension.flare.data.network.xqt.XQTTimelineQueryIds
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Required
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -16,9 +18,11 @@ internal data class TagTimelineRequest(
     val queryId: String = XQTTimelineQueryIds.TAG_TIMELINE,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 internal data class TagTimelineVariables(
     val count: Long,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
     val cursor: String? = null,
     @Required
     val includePromotedContent: Boolean = true,

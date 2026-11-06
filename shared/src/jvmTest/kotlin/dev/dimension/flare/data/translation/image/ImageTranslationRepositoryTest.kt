@@ -21,6 +21,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -206,6 +207,8 @@ class ImageTranslationRepositoryTest {
                 started.await()
                 repository.closeSession(session)
                 cancelled.await()
+                // The IO operation finishes before its cancellation reaches the caller's dispatcher.
+                assertFailsWith<CancellationException> { result.await() }
                 assertTrue(result.isCancelled)
                 assertEquals(0L, repository.size())
             }

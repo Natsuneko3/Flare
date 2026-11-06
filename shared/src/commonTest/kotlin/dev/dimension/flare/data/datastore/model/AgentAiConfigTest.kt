@@ -18,6 +18,64 @@ class AgentAiConfigTest {
     private val agent = AppSettings.AiConfig.Type.OpenAI("https://agent.example/v1/", "agent-key", "strong", "high", "{\"seed\":2}")
 
     @Test
+    fun defaultOpenAIConfigHasEndpointAndModelWithoutCredentials() {
+        val config = AppSettings.AiConfig()
+        val openAI = config.type as AppSettings.AiConfig.Type.OpenAI
+        assertEquals("https://api.openai.com/v1/", openAI.serverUrl)
+        assertEquals("gpt-5.4-mini", openAI.model)
+        assertEquals("", openAI.apiKey)
+        assertNull(config.agentType)
+        assertEquals(openAI, config.effectiveAgentType)
+        assertFalse(config.isAgentEnabled)
+    }
+
+    @Test
+    fun emptyLegacyConfigReceivesDefaultsAndPreservesInheritanceAndOptions() {
+        val empty = AppSettings.AiConfig.Type.OpenAI("", "", "")
+        val legacy =
+            AppSettings.AiConfig(
+                type = empty,
+                agent = false,
+                tldr = true,
+                translatePrompt = "custom translate",
+                tldrPrompt = "custom summarize",
+            )
+        val migrated = OpenAIConfigDefaults.applyToUnconfigured(legacy)
+        assertEquals(legacy.copy(type = OpenAIConfigDefaults.create()), migrated)
+        assertNull(migrated.agentType)
+        assertEquals(migrated.type, migrated.effectiveAgentType)
+        assertEquals(migrated, OpenAIConfigDefaults.applyToUnconfigured(migrated))
+
+        val independent = AppSettings.AiConfig(type = basic, agentType = empty)
+        assertEquals(
+            independent.copy(agentType = OpenAIConfigDefaults.create()),
+            OpenAIConfigDefaults.applyToUnconfigured(independent),
+        )
+        val onDevice = AppSettings.AiConfig(type = AppSettings.AiConfig.Type.OnDevice)
+        assertEquals(onDevice, OpenAIConfigDefaults.applyToUnconfigured(onDevice))
+    }
+
+    @Test
+    fun defaultMigrationPreservesEveryPartiallyConfiguredOpenAIField() {
+        val empty = AppSettings.AiConfig.Type.OpenAI("", "", "")
+        val configured =
+            listOf(
+                empty.copy(serverUrl = "https://custom.example/v1/"),
+                empty.copy(apiKey = "custom-key"),
+                empty.copy(model = "custom-model"),
+                empty.copy(reasoningEffort = "high"),
+                empty.copy(extraBody = "{\"seed\":1}"),
+                empty.copy(contextWindow = 32768),
+            )
+        configured.forEach { type ->
+            val inherited = AppSettings.AiConfig(type = type)
+            assertEquals(inherited, OpenAIConfigDefaults.applyToUnconfigured(inherited))
+            val independent = inherited.copy(agentType = type)
+            assertEquals(independent, OpenAIConfigDefaults.applyToUnconfigured(independent))
+        }
+    }
+
+    @Test
     fun legacyProtobufAndJsonInheritAllBasicSettings() {
         val legacy =
             LegacyAgentInheritanceConfig(type = basic, tldr = true, agent = false, translatePrompt = "translate", tldrPrompt = "summarize")
@@ -64,7 +122,10 @@ class AgentAiConfigTest {
         val settings = AppSettings.AiConfig(type = basic, agentType = agent.copy(model = ""))
         assertEquals("", (settings.effectiveAgentType as AppSettings.AiConfig.Type.OpenAI).model)
         assertFalse(settings.isAgentEnabled)
+        assertFalse(settings.copy(agentType = agent.copy(serverUrl = " ")).isAgentEnabled)
+        assertFalse(settings.copy(agentType = agent.copy(apiKey = " ")).isAgentEnabled)
         assertFalse(settings.copy(agentType = agent, agent = false).isAgentEnabled)
+        assertFalse(AppSettings.AiConfig().isAgentEnabled)
     }
 
     @Test

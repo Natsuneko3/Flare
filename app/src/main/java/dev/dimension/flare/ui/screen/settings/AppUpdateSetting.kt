@@ -67,9 +67,10 @@ internal class AppUpdateViewModel(
 }
 
 @Composable
-internal fun AppUpdateSetting() {
-    val context = LocalContext.current
-    val model = viewModel { AppUpdateViewModel(context.applicationContext) }
+internal fun AppUpdateSetting(
+    context: Context = LocalContext.current,
+    model: AppUpdateViewModel = viewModel { AppUpdateViewModel(context.applicationContext) },
+) {
     val state by model.controller.state.collectAsState()
     val scope = rememberCoroutineScope()
     var preparingInstall by remember { mutableStateOf(false) }
@@ -140,10 +141,10 @@ private fun AppUpdateState.Ready.permissionKey() = "${release.versionCode}:${rel
 @Composable
 internal fun AppUpdateSettingContent(
     state: AppUpdateState,
-    preparingInstall: Boolean = false,
     onCheck: () -> Unit,
     onDownload: () -> Unit,
     onDismiss: () -> Unit,
+    preparingInstall: Boolean = false,
     onInstall: () -> Unit,
 ) {
     SegmentedListItem(

@@ -2,22 +2,13 @@ package dev.dimension.flare.common
 
 import androidx.compose.runtime.snapshotFlow
 import androidx.paging.LoadState
+import androidx.paging.awaitNotLoading
 import androidx.paging.compose.LazyPagingItems
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 
 internal suspend fun <T : Any> LazyPagingItems<T>.refreshSuspend() {
     refresh()
-    snapshotFlow { loadState }
-        .distinctUntilChanged()
-        .first {
-            it.refresh is LoadState.Loading
-        }
-    snapshotFlow { loadState }
-        .distinctUntilChanged()
-        .first {
-            it.refresh is LoadState.NotLoading || it.refresh is LoadState.Error
-        }
+    // Paging's stable idle/error wait also handles a Loading state conflated by Compose.
+    snapshotFlow { loadState }.awaitNotLoading()
 }
 
 internal inline fun <reified T : Any> LazyPagingItems<T>.onLoading(block: () -> Unit): LazyPagingItems<T> {

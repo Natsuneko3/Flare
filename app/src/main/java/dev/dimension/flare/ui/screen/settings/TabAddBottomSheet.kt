@@ -27,6 +27,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
@@ -69,9 +70,11 @@ import compose.icons.fontawesomeicons.solid.Plus
 import compose.icons.fontawesomeicons.solid.TableList
 import compose.icons.fontawesomeicons.solid.Trash
 import dev.dimension.flare.R
+import dev.dimension.flare.common.onError
 import dev.dimension.flare.data.model.tab.UiTimelineTabItem
 import dev.dimension.flare.ui.common.itemsIndexed
 import dev.dimension.flare.ui.component.AvatarComponent
+import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
@@ -271,13 +274,31 @@ internal fun TabAddBottomSheet(
                                         contentPadding = PaddingValues(horizontal = screenHorizontalPadding),
                                         verticalArrangement = Arrangement.spacedBy(2.dp),
                                     ) {
-                                        itemsIndexed(section.data, emptyContent = {
-                                            ListEmptyView(
-                                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                                                text = stringResource(R.string.empty_tab_candidates),
-                                                icon = FontAwesomeIcons.Solid.TableList,
-                                            )
-                                        }) { index, totalCount, item ->
+                                        itemsIndexed(
+                                            state = section.data,
+                                            emptyContent = {
+                                                ListEmptyView(
+                                                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                    text = stringResource(R.string.empty_tab_candidates),
+                                                    icon = FontAwesomeIcons.Solid.TableList,
+                                                )
+                                            },
+                                            errorContent = { error ->
+                                                ErrorContent(
+                                                    error = error,
+                                                    onRetry = { section.data.onError { onRetry() } },
+                                                )
+                                            },
+                                            loadingCount = 1,
+                                            loadingContent = { _, _ ->
+                                                Box(
+                                                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    CircularProgressIndicator()
+                                                }
+                                            },
+                                        ) { index, totalCount, item ->
                                             TabItem(
                                                 item,
                                                 modifier =

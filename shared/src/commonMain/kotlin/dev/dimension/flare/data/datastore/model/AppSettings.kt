@@ -91,7 +91,7 @@ public data class AppSettings(
         )
         val translation: Boolean = false,
         val tldr: Boolean = false,
-        val type: Type = Type.OpenAI("", "", ""),
+        val type: Type = OpenAIConfigDefaults.create(),
         val translatePrompt: String = AiPromptDefaults.TRANSLATE_PROMPT,
         val tldrPrompt: String = AiPromptDefaults.TLDR_PROMPT,
         @Deprecated(
@@ -106,7 +106,10 @@ public data class AppSettings(
             get() = agentType ?: type
 
         public val isAgentEnabled: Boolean
-            get() = agent && (effectiveAgentType as? Type.OpenAI)?.model?.isNotBlank() == true
+            get() =
+                agent && (effectiveAgentType as? Type.OpenAI)?.let {
+                    it.serverUrl.isNotBlank() && it.apiKey.isNotBlank() && it.model.isNotBlank()
+                } == true
 
         public companion object {
             // for iOS

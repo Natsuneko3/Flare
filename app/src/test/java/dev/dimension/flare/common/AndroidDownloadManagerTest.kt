@@ -1,5 +1,6 @@
 package dev.dimension.flare.common
 
+import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
@@ -29,7 +30,7 @@ import java.io.File
 import java.io.IOException
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], manifest = Config.NONE)
+@Config(sdk = [35], manifest = Config.NONE, application = Application::class)
 class AndroidDownloadManagerTest {
     private lateinit var provider: SaveProvider
     private lateinit var manager: AndroidDownloadManager

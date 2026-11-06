@@ -217,7 +217,7 @@ class TimelineInclusionTest {
             assertTrue(presenter.sourceActive.first(), "Excluding a timeline from mixed timelines must keep its own page active")
 
             version.set(2)
-            withContext(Dispatchers.Main) { checkNotNull(models.value).refresh() }
+            withTimeout(5_000) { withContext(Dispatchers.Main) { checkNotNull(models.value).refresh() } }
             val refreshed = awaitPost("target-2")
             assertEquals(1, (refreshed.listState as PagingState.Success).itemCount)
             assertEquals(2, targetRequests.get())

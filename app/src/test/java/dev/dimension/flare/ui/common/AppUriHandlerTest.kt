@@ -1,6 +1,7 @@
 package dev.dimension.flare.ui.common
 
 import android.app.Activity
+import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.ContextWrapper
 import android.content.Intent
@@ -18,7 +19,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], manifest = Config.NONE)
+@Config(sdk = [35], manifest = Config.NONE, application = Application::class)
 class AppUriHandlerTest {
     @Test
     fun rejectsEmptyAndRelativeLinksBeforeLaunching() {

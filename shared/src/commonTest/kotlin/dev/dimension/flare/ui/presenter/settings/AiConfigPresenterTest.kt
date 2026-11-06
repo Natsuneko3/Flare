@@ -1,6 +1,7 @@
 package dev.dimension.flare.ui.presenter.settings
 
 import dev.dimension.flare.data.datastore.model.AppSettings
+import dev.dimension.flare.data.datastore.model.OpenAIConfigDefaults
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -34,8 +35,16 @@ class AiConfigPresenterTest {
     fun onDeviceBasicCanCreateAnIndependentRemoteAgent() {
         val independent = AppSettings.AiConfig(type = AppSettings.AiConfig.Type.OnDevice).withAgentConfigInheritance(false)
         assertEquals(AppSettings.AiConfig.Type.OnDevice, independent.type)
-        assertEquals(AppSettings.AiConfig.Type.OpenAI("", "", ""), independent.agentType)
+        assertEquals(OpenAIConfigDefaults.create(), independent.agentType)
         assertEquals(independent, independent.withAgentConfigInheritance(false))
+    }
+
+    @Test
+    fun officialEndpointHasOfflineModelChoicesWithoutChangingCustomEndpoints() {
+        assertEquals(OpenAIConfigDefaults.MODELS, openAIModelPresets(OpenAIConfigDefaults.SERVER_URL))
+        assertEquals(OpenAIConfigDefaults.MODELS, openAIModelPresets(" https://api.openai.com/v1 "))
+        assertEquals(emptyList(), openAIModelPresets(""))
+        assertEquals(emptyList(), openAIModelPresets("https://custom.example/v1/"))
     }
 
     @Test

@@ -7,8 +7,21 @@ import kotlin.test.assertTrue
 
 class AiAgentEnabledPresenterTest {
     @Test
-    fun isAiAgentEnabled_requiresAgentAndOpenAIModel() {
+    fun isAiAgentEnabled_requiresAgentAndCompleteOpenAIConfig() {
         assertTrue(
+            AppSettings
+                .AiConfig(
+                    agent = true,
+                    type =
+                        AppSettings.AiConfig.Type.OpenAI(
+                            serverUrl = "https://api.example/v1/",
+                            apiKey = "test-key",
+                            model = "gpt-4.1",
+                        ),
+                ).isAiAgentEnabled(),
+        )
+
+        assertFalse(
             AppSettings
                 .AiConfig(
                     agent = true,
@@ -27,8 +40,8 @@ class AiAgentEnabledPresenterTest {
                     agent = false,
                     type =
                         AppSettings.AiConfig.Type.OpenAI(
-                            serverUrl = "",
-                            apiKey = "",
+                            serverUrl = "https://api.example/v1/",
+                            apiKey = "test-key",
                             model = "gpt-4.1",
                         ),
                 ).isAiAgentEnabled(),
@@ -40,8 +53,8 @@ class AiAgentEnabledPresenterTest {
                     agent = true,
                     type =
                         AppSettings.AiConfig.Type.OpenAI(
-                            serverUrl = "",
-                            apiKey = "",
+                            serverUrl = "https://api.example/v1/",
+                            apiKey = "test-key",
                             model = " ",
                         ),
                 ).isAiAgentEnabled(),
