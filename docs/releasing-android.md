@@ -2,7 +2,7 @@
 
 This fork upgrades the installed `dev.dimension.flare.videofix` application in place. Its first managed release is `1.7.8-custom.1` / version code `1781`, following the installed `1.7.8-local-glass-animation` / `1780` build. Android requires the same package ID and signing certificate and a higher version code. Do not uninstall the existing app to work around a signing error: uninstalling removes its local data.
 
-The current upstream sync is configured as `1.8.0-custom.1` / version code `1801`. This configuration does not mean a build has been verified or published.
+The current performance release is configured as `1.8.0-custom.2` / version code `1802`. This configuration does not mean a build has been verified or published.
 
 The authoritative version and package identity are committed in `android-release.properties`. `BUILD_NUMBER`, `BUILD_VERSION`, and upstream `fdroid.properties` do not override them. The Android release includes `arm64-v8a` native libraries; debug builds also support the x86_64 CI emulator. The tool inspects the APK and uses the actual ABI set in its filename.
 
@@ -27,7 +27,7 @@ Fork CI compiles debug Android variants and retains shared, desktop, lint and de
    python3 -B scripts/android_release.py --bump-version
    ```
 
-   From the current configuration, this changes `custom.1` / `1801` to `custom.2` / `1802`, and checks Android's maximum version code. When intentionally moving to a new upstream base, edit `versionName` to its `MAJOR.MINOR.PATCH-custom.1` value and continue increasing `versionCode` globally.
+   From the current configuration, this changes `custom.2` / `1802` to `custom.3` / `1803`, and checks Android's maximum version code. When intentionally moving to a new upstream base, edit `versionName` to its `MAJOR.MINOR.PATCH-custom.1` value and continue increasing `versionCode` globally.
 
 2. Write UTF-8 release notes, then commit all source and version changes. Keep notes outside the repository or commit them too. The tool rejects tracked changes and untracked files; ignored build outputs are allowed.
 
