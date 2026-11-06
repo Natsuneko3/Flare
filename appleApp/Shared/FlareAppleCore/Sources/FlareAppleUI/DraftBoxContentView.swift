@@ -1,12 +1,7 @@
 import FlareAppleCore
+import Kingfisher
 @preconcurrency import KotlinSharedUI
 import SwiftUI
-
-#if os(iOS)
-import UIKit
-#elseif os(macOS)
-import AppKit
-#endif
 
 public enum DraftBoxContentRowMode {
     case compact
@@ -137,7 +132,7 @@ private struct DraftBoxContentRow: View {
                     ScrollView(.horizontal) {
                         HStack(spacing: 8) {
                             ForEach(Array(draft.medias.prefix(4).enumerated()), id: \.offset) { _, media in
-                                DraftMediaThumbnail(media: media)
+                                DraftMediaThumbnail(media: media, revision: draft.updatedAt.platformValue.timeIntervalSince1970)
                             }
                         }
                     }
@@ -295,6 +290,8 @@ private struct DraftStatusText: View {
 
 private struct DraftMediaThumbnail: View {
     let media: UiDraftMedia
+    let revision: TimeInterval
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         Group {
@@ -312,27 +309,26 @@ private struct DraftMediaThumbnail: View {
         .accessibilityLabel(Text(verbatim: media.accessibleDescription))
     }
 
-    @ViewBuilder
     private var platformImage: some View {
-        #if os(iOS)
-        if let image = UIImage(contentsOfFile: media.cachePath) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-        } else {
-            placeholder(icon: "photo")
-        }
-        #elseif os(macOS)
-        if let image = NSImage(contentsOfFile: media.cachePath) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-        } else {
-            placeholder(icon: "photo")
-        }
-        #else
-        placeholder(icon: "photo")
-        #endif
+        let identity = "draft:\(media.cachePath)|\(revision)"
+        let source = Source.provider(LocalFileImageDataProvider(
+            fileURL: URL(fileURLWithPath: media.cachePath), cacheKey: identity
+        ))
+        return KFImage(source: source)
+            .setProcessor(ImageDownsamplingProcessor(
+                pixelSize: CGSize(width: 60 * displayScale, height: 60 * displayScale),
+                fillsBounds: true, preservesAnimation: false
+            ))
+            .scaleFactor(displayScale)
+            .cacheMemoryOnly()
+            .flareAsyncCacheTypeCheck()
+            .flareBackgroundDecodeIfSupported()
+            .loadDiskFileSynchronously(false)
+            .resizable()
+            .placeholder { placeholder(icon: "photo") }
+            .cancelOnDisappear(true)
+            .scaledToFill()
+            .id(identity)
     }
 
     @ViewBuilder

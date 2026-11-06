@@ -11,11 +11,15 @@ import AppKit
 public nonisolated struct ImageDownsamplingProcessor: ImageProcessor {
     public let pixelSize: CGSize
     public let fillsBounds: Bool
-    public var identifier: String { "dev.dimension.flare.preview(\(pixelSize),\(fillsBounds))" }
+    public let preservesAnimation: Bool
+    public var identifier: String {
+        "dev.dimension.flare.preview(\(pixelSize),\(fillsBounds))" + (preservesAnimation ? "" : ".firstFrame")
+    }
 
-    public init(pixelSize: CGSize, fillsBounds: Bool) {
+    public init(pixelSize: CGSize, fillsBounds: Bool, preservesAnimation: Bool = true) {
         self.pixelSize = pixelSize
         self.fillsBounds = fillsBounds
+        self.preservesAnimation = preservesAnimation
     }
 
     public func process(item: ImageProcessItem, options: KingfisherParsedOptionsInfo) -> KFCrossPlatformImage? {
@@ -23,7 +27,7 @@ public nonisolated struct ImageDownsamplingProcessor: ImageProcessor {
         switch item {
         case .data(let data):
             guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-                  CGImageSourceGetCount(source) == 1,
+                  !preservesAnimation || CGImageSourceGetCount(source) == 1,
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
                   let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
                   let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
@@ -33,7 +37,7 @@ public nonisolated struct ImageDownsamplingProcessor: ImageProcessor {
             let rotated = (5...8).contains(properties[kCGImagePropertyOrientation] as? Int ?? 1)
             sourceSize = rotated ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
         case .image(let image):
-            guard (image.kf.imageFrameCount ?? 1) <= 1 else { return image }
+            guard !preservesAnimation || (image.kf.imageFrameCount ?? 1) <= 1 else { return image }
             sourceSize = image.size
         }
         guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }

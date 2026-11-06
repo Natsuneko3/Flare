@@ -295,6 +295,7 @@ targets:
     dependencies:
       - target: FlareAppleCore
       - target: FlareAppleUI
+      - package: Kingfisher
       - package: Firebase
         product: FirebaseCrashlytics
     settings:
