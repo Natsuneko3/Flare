@@ -1684,10 +1684,9 @@ private fun mediaViewerPresenter(
         ) {
             scope.launch {
                 context.imageLoader.diskCache?.openSnapshot(media.cacheKey)?.use {
-                    val byteArray = it.data.toFile().readBytes()
                     val success =
-                        mediaDownloadManager.saveByteArray(
-                            byteArray = byteArray,
+                        mediaDownloadManager.saveImageFile(
+                            file = it.data.toFile(),
                             fileName = fileName,
                         )
                     withContext(Dispatchers.Main) {

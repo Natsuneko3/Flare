@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.database.sqlite.SQLiteConstraintException
@@ -25,15 +26,19 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowContentResolver
 import java.io.File
 import java.io.IOException
+import java.util.Base64
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE, application = Application::class)
 class AndroidDownloadManagerTest {
     private lateinit var provider: SaveProvider
     private lateinit var manager: AndroidDownloadManager
+    private lateinit var repository: AndroidMediaSaveLocationRepository
+    private lateinit var source: File
     private val bytes = byteArrayOf(1, 2, 3)
 
     @Before
@@ -42,11 +47,13 @@ class AndroidDownloadManagerTest {
         provider = SaveProvider(context)
         provider.attachInfo(context, ProviderInfo().apply { authority = MediaStore.AUTHORITY })
         ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+        source = File.createTempFile("cached-image-", ".bin", context.cacheDir)
+        repository = AndroidMediaSaveLocationRepository(context).apply { setDefaultDownloads() }
         manager =
             AndroidDownloadManager(
                 context = context,
                 media3VideoCacheManager = Media3VideoCacheManager(context),
-                mediaSaveLocationRepository = AndroidMediaSaveLocationRepository(context),
+                mediaSaveLocationRepository = repository,
                 mediaSavePicker = AndroidMediaSavePicker(),
             )
     }
@@ -54,6 +61,7 @@ class AndroidDownloadManagerTest {
     @After
     fun tearDown() {
         provider.file.delete()
+        source.delete()
     }
 
     @Test
@@ -128,6 +136,89 @@ class AndroidDownloadManagerTest {
         assertEquals(listOf(provider.outputUri), provider.deletedUris)
     }
 
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun exportsCachedPngBytesWithDetectedMimeDespiteDifferentExtension() {
+        val png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1cAAAAASUVORK5CYII=")
+        source.writeBytes(png)
+
+        assertTrue(saveImage())
+        assertArrayEquals(png, provider.file.readBytes())
+        assertEquals("image/png", provider.insertedValues?.getAsString(MediaStore.MediaColumns.MIME_TYPE))
+        assertEquals("cached-image.bin", provider.insertedValues?.getAsString(MediaStore.MediaColumns.DISPLAY_NAME))
+        assertArrayEquals(png, source.readBytes())
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun exportsAnimatedGifBytesWithoutReencoding() {
+        val frame = Base64.getDecoder().decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
+        val gif = frame.copyOfRange(0, frame.lastIndex) + frame.copyOfRange(19, frame.size) + bytes
+        source.writeBytes(gif)
+
+        assertTrue(saveImage())
+        assertArrayEquals(gif, provider.file.readBytes())
+        assertEquals("image/gif", provider.insertedValues?.getAsString(MediaStore.MediaColumns.MIME_TYPE))
+    }
+
+    @Test
+    fun unknownImageMimeRetainsJpegFallbackAndCopiesMultipleBuffers() {
+        val content = ByteArray(100_000) { (it % 251).toByte() }
+        source.writeBytes(content)
+
+        assertTrue(saveImage())
+        assertArrayEquals(content, provider.file.readBytes())
+        assertEquals("image/jpeg", provider.insertedValues?.getAsString(MediaStore.MediaColumns.MIME_TYPE))
+    }
+
+    @Test
+    fun missingCachedImageFailsAndCleansTheIncompleteOutput() {
+        source.delete()
+
+        assertFalse(saveImage())
+        assertEquals(listOf(provider.outputUri), provider.deletedUris)
+    }
+
+    @Test
+    fun cachedImageWriteFailureCleansOnlyTheNewOutputAndPreservesSource() {
+        source.writeBytes(bytes)
+        provider.writeFailure = IOException("Write failed")
+
+        assertFalse(saveImage())
+        assertEquals(listOf(provider.outputUri), provider.deletedUris)
+        assertArrayEquals(bytes, source.readBytes())
+    }
+
+    @Test
+    fun cachedImageCancellationIsRethrownAfterCleanup() {
+        source.writeBytes(bytes)
+        provider.writeFailure = CancellationException("Save canceled")
+
+        assertThrows(CancellationException::class.java) { saveImage() }
+        assertEquals(listOf(provider.outputUri), provider.deletedUris)
+        assertArrayEquals(bytes, source.readBytes())
+    }
+
+    @Test
+    fun revokedCustomDirectoryPermissionStillResetsPreferenceAndFailsWithoutOutput() {
+        source.writeBytes(bytes)
+        val directoryUri = Uri.parse("content://test.documents/tree/primary%3APictures")
+        repository.setCustomDirectory(directoryUri)
+        RuntimeEnvironment.getApplication().contentResolver.releasePersistableUriPermission(
+            directoryUri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+
+        assertFalse(saveImage())
+        assertTrue(provider.operations.isEmpty())
+        assertEquals(MediaSaveLocationMode.DefaultDownloads, repository.state.value.mode)
+    }
+
+    private fun saveImage(): Boolean =
+        runBlocking {
+            manager.saveImageFile(source, "cached-image.bin")
+        }
+
     private fun save(): Boolean =
         runBlocking {
             manager.saveByteArray(bytes, "media.png", "image/png")
@@ -146,6 +237,7 @@ class AndroidDownloadManagerTest {
         var deleteFailure: Exception? = null
         var insertReturnsNull = false
         var updatedRows = 1
+        var insertedValues: ContentValues? = null
 
         override fun onCreate(): Boolean = true
 
@@ -154,6 +246,7 @@ class AndroidDownloadManagerTest {
             values: ContentValues?,
         ): Uri? {
             operations += "insert"
+            insertedValues = values?.let(::ContentValues)
             assertEquals(MediaStore.Downloads.EXTERNAL_CONTENT_URI, uri)
             assertEquals(1, values?.getAsInteger(MediaStore.MediaColumns.IS_PENDING))
             insertFailure?.let { throw it }
