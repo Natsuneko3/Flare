@@ -63,14 +63,13 @@ struct TimelineScreen: View {
                     .backport
                     .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
                     .accessibilityIdentifier("home-new-content")
-                    .transition(reduceMotion ? .opacity : .move(edge: .top))
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 }
             }
             .animation(
                 reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 1),
                 value: presenter.state.reading?.hasNewContent == true
             )
-            .clipped()
             .padding(.top, 8)
         }
             .refreshable {

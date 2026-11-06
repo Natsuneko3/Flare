@@ -218,13 +218,22 @@ def sdk_tool(name):
     sdk = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
     if not sdk and (ROOT / "local.properties").is_file():
         sdk = load_properties(ROOT / "local.properties").get("sdk.dir")
+        if sdk:
+            sdk = sdk.replace("\\\\", "\\").replace("\\:", ":")
     if not sdk:
         raise ValueError(f"Set ANDROID_HOME or ANDROID_SDK_ROOT to locate {name}")
-    candidates = list((Path(sdk) / "build-tools").glob(f"*/{name}"))
+    # Stable version sorting preserves this preference: executable, batch, command.
+    suffixes = (".cmd", ".bat", ".exe") if sys.platform == "win32" else ("",)
+    candidates = [tool for suffix in suffixes
+                  for tool in (Path(sdk) / "build-tools").glob(f"*/{name}{suffix}") if tool.is_file()]
     candidates.sort(key=lambda path: [int(n) for n in re.findall(r"\d+", path.parent.name)])
     if not candidates:
         raise ValueError(f"Android SDK build-tools missing {name}")
     return candidates[-1]
+
+
+def gradle_wrapper():
+    return ROOT / ("gradlew.bat" if sys.platform == "win32" else "gradlew")
 
 
 def parse_badging(badging):
@@ -352,7 +361,7 @@ def prepare(args, config):
     for name in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
                  "BUILD_NUMBER", "BUILD_VERSION"):
         environment.pop(name, None)
-    command = [ROOT / "gradlew", "--no-daemon", ":app:testDebugUnitTest", ":app:assembleRelease"]
+    command = [gradle_wrapper(), "--no-daemon", ":app:testDebugUnitTest", ":app:assembleRelease"]
     for argument in args.gradle_arg:
         command.append(argument)
     init_script = os.environ.get("FLARE_GRADLE_INIT_SCRIPT")

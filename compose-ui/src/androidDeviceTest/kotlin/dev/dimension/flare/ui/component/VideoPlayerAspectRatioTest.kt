@@ -30,6 +30,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.dimension.flare.ui.model.UiMedia
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -89,8 +90,7 @@ class VideoPlayerAspectRatioTest {
                     KoinApplication(configuration = koinConfiguration { modules(playerModule) }) {
                         Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                             VideoPlayer(
-                                uri = uri.value,
-                                previewUri = null,
+                                media = localVideo(uri.value),
                                 contentDescription = "Aspect ratio regression video",
                                 muted = true,
                                 keepScreenOn = true,
@@ -151,8 +151,7 @@ class VideoPlayerAspectRatioTest {
                                     items(count = 24, key = { it }, contentType = { "video" }) { index ->
                                         val isPortrait = index % 2 == 0
                                         VideoPlayer(
-                                            uri = clips[index],
-                                            previewUri = null,
+                                            media = localVideo(clips[index]),
                                             contentDescription = null,
                                             autoPlay = selected.value == index,
                                             muted = true,
@@ -188,6 +187,16 @@ class VideoPlayerAspectRatioTest {
             scope.cancel()
         }
     }
+
+    // Leave dimensions unset so the test still exercises the decoder's presentation size.
+    private fun localVideo(uri: String): UiMedia.Video =
+        UiMedia.Video(
+            url = uri,
+            thumbnailUrl = "",
+            description = null,
+            height = 0f,
+            width = 0f,
+        )
 
     private fun fixture(
         name: String,

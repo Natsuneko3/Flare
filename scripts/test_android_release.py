@@ -267,6 +267,42 @@ class ReleaseContractTests(unittest.TestCase):
             with self.subTest(argument=argument), self.assertRaises(ValueError):
                 self.release.validate_gradle_args([argument])
 
+    def test_gradle_wrapper_matches_the_host_platform(self):
+        for platform, filename in (("win32", "gradlew.bat"), ("linux", "gradlew"), ("darwin", "gradlew")):
+            with self.subTest(platform=platform), patch.object(self.release.sys, "platform", platform):
+                self.assertEqual(self.release.gradle_wrapper(), self.release.ROOT / filename)
+
+    def test_sdk_tools_use_host_suffix_and_latest_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sdk = Path(temp)
+            for version in ("36.0.0", "37.0.0"):
+                directory = sdk / "build-tools" / version
+                directory.mkdir(parents=True)
+                for filename in ("aapt2", "aapt2.exe", "aapt2.bat", "apksigner", "apksigner.bat", "apksigner.cmd"):
+                    (directory / filename).touch()
+            for platform, aapt, signer in (("win32", "aapt2.exe", "apksigner.bat"), ("linux", "aapt2", "apksigner")):
+                with self.subTest(platform=platform), \
+                        patch.object(self.release.sys, "platform", platform), \
+                        patch.object(self.release.shutil, "which", return_value=None), \
+                        patch.dict(self.release.os.environ, {"ANDROID_HOME": str(sdk), "ANDROID_SDK_ROOT": ""}):
+                    self.assertEqual(self.release.sdk_tool("aapt2"), sdk / "build-tools" / "37.0.0" / aapt)
+                    self.assertEqual(self.release.sdk_tool("apksigner"), sdk / "build-tools" / "37.0.0" / signer)
+
+    def test_sdk_tool_reads_escaped_local_properties_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            sdk = root / "Android SDK"
+            directory = sdk / "build-tools" / "37.0.0"
+            directory.mkdir(parents=True)
+            (directory / "apksigner.bat").touch()
+            escaped_sdk = str(sdk).replace("\\", "\\\\").replace(":", "\\:")
+            (root / "local.properties").write_text(f"sdk.dir={escaped_sdk}\n", encoding="utf-8")
+            with patch.object(self.release, "ROOT", root), \
+                    patch.object(self.release.sys, "platform", "win32"), \
+                    patch.object(self.release.shutil, "which", return_value=None), \
+                    patch.dict(self.release.os.environ, {"ANDROID_HOME": "", "ANDROID_SDK_ROOT": ""}):
+                self.assertEqual(self.release.sdk_tool("apksigner"), directory / "apksigner.bat")
+
     def test_bump_command_preserves_identity_and_signer_on_disk(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

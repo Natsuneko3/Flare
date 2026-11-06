@@ -4,6 +4,8 @@ import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsPlugin
 // END Non-FOSS component
 import com.google.gms.googleservices.GoogleServicesPlugin
 import dev.dimension.flare.buildlogic.flare
+import java.security.KeyStore
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -46,9 +48,6 @@ android {
     defaultConfig {
         versionCode = androidReleaseProperties.getProperty("versionCode").toInt()
         versionName = androidReleaseProperties.getProperty("versionName")
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
     }
 
     val file = rootProject.file("signing.properties")
@@ -64,6 +63,11 @@ android {
                 keyAlias = signingProp.getProperty("keyAlias")
                 keyPassword = signingProp.getProperty("keyPassword")
             }
+        } else {
+            // A separate signing config must never generate a replacement debug key.
+            create("flare") {
+                initWith(signingConfigs.getByName("debug"))
+            }
         }
     }
 
@@ -74,6 +78,9 @@ android {
             }
         }
         release {
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
             optimization {
                 enable = true
             }
@@ -85,15 +92,7 @@ android {
                 }
             }
             // END Non-FOSS component
-            if (hasSigningProps) {
-                signingConfig = signingConfigs.getByName("flare")
-            } else {
-                val existingDebugSigning = signingConfigs.getByName("debug")
-                check(existingDebugSigning.storeFile?.isFile == true) {
-                    "The existing Android signing keystore is missing. Restore it; do not generate a new key."
-                }
-                signingConfig = existingDebugSigning
-            }
+            signingConfig = signingConfigs.getByName("flare")
         }
     }
 
@@ -106,6 +105,45 @@ android {
         sourceSets.getByName("main").kotlin.directories.add("src/foss/java")
     }
 }
+
+abstract class VerifyReleaseSigningTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val storeFile: RegularFileProperty
+
+    @get:Internal
+    abstract val storePassword: Property<String>
+
+    @get:Input
+    abstract val keyAlias: Property<String>
+
+    @get:Input
+    abstract val expectedSignerSha256: Property<String>
+
+    @TaskAction
+    fun verify() {
+        val keystore = KeyStore.getInstance(storeFile.get().asFile, storePassword.get().toCharArray())
+        val alias = keyAlias.get()
+        check(keystore.isKeyEntry(alias)) { "The existing Android signing key is missing. Restore the original keystore." }
+        val certificate = checkNotNull(keystore.getCertificate(alias)) { "The Android signing certificate is missing." }
+        val fingerprint = MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it) }
+        check(fingerprint == expectedSignerSha256.get()) {
+            "The Android signing certificate differs from android-release.properties. Restore the original keystore; do not replace the signer."
+        }
+    }
+}
+
+val releaseSigning = android.signingConfigs.getByName("flare")
+val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
+    releaseSigning.storeFile?.let { storeFile.set(it) }
+    storePassword.set(releaseSigning.storePassword.orEmpty())
+    keyAlias.set(releaseSigning.keyAlias.orEmpty())
+    expectedSignerSha256.set(androidReleaseProperties.getProperty("expectedSignerSha256"))
+}
+tasks.matching { it.name in setOf("validateSigningRelease", "packageRelease", "signReleaseBundle", "assembleRelease", "bundleRelease") }
+    .configureEach {
+        dependsOn(verifyReleaseSigning)
+    }
 
 dependencies {
     implementation(libs.core.ktx)
@@ -149,6 +187,7 @@ dependencies {
     implementation(projects.feature.subscription)
     implementation(projects.feature.tab)
     implementation(projects.feature.agent)
+    implementation(projects.feature.plugin)
     implementation(projects.composeUi)
     implementation(libs.androidx.splash)
     implementation(libs.materialKolor)
@@ -161,7 +200,6 @@ dependencies {
     implementation(libs.webkit)
     implementation(libs.bundles.navigation3)
     implementation(libs.richtext.ui.material3)
-    implementation(libs.richtext.commonmark)
     implementation(libs.androidx.browser)
     implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
@@ -171,12 +209,13 @@ dependencies {
         implementation(libs.firebase.crashlytics.ktx)
         implementation(libs.firebase.analytics.ktx)
         implementation(libs.kotlinx.coroutines.play.services)
-        implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
+        implementation("com.google.mlkit:genai-prompt:1.0.0-beta5")
         implementation("com.google.mlkit:genai-summarization:1.0.0-beta1")
     }
     // END Non-FOSS component
 
     testImplementation(libs.junit)
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.test.ext.junit)

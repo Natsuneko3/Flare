@@ -124,6 +124,7 @@ struct GalleryDetailScreen: View {
             }
             .padding(.bottom, 24)
         }
+        .timelineMediaViewport()
         .sheet(isPresented: $showInfoSheet) {
             NavigationStack {
                 ScrollView {
@@ -144,6 +145,7 @@ struct GalleryDetailScreen: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 16)
                 }
+                .timelineMediaViewport()
                 .navigationTitle("Info")
                 .navigationBarTitleDisplayMode(.inline)
             }
@@ -365,7 +367,7 @@ private struct GalleryAuthorCard: View {
         ListCardView(index: 0, totalCount: 2) {
             HStack(spacing: 12) {
                 if let user = detail.author {
-                    AvatarView(data: user.avatar?.url, customHeader: user.avatar?.customHeaders)
+                    AvatarView(data: user.avatar)
                         .frame(width: 44, height: 44)
                         .onTapGesture {
                             onProfile(user)
@@ -662,7 +664,7 @@ private struct GalleryCompactToolbarTitle: View {
             let user = detail.author
             HStack(spacing: 10) {
                 if let user {
-                    AvatarView(data: user.avatar?.url, customHeader: user.avatar?.customHeaders)
+                    AvatarView(data: user.avatar)
                         .frame(width: 32, height: 32)
                         .onTapGesture {
                             onProfile(user)
@@ -794,6 +796,7 @@ private extension TimelineAppearance {
             showSensitiveContent: showSensitiveContent,
             expandContentWarning: expandContentWarning,
             expandMediaSize: expandMediaSize,
+            limitSingleMediaHeight: limitSingleMediaHeight,
             mediaLayout: mediaLayout,
             limitMediaGridToNine: limitMediaGridToNine,
             videoAutoplay: videoAutoplay,

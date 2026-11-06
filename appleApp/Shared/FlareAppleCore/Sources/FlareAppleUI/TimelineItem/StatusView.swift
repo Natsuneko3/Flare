@@ -137,7 +137,7 @@ public struct StatusView: View {
         let accountType = data.accountType
         let statusKey = data.statusKey
         let effectiveLineLimit = max(maxLine ?? Int(appearanceLineLimit), 1)
-        let contentLineLimit: Int? = isDetail || textExpanded ? nil : effectiveLineLimit
+        let contentLineLimit: Int? = isDetail || textExpanded || effectiveLineLimit == Int(Int32.max) ? nil : effectiveLineLimit
         let collapseThreshold = maxLine == nil ? max(15, effectiveLineLimit) : effectiveLineLimit
         let canExpandLineLimitedContent = contentLineLimit != nil && !isDetail && !textExpanded && showExpandTextButton
         let hasPreMediaBody =
@@ -180,11 +180,11 @@ public struct StatusView: View {
                 spacing: 8,
             ) {
                 if showAsFullWidth, let user {
-                    AvatarView(data: user.avatar?.url, customHeader: user.avatar?.customHeaders)
+                    AvatarView(data: user.avatar)
                         .frame(width: 44, height: 44)
                         .accessibilityLabel(
                             Text(
-                                verbatim: openProfileAccessibilityLabel(handle: user.handle.canonical)
+                                verbatim: openProfileAccessibilityLabel(handle: user.handle.display)
                             )
                         )
                         .onTapGesture {
@@ -202,7 +202,7 @@ public struct StatusView: View {
                         ) {
                             if let user {
                                 if showAsFullWidth {
-                                    UserOnelineView(data: user, showAvatar: false) {
+                                    UserOnelineView(data: user, showAvatar: false, subtitle: data.authorSubtitle) {
                                         topEndContent(
                                             visibility: visibility,
                                             translationDisplayState: translationDisplayState,
@@ -216,7 +216,7 @@ public struct StatusView: View {
                                         user.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
                                     }
                                 } else if isQuote {
-                                    UserOnelineView(data: user, showAvatar: true) {
+                                    UserOnelineView(data: user, showAvatar: true, subtitle: data.authorSubtitle) {
                                         topEndContent(
                                             visibility: visibility,
                                             translationDisplayState: translationDisplayState,
@@ -230,7 +230,7 @@ public struct StatusView: View {
                                         user.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
                                     }
                                 } else {
-                                    UserCompatView(data: user) {
+                                    UserCompatView(data: user, subtitle: data.authorSubtitle) {
                                         topEndContent(
                                             visibility: visibility,
                                             translationDisplayState: translationDisplayState,
@@ -458,7 +458,7 @@ public struct StatusView: View {
                         }
 
                         if (postActionStyle != .hidden || isDetail) && !forceHideActions {
-                            StatusActionsView(data: actions, useText: false, topPadding: 8)
+                            StatusActionsView(data: actions, useText: false, topPadding: 8, isDetail: isDetail, postKey: String(describing: data.statusKey))
                             #if os(macOS)
                                 .font(isDetail ? .body : .callout)
                             #else
@@ -505,7 +505,7 @@ public struct StatusView: View {
     private func topEndContent(
         visibility: UiTimelineV2.PostVisibility?,
         translationDisplayState: TranslationDisplayState,
-        platformIcon: UiIcon,
+        platformIcon: IconType,
         platformId: String,
         createdAt: UiDateTime,
         accountType: AccountType,
@@ -523,7 +523,7 @@ public struct StatusView: View {
                     .foregroundStyle(.secondary)
             }
             if showPlatformLogo {
-                Image(fontAwesome: platformIcon.fontAwesomeIcon)
+                TabIcon(icon: platformIcon, size: 14)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel(

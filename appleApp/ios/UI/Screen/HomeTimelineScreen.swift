@@ -202,6 +202,7 @@ struct HomeTimelineScreen: View {
                                                 }
                                             }
                                         }
+                                        .padding(.top, 6)
                                         .padding(.horizontal)
                                         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: selectedTabId)
                                     }
@@ -259,9 +260,9 @@ struct HomeTimelineScreen: View {
                     Image(fontAwesome: .gear)
                 } else {
                     if #available(iOS 26.0, *) {
-                        AvatarView(data: user.avatar?.url, customHeader: user.avatar?.customHeaders)
+                        AvatarView(data: user.avatar)
                     } else {
-                        AvatarView(data: user.avatar?.url, customHeader: user.avatar?.customHeaders)
+                        AvatarView(data: user.avatar)
                             .frame(width: 24, height: 24)
                     }
                 }
