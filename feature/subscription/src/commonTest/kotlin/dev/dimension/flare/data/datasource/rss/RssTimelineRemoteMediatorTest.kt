@@ -55,7 +55,10 @@ class RssTimelineRemoteMediatorTest {
                 RssTimelineRemoteMediator(
                     url = "https://example.com/rss",
                     fetchFeed = { feed },
-                    fetchIcon = { _ -> null },
+                    fetchIcon = { _, fetched ->
+                        assertEquals(feed, fetched)
+                        null
+                    },
                     fetchSource = { _ -> null },
                 )
 

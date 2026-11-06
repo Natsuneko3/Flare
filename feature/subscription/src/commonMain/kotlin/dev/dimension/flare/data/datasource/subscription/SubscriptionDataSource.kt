@@ -1,7 +1,6 @@
 package dev.dimension.flare.data.datasource.subscription
 
 import dev.dimension.flare.common.Locale
-import dev.dimension.flare.data.database.app.model.RssDisplayMode
 import dev.dimension.flare.data.database.app.model.SubscriptionType
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
 import dev.dimension.flare.data.datasource.rss.RssTimelineRemoteMediator
@@ -10,8 +9,6 @@ import dev.dimension.flare.data.model.tab.SubscriptionTimelineData
 import dev.dimension.flare.data.network.FaviconService
 import dev.dimension.flare.data.network.rss.DocumentData
 import dev.dimension.flare.data.network.rss.Readability
-import dev.dimension.flare.data.network.rss.RssService
-import dev.dimension.flare.data.network.rss.toRssWebUrl
 import dev.dimension.flare.data.platform.RssTimelineSpecs
 import dev.dimension.flare.data.repository.SettingsRepository
 import dev.dimension.flare.data.repository.SubscriptionRepository
@@ -20,15 +17,8 @@ import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.PlatformRegistry
 import dev.dimension.flare.ui.model.UiRssSource
 import dev.dimension.flare.ui.model.UiTimelineV2
-import dev.dimension.flare.ui.model.mapper.title
-import dev.dimension.flare.ui.render.toUi
-import io.ktor.http.Url
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlin.native.HiddenFromObjC
-import kotlin.time.Instant
 
 @HiddenFromObjC
 public interface SubscriptionDataSource {
@@ -89,65 +79,8 @@ public object KoinSubscriptionDataSource :
 
     override suspend fun listSources(): List<UiRssSource> = subscriptionRepository.observeAll().first()
 
-    override suspend fun detectSource(input: String): SubscriptionSourceDetection {
-        val url = input.trim()
-        require(url.isNotBlank()) {
-            "Subscription URL or host is required."
-        }
-        if (url.startsWith("rsshub://", ignoreCase = true)) {
-            return SubscriptionSourceDetection.RssHub
-        }
-
-        val actualUrl = url.toRssWebUrl()
-        val feed =
-            runCatching {
-                RssService.fetch(actualUrl)
-            }
-        if (feed.isSuccess) {
-            return SubscriptionSourceDetection.RssFeed(
-                title = feed.getOrThrow().title.trim(),
-                url = actualUrl,
-                icon =
-                    runCatching {
-                        RssService.fetchIcon(actualUrl)
-                    }.getOrNull(),
-            )
-        }
-
-        val linkSources =
-            runCatching {
-                coroutineScope {
-                    RssService
-                        .detectLinkSources(actualUrl)
-                        .map { sourceUrl ->
-                            async {
-                                UiRssSource(
-                                    id = 0,
-                                    url = sourceUrl,
-                                    title = RssService.fetch(sourceUrl).title.trim(),
-                                    lastUpdate = Instant.DISTANT_PAST.toUi(),
-                                    favIcon =
-                                        runCatching {
-                                            RssService.fetchIcon(sourceUrl)
-                                        }.getOrNull(),
-                                    displayMode = RssDisplayMode.FULL_CONTENT,
-                                )
-                            }
-                        }.awaitAll()
-                }
-            }.getOrNull()
-
-        if (!linkSources.isNullOrEmpty()) {
-            return SubscriptionSourceDetection.RssSources(linkSources)
-        }
-
-        val host =
-            runCatching {
-                Url(actualUrl).host
-            }.getOrNull() ?: throw IllegalArgumentException("Invalid URL: $input")
-        return detectSubscriptionInstance(host)
-            ?: throw IllegalArgumentException("URL is not a valid RSS feed or supported subscription instance: $input")
-    }
+    override suspend fun detectSource(input: String): SubscriptionSourceDetection =
+        RssSourceDetector().detect(input, detectInstance = ::detectSubscriptionInstance).source
 
     override fun createTimelineLoader(
         type: SubscriptionType,
@@ -190,36 +123,16 @@ public object KoinSubscriptionDataSource :
         fallbackHtml: String?,
     ): DocumentData = readability.load(url, descriptionHtml, descriptionTitle, fallbackHtml)
 
-    private suspend fun detectSubscriptionInstance(host: String): SubscriptionSourceDetection.SubscriptionInstance? =
-        coroutineScope {
-            val timelines =
-                platformRegistry
-                    .subscriptionTimelineSpecs
-                    .map { spec ->
-                        async {
-                            if (spec.isAvailable(host, Locale.language)) {
-                                spec.type
-                            } else {
-                                null
-                            }
-                        }
-                    }.awaitAll()
-                    .filterNotNull()
-
-            if (timelines.isEmpty()) {
-                return@coroutineScope null
-            }
-
-            SubscriptionSourceDetection.SubscriptionInstance(
-                host = host,
-                instanceName = host,
-                icon =
-                    runCatching {
-                        FaviconService.fetchIcon("https://$host/")
-                    }.getOrNull(),
-                availableTimelines = timelines,
-            )
-        }
+    private suspend fun detectSubscriptionInstance(host: String): SubscriptionSourceDetection.SubscriptionInstance? {
+        val timelines = availableSubscriptionTimelines(platformRegistry.subscriptionTimelineSpecs, host)
+        if (timelines.isEmpty()) return null
+        return SubscriptionSourceDetection.SubscriptionInstance(
+            host = host,
+            instanceName = host,
+            icon = rssCheck { FaviconService.fetchIcon("https://$host/") }.getOrNull(),
+            availableTimelines = timelines,
+        )
+    }
 }
 
 private fun UiRssSource.timelineSourceId(): String =

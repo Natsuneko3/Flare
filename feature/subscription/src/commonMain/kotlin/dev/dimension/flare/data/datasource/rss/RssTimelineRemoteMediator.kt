@@ -14,7 +14,7 @@ import dev.dimension.flare.ui.model.mapper.title
 internal class RssTimelineRemoteMediator(
     private val url: String,
     private val fetchFeed: suspend (String) -> Feed = RssService::fetch,
-    private val fetchIcon: suspend (String) -> String? = RssService::fetchIcon,
+    private val fetchIcon: suspend (String, Feed) -> String? = RssService::fetchIcon,
     private val fetchSource: suspend (String) -> UiRssSource?,
 ) : CacheableRemoteLoader<UiTimelineV2> {
     override val pagingKey: String
@@ -31,7 +31,7 @@ internal class RssTimelineRemoteMediator(
         val rssSource = fetchSource(url)
         val response = fetchFeed(url)
         val title = rssSource?.title ?: response.title
-        val icon = rssSource?.favIcon ?: fetchIcon(url)
+        val icon = rssSource?.favIcon ?: fetchIcon(url, response)
         val displayMode = rssSource?.displayMode ?: RssDisplayMode.FULL_CONTENT
         val content =
             when (response) {

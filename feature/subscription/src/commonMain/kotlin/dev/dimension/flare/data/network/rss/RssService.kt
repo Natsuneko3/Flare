@@ -27,15 +27,20 @@ internal object RssService {
     private val client = ktorClient { }
 
     suspend fun fetch(url: String): Feed {
-        val response = client.get(url).decodedText()
+        val response = fetchText(url)
         return parseFeedText(response)
     }
 
-    suspend fun detectLinkSources(url: String): List<String> =
-        client
-            .get(url)
-            .decodedText()
-            .let(Ksoup::parse)
+    suspend fun fetchText(url: String): String = client.get(url).decodedText()
+
+    suspend fun detectLinkSources(url: String): List<String> = parseLinkSources(url, fetchText(url))
+
+    fun parseLinkSources(
+        url: String,
+        text: String,
+    ): List<String> =
+        Ksoup
+            .parse(text)
             .getElementsByAttributeValueStarting("type", "application/")
             .filter {
                 (
@@ -69,6 +74,13 @@ internal object RssService {
             tryRun {
                 xml.decodeFromString<Feed>(webContent)
             }.getOrNull()
+        return fetchIcon(url, feed)
+    }
+
+    suspend fun fetchIcon(
+        url: String,
+        feed: Feed?,
+    ): String? {
         val feedIcon =
             when (feed) {
                 is Feed.Atom -> feed.icon

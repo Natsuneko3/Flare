@@ -8,6 +8,36 @@ import kotlin.test.assertTrue
 
 class BlueskyFacetsTest {
     @Test
+    fun `repeated handles resolve once per parse and preserve utf8 ranges`() =
+        runTest {
+            val content = "你好 @example.com 🎉 @other.example @example.com"
+            val resolved = mutableListOf<String>()
+            val facets =
+                parseBskyFacets(content) { handle ->
+                    resolved += handle
+                    "did:plc:${resolved.size}"
+                }
+
+            assertEquals(listOf("example.com", "other.example"), resolved)
+            assertEquals(3, facets.size)
+            assertEquals(
+                listOf("did:plc:1", "did:plc:2", "did:plc:1"),
+                facets.map {
+                    (it.features.single() as FacetFeatureUnion.Mention).value.did.did
+                },
+            )
+            assertEquals(
+                listOf("@example.com", "@other.example", "@example.com"),
+                facets.map {
+                    content.encodeToByteArray().copyOfRange(it.index.byteStart.toInt(), it.index.byteEnd.toInt()).decodeToString()
+                },
+            )
+
+            val next = parseBskyFacets("@example.com") { "did:plc:changed" }
+            assertEquals("did:plc:changed", (next.single().features.single() as FacetFeatureUnion.Mention).value.did.did)
+        }
+
+    @Test
     fun `creates facets for link tag and handle mention resolved to did`() =
         runTest {
             val content = "https://example.com #tag @example.com"

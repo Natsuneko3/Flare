@@ -3,16 +3,17 @@ package dev.dimension.flare.ui.presenter.home.rss
 import dev.dimension.flare.data.network.rss.model.Feed
 import dev.dimension.flare.ui.model.UiState
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class CheckRssSourceConcurrencyTest {
     @Test
@@ -22,14 +23,21 @@ class CheckRssSourceConcurrencyTest {
                 withTimeout(15_000) {
                     repeat(4) {
                         val urls = List(256) { "https://example.com/feed/$it" }
-                        val fetched = CyclicBarrier(8)
+                        val active = AtomicInteger()
+                        val maximum = AtomicInteger()
                         val presenter =
                             CheckRssSourcePresenter(
                                 "https://example.com/discover",
                                 fetchFeed = { url ->
                                     if (url.endsWith("discover")) error("Not XML")
-                                    fetched.await(5, TimeUnit.SECONDS)
-                                    Feed.Rss20("2.0", Feed.Rss20.Channel(url, url))
+                                    val count = active.incrementAndGet()
+                                    maximum.updateAndGet { maxOf(it, count) }
+                                    try {
+                                        delay(1)
+                                        Feed.Rss20("2.0", Feed.Rss20.Channel(url, url))
+                                    } finally {
+                                        active.decrementAndGet()
+                                    }
                                 },
                                 fetchIcon = { null },
                                 detectLinkSources = { urls },
@@ -41,6 +49,7 @@ class CheckRssSourceConcurrencyTest {
                         urls.forEach { url ->
                             assertEquals(url, assertIs<Feed.Rss20>(presenter.feeds[url]).channel.link)
                         }
+                        assertTrue(maximum.get() in 2..3, "Expected bounded parallel discovery, got ${maximum.get()}")
                     }
                 }
             }
