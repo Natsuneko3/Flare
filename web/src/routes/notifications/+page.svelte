@@ -181,7 +181,7 @@
 	</AppTopBar>
 
 	<section class="notifications-content">
-		<TimelineList listState={notifications.timeline as unknown as TimelinePagingState<UiTimelineV2>} />
+		<TimelineList listState={notifications.timeline as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={JSON.stringify([notifications.selectedAccountKey, notifications.selectedFilter])} />
 	</section>
 </div>
 

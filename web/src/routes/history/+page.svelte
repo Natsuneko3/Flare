@@ -11,9 +11,10 @@
 
 	const history = createLocalCacheSearchPresenter();
 	let query = $state('');
+	let submittedQuery = $state('');
 	let selectedType = $state<SearchType>('status');
-	const activeStatusState = $derived(query.trim() ? history.data : history.history);
-	const activeUserState = $derived(query.trim() ? history.searchUser : history.userHistory);
+	const activeStatusState = $derived(submittedQuery ? history.data : history.history);
+	const activeUserState = $derived(submittedQuery ? history.searchUser : history.userHistory);
 	const userIndexes = $derived(
 		activeUserState.type === 'Success'
 			? Array.from({ length: activeUserState.itemCount }, (_, index) => index)
@@ -22,7 +23,8 @@
 
 	function submitSearch(event: Event): void {
 		event.preventDefault();
-		history.setQuery(query.trim());
+		submittedQuery = query.trim();
+		history.setQuery(submittedQuery);
 	}
 
 	let requestedUserIndexes = new Set<number>();
@@ -109,7 +111,7 @@
 	</div>
 
 	{#if selectedType === 'status'}
-		<TimelineList listState={activeStatusState} />
+		<TimelineList listState={activeStatusState} sourceKey={`history:${submittedQuery}`} />
 	{:else}
 		<div class="history-content user-list-wrap">
 			{#if activeUserState.type === 'Loading'}

@@ -301,7 +301,7 @@
 			</DiscoverSection>
 
 			<DiscoverSection title={m.searchStatus()} state={search.status}>
-				<TimelineList listState={search.status as unknown as TimelinePagingState<UiTimelineV2>} />
+				<TimelineList listState={search.status as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={`search:${accountSegment}:${searchQuerySegment}`} />
 			</DiscoverSection>
 		{/if}
 	</section>

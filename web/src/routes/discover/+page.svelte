@@ -248,7 +248,7 @@
 			</DiscoverSection>
 
 			<DiscoverSection title={m.discoverStatus()} state={search.status}>
-				<TimelineList listState={search.status as unknown as TimelinePagingState<UiTimelineV2>} />
+				<TimelineList listState={search.status as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={`search:${accountKey}:${submittedQuery}`} />
 			</DiscoverSection>
 		{:else}
 			<DiscoverSection title={m.discoverUsers()} state={discover.users}>
@@ -297,7 +297,7 @@
 			</DiscoverSection>
 
 			<DiscoverSection title={m.discoverStatus()} state={discover.status}>
-				<TimelineList listState={discover.status as unknown as TimelinePagingState<UiTimelineV2>} />
+				<TimelineList listState={discover.status as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={`discover:${accountKey}`} />
 			</DiscoverSection>
 		{/if}
 	</section>
