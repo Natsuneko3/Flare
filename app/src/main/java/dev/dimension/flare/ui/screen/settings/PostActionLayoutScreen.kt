@@ -43,7 +43,6 @@ import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.Bars
 import compose.icons.fontawesomeicons.solid.EllipsisVertical
 import dev.dimension.flare.R
-import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.PostActionFamily
 import dev.dimension.flare.data.datasource.microblog.PostActionLayoutConfig
 import dev.dimension.flare.data.model.appearance.AppearanceKeys
@@ -54,9 +53,8 @@ import dev.dimension.flare.ui.component.FlareScaffold
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.status.StatusItem
 import dev.dimension.flare.ui.component.toImageVector
+import dev.dimension.flare.ui.model.PostActionLayoutPreviewHelper
 import dev.dimension.flare.ui.model.UiIcon
-import dev.dimension.flare.ui.model.UiNumber
-import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.isSuccess
 import dev.dimension.flare.ui.model.onSuccess
 import dev.dimension.flare.ui.theme.first
@@ -154,7 +152,7 @@ internal fun PostActionLayoutScreen(onBack: () -> Unit) {
                                 LocalTimelineAppearance provides timelineAppearance.copy(postActionLayout = config),
                             ) {
                                 StatusItem(
-                                    sample.withPostActionLayoutPreviewActions(),
+                                    PostActionLayoutPreviewHelper.withPreviewActions(sample),
                                     modifier = Modifier.background(MaterialTheme.colorScheme.surface),
                                 )
                             }
@@ -397,76 +395,6 @@ private fun LazyItemScope.PostActionFamilyRow(
         )
     }
 }
-
-private fun UiTimelineV2.Post.withPostActionLayoutPreviewActions(): UiTimelineV2.Post {
-    var replacedMore = false
-    val previewActions =
-        actions
-            .map { action ->
-                val item = action as? ActionMenu.Item
-                if (item?.isMoreMenuDisplayItem() == true) {
-                    replacedMore = true
-                    previewMoreGroup(item)
-                } else if (item?.actionFamily == PostActionFamily.Repost) {
-                    previewRepostGroup(item)
-                } else {
-                    action
-                }
-            }.let { actions ->
-                if (replacedMore) actions else actions + previewMoreGroup()
-            }
-    return copy(actions = previewActions.toPersistentList())
-}
-
-private fun ActionMenu.Item.isMoreMenuDisplayItem(): Boolean =
-    actionFamily == null &&
-        icon == UiIcon.More &&
-        text == ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.More)
-
-private fun previewMoreGroup(
-    displayItem: ActionMenu.Item =
-        ActionMenu.Item(
-            icon = UiIcon.More,
-            text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.More),
-        ),
-): ActionMenu.Group =
-    ActionMenu.Group(
-        displayItem = displayItem,
-        actions =
-            listOf(
-                ActionMenu.Item(
-                    icon = UiIcon.Translate,
-                    text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.Translate),
-                    actionFamily = PostActionFamily.Translate,
-                ),
-                ActionMenu.Item(
-                    icon = UiIcon.Bookmark,
-                    text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.Bookmark),
-                    count = UiNumber(4),
-                    actionFamily = PostActionFamily.Bookmark,
-                ),
-                ActionMenu.Item(
-                    icon = UiIcon.Share,
-                    text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.Share),
-                    actionFamily = PostActionFamily.Share,
-                ),
-            ).toPersistentList(),
-    )
-
-private fun previewRepostGroup(displayItem: ActionMenu.Item): ActionMenu.Group =
-    ActionMenu.Group(
-        displayItem = displayItem,
-        actions =
-            listOf(
-                displayItem,
-                ActionMenu.Item(
-                    icon = UiIcon.Quote,
-                    text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.Quote),
-                    count = UiNumber(2),
-                    actionFamily = PostActionFamily.Quote,
-                ),
-            ).toPersistentList(),
-    )
 
 private enum class PostActionPlacement {
     ButtonRow,

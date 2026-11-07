@@ -12,7 +12,7 @@ class WebPresenterRendererTest {
 
         kotlin.assertContains("@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)")
         kotlin.assertContains(
-            """@file:Suppress("DEPRECATION", "NATIVE_INVOKE", "REDUNDANT_ELSE_IN_WHEN", "UNCHECKED_CAST", "UNCHECKED_CAST_TO_EXTERNAL_INTERFACE")""",
+            """@file:Suppress("DEPRECATION", "NATIVE_INVOKE", "REDUNDANT_ELSE_IN_WHEN", "UNCHECKED_CAST", "UNCHECKED_CAST_TO_EXTERNAL_INTERFACE", "UNNECESSARY_SAFE_CALL")""",
         )
         kotlin.assertContains("import kotlin.js.JsAny")
         kotlin.assertContains("import kotlin.js.nativeInvoke")
@@ -823,6 +823,129 @@ class WebPresenterRendererTest {
         manifest.assertContains(
             """{ "name": "Message", "tag": "Message", "properties": [{ "name": "type_", "tsType": "string" }] }""",
         )
+    }
+
+    @Test
+    fun doesNotDecodeSealedPropertiesBehindReferenceArguments() {
+        val output =
+            SealedModel(
+                type = "sample.Output",
+                typeName = "Output",
+                variants =
+                    listOf(
+                        SealedVariantModel(
+                            type = "sample.Output.Value",
+                            typeName = "Value",
+                            tag = "Value",
+                            objectLike = false,
+                            properties = emptyList(),
+                        ),
+                    ),
+            )
+        val reference =
+            RefModel(
+                type = "sample.Reference",
+                typeName = "Reference",
+                properties = listOf(RefPropertyModel(name = "output", webType = null, sealed = output)),
+                methods =
+                    listOf(
+                        RefMethodModel(
+                            name = "output",
+                            args = emptyList(),
+                            returnValue = ReturnModel(webType = null, ref = null, sealed = output),
+                        ),
+                    ),
+            )
+        val presenter =
+            counterPresenter(
+                actions =
+                    listOf(
+                        ActionModel(
+                            name = "accept",
+                            args = listOf(ArgumentModel(name = "reference", webType = null, ref = reference, callback = null)),
+                        ),
+                    ),
+            )
+
+        val kotlin = WebPresenterRenderer.renderKotlin(listOf(presenter))
+
+        kotlin.assertContains("private fun encodeSampleOutputWebSealed(")
+        kotlin.assertContains(".get() as sample.Reference,")
+        assertFalse("private fun decodeSampleOutputWebSealed(" in kotlin, "Reference values are recovered by handle, not decoded")
+    }
+
+    @Test
+    fun decodesImmutableListArgumentsToPersistentLists() {
+        val presenter =
+            counterPresenter(
+                actions =
+                    listOf(
+                        ActionModel(
+                            name = "accept",
+                            args =
+                                listOf(
+                                    ArgumentModel(
+                                        name = "items",
+                                        webType = null,
+                                        ref = null,
+                                        callback = null,
+                                        array =
+                                            ArrayModel(
+                                                item = WebValueModel(webType = WebType.String),
+                                                type = "kotlinx.collections.immutable.ImmutableList<kotlin.String>",
+                                            ),
+                                    ),
+                                ),
+                        ),
+                    ),
+            )
+
+        val kotlin = WebPresenterRenderer.renderKotlin(listOf(presenter))
+
+        kotlin.assertContains("import kotlinx.collections.immutable.toPersistentList")
+        kotlin.assertContains(
+            "items = requireNotNull(requireNotNull(args)[\"items\"]?.takeUnless { it == JsonNull }?.jsonArray?.map { item -> requireNotNull(item?.jsonPrimitive).content }?.toPersistentList()),",
+        )
+    }
+
+    @Test
+    fun decodesSealedArgumentsOnMethodsOfOutputReferences() {
+        val input =
+            SealedModel(
+                type = "sample.Input",
+                typeName = "Input",
+                variants =
+                    listOf(
+                        SealedVariantModel(
+                            type = "sample.Input.Value",
+                            typeName = "Value",
+                            tag = "Value",
+                            objectLike = false,
+                            properties = listOf(SealedPropertyModel(name = "text", webType = WebType.String)),
+                        ),
+                    ),
+            )
+        val reference =
+            RefModel(
+                type = "sample.Reference",
+                typeName = "Reference",
+                properties = emptyList(),
+                methods =
+                    listOf(
+                        RefMethodModel(
+                            name = "accept",
+                            args = listOf(ArgumentModel(name = "input", webType = null, ref = null, callback = null, sealed = input)),
+                            returnValue = null,
+                        ),
+                    ),
+            )
+        val presenter = counterPresenter(properties = listOf(PropertyModel(name = "reference", webType = null, ref = reference)))
+
+        val kotlin = WebPresenterRenderer.renderKotlin(listOf(presenter))
+
+        kotlin.assertContains("private fun decodeSampleInputWebSealed(")
+        kotlin.assertContains("input = decodeSampleInputWebSealed(requireNotNull(requireNotNull(args)[\"input\"]), refs),")
+        kotlin.assertContains("text = requireNotNull(json[\"text\"]?.jsonPrimitive).content,")
     }
 
     @Test

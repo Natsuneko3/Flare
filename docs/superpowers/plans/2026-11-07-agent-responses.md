@@ -53,3 +53,12 @@
 - Android Agent compilation and `:app:compileDebugKotlin` passed. Gradle reported `BUILD SUCCESSFUL` (184 tasks, 14 executed).
 - Independent final review reported no remaining findings after the compaction and passthrough corrections.
 - Tests used simulated HTTP responses and local SQLite persistence. No real model API request, application packaging, device installation, commit or push was performed.
+
+## Authorized Release Follow-up
+
+The user subsequently requested packaging and upload to GitHub Release. The public latest release was `1.8.0-custom.2` while this checkout was still based on `custom.1`. Merge the already released performance branch before publication so the new update retains those changes.
+
+- The performance changes and Responses changes merged without conflicts. Independent review confirmed both incremental persistence tests and encrypted-reasoning replay tests remain intact.
+- Combined Agent verification passed all 174 JVM tests and the commonMain/commonTest/jvmTest Ktlint checks. Only two formatting adjustments were needed in the previously released performance code.
+- Release configuration is `1.8.0-custom.3` / `1803`, preserving application ID and signer. Use the existing release tool for Android unit tests, fresh release assembly, APK validation, receipt generation and publication.
+- Keep the screenshot locally excluded from Git. No device installation or real model API request is part of this follow-up.

@@ -91,6 +91,7 @@ internal suspend fun encodeUgoira(
         var codecStarted = false
         var completed = false
         val bufferInfo = MediaCodec.BufferInfo()
+        var outputBitmap: Bitmap? = null
         try {
             try {
                 codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -103,6 +104,13 @@ internal suspend fun encodeUgoira(
             codecStarted = true
             val output = MediaMuxer(destination.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = output
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            outputBitmap = bitmap
+            val canvas = Canvas(bitmap)
+            val contentRect = Rect(0, 0, contentWidth, contentHeight)
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+            val pixels = IntArray(width * 2)
+            val frameBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             var inputIndex = 0
             var sentEnd = false
             var outputEnded = false
@@ -117,22 +125,20 @@ internal suspend fun encodeUgoira(
                             sentEnd = true
                         } else {
                             val frame = animation.frames[inputIndex]
-                            val frameBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                             BitmapFactory.decodeFile(frame.file, frameBounds)
                             require(
                                 frameBounds.outWidth == bounds.outWidth && frameBounds.outHeight == bounds.outHeight,
                             ) { "Inconsistent Ugoira frame dimensions" }
                             val decoded = BitmapFactory.decodeFile(frame.file, decodeOptions) ?: error("Invalid Ugoira image")
-                            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                             try {
-                                val canvas = Canvas(bitmap)
                                 canvas.drawColor(Color.WHITE)
-                                canvas.drawBitmap(decoded, null, Rect(0, 0, contentWidth, contentHeight), Paint(Paint.FILTER_BITMAP_FLAG))
+                                canvas.drawBitmap(decoded, null, contentRect, paint)
+                            } finally {
                                 decoded.recycle()
-                                val inputSize = checkNotNull(codec.getInputBuffer(bufferIndex)).capacity()
-                                val image = checkNotNull(codec.getInputImage(bufferIndex)) { "Encoder does not expose YUV input" }
+                            }
+                            val inputSize = checkNotNull(codec.getInputBuffer(bufferIndex)).capacity()
+                            checkNotNull(codec.getInputImage(bufferIndex)) { "Encoder does not expose YUV input" }.use { image ->
                                 // ponytail: CPU conversion handles vendor strides; use a GPU surface if profiling requires it.
-                                val pixels = IntArray(width * 2)
                                 for (row in 0 until height) {
                                     currentCoroutineContext().ensureActive()
                                     if (row % 2 == 0) bitmap.getPixels(pixels, 0, width, 0, row, width, 2)
@@ -170,12 +176,8 @@ internal suspend fun encodeUgoira(
                                         }
                                     }
                                 }
-                                image.close()
-                                codec.queueInputBuffer(bufferIndex, 0, inputSize, animation.frameStartMillis(inputIndex) * 1000, 0)
-                            } finally {
-                                bitmap.recycle()
-                                decoded.recycle()
                             }
+                            codec.queueInputBuffer(bufferIndex, 0, inputSize, animation.frameStartMillis(inputIndex) * 1000, 0)
                             inputIndex++
                             progress(inputIndex.toFloat() / animation.frames.size)
                         }
@@ -210,6 +212,7 @@ internal suspend fun encodeUgoira(
             started = false
             completed = true
         } finally {
+            outputBitmap?.recycle()
             if (codecStarted) runCatching { codec.stop() }
             codec.release()
             if (started) runCatching { muxer?.stop() }

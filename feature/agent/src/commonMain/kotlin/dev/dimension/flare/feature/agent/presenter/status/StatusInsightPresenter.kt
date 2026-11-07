@@ -16,6 +16,7 @@ import dev.dimension.flare.feature.agent.common.AgentChatHistoryMessage
 import dev.dimension.flare.feature.agent.common.AgentChatHistoryProvider
 import dev.dimension.flare.feature.agent.common.AgentChatRoom
 import dev.dimension.flare.feature.agent.common.AgentInputRequest
+import dev.dimension.flare.feature.agent.presenter.rememberAgentChatHistoryCallbacks
 import dev.dimension.flare.feature.agent.presenter.rememberAgentChatPresenterController
 import dev.dimension.flare.feature.agent.status.StatusInsightAgentUseCase
 import dev.dimension.flare.model.AccountType
@@ -75,6 +76,7 @@ public class StatusInsightPresenter(
                         }
                     }.distinctUntilChanged()
             }
+        val historyCallbacks = rememberAgentChatHistoryCallbacks(historyProvider, conversationId)
         val controller =
             rememberAgentChatPresenterController(
                 key = key,
@@ -92,31 +94,12 @@ public class StatusInsightPresenter(
                         retryMode = retryMode,
                     )
                 },
-                onUserMessageSubmitted = { text ->
-                    historyProvider.storeUserUiMessage(conversationId, text)
-                },
-                onInputRequestOptionSubmitted = { option ->
-                    historyProvider.storeUserUiInputRequestOption(conversationId, option)
-                },
-                onInputRequestSelected = { requestId, optionId ->
-                    historyProvider.markInputRequestSelected(conversationId, requestId, optionId)
-                },
-                onAgentRunCompleted = {
-                    historyProvider.generateTitleIfNeeded(conversationId)
-                },
-                onRoomRuntimeStateChanged = { isRunning ->
-                    historyProvider.updateRoomState(
-                        conversationId = conversationId,
-                        isRunning = isRunning,
-                        updateErrorMessage = false,
-                    )
-                },
-                onRoomStateChanged = { errorMessage ->
-                    historyProvider.updateRoomState(
-                        conversationId = conversationId,
-                        errorMessage = errorMessage,
-                    )
-                },
+                onUserMessageSubmitted = historyCallbacks::userMessageSubmitted,
+                onInputRequestOptionSubmitted = historyCallbacks::inputRequestOptionSubmitted,
+                onInputRequestSelected = historyCallbacks::inputRequestSelected,
+                onAgentRunCompleted = historyCallbacks::agentRunCompleted,
+                onRoomRuntimeStateChanged = historyCallbacks::roomRuntimeStateChanged,
+                onRoomStateChanged = historyCallbacks::roomStateChanged,
                 missingContextError = {
                     IllegalStateException("Current account does not support post data source")
                 },

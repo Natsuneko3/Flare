@@ -184,6 +184,7 @@ internal suspend fun parseBskyFacets(
     }
 
     val facets = mutableListOf<Facet>()
+    val resolvedMentions = mutableMapOf<String, String>()
     var byteIndex = 0
 
     for (token in tokens) {
@@ -213,7 +214,7 @@ internal suspend fun parseBskyFacets(
 
                 is UserNameToken -> {
                     val handle = token.value.removePrefix("@")
-                    val didString = resolveMentionDid(handle)
+                    val didString = resolvedMentions.getOrPut(handle) { resolveMentionDid(handle) }
                     FacetFeatureUnion.Mention(
                         FacetMention(
                             did = Did(didString),

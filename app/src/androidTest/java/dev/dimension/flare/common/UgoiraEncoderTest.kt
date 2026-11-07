@@ -35,7 +35,7 @@ class UgoiraEncoderTest {
                 val frames =
                     listOf(40, 80, 100).mapIndexed { index, duration ->
                         val image = Bitmap.createBitmap(255, 257, Bitmap.Config.ARGB_8888)
-                        image.eraseColor(Color.TRANSPARENT)
+                        image.eraseColor(listOf(Color.RED, Color.TRANSPARENT, Color.BLUE)[index])
                         val path = File(directory, "$index.png")
                         path.outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
                         image.recycle()
@@ -66,10 +66,19 @@ class UgoiraEncoderTest {
                 val reader = MediaMetadataRetriever()
                 try {
                     reader.setDataSource(output.absolutePath)
-                    val image = checkNotNull(reader.getFrameAtTime(0))
-                    val pixel = image.getPixel(0, 0)
-                    assertTrue(Color.red(pixel) > 240 && Color.green(pixel) > 240 && Color.blue(pixel) > 240)
-                    image.recycle()
+                    listOf(0L, 40_000L, 120_000L).forEachIndexed { index, time ->
+                        val image = checkNotNull(reader.getFrameAtTime(time, MediaMetadataRetriever.OPTION_CLOSEST))
+                        try {
+                            val pixel = image.getPixel(image.width / 2, image.height / 2)
+                            when (index) {
+                                0 -> assertTrue(Color.red(pixel) > 240 && Color.green(pixel) < 20 && Color.blue(pixel) < 20)
+                                1 -> assertTrue(Color.red(pixel) > 240 && Color.green(pixel) > 240 && Color.blue(pixel) > 240)
+                                2 -> assertTrue(Color.red(pixel) < 20 && Color.green(pixel) < 20 && Color.blue(pixel) > 240)
+                            }
+                        } finally {
+                            image.recycle()
+                        }
+                    }
                 } finally {
                     reader.release()
                 }

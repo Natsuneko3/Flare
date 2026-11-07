@@ -26,7 +26,7 @@
 </script>
 
 <div class="profile-timeline-tab-panel">
-	<TimelineList listState={timeline.listState} />
+	<TimelineList listState={timeline.listState} sourceKey={timelinePresenterKey} />
 </div>
 
 <style>

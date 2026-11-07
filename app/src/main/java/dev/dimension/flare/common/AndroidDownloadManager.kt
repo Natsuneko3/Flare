@@ -186,6 +186,32 @@ internal class AndroidDownloadManager(
             true
         }
 
+    /** The caller retains ownership of the cached file until this save finishes. */
+    suspend fun saveImageFile(
+        file: File,
+        fileName: String,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, options)
+            val mimeType = options.outMimeType?.lowercase() ?: "image/jpeg"
+            val exportContext = currentCoroutineContext()
+            saveFile(fileName = fileName, mimeType = mimeType) { outputStream ->
+                file.inputStream().use { inputStream ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        exportContext.ensureActive()
+                        val bytesRead = inputStream.read(buffer)
+                        if (bytesRead < 0) break
+                        outputStream.write(buffer, 0, bytesRead)
+                    }
+                }
+                exportContext.ensureActive()
+                outputStream.flush()
+                true
+            }
+        }
+
     /**
      * Save a media file. Full progressive cache is exported first; otherwise missing bytes are
      * fetched through the same Media3 cache and written to the configured destination.

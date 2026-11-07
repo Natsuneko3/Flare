@@ -52,7 +52,7 @@
 
 <div class="home-timeline-tab-panel">
 	<TimelineAppearanceProvider {appearance}>
-		<TimelineList listState={timeline.listState} />
+		<TimelineList listState={timeline.listState} sourceKey={timelinePresenterKey} />
 	</TimelineAppearanceProvider>
 </div>
 

@@ -2,7 +2,7 @@
 
 This fork upgrades the installed `dev.dimension.flare.videofix` application in place. Its first managed release is `1.7.8-custom.1` / version code `1781`, following the installed `1.7.8-local-glass-animation` / `1780` build. Android requires the same package ID and signing certificate and a higher version code. Do not uninstall the existing app to work around a signing error: uninstalling removes its local data.
 
-The current upstream sync is configured as `1.8.0-custom.1` / version code `1801`. This configuration does not mean a build has been verified or published.
+The current Agent compatibility release is configured as `1.8.0-custom.3` / version code `1803`, retaining the previous performance release. This configuration does not mean a build has been verified or published.
 
 The authoritative version and package identity are committed in `android-release.properties`. `BUILD_NUMBER`, `BUILD_VERSION`, and upstream `fdroid.properties` do not override them. The Android release includes `arm64-v8a` native libraries; debug builds also support the x86_64 CI emulator. The tool inspects the APK and uses the actual ABI set in its filename.
 
@@ -27,7 +27,7 @@ Fork CI compiles debug Android variants and retains shared, desktop, lint and de
    python3 -B scripts/android_release.py --bump-version
    ```
 
-   From the current configuration, this changes `custom.1` / `1801` to `custom.2` / `1802`, and checks Android's maximum version code. When intentionally moving to a new upstream base, edit `versionName` to its `MAJOR.MINOR.PATCH-custom.1` value and continue increasing `versionCode` globally.
+   From the current configuration, this changes `custom.3` / `1803` to `custom.4` / `1804`, and checks Android's maximum version code. When intentionally moving to a new upstream base, edit `versionName` to its `MAJOR.MINOR.PATCH-custom.1` value and continue increasing `versionCode` globally.
 
 2. Write UTF-8 release notes, then commit all source and version changes. Keep notes outside the repository or commit them too. The tool rejects tracked changes and untracked files; ignored build outputs are allowed.
 
@@ -39,7 +39,7 @@ Fork CI compiles debug Android variants and retains shared, desktop, lint and de
 
 The command checks GitHub authentication, runs the release tool's tests and `:app:testDebugUnitTest`, builds `:app:assembleRelease`, and verifies the APK package ID, version, minimum SDK and signing certificate. Existing generated release APK output is moved into `build/android-release/.previous-apks/`, so an old APK cannot satisfy a failed or skipped build. Source content and the Git commit are checked before and after building.
 
-The prepared files are stored under `build/android-release/android-v1.8.0-custom.1/` (using the configured version). The folder contains the APK, `flare-update.json`, release notes and `build-receipt.json`. The receipt binds the commit, source content and file hashes to the successful test/build run. Do not hand-edit the manifest or receipt.
+The prepared files are stored under `build/android-release/android-v1.8.0-custom.3/` (using the configured version). The folder contains the APK, `flare-update.json`, release notes and `build-receipt.json`. The receipt binds the commit, source content and file hashes to the successful test/build run. Do not hand-edit the manifest or receipt.
 
 Only after successful local preparation does the tool push the current branch and its annotated tag, create a **draft** GitHub Release, upload the APK and manifest, and download both assets to compare their hashes. It then publishes the release and marks it latest. The public unauthenticated manifest is checked after publishing. Existing published releases are never overwritten; a matching draft can be resumed. If an upload or verification fails, the draft stays unpublished, and the previous latest release remains usable.
 
@@ -56,7 +56,7 @@ python3 -B scripts/android_release.py --prepare-only --notes-file /path/to/relea
 After reviewing or installing the prepared APK, publish exactly that verified build:
 
 ```console
-python3 -B scripts/android_release.py --publish-existing build/android-release/android-v1.8.0-custom.1
+python3 -B scripts/android_release.py --publish-existing build/android-release/android-v1.8.0-custom.3
 ```
 
 Publishing rechecks the source commit, clean tree, source fingerprint, APK hash, manifest hash, APK metadata and certificate. If the source or version changes after preparation, commit and rebuild. To deliberately rebuild the same unpublished version, move its existing prepared folder aside first. Generated backups can be reviewed and removed manually when no longer needed.

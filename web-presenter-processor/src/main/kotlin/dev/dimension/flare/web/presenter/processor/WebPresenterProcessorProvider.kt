@@ -308,7 +308,7 @@ internal object WebPresenterRenderer {
 
             appendLine("@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)")
             appendLine(
-                "@file:Suppress(\"DEPRECATION\", \"NATIVE_INVOKE\", \"REDUNDANT_ELSE_IN_WHEN\", \"UNCHECKED_CAST\", \"UNCHECKED_CAST_TO_EXTERNAL_INTERFACE\")",
+                "@file:Suppress(\"DEPRECATION\", \"NATIVE_INVOKE\", \"REDUNDANT_ELSE_IN_WHEN\", \"UNCHECKED_CAST\", \"UNCHECKED_CAST_TO_EXTERNAL_INTERFACE\", \"UNNECESSARY_SAFE_CALL\")",
             )
             appendLine()
             appendLine("package $GENERATED_PACKAGE")
@@ -318,6 +318,9 @@ internal object WebPresenterRenderer {
             appendLine("import dev.dimension.flare.web.shared.WebPresenterSnapshot")
             appendLine("import dev.dimension.flare.web.shared.webPresenterActionPath")
             appendLine("import kotlinx.coroutines.flow.StateFlow")
+            if (allArrays.any { it.isImmutableList() }) {
+                appendLine("import kotlinx.collections.immutable.toPersistentList")
+            }
             appendLine("import kotlinx.serialization.json.JsonElement")
             appendLine("import kotlinx.serialization.json.JsonNull")
             appendLine("import kotlinx.serialization.json.JsonPrimitive")
@@ -1513,13 +1516,13 @@ private fun PresenterModel.referencedInputSealeds(): List<SealedModel> =
     buildList {
         parameters
             .filter { it.callback == null }
-            .forEach { it.valueModel().collectSealeds(this) }
+            .forEach { it.valueModel().collectInputSealeds(this) }
         actions.forEach { action ->
-            action.args.forEach { it.valueModel().collectSealeds(this) }
+            action.args.forEach { it.valueModel().collectInputSealeds(this) }
         }
         referencedRefs().forEach { ref ->
             ref.methods.forEach { method ->
-                method.args.forEach { it.valueModel().collectSealeds(this) }
+                method.args.forEach { it.valueModel().collectInputSealeds(this) }
             }
         }
     }
@@ -1608,6 +1611,20 @@ private fun WebValueModel.collectSealeds(sealeds: MutableList<SealedModel>) {
     }
     array?.item?.collectSealeds(sealeds)
     stateCodecValue()?.content?.collectSealeds(sealeds)
+}
+
+// Reference inputs are recovered from JsReference handles; their properties are output-only.
+private fun WebValueModel.collectInputSealeds(sealeds: MutableList<SealedModel>) {
+    sealed?.let { sealed ->
+        if (sealeds.none { it.type == sealed.type }) {
+            sealeds += sealed
+            sealed.variants.forEach { variant ->
+                variant.properties.filter { it.constructorParameter }.forEach { it.valueModel().collectInputSealeds(sealeds) }
+            }
+        }
+    }
+    array?.item?.collectInputSealeds(sealeds)
+    stateCodecValue()?.content?.collectInputSealeds(sealeds)
 }
 
 private fun WebValueModel.collectArrays(arrays: MutableList<ArrayModel>) {
@@ -1886,10 +1903,11 @@ private fun WebValueModel.readJsonElementExpression(
         }
     }
     array?.let {
-        val expression = "$elementExpression?.takeUnless { it == JsonNull }?.jsonArray?.map { item -> ${it.item.readJsonElementExpression(
-            "item",
-            refsName,
-        )} }"
+        val expression =
+            "$elementExpression?.takeUnless { it == JsonNull }?.jsonArray?.map { item -> ${it.item.readJsonElementExpression(
+                "item",
+                refsName,
+            )} }" + if (it.isImmutableList()) "?.toPersistentList()" else ""
         return if (nullable) {
             expression
         } else {
@@ -2016,6 +2034,8 @@ private fun SealedModel.decoderName(): String = "decode${type.toKotlinIdentifier
 
 private fun ArrayModel.encoderName(): String = "encode${type.toKotlinIdentifierSuffix()}WebArray"
 
+private fun ArrayModel.isImmutableList(): Boolean = type.substringBefore('<') in immutableListTypes
+
 private fun WebValueModel.kotlinType(): String =
     when {
         webType != null -> webType.kotlinType
@@ -2125,7 +2145,12 @@ private class WebTypeAnalyzer(
         val item = value(itemType, visited = visited, allowRef = true) ?: return null
         return ArrayModel(
             item = item,
-            type = "kotlin.collections.Iterable<${item.kotlinType()}>",
+            type =
+                if (type.declaration.qualifiedName?.asString() in immutableListTypes) {
+                    "${type.declaration.qualifiedName?.asString()}<${item.kotlinType()}>"
+                } else {
+                    "kotlin.collections.Iterable<${item.kotlinType()}>"
+                },
         )
     }
 
@@ -2612,6 +2637,12 @@ private val platformReferencePackagePrefixes =
         "kotlinx.serialization.",
         "org.koin.",
     )
+private val immutableListTypes =
+    setOf(
+        "dev.dimension.flare.common.SerializableImmutableList",
+        "kotlinx.collections.immutable.ImmutableList",
+        "kotlinx.collections.immutable.PersistentList",
+    )
 private val supportedArrayTypes =
     setOf(
         "kotlin.Array",
@@ -2619,7 +2650,4 @@ private val supportedArrayTypes =
         "kotlin.collections.Iterable",
         "kotlin.collections.List",
         "kotlin.collections.MutableList",
-        "dev.dimension.flare.common.SerializableImmutableList",
-        "kotlinx.collections.immutable.ImmutableList",
-        "kotlinx.collections.immutable.PersistentList",
-    )
+    ) + immutableListTypes

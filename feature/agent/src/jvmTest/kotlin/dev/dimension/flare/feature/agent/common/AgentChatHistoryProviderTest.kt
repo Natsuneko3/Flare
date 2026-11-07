@@ -45,6 +45,7 @@ import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -54,6 +55,147 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class AgentChatHistoryProviderTest {
+    @Test
+    fun unchangedHistoryDoesNotRewriteMessagesOrConversation() =
+        runTest {
+            val driver = CountingHistoryDriver()
+            Fixture(driver = driver).use { fixture ->
+                val messages = listOf(user("Question", "q"), assistant("Answer", "a"))
+                fixture.history.store(CONVERSATION, messages)
+                driver.reset()
+                fixture.history.store(CONVERSATION, messages)
+                assertEquals(0, driver.messageWrites.get())
+                assertEquals(0, driver.conversationWrites.get())
+                assertEquals(listOf("q", "a"), fixture.history.load(CONVERSATION).map { it.id })
+            }
+        }
+
+    @Test
+    fun appendingHistoryWritesOnlyTheNewMessageAndKeepsPositions() =
+        runTest {
+            val driver = CountingHistoryDriver()
+            Fixture(driver = driver).use { fixture ->
+                val original = listOf(user("Question", "q"), assistant("Answer", "a"))
+                fixture.history.store(CONVERSATION, original)
+                val ids =
+                    fixture.history
+                        .observeMessages(CONVERSATION)
+                        .first()
+                        .map { it.id }
+                driver.reset()
+                fixture.history.store(CONVERSATION, original + user("Follow up", "next"))
+                assertEquals(1, driver.messageWrites.get())
+                assertEquals(
+                    ids,
+                    fixture.history
+                        .observeMessages(CONVERSATION)
+                        .first()
+                        .drop(1)
+                        .map { it.id },
+                )
+                assertEquals(listOf("q", "a", "next"), fixture.history.load(CONVERSATION).map { it.id })
+            }
+        }
+
+    @Test
+    fun changedAssistantSupportWritesOnlyTheLastRowAndRetainsTheModelMessage() =
+        runTest {
+            val driver = CountingHistoryDriver()
+            Fixture(driver = driver).use { fixture ->
+                val post = post()
+                val answer = "Answer ${post.agentAttachmentMarker()}"
+                val messages = listOf(user("Question", "q"), assistant(answer, "a"))
+                fixture.history.store(CONVERSATION, messages)
+                val card = AgentMessagePart.PostCard(post)
+                driver.reset()
+                fixture.history.storeAssistantResponse(CONVERSATION, messages, listOf(card), null)
+                assertEquals(1, driver.messageWrites.get())
+                assertEquals(0, driver.conversationWrites.get())
+                assertEquals(
+                    post.statusKey,
+                    fixture.history
+                        .observeMessages(
+                            CONVERSATION,
+                        ).first()
+                        .first()
+                        .parts
+                        .filterIsInstance<AgentMessagePart.PostCard>()
+                        .single()
+                        .post.statusKey,
+                )
+                assertEquals(listOf("Question", answer), fixture.history.load(CONVERSATION).map { it.textContent() })
+                driver.reset()
+                fixture.history.storeAssistantResponse(CONVERSATION, messages, listOf(card), null)
+                assertEquals(0, driver.messageWrites.get())
+            }
+        }
+
+    @Test
+    fun changedModelMessageWithTheSameIdUpdatesItsExistingPosition() =
+        runTest {
+            val driver = CountingHistoryDriver()
+            Fixture(driver = driver).use { fixture ->
+                val question = user("Question", "q")
+                val answer = assistant("Draft", "a")
+                fixture.history.store(CONVERSATION, listOf(question, answer))
+                val ids =
+                    fixture.history
+                        .observeMessages(CONVERSATION)
+                        .first()
+                        .map { it.id }
+                driver.reset()
+                fixture.history.store(CONVERSATION, listOf(question, answer.copy(parts = listOf(MessagePart.Text("Revised")))))
+                assertEquals(1, driver.messageWrites.get())
+                assertEquals(
+                    ids,
+                    fixture.history
+                        .observeMessages(CONVERSATION)
+                        .first()
+                        .map { it.id },
+                )
+                assertEquals(
+                    "Revised",
+                    fixture.history
+                        .load(CONVERSATION)
+                        .last()
+                        .textContent(),
+                )
+            }
+        }
+
+    @Test
+    fun optimisticReconciliationAndCheckpointDoNotRewriteStableRows() =
+        runTest {
+            val driver = CountingHistoryDriver()
+            Fixture(driver = driver).use { fixture ->
+                val first = user("Question", "q")
+                fixture.history.store(CONVERSATION, listOf(first))
+                fixture.history.storeUserUiMessage(CONVERSATION, "Follow up")
+                val pendingId =
+                    fixture.history
+                        .observeMessages(CONVERSATION)
+                        .first()
+                        .first()
+                        .id
+                val messages = listOf(first, user("Follow up", "next"), assistant("Answer", "a"))
+                driver.reset()
+                fixture.history.store(CONVERSATION, messages)
+                assertEquals(2, driver.messageWrites.get())
+                assertEquals(
+                    pendingId,
+                    fixture.history
+                        .observeMessages(CONVERSATION)
+                        .first()[1]
+                        .id,
+                )
+                driver.reset()
+                fixture.history.storeCheckpoint(CONVERSATION, messages, AgentContextCheckpoint("Summary", "q"))
+                assertEquals(0, driver.messageWrites.get())
+                assertEquals(0, driver.conversationWrites.get())
+                assertEquals(listOf(AGENT_CONTEXT_SUMMARY_ID, "next", "a"), fixture.history.load(CONVERSATION).map { it.id })
+            }
+        }
+
     @Test
     fun deepSeekImageRetryKeepsTheSourceCardBeforeAndAfterTheModelFinishes() =
         runTest {
@@ -1055,11 +1197,12 @@ class AgentChatHistoryProviderTest {
 
     private class Fixture(
         path: String? = null,
+        driver: SQLiteDriver = BundledSQLiteDriver(),
     ) : AutoCloseable {
         private val database =
             (if (path == null) Room.inMemoryDatabaseBuilder<AgentDatabase>() else Room.databaseBuilder<AgentDatabase>(path))
                 .addMigrations(AGENT_CONTEXT_MIGRATION)
-                .setDriver(BundledSQLiteDriver())
+                .setDriver(driver)
                 .setQueryCoroutineContext(Dispatchers.IO)
                 .build()
         val history = AgentChatHistoryProvider(database) { null }
@@ -1103,6 +1246,39 @@ class AgentChatHistoryProviderTest {
 
     private companion object {
         const val CONVERSATION = "conversation"
+    }
+
+    private class CountingHistoryDriver(
+        private val delegate: SQLiteDriver = BundledSQLiteDriver(),
+    ) : SQLiteDriver by delegate {
+        val messageWrites = AtomicInteger()
+        val conversationWrites = AtomicInteger()
+
+        fun reset() {
+            messageWrites.set(0)
+            conversationWrites.set(0)
+        }
+
+        override fun open(fileName: String): SQLiteConnection {
+            val connection = delegate.open(fileName)
+            return object : SQLiteConnection by connection {
+                override fun prepare(sql: String): SQLiteStatement {
+                    val statement = connection.prepare(sql)
+                    return object : SQLiteStatement by statement {
+                        override fun step(): Boolean {
+                            if (sql.startsWith("INSERT", ignoreCase = true) ||
+                                sql.startsWith("UPDATE", ignoreCase = true) ||
+                                sql.startsWith("DELETE", ignoreCase = true)
+                            ) {
+                                if ("agent_messages" in sql) messageWrites.incrementAndGet()
+                                if ("agent_conversations" in sql) conversationWrites.incrementAndGet()
+                            }
+                            return statement.step()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private class PausedHistoryDriver(

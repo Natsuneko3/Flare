@@ -414,12 +414,22 @@ internal class AgentChatHistoryProvider(
         checkpoint: AgentContextCheckpoint? = null,
     ) {
         val messages = history.filterNot { it.id == AGENT_CONTEXT_SUMMARY_ID }
+        val encodedMessages = messages.map { json.encodeToString<Message>(it) }
+        val incomingByJson =
+            buildMap {
+                encodedMessages.forEachIndexed { index, payload -> put(payload, messages[index]) }
+            }
         val now = Clock.System.now().toEpochMilliseconds()
         val latestMessageAt = messages.latestVisibleMessageCreatedAt() ?: now
         database.connect {
             val existing = database.conversationDao().getConversation(conversationId)
             val existingMessages = database.conversationDao().getMessagesChronological(conversationId)
-            val existingById = existingMessages.associateBy { it.toMessage()?.id ?: it.messageId() }
+            // Equal model payloads already carry their IDs in memory. Decode only changed,
+            // trimmed or legacy messages instead of every persisted message at each boundary.
+            val existingById =
+                existingMessages.associateBy { stored ->
+                    incomingByJson[stored.messageJson]?.id ?: stored.toMessage()?.id ?: stored.messageId()
+                }
             val pendingUiMessages =
                 existingMessages
                     .filter { it.messageJson.isEmpty() }
@@ -428,18 +438,17 @@ internal class AgentChatHistoryProvider(
             var nextPosition = (existingMessages.maxOfOrNull { it.position } ?: -1) + 1
             // Keep optimistic user positions while placing new system messages before them.
             var nextSystemPosition = (existingMessages.minOfOrNull { it.position } ?: 0) - messages.count { it is Message.System }
-            val historyMessages = messages.mapNotNull { it.toHistoryMessage(conversationId) }
             val fallbackTitle =
-                existing.agentTitleOrFallback(
-                    conversationId = conversationId,
-                    fallbackTitle =
-                        agentConversationFallbackTitle(
-                            conversationId = conversationId,
-                            messages = messages,
-                            historyMessages = historyMessages,
-                        ),
-                )
-            database.conversationDao().upsertConversation(
+                if (existing != null && !existing.shouldUseAgentFallbackTitle(conversationId)) {
+                    existing.title.orEmpty()
+                } else {
+                    agentConversationFallbackTitle(
+                        conversationId = conversationId,
+                        messages = messages,
+                        historyMessages = messages.mapNotNull { it.toHistoryMessage(conversationId) },
+                    )
+                }
+            val conversation =
                 DbAgentConversation(
                     conversationId = conversationId,
                     title = fallbackTitle,
@@ -448,10 +457,12 @@ internal class AgentChatHistoryProvider(
                     updatedAt = latestMessageAt,
                     isRunning = existing?.isRunning ?: false,
                     errorMessage = existing?.errorMessage,
-                ),
-            )
-            database.conversationDao().insertMessages(
-                messages.mapIndexed { index, message ->
+                )
+            if (conversation != existing) {
+                database.conversationDao().upsertConversation(conversation)
+            }
+            val changedMessages =
+                messages.mapIndexedNotNull { index, message ->
                     val previous =
                         existingById[message.id]
                             ?: pendingUiMessages[
@@ -460,25 +471,30 @@ internal class AgentChatHistoryProvider(
                                     message.displayText(conversationId),
                                 ),
                             ]?.removeFirstOrNull()
-                    message.toDbMessage(
-                        conversationId = conversationId,
-                        position = previous?.position ?: if (message is Message.System) nextSystemPosition++ else nextPosition++,
-                        existingUiContent =
-                            if (index == messages.lastIndex && lastResponseParts != null) {
-                                encodeContent(lastResponseParts)
-                            } else {
-                                previous?.contentJson
-                            },
-                    )
-                },
-            )
+                    message
+                        .toDbMessage(
+                            conversationId = conversationId,
+                            position = previous?.position ?: if (message is Message.System) nextSystemPosition++ else nextPosition++,
+                            existingUiContent =
+                                if (index == messages.lastIndex && lastResponseParts != null) {
+                                    encodeContent(lastResponseParts)
+                                } else {
+                                    previous?.contentJson
+                                },
+                            messageJson = encodedMessages[index],
+                        ).takeUnless { it == previous }
+                }
+            if (changedMessages.isNotEmpty()) {
+                database.conversationDao().insertMessages(changedMessages)
+            }
             if (checkpoint != null) {
                 val throughPosition =
                     database
                         .conversationDao()
                         .getMessagesChronological(conversationId)
-                        .first { it.toMessage()?.id == checkpoint.throughMessageId }
-                        .position
+                        .first { stored ->
+                            (incomingByJson[stored.messageJson]?.id ?: stored.toMessage()?.id) == checkpoint.throughMessageId
+                        }.position
                 val previousPosition = database.conversationDao().getContext(conversationId)?.throughPosition ?: throughPosition
                 database.conversationDao().upsertContext(
                     DbAgentContext(conversationId, checkpoint.summary, maxOf(previousPosition, throughPosition)),
@@ -567,6 +583,7 @@ internal class AgentChatHistoryProvider(
         conversationId: String,
         position: Int,
         existingUiContent: String?,
+        messageJson: String,
     ): DbAgentMessage {
         val text = displayText(conversationId)
         val roleName = role.name
@@ -578,7 +595,7 @@ internal class AgentChatHistoryProvider(
             contentJson =
                 existingUiContent
                     ?: encodeContent(text.toAgentTextParts()),
-            messageJson = json.encodeToString<Message>(this),
+            messageJson = messageJson,
             createdAt = metaInfo.timestamp.toEpochMilliseconds(),
         )
     }

@@ -124,7 +124,7 @@
 		{:else if isLoading}
 			<TimelineLoadingPlaceholderList />
 		{:else}
-			<TimelineList listState={statusState.listState} {detailStatusKey} />
+			<TimelineList listState={statusState.listState} sourceKey={presenterKey} {detailStatusKey} />
 		{/if}
 	</div>
 </section>
