@@ -36,6 +36,43 @@ import kotlin.test.assertTrue
 
 class AgentContextCompactionTest {
     @Test
+    fun completedResponsesSummaryCreatesCheckpointAndContinues() =
+        runTest {
+            Fixture(model = "gpt-6-astra") { request, _ ->
+                assertTrue("input" in request)
+                assertFalse("messages" in request)
+                responsesTextResponse(if (request.isCompaction()) "Responses checkpoint: remaining work" else "Done")
+            }.use { fixture ->
+                fixture.history.messages = oldHistory()
+                assertEquals("Done", fixture.run())
+                assertEquals(2, fixture.requests.size)
+                assertEquals("Responses checkpoint: remaining work", fixture.checkpoints.single().summary)
+                assertTrue(fixture.requests.first().isCompaction())
+                assertFalse(fixture.requests.first().hasTools())
+                val continued = fixture.requests.last().toString()
+                assertTrue("Responses checkpoint: remaining work" in continued)
+                assertTrue("CURRENT USER REQUIREMENT" in continued)
+                assertFalse("old-0" in continued)
+            }
+        }
+
+    @Test
+    fun incompleteResponsesSummaryDoesNotPublishCheckpoint() =
+        runTest {
+            Fixture(model = "gpt-6-astra") { request, _ ->
+                assertTrue(request.isCompaction())
+                responsesTextResponse("Truncated Responses checkpoint", status = "incomplete")
+            }.use { fixture ->
+                val original = oldHistory()
+                fixture.history.messages = original
+                assertFailsWith<AgentRetryableException> { fixture.run() }
+                assertTrue(fixture.checkpoints.isEmpty())
+                assertEquals(1, fixture.requests.size)
+                assertEquals(original, fixture.history.messages.filter { it.id in original.map(Message::id) })
+            }
+        }
+
+    @Test
     fun largeHistoryBecomesOneCheckpointAndRecentContextWithoutLosingTheCurrentRequest() =
         runTest {
             Fixture().use { fixture ->
@@ -586,6 +623,7 @@ class AgentContextCompactionTest {
         private val failCheckpoint: Boolean = false,
         private val extraBody: String = "",
         private val contextWindow: Int? = 16_384,
+        private val model: String = "test-model",
         private val response: (
             JsonObject,
             Int,
@@ -631,7 +669,7 @@ class AgentContextCompactionTest {
                             AppSettings.AiConfig.Type.OpenAI(
                                 "https://agent.example/v1/",
                                 "key",
-                                "test-model",
+                                model,
                                 contextWindow = contextWindow,
                                 extraBody = extraBody,
                             ),
@@ -728,6 +766,17 @@ class AgentContextCompactionTest {
             """{"id":"response","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":${Json.encodeToString(
                 text,
             )}},"finish_reason":"stop"}]}"""
+
+        fun responsesTextResponse(
+            text: String,
+            status: String = "completed",
+        ): String =
+            """
+            {"id":"response","object":"response","created_at":0,"model":"gpt-6-astra","status":"$status",
+             "output":[{"id":"msg_1","type":"message","role":"assistant","status":"$status",
+                        "content":[{"type":"output_text","text":${Json.encodeToString(text)},"annotations":[]}]}],
+             "parallel_tool_calls":true,"text":{"format":{"type":"text"}}}
+            """.trimIndent()
 
         fun toolResponse(
             number: Int,

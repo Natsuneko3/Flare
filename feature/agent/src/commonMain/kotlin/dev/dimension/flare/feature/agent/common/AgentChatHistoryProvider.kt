@@ -632,9 +632,26 @@ internal class AgentChatHistoryProvider(
                 }
 
                 is Message.Assistant -> {
+                    val hasCompletedToolCall =
+                        message.parts.withIndex().any { (partIndex, part) ->
+                            part is MessagePart.Tool.Call && (messageIndex to partIndex) in completed
+                        }
                     val parts =
                         message.parts.filterIndexed { partIndex, part ->
-                            part !is MessagePart.Reasoning && (part !is MessagePart.Tool.Call || (messageIndex to partIndex) in completed)
+                            when (part) {
+                                is MessagePart.Reasoning -> {
+                                    // Responses needs the opaque reasoning item when replaying its tool call.
+                                    hasCompletedToolCall && !part.id.isNullOrBlank() && !part.encrypted.isNullOrBlank()
+                                }
+
+                                is MessagePart.Tool.Call -> {
+                                    (messageIndex to partIndex) in completed
+                                }
+
+                                else -> {
+                                    true
+                                }
+                            }
                         }
                     parts.takeIf { it.isNotEmpty() }?.let { message.copy(parts = it) }
                 }

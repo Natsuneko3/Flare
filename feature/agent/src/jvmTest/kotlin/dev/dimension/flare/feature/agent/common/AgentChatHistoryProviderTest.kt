@@ -834,6 +834,63 @@ class AgentChatHistoryProviderTest {
         }
 
     @Test
+    fun responsesReasoningSurvivesReopenOnlyForCompleteToolExchanges() =
+        runTest {
+            val directory = Files.createTempDirectory("flare-agent-responses-history-")
+            val path = directory.resolve("agent.db").toString()
+            val reasoning =
+                MessagePart.Reasoning(
+                    content = emptyList(),
+                    summary = emptyList(),
+                    encrypted = "opaque-completed-reasoning",
+                    id = "rs-completed",
+                )
+            val call = MessagePart.Tool.Call("completed-call", "lookup", "{}")
+            val result = MessagePart.Tool.Result("completed-call", "lookup", "Found item")
+            val messages =
+                listOf(
+                    user("Requirement", "question"),
+                    assistant("", "call").copy(
+                        parts = listOf(MessagePart.Reasoning("private reasoning"), reasoning, call),
+                    ),
+                    user("", "result").copy(parts = listOf(result)),
+                    assistant("Done", "final"),
+                    assistant("Visible progress", "orphan").copy(
+                        parts =
+                            listOf(
+                                MessagePart.Text("Visible progress"),
+                                reasoning.copy(id = "rs-orphan", encrypted = "opaque-orphan-reasoning"),
+                                MessagePart.Tool.Call("orphan-call", "lookup", "{}"),
+                            ),
+                    ),
+                    user("", "orphan-result").copy(parts = listOf(MessagePart.Tool.Result("missing-call", "lookup", "Orphan result"))),
+                )
+            try {
+                Fixture(path).use { fixture ->
+                    fixture.history.store(CONVERSATION, messages)
+                }
+                Fixture(path).use { fixture ->
+                    val replay = fixture.history.load(CONVERSATION)
+                    val parts = replay.flatMap { it.parts }
+                    assertEquals(listOf(reasoning), parts.filterIsInstance<MessagePart.Reasoning>())
+                    assertEquals(listOf(call), parts.filterIsInstance<MessagePart.Tool.Call>())
+                    assertEquals(listOf(result), parts.filterIsInstance<MessagePart.Tool.Result>())
+                    assertEquals(listOf("question", "call", "result", "final", "orphan"), replay.map { it.id })
+                    assertEquals(
+                        listOf("Visible progress", "Done", "Requirement"),
+                        fixture.history
+                            .observeMessages(CONVERSATION)
+                            .first()
+                            .map { it.parts.agentMessageText() },
+                    )
+                }
+            } finally {
+                Files.list(directory).use { paths -> paths.forEach(Files::delete) }
+                Files.delete(directory)
+            }
+        }
+
+    @Test
     fun replayKeepsCompleteToolExchangesAndDropsOrphanCallsAndResults() =
         runTest {
             Fixture().use { fixture ->

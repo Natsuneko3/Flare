@@ -148,6 +148,197 @@ class AgentAiConfigurationTest {
         }
 
     @Test
+    fun gpt6AgentUsesResponsesAndPreservesReasoningAcrossToolCalls() =
+        runTest {
+            for ((model, effort) in listOf(
+                "gpt-6-astra" to "high",
+                "gpt-6-astra-2026-09-01" to "max",
+                "gpt-6.1-sol" to "xhigh",
+                "gpt-6-sol" to "high",
+                "openai/gpt-6-astra" to "high",
+            )) {
+                val config = independent.copy(model = model, reasoningEffort = effort)
+                val requests = mutableListOf<JsonObject>()
+                val engine =
+                    MockEngine { request ->
+                        assertEquals("https://agent.example/custom/v1/responses", request.url.toString())
+                        assertEquals("Bearer agent-key", request.headers[HttpHeaders.Authorization])
+                        val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+                        requests += body
+                        assertEquals(model, body["model"]?.jsonPrimitive?.content)
+                        assertEquals(
+                            effort,
+                            body["reasoning"]
+                                ?.jsonObject
+                                ?.get("effort")
+                                ?.jsonPrimitive
+                                ?.content,
+                        )
+                        assertTrue(body.getValue("include").jsonArray.any { it.jsonPrimitive.content == "reasoning.encrypted_content" })
+                        assertEquals("false", body["store"]?.jsonPrimitive?.content)
+                        assertFalse("reasoning_effort" in body)
+                        assertFalse("messages" in body)
+                        assertEquals("2", body["seed"]?.jsonPrimitive?.content)
+                        val output =
+                            if (requests.size == 1) {
+                                """
+                                [{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque-reasoning"},
+                                 {"id":"fc_1","type":"function_call","call_id":"call-1","name":"echo",
+                                  "arguments":"{\"text\":\"hello\"}","status":"completed"}]
+                                """.trimIndent()
+                            } else {
+                                """[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done","annotations":[]}]}]"""
+                            }
+                        respond(
+                            responsesResult(model, output, effort),
+                            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        )
+                    }
+                HttpClient(engine).use { client ->
+                    val runtime =
+                        assertNotNull(
+                            AiConfigKoogBridge().createRuntime(
+                                AppSettings.AiConfig(type = basic, agentType = config),
+                                KtorKoogHttpClient.Factory(baseClient = client),
+                            ),
+                        )
+                    val tool = EchoTool()
+                    val request =
+                        FlareAgentRequest(
+                            prompt = Prompt.build("input") { user("echo hello") },
+                            systemPrompt = "Use echo to repeat the text.",
+                            agentId = "responses-test",
+                            strategyName = "responses-test",
+                            analyzeNodeName = "analyze",
+                            executeToolsNodeName = "tools",
+                            sendToolResultsNodeName = "results",
+                            toolSet = AgentToolSet.Empty.copy(toolRegistry = ToolRegistry { tool(tool) }),
+                        )
+                    val history = MemoryHistory()
+                    val agent = runtime.createAgent(request, onTrace = {}, chatHistoryProvider = history)
+                    try {
+                        assertEquals("done", agent.run(request.prompt, "conversation"))
+                        assertEquals(1, tool.calls)
+                        assertEquals(2, requests.size)
+                        assertEquals(
+                            "echo",
+                            requests[0]
+                                .getValue("tools")
+                                .jsonArray
+                                .single()
+                                .jsonObject["name"]
+                                ?.jsonPrimitive
+                                ?.content,
+                        )
+                        val input = requests[1].getValue("input").jsonArray.map { it.jsonObject }
+                        assertTrue(
+                            input.any {
+                                it["type"]?.jsonPrimitive?.content == "function_call_output" &&
+                                    it["call_id"]?.jsonPrimitive?.content == "call-1" &&
+                                    it["output"]?.jsonPrimitive?.content == "hello"
+                            },
+                        )
+                        assertTrue(
+                            input.any {
+                                it["type"]?.jsonPrimitive?.content == "reasoning" &&
+                                    it["encrypted_content"]?.jsonPrimitive?.content == "opaque-reasoning"
+                            },
+                        )
+                        assertTrue(history.messages.isNotEmpty())
+                    } finally {
+                        agent.close()
+                        runtime.promptExecutor.close()
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun responsesReasoningSettingsPreserveOptionsAndProtectConversationFields() =
+        runTest {
+            for ((effort, extraBody, expectedEffort) in listOf(
+                Triple("", "", null),
+                Triple("", """{"reasoning_effort":"low"}""", "low"),
+                Triple("", """{"reasoning_effort":"low","reasoning":{"effort":"medium"}}""", "medium"),
+                Triple(
+                    "high",
+                    """{"reasoning_effort":"low","reasoning":{"effort":"medium","summary":"auto"},"input":[],"instructions":"wrong","previous_response_id":"wrong","conversation":"wrong","tools":[],"tool_choice":"none"}""",
+                    "high",
+                ),
+            )) {
+                val config = independent.copy(model = "gpt-6-astra", reasoningEffort = effort, extraBody = extraBody)
+                val engine =
+                    MockEngine { request ->
+                        assertEquals("https://agent.example/custom/v1/responses", request.url.toString())
+                        val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+                        assertEquals(
+                            expectedEffort,
+                            body["reasoning"]
+                                ?.jsonObject
+                                ?.get("effort")
+                                ?.jsonPrimitive
+                                ?.content,
+                        )
+                        if (expectedEffort == null) assertFalse("reasoning" in body)
+                        if (effort == "high") {
+                            assertEquals(
+                                "auto",
+                                body["reasoning"]
+                                    ?.jsonObject
+                                    ?.get("summary")
+                                    ?.jsonPrimitive
+                                    ?.content,
+                            )
+                        }
+                        assertFalse("reasoning_effort" in body)
+                        assertFalse("instructions" in body)
+                        assertFalse("previous_response_id" in body)
+                        assertFalse("conversation" in body)
+                        assertFalse(body["tool_choice"]?.jsonPrimitive?.content == "none")
+                        val input = body.getValue("input").jsonArray
+                        assertEquals(
+                            "hello",
+                            input
+                                .single()
+                                .jsonObject
+                                .getValue("content")
+                                .jsonArray
+                                .single()
+                                .jsonObject["text"]
+                                ?.jsonPrimitive
+                                ?.content,
+                        )
+                        respond(
+                            responsesResult(
+                                config.model,
+                                """[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done","annotations":[]}]}]""",
+                            ),
+                            headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                        )
+                    }
+                HttpClient(engine).use { client ->
+                    val runtime =
+                        assertNotNull(
+                            AiConfigKoogBridge().createRuntime(
+                                AppSettings.AiConfig(type = config),
+                                KtorKoogHttpClient.Factory(baseClient = client),
+                            ),
+                        )
+                    try {
+                        val result =
+                            runtime.promptExecutor.execute(
+                                Prompt.build("test", params = runtime.params) { user("hello") },
+                                runtime.model,
+                            )
+                        assertEquals("done", result.textContent())
+                    } finally {
+                        runtime.promptExecutor.close()
+                    }
+                }
+            }
+        }
+
+    @Test
     fun extraBodyPreservesNestedValuesButCannotReplaceAgentOwnedFields() =
         runTest {
             val config =
@@ -156,7 +347,8 @@ class AgentAiConfigurationTest {
                         """
                         {"thinking":{"type":"enabled","budget":2048},"reasoning_effort":"low",
                          "model":"wrong","messages":[],"tools":[],"tool_choice":"none",
-                         "stream":true,"stream_options":{},"n":2}
+                         "stream":true,"stream_options":{},"n":2,
+                         "instructions":"provider-specific","previous_response_id":"provider-state"}
                         """.trimIndent(),
                 )
             val engine =
@@ -164,6 +356,8 @@ class AgentAiConfigurationTest {
                     val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                     assertEquals("strong", body["model"]?.jsonPrimitive?.content)
                     assertEquals("high", body["reasoning_effort"]?.jsonPrimitive?.content)
+                    assertEquals("provider-specific", body["instructions"]?.jsonPrimitive?.content)
+                    assertEquals("provider-state", body["previous_response_id"]?.jsonPrimitive?.content)
                     assertEquals(
                         "enabled",
                         body["thinking"]
@@ -265,6 +459,20 @@ class AgentAiConfigurationTest {
             }
         }
     }
+
+    private fun responsesResult(
+        model: String,
+        output: String,
+        effort: String = "high",
+    ): String =
+        """
+        {"id":"resp_1","object":"response","created_at":0,"status":"completed","error":null,
+         "incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"$model","output":$output,
+         "parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"$effort","summary":null},
+         "store":false,"temperature":1,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],
+         "top_p":1,"truncation":"disabled","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},
+         "output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2},"user":null,"metadata":{}}
+        """.trimIndent()
 
     private class MemoryHistory : ChatHistoryProvider {
         var messages: List<Message> = emptyList()

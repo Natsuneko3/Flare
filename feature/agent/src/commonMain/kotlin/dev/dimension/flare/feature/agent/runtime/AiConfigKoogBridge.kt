@@ -11,7 +11,10 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import dev.dimension.flare.common.JSON
 import dev.dimension.flare.data.datastore.model.AppSettings
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
@@ -56,16 +59,35 @@ internal class AiConfigKoogBridge {
             openAIConfig.contextWindow?.also { require(it >= 1_024) { "Context window must be at least 1024 tokens" } }?.toLong()
                 ?: OpenAIModels.models.firstOrNull { it.id == openAIConfig.model }?.contextLength
         val extraBody = openAIConfig.extraBody.takeIf { it.isNotBlank() }?.let { JSON.parseToJsonElement(it).jsonObject }
+        // GPT-6 tool calls require Responses; other compatible providers retain Chat Completions.
+        val useResponses = openAIConfig.model.substringAfterLast('/').let { it.startsWith("gpt-6-") || it.startsWith("gpt-6.") }
         val params =
             LLMParams(
                 additionalProperties =
                     buildJsonObject {
                         extraBody
-                            ?.filterKeys { it !in AGENT_REQUEST_FIELDS }
+                            ?.filterKeys { it !in AGENT_REQUEST_FIELDS && (!useResponses || it !in RESPONSES_REQUEST_FIELDS) }
                             ?.forEach { (key, value) -> put(key, value) }
-                        openAIConfig.reasoningEffort
-                            .takeIf { it.isNotBlank() }
-                            ?.let { put("reasoning_effort", it) }
+                        if (useResponses) {
+                            val reasoning =
+                                buildJsonObject {
+                                    extraBody?.get("reasoning_effort")?.let { put("effort", it) }
+                                    extraBody?.get("reasoning")?.jsonObject?.forEach { (key, value) -> put(key, value) }
+                                    openAIConfig.reasoningEffort.takeIf { it.isNotBlank() }?.let { put("effort", it) }
+                                }
+                            if (reasoning.isNotEmpty()) put("reasoning", reasoning)
+                            // The agent replays its own history, including opaque reasoning from tool calls.
+                            put("store", false)
+                            put(
+                                "include",
+                                buildJsonArray {
+                                    extraBody?.get("include")?.jsonArray?.forEach { add(it) }
+                                    add("reasoning.encrypted_content")
+                                },
+                            )
+                        } else {
+                            openAIConfig.reasoningEffort.takeIf { it.isNotBlank() }?.let { put("reasoning_effort", it) }
+                        }
                     },
             )
         val client =
@@ -80,21 +102,26 @@ internal class AiConfigKoogBridge {
                         moderationsPath = "moderations",
                         modelsPath = "models",
                     ),
-                httpClientFactory = httpClientFactory,
+                httpClientFactory = if (useResponses) ResponsesHttpClientFactory(httpClientFactory) else httpClientFactory,
             )
         val model =
             LLModel(
                 provider = LLMProvider.OpenAI,
                 id = openAIConfig.model,
                 capabilities =
-                    listOf(
-                        LLMCapability.Completion,
-                        LLMCapability.OpenAIEndpoint.Completions,
-                        LLMCapability.Temperature,
-                        LLMCapability.Tools,
-                        LLMCapability.ToolChoice,
-                        LLMCapability.Vision.Image,
-                    ),
+                    buildList {
+                        add(LLMCapability.Completion)
+                        if (useResponses) {
+                            add(LLMCapability.OpenAIEndpoint.Responses)
+                            add(LLMCapability.Thinking)
+                        } else {
+                            add(LLMCapability.OpenAIEndpoint.Completions)
+                            add(LLMCapability.Temperature)
+                        }
+                        add(LLMCapability.Tools)
+                        add(LLMCapability.ToolChoice)
+                        add(LLMCapability.Vision.Image)
+                    },
                 contextLength = contextWindow,
             )
 
@@ -107,6 +134,16 @@ internal class AiConfigKoogBridge {
 
     private companion object {
         // The agent owns conversation history, tool selection and response transport.
-        val AGENT_REQUEST_FIELDS = setOf("model", "messages", "tools", "tool_choice", "stream", "stream_options", "n")
+        val AGENT_REQUEST_FIELDS =
+            setOf(
+                "model",
+                "messages",
+                "tools",
+                "tool_choice",
+                "stream",
+                "stream_options",
+                "n",
+            )
+        val RESPONSES_REQUEST_FIELDS = setOf("input", "instructions", "previous_response_id", "conversation", "reasoning_effort")
     }
 }

@@ -141,7 +141,7 @@ internal class AgentContextCompaction {
             } finally {
                 session.prompt = original
             }
-        check(response.finishReason == null || response.finishReason?.lowercase() in setOf("stop", "end_turn")) {
+        check(response.finishReason == null || response.finishReason?.lowercase() in setOf("stop", "end_turn", "completed")) {
             "The model did not finish the context summary"
         }
         check(response.parts.none { it is MessagePart.Tool.Call }) { "Tools are disabled during context compaction" }
