@@ -113,7 +113,7 @@ class GithubReleaseTests(unittest.TestCase):
                 if args[:4] == ['git','remote','get-url','origin']:
                     output = 'https://github.com/Natsuneko3/Flare.git'
                 elif args[:2] == ['git','symbolic-ref']:
-                    output = 'ci-android-release'
+                    code = 1  # Actions checks out the reserved build commit in detached HEAD state
                 elif args[:2] == ['git','rev-parse']:
                     code = 1
                 elif args[:2] == ['git','ls-remote']:

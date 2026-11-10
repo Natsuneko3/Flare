@@ -412,7 +412,7 @@ def publish(folder, config, *, push_source=True, extra_files=()):
     if origin not in {f"https://github.com/{REPO}", f"git@github.com:{REPO}"}:
         raise ValueError("origin does not point to the configured public release repository")
     branch = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], check=False).stdout.strip()
-    if not branch:
+    if not branch and push_source:
         raise ValueError("Check out a branch before publishing; detached HEAD is not supported")
     tag = manifest["releaseTag"]
     existing = run(["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"], check=False)
