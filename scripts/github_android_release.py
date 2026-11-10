@@ -22,7 +22,7 @@ def require_ci():
     return env['GITHUB_SHA']
 
 
-def next_config(config, previous):
+def next_config(config, previous, reserved=()):
     publisher.validate_config(config)
     updated = dict(config)
     base, counter = config['versionName'].rsplit('-custom.', 1)
@@ -39,7 +39,9 @@ def next_config(config, previous):
             raise ValueError('Source is based on an older upstream version than the published app')
         code = max(code, previous['versionCode'] + 1)
         number = max(int(counter), int(old_counter)) + 1 if base == old_base else int(counter)
-    updated.update(versionCode=str(code), versionName=f'{base}-custom.{number}')
+    available = max(number, max(reserved, default=0) + 1)
+    code += available - number
+    updated.update(versionCode=str(code), versionName=f'{base}-custom.{available}')
     publisher.validate_config(updated)
     if previous:
         publisher.validate_version_advance(updated, previous)
@@ -110,52 +112,79 @@ def install_signing():
     print('Existing signing key restored; Gradle and APK validation will verify its certificate')
 
 
-def prepare():
+def plan():
     source = require_ci()
     publisher.require_auth()
-    config = next_config(publisher.load_properties(publisher.ROOT / 'android-release.properties'), latest_manifest())
+    original = publisher.load_properties(publisher.ROOT / 'android-release.properties')
+    base = original['versionName'].rsplit('-custom.', 1)[0]
+    refs = json.loads(publisher.run(['gh', 'api', f'repos/{publisher.REPO}/git/matching-refs/tags/android-v{base}-custom.']).stdout)
+    pattern = re.compile(r'refs/tags/android-v' + re.escape(base) + r'-custom\.([1-9][0-9]*)$')
+    reserved = [int(match.group(1)) for item in refs if (match := pattern.fullmatch(item['ref']))]
+    value = next_config(original, latest_manifest(), reserved)
     publisher.run(['git', 'checkout', '-B', 'ci-android-release', source])
-    build_commit = commit_version(source, config)
+    build_commit = commit_version(source, value)
+    tag = 'android-v' + value['versionName']
+    # Reserve this version before parallel builds. Failed tags are skipped by future plans.
+    publisher.run(['git', '-c', 'user.name=github-actions[bot]', '-c',
+                   'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+                   'tag', '-a', tag, build_commit, '-m', 'Mobile ' + value['versionName']])
+    publisher.run(['git', 'push', 'origin', 'refs/tags/' + tag], capture=False)
+    with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+        output.write(f'version={value["versionName"]}\nversion_code={value["versionCode"]}\n'
+                     f'build_commit={build_commit}\ntag={tag}\n')
+
+
+def verify_build_source():
+    source = require_ci()
+    current, _ = publisher.source_state()
+    parent = publisher.run(['git', 'rev-parse', 'HEAD^']).stdout.strip()
+    if parent != source:
+        raise ValueError('Build commit is not the version-only child of this workflow source')
+    changes = publisher.run(['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', current]).stdout.splitlines()
+    if changes != ['android-release.properties']:
+        raise ValueError('Build commit contains changes other than its version')
+    return source, current
+
+
+def build():
+    source, _ = verify_build_source()
+    value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
     title = publisher.run(['git', 'log', '-1', '--format=%s', source]).stdout.strip()[:1000]
     notes = Path(os.environ['RUNNER_TEMP']) / 'flare-release-notes.md'
     notes.write_text(f'本次更新：{title}\n\n源代码：{source}\n', encoding='utf-8')
     folder = publisher.prepare(SimpleNamespace(notes_file=str(notes), gradle_arg=[
-        '--exclude-task=kmpPartiallyResolvedDependenciesChecker', '--max-workers=2', '--console=plain']), config)
-    publisher.write_json(publisher.ROOT / 'build' / 'ci-release-context.json', {
-        'sourceCommit': source, 'buildCommit': build_commit, 'folder': str(folder),
-    })
+        '--exclude-task=kmpPartiallyResolvedDependenciesChecker', '--max-workers=2', '--console=plain',
+        '-Pkotlin.compiler.execution.strategy=in-process']), value)
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-        output.write(f'folder={folder}\nversion={config["versionName"]}\n')
+        output.write(f'folder={folder}\n')
 
 
 def publish():
-    source = require_ci()
-    context = json.loads((publisher.ROOT / 'build' / 'ci-release-context.json').read_text(encoding='utf-8'))
-    current, _ = publisher.source_state()
-    parent = publisher.run(['git', 'rev-parse', 'HEAD^']).stdout.strip()
-    if context['sourceCommit'] != source or context['buildCommit'] != current or parent != source:
-        raise ValueError('Prepared build does not belong to this workflow source commit')
-    latest_source = json.loads(publisher.run(['gh', 'api', f'repos/{publisher.REPO}/git/ref/heads/master']).stdout)['object']['sha']
+    source, current = verify_build_source()
+    latest_source = json.loads(publisher.run(['gh', 'api', '-H', 'Cache-Control: no-cache',
+        f'repos/{publisher.REPO}/git/ref/heads/master']).stdout)['object']['sha']
     if latest_source != source:
         print('A newer master commit is queued; keeping the previous release until that build succeeds')
         return
-    folder = Path(context['folder']).resolve()
-    if folder.parent != (publisher.ROOT / 'build' / 'android-release').resolve():
-        raise ValueError('Prepared directory is outside the release output folder')
-    config = publisher.load_properties(publisher.ROOT / 'android-release.properties')
+    value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
+    folder = publisher.ROOT / 'build/android-release' / ('android-v' + value['versionName'])
+    from github_ios_release import validate_artifacts
+    ios_assets = validate_artifacts(publisher.ROOT / 'build/ios-release', value['versionName'],
+                                    int(value['versionCode']), source, current)
     publisher.previous_remote_manifest = latest_manifest
-    # The release tag includes the version-only child commit; master is never rewritten.
-    publisher.publish(folder, config, push_source=False)
+    publisher.publish(folder, value, push_source=False, extra_files=ios_assets)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['install-signing', 'prepare', 'publish', 'cleanup'])
+    parser.add_argument('command', choices=['install-signing', 'plan', 'build', 'publish', 'cleanup'])
     args = parser.parse_args()
     if args.command == 'install-signing':
         install_signing()
-    elif args.command == 'prepare':
-        prepare()
+    elif args.command == 'plan':
+        plan()
+    elif args.command == 'build':
+        build()
     elif args.command == 'publish':
         publish()
     else:

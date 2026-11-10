@@ -390,7 +390,7 @@ def prepare(args, config):
     return folder
 
 
-def publish(folder, config, *, push_source=True):
+def publish(folder, config, *, push_source=True, extra_files=()):
     validate_config(config)
     commit, source_hash = source_state()
     with (folder / MANIFEST_NAME).open("rb") as stream:
@@ -438,14 +438,20 @@ def publish(folder, config, *, push_source=True):
     if not existing_release:
         run(["gh", "release", "create", tag, "--repo", REPO, "--verify-tag", "--draft",
              "--title", f"Flare {config['versionName']}", "--notes-file", notes])
-    print("Uploading APK and manifest to a draft release…", flush=True)
-    run(["gh", "release", "upload", tag, apk, folder / MANIFEST_NAME,
-         "--repo", REPO, "--clobber"])
+    assets = [apk, folder / MANIFEST_NAME, *map(Path, extra_files)]
+    if len({asset.name for asset in assets}) != len(assets):
+        raise ValueError("Release asset filenames must be unique")
+    for asset in assets:
+        validate_path_segment(asset.name, "release asset")
+        if not asset.is_file() or not 0 < asset.stat().st_size < 2 * 1024 ** 3:
+            raise ValueError("Release asset is missing, empty or exceeds GitHub's file limit")
+    print("Uploading verified packages to a draft release…", flush=True)
+    run(["gh", "release", "upload", tag, *assets, "--repo", REPO, "--clobber"])
     # Read assets back before exposing the update through releases/latest.
     with tempfile.TemporaryDirectory(prefix="flare-release-verify-") as temp:
-        run(["gh", "release", "download", tag, "--repo", REPO, "--dir", temp,
-             "--pattern", apk.name, "--pattern", MANIFEST_NAME])
-        for local in (apk, folder / MANIFEST_NAME):
+        patterns = [value for asset in assets for value in ("--pattern", asset.name)]
+        run(["gh", "release", "download", tag, "--repo", REPO, "--dir", temp, *patterns])
+        for local in assets:
             if sha256(Path(temp) / local.name) != sha256(local):
                 raise ValueError("Uploaded asset differs from local file; release remains a draft")
     if source_state() != (commit, source_hash):

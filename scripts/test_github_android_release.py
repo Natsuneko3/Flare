@@ -32,6 +32,12 @@ class GithubReleaseTests(unittest.TestCase):
         self.assertEqual(actual['applicationId'], self.config()['applicationId'])
         self.assertEqual(actual['expectedSignerSha256'], self.config()['expectedSignerSha256'])
 
+    def test_failed_draft_tags_do_not_block_the_next_build(self):
+        previous = dict(applicationId='dev.dimension.flare.videofix',versionCode=1803,versionName='1.8.0-custom.3')
+        actual = self.ci.next_config(self.config(),previous,reserved=[3,4,6])
+        self.assertEqual(actual['versionName'],'1.8.0-custom.7')
+        self.assertEqual(actual['versionCode'],'1807')
+
     def test_new_upstream_base_keeps_its_custom_counter_and_advances_code(self):
         previous = dict(applicationId='dev.dimension.flare.videofix', versionCode=1809,
                         versionName='1.8.0-custom.9')
@@ -90,6 +96,7 @@ class GithubReleaseTests(unittest.TestCase):
             folder = Path(temp)
             apk = folder / release.apk_filename(config['versionName'], ['arm64-v8a'])
             apk.write_bytes(b'fixture apk')
+            ios_package=folder/'Flare-ios.ipa';ios_package.write_bytes(b'fixture signed iphone package')
             metadata = dict(applicationId=config['applicationId'], versionCode=int(config['versionCode']),
                             versionName=config['versionName'], minSdk=26, abis=['arm64-v8a'])
             manifest = release.make_manifest(apk, metadata, 'notes')
@@ -115,7 +122,7 @@ class GithubReleaseTests(unittest.TestCase):
                     output = '[]'
                 elif args[:3] == ['gh','release','download']:
                     destination = Path(args[args.index('--dir')+1])
-                    for item in [apk,folder/release.MANIFEST_NAME]:
+                    for item in [apk,folder/release.MANIFEST_NAME,ios_package]:
                         shutil.copy2(item,destination/item.name)
                 elif args[:3] == ['gh','release','edit']:
                     published = True
@@ -124,12 +131,15 @@ class GithubReleaseTests(unittest.TestCase):
                     patch.object(release,'inspect_apk',return_value=metadata), \
                     patch.object(release,'previous_remote_manifest',side_effect=lambda:manifest if published else None), \
                     patch('sys.stdout',new_callable=io.StringIO):
-                release.publish(folder,config,push_source=False)
+                release.publish(folder,config,push_source=False,extra_files=[ios_package])
             pushes = [command for command in commands if command[:2] == ['git','push']]
             self.assertEqual(pushes,[['git','push','origin','refs/tags/'+manifest['releaseTag']]])
             download = next(i for i,c in enumerate(commands) if c[:3] == ['gh','release','download'])
             edit = next(i for i,c in enumerate(commands) if c[:3] == ['gh','release','edit'])
             self.assertLess(download,edit,'Assets must be read back before exposing the new update')
+            upload=next(c for c in commands if c[:3]==['gh','release','upload'])
+            self.assertIn(str(ios_package),upload)
+            self.assertIn(ios_package.name,commands[download])
 
     def test_signing_key_is_private_and_never_written_into_source(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -151,7 +161,7 @@ class GithubReleaseTests(unittest.TestCase):
             (root/'build'/'ci-release-context.json').write_text(json.dumps(dict(sourceCommit='a'*40,buildCommit='b'*40,folder='unused')))
             def run(args,**kwargs):
                 return subprocess.CompletedProcess(args,0,stdout='a'*40 if args[0]=='git' else json.dumps({'object':{'sha':'c'*40}}))
-            with patch.object(self.ci,'require_ci',return_value='a'*40),patch.object(self.ci.publisher,'ROOT',root), \
+            with patch.object(self.ci,'verify_build_source',return_value=('a'*40,'b'*40)),patch.object(self.ci.publisher,'ROOT',root), \
                     patch.object(self.ci.publisher,'source_state',return_value=('b'*40,'hash')), \
                     patch.object(self.ci.publisher,'run',side_effect=run),patch.object(self.ci.publisher,'publish') as publish, \
                     patch('sys.stdout',new_callable=io.StringIO):

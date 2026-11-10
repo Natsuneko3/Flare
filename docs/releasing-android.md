@@ -17,7 +17,7 @@ An ignored root `signing.properties` can later point to a stable copy of that sa
 
 On Windows, use `python` instead of `python3` in the commands below. The release tool selects `gradlew.bat` and SDK `.exe`/`.bat` tools, including SDK paths with spaces and escaped `sdk.dir` values in `local.properties`. `JAVA_HOME` must point to the installed JDK.
 
-Fork CI compiles debug Android variants and retains shared, desktop, lint and device checks without the private release keystore. Official Apple runner jobs, store bundles and Google Play/GitHub publishing jobs are restricted to `flaresocialapp/Flare`; this fork publishes its signed APK and `flare-update.json` through `Android APK Release` or the local release tool below.
+Fork CI compiles debug Android variants and retains shared, desktop, lint and device checks without the private release keystore. Official Apple runner jobs, store bundles and Google Play/GitHub publishing jobs are restricted to `flaresocialapp/Flare`; this fork publishes its signed APK and `flare-update.json` through `Mobile Release` or the local release tool below.
 
 ## Automatic GitHub builds and manual app updates
 
@@ -25,11 +25,21 @@ Pushing application changes to `master` starts `.github/workflows/android-apk-re
 
 The workflow runs publisher contract tests and Android unit tests, builds the release APK with JDK 25, and reuses the existing certificate. The only signing Secret is `FLARE_ANDROID_KEYSTORE_BASE64`: the base64 encoding of the original Android debug keystore already used for this app. Its default alias and passwords are unchanged. Store this binary only in repository Actions Secrets, never in Git or an artifact. The runner restores it in its temporary directory with private permissions and removes it after the job. Both Gradle and APK inspection verify `expectedSignerSha256`.
 
-Versions are calculated from both `android-release.properties` and the latest published manifest, so every update has a higher Android version code. CI creates a version-only child commit of the pushed source and attaches the release tag to that exact build commit. It never pushes the generated version commit back to `master`; the release tag contains the reproducible source and effective version. If a newer `master` push is already queued, the obsolete build does not replace the latest release. Concurrent release jobs are serialized.
+Versions are calculated from both `android-release.properties` and the latest published manifest, so every update has a higher Android version code. A planning job reserves a unique tag and creates a version-only child commit of the pushed source; both platform jobs build that exact commit. Tags left by failed builds are skipped by later plans and do not become public Releases. It never pushes the generated version commit back to `master`; the release tag contains the reproducible source and effective version. If a newer `master` push is already queued, the obsolete build does not replace the latest release. Concurrent release jobs are serialized.
 
-Publication creates a draft, uploads the signed APK and `flare-update.json`, downloads and hashes both files, then publishes the release as latest. A failed build or verification leaves the previous update available. Local release behavior is unchanged; local publishers must choose a version higher than the latest CI release instead of assuming the base configuration is the latest installed version.
+Publication waits for both platform jobs, creates a draft, uploads the signed APK, signed IPA and their metadata, downloads and hashes every asset, then publishes the release as latest. A failed build or verification leaves the previous update available. Local release behavior is unchanged; local publishers must choose a version higher than the latest CI release instead of assuming the base configuration is the latest installed version.
 
 The package ID stays `dev.dimension.flare.videofix`, the certificate stays the same, and the version code increases. Android therefore upgrades the existing app while preserving its data. The existing **Settings → Check for updates** button lets the user explicitly check, download and start the system update installer. CI does not install anything on a device.
+
+## Signed iPhone package in the same release
+
+The same workflow builds the iOS target in parallel on GitHub's `xcode-27` macOS runner and includes `Flare-<version>-ios.ipa` plus `flare-ios-build.json` to that release. Both platform builds must succeed before a new public release is created.
+
+`ios-release.properties` records the existing iPhone identity: Bundle ID `dev.dimension.flare.xiamao`, its Open in Flare extension, development team, certificate fingerprint and installed build baseline. CI overrides only the generated Xcode project, preserving upstream project files. The iOS marketing version uses the numeric base (for example `1.8.0`); its build number matches the increasing Android release code. Both app and extension must match the existing identity and use physical iPhone builds.
+
+The encrypted repository Secrets are `FLARE_IOS_CERTIFICATE_P12_BASE64`, `FLARE_IOS_CERTIFICATE_PASSWORD`, `FLARE_IOS_APP_PROFILE_BASE64` and `FLARE_IOS_EXTENSION_PROFILE_BASE64`. They contain only the existing selected signing identity and its matching profiles. A temporary runner keychain holds the certificate; signing files and keychain are removed after the job. The private certificate is never uploaded as a release artifact.
+
+The current personal development profiles expire on 2026-11-14 and cover the existing iPhone. This is a development-signed update, not App Store distribution. Refresh profiles with the same Apple account before expiry and update the two profile Secrets; if Apple also rotates the certificate, update the existing identity configuration and encrypted certificate together. Expired profiles or a different Bundle ID/team/certificate stop the iOS job. Manual IPA installation must use the same identity and an authorized device to preserve the existing app data.
 
 ## Release in one command
 
