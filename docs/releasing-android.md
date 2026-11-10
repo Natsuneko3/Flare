@@ -17,7 +17,19 @@ An ignored root `signing.properties` can later point to a stable copy of that sa
 
 On Windows, use `python` instead of `python3` in the commands below. The release tool selects `gradlew.bat` and SDK `.exe`/`.bat` tools, including SDK paths with spaces and escaped `sdk.dir` values in `local.properties`. `JAVA_HOME` must point to the installed JDK.
 
-Fork CI compiles debug Android variants and retains shared, desktop, lint and device checks without the private release keystore. Official Apple runner jobs, store bundles and Google Play/GitHub publishing jobs are restricted to `flaresocialapp/Flare`; this fork continues to publish its APK and `flare-update.json` through the local release tool below.
+Fork CI compiles debug Android variants and retains shared, desktop, lint and device checks without the private release keystore. Official Apple runner jobs, store bundles and Google Play/GitHub publishing jobs are restricted to `flaresocialapp/Flare`; this fork publishes its signed APK and `flare-update.json` through `Android APK Release` or the local release tool below.
+
+## Automatic GitHub builds and manual app updates
+
+Pushing application changes to `master` starts `.github/workflows/android-apk-release.yml`. A manual **Run workflow** is also available on the repository Actions page. Documentation-only pushes are ignored, and GitHub's `[skip ci]` commit directive also skips automatic runs; use the manual workflow when needed. Pull requests and other forks cannot run this signing/publishing job.
+
+The workflow runs publisher contract tests and Android unit tests, builds the release APK with JDK 25, and reuses the existing certificate. The only signing Secret is `FLARE_ANDROID_KEYSTORE_BASE64`: the base64 encoding of the original Android debug keystore already used for this app. Its default alias and passwords are unchanged. Store this binary only in repository Actions Secrets, never in Git or an artifact. The runner restores it in its temporary directory with private permissions and removes it after the job. Both Gradle and APK inspection verify `expectedSignerSha256`.
+
+Versions are calculated from both `android-release.properties` and the latest published manifest, so every update has a higher Android version code. CI creates a version-only child commit of the pushed source and attaches the release tag to that exact build commit. It never pushes the generated version commit back to `master`; the release tag contains the reproducible source and effective version. If a newer `master` push is already queued, the obsolete build does not replace the latest release. Concurrent release jobs are serialized.
+
+Publication creates a draft, uploads the signed APK and `flare-update.json`, downloads and hashes both files, then publishes the release as latest. A failed build or verification leaves the previous update available. Local release behavior is unchanged; local publishers must choose a version higher than the latest CI release instead of assuming the base configuration is the latest installed version.
+
+The package ID stays `dev.dimension.flare.videofix`, the certificate stays the same, and the version code increases. Android therefore upgrades the existing app while preserving its data. The existing **Settings → Check for updates** button lets the user explicitly check, download and start the system update installer. CI does not install anything on a device.
 
 ## Release in one command
 

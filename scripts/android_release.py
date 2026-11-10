@@ -390,7 +390,7 @@ def prepare(args, config):
     return folder
 
 
-def publish(folder, config):
+def publish(folder, config, *, push_source=True):
     validate_config(config)
     commit, source_hash = source_state()
     with (folder / MANIFEST_NAME).open("rb") as stream:
@@ -420,8 +420,9 @@ def publish(folder, config):
         raise ValueError("Local release tag points to another commit; never overwrite release tags")
     if existing.returncode:
         run(["git", "tag", "-a", tag, commit, "-m", f"Android {config['versionName']}"])
-    print(f"Pushing source commit and tag {tag}…", flush=True)
-    run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], capture=False)
+    print(f"Pushing verified release tag {tag}…", flush=True)
+    if push_source:
+        run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], capture=False)
     run(["git", "push", "origin", f"refs/tags/{tag}"], capture=False)
     remote = run(["git", "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"]).stdout
     remote_commits = {line.split()[0] for line in remote.splitlines()}
