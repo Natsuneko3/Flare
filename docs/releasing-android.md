@@ -35,7 +35,7 @@ The package ID stays `dev.dimension.flare.videofix`, the certificate stays the s
 
 The same workflow builds the iOS target in parallel on GitHub's `xcode-27` macOS runner and includes `Flare-<version>-ios.ipa` plus `flare-ios-build.json` to that release. Both platform builds must succeed before a new public release is created.
 
-The Kotlin/Native Release framework builds first, with a single worker and an 8 GiB Java heap, before Xcode compiles Swift. Its progress streams directly to the job log. The previous 4 GiB heap was insufficient for release optimization of the exported shared framework. Xcode then reuses that framework and builds with one job to limit concurrent memory use.
+The shared Kotlin libraries compile first with one worker and a 4 GiB heap. That JVM exits before a fresh process links the Release framework with a 6 GiB heap, keeping dependency compiler state out of the optimizer. A 5 GiB isolated link still ran out of memory; the 6 GiB isolated link passed local verification. An 8 GiB heap budget exceeds the hosted ARM runner's 7 GiB RAM and can page heavily. Progress streams directly to the job log. Xcode then reuses the framework and builds with one job to limit concurrent memory use.
 
 `ios-release.properties` records the existing iPhone identity: Bundle ID `dev.dimension.flare.xiamao`, its Open in Flare extension, development team, certificate fingerprint and installed build baseline. CI overrides only the generated Xcode project, preserving upstream project files. The iOS marketing version uses the numeric base (for example `1.8.0`); its build number matches the increasing Android release code. Both app and extension must match the existing identity and use physical iPhone builds.
 

@@ -123,14 +123,16 @@ def build(version, code):
     environment = dict(os.environ)
     for key in ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']:
         environment.pop(key, None)
-    # The exported shared framework needs more than 4 GiB during Native release
-    # optimization. Build it before Xcode so Swift compilation does not compete
-    # for memory, and stream Gradle progress directly instead of Xcode buffering it.
-    jvm_args = '-Xmx8G -XX:+UseParallelGC -Dfile.encoding=UTF-8'
-    print('Building the shared iPhone Release framework with an 8 GiB heap', flush=True)
-    publisher.run(['./gradlew', '--no-daemon', '--max-workers=1', '--console=plain',
-                   f'-Dorg.gradle.jvmargs={jvm_args}',
-                   '-Pkotlin.compiler.execution.strategy=in-process',
+    # Compile klibs in a separate JVM so compiler state is released before LTO.
+    # Keep the linker budget below the hosted ARM runner's 7 GiB RAM.
+    gradle = ['./gradlew', '--no-daemon', '--max-workers=1', '--console=plain',
+              '-Pkotlin.compiler.execution.strategy=in-process']
+    print('Compiling shared iPhone libraries with a 4 GiB heap', flush=True)
+    publisher.run([*gradle, '-Dorg.gradle.jvmargs=-Xmx4G -Dfile.encoding=UTF-8',
+                   ':apple-shared:compileKotlinIosArm64'], env=environment, capture=False)
+    jvm_args = '-Xmx6G -Dfile.encoding=UTF-8'
+    print('Linking the iPhone Release framework in a fresh 6 GiB JVM', flush=True)
+    publisher.run([*gradle, f'-Dorg.gradle.jvmargs={jvm_args}',
                    ':apple-shared:linkReleaseFrameworkIosArm64'], env=environment, capture=False)
     publisher.run(['xcodebuild', 'build', '-project', 'appleApp/Flare.xcodeproj', '-scheme', 'iOS',
                    '-configuration', 'Release', '-sdk', 'iphoneos', '-destination', 'generic/platform=iOS',
