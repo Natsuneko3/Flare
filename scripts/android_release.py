@@ -390,7 +390,7 @@ def prepare(args, config):
     return folder
 
 
-def publish(folder, config, *, push_source=True, extra_files=()):
+def publish(folder, config, *, push_source=True, extra_files=(), can_publish=None):
     validate_config(config)
     commit, source_hash = source_state()
     with (folder / MANIFEST_NAME).open("rb") as stream:
@@ -456,6 +456,9 @@ def publish(folder, config, *, push_source=True, extra_files=()):
                 raise ValueError("Uploaded asset differs from local file; release remains a draft")
     if source_state() != (commit, source_hash):
         raise ValueError("Source changed during upload; release remains a draft")
+    if can_publish is not None and not can_publish():
+        print("A newer application commit is queued; keeping this release as a draft", flush=True)
+        return
     run(["gh", "release", "edit", tag, "--repo", REPO, "--draft=false", "--latest",
          "--notes-file", notes, "--verify-tag"])
     for attempt in range(5):

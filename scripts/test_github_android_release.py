@@ -89,7 +89,7 @@ class GithubReleaseTests(unittest.TestCase):
                     self.assertRaises(ValueError):
                 self.ci.latest_manifest()
 
-    def test_ci_publication_pushes_only_the_verified_tag_and_reads_assets_back(self):
+    def _exercise_ci_publication(self, allow_publication):
         release = self.ci.publisher
         config = self.config()
         with tempfile.TemporaryDirectory() as temp:
@@ -127,19 +127,56 @@ class GithubReleaseTests(unittest.TestCase):
                 elif args[:3] == ['gh','release','edit']:
                     published = True
                 return subprocess.CompletedProcess(args,code,stdout=output)
+            def can_publish():
+                commands.append(['publication-gate'])
+                return allow_publication
             with patch.object(release,'run',side_effect=run), patch.object(release,'source_state',return_value=('a'*40,'b'*64)), \
                     patch.object(release,'inspect_apk',return_value=metadata), \
                     patch.object(release,'previous_remote_manifest',side_effect=lambda:manifest if published else None), \
                     patch('sys.stdout',new_callable=io.StringIO):
-                release.publish(folder,config,push_source=False,extra_files=[ios_package])
+                release.publish(folder,config,push_source=False,extra_files=[ios_package],can_publish=can_publish)
             pushes = [command for command in commands if command[:2] == ['git','push']]
             self.assertEqual(pushes,[['git','push','origin','refs/tags/'+manifest['releaseTag']]])
             download = next(i for i,c in enumerate(commands) if c[:3] == ['gh','release','download'])
-            edit = next(i for i,c in enumerate(commands) if c[:3] == ['gh','release','edit'])
-            self.assertLess(download,edit,'Assets must be read back before exposing the new update')
+            gate = commands.index(['publication-gate'])
+            self.assertLess(download,gate,'The final source check must follow asset readback')
+            if allow_publication:
+                edit = next(i for i,c in enumerate(commands) if c[:3] == ['gh','release','edit'])
+                self.assertLess(gate,edit,'The final source check must precede publication')
+            else:
+                self.assertFalse(published,'A push during upload must leave the release unpublished')
             upload=next(c for c in commands if c[:3]==['gh','release','upload'])
             self.assertIn(str(ios_package),upload)
             self.assertIn(ios_package.name,commands[download])
+
+    def test_ci_publication_pushes_only_the_verified_tag_and_reads_assets_back(self):
+        self._exercise_ci_publication(True)
+
+    def test_push_during_asset_upload_leaves_the_release_as_a_draft(self):
+        self._exercise_ci_publication(False)
+
+    def test_docs_only_descendants_do_not_discard_an_application_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            def git(*args):
+                return subprocess.run(['git','-C',temp,*args],check=True,capture_output=True,text=True).stdout.strip()
+            git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.invalid')
+            git('remote','add','origin',temp)
+            (root/'app.kt').write_text('application code')
+            git('add','.');git('commit','-qm','application update')
+            source=git('rev-parse','HEAD')
+            (root/'README.md').write_text('documentation')
+            git('add','.');git('commit','-qm','docs only')
+            actual_run=self.ci.publisher.run
+            def run(args,**kwargs):
+                if args[:2]==['gh','api']:
+                    return subprocess.CompletedProcess(args,0,stdout=json.dumps({'object':{'sha':git('rev-parse','HEAD')}}))
+                return actual_run(args,**kwargs)
+            with patch.object(self.ci.publisher,'ROOT',root),patch.object(self.ci.publisher,'run',side_effect=run):
+                self.assertTrue(self.ci.source_can_publish(source))
+                # A code deletion renamed to Markdown still changes the application.
+                git('mv','app.kt','notes.md');git('commit','-qm','remove application code')
+                self.assertFalse(self.ci.source_can_publish(source))
 
     def test_signing_key_is_private_and_never_written_into_source(self):
         with tempfile.TemporaryDirectory() as temp:

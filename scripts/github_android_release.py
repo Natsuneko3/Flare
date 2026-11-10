@@ -159,11 +159,30 @@ def build():
         output.write(f'folder={folder}\n')
 
 
-def publish():
-    source, current = verify_build_source()
+def source_can_publish(source):
     latest_source = json.loads(publisher.run(['gh', 'api', '-H', 'Cache-Control: no-cache',
         f'repos/{publisher.REPO}/git/ref/heads/master']).stdout)['object']['sha']
-    if latest_source != source:
+    if not re.fullmatch(r'[0-9a-f]{40}', latest_source):
+        raise ValueError('GitHub returned an invalid master commit')
+    if latest_source == source:
+        return True
+    # Trigger-excluded docs may land while an application build is running.
+    # Fetch and compare the full diff instead of the API's truncated file list.
+    root = publisher.ROOT
+    publisher.run(['git', 'fetch', '--no-tags', 'origin', latest_source], cwd=root)
+    ancestor = publisher.run(['git', 'merge-base', '--is-ancestor', source, latest_source], cwd=root, check=False)
+    if ancestor.returncode == 1:
+        return False
+    if ancestor.returncode:
+        raise ValueError('Cannot verify the relationship to current master')
+    paths = publisher.run(['git', 'diff', '--name-only', '--no-renames', '-z', source, latest_source, '--'], cwd=root).stdout
+    return all(path.endswith('.md') or path.startswith('.github/ISSUE_TEMPLATE/')
+               for path in paths.split('\0') if path)
+
+
+def publish():
+    source, current = verify_build_source()
+    if not source_can_publish(source):
         print('A newer master commit is queued; keeping the previous release until that build succeeds')
         return
     value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
@@ -172,7 +191,8 @@ def publish():
     ios_assets = validate_artifacts(publisher.ROOT / 'build/ios-release', value['versionName'],
                                     int(value['versionCode']), source, current)
     publisher.previous_remote_manifest = latest_manifest
-    publisher.publish(folder, value, push_source=False, extra_files=ios_assets)
+    publisher.publish(folder, value, push_source=False, extra_files=ios_assets,
+                      can_publish=lambda: source_can_publish(source))
 
 
 def main():
