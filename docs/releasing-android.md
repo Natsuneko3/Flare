@@ -35,6 +35,8 @@ The package ID stays `dev.dimension.flare.videofix`, the certificate stays the s
 
 The same workflow builds the iOS target in parallel on GitHub's `xcode-27` macOS runner and includes `Flare-<version>-ios.ipa` plus `flare-ios-build.json` to that release. Both platform builds must succeed before a new public release is created.
 
+The Kotlin/Native Release framework builds first, with a single worker and an 8 GiB Java heap, before Xcode compiles Swift. Its progress streams directly to the job log. The previous 4 GiB heap was insufficient for release optimization of the exported shared framework. Xcode then reuses that framework and builds with one job to limit concurrent memory use.
+
 `ios-release.properties` records the existing iPhone identity: Bundle ID `dev.dimension.flare.xiamao`, its Open in Flare extension, development team, certificate fingerprint and installed build baseline. CI overrides only the generated Xcode project, preserving upstream project files. The iOS marketing version uses the numeric base (for example `1.8.0`); its build number matches the increasing Android release code. Both app and extension must match the existing identity and use physical iPhone builds.
 
 The encrypted repository Secrets are `FLARE_IOS_CERTIFICATE_P12_BASE64`, `FLARE_IOS_CERTIFICATE_PASSWORD`, `FLARE_IOS_APP_PROFILE_BASE64` and `FLARE_IOS_EXTENSION_PROFILE_BASE64`. They contain only the existing selected signing identity and its matching profiles. A temporary runner keychain holds the certificate; signing files and keychain are removed after the job. The private certificate is never uploaded as a release artifact.

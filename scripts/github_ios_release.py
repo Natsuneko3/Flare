@@ -123,12 +123,21 @@ def build(version, code):
     environment = dict(os.environ)
     for key in ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']:
         environment.pop(key, None)
+    # The exported shared framework needs more than 4 GiB during Native release
+    # optimization. Build it before Xcode so Swift compilation does not compete
+    # for memory, and stream Gradle progress directly instead of Xcode buffering it.
+    jvm_args = '-Xmx8G -XX:+UseParallelGC -Dfile.encoding=UTF-8'
+    print('Building the shared iPhone Release framework with an 8 GiB heap', flush=True)
+    publisher.run(['./gradlew', '--no-daemon', '--max-workers=1', '--console=plain',
+                   f'-Dorg.gradle.jvmargs={jvm_args}',
+                   '-Pkotlin.compiler.execution.strategy=in-process',
+                   ':apple-shared:linkReleaseFrameworkIosArm64'], env=environment, capture=False)
     publisher.run(['xcodebuild', 'build', '-project', 'appleApp/Flare.xcodeproj', '-scheme', 'iOS',
                    '-configuration', 'Release', '-sdk', 'iphoneos', '-destination', 'generic/platform=iOS',
-                   '-derivedDataPath', derived, '-jobs', '2', 'ARCHS=arm64',
+                   '-derivedDataPath', derived, '-jobs', '1', 'ARCHS=arm64',
                    'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO',
                    f'MARKETING_VERSION={version.split("-custom.", 1)[0]}', f'CURRENT_PROJECT_VERSION={code}',
-                   'GRADLE_JVM_ARGS=-Xmx4G -Dfile.encoding=UTF-8'], env=environment, capture=False)
+                   f'GRADLE_JVM_ARGS={jvm_args}'], env=environment, capture=False)
     staging = temp_path('flare-ios-staging')
     app = staging / 'Payload/Flare.app'
     if staging.exists():
