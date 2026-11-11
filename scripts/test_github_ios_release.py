@@ -54,6 +54,13 @@ class IOSReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ios.validate_app_info({**info,'CFBundleVersion':'1800'},self.config['bundleId'],'1.8.0-custom.4',1800,self.config)
 
+    def test_plain_version_is_the_ios_marketing_version(self):
+        info=dict(CFBundleIdentifier=self.config['bundleId'],CFBundleVersion='1809',
+                  CFBundleShortVersionString='1.8.1',CFBundleSupportedPlatforms=['iPhoneOS'])
+        ios.validate_app_info(info,self.config['bundleId'],'1.8.1',1809,self.config)
+        ios.publisher.validate_config(dict(applicationId='dev.dimension.flare.videofix',versionCode='1809',
+            versionName='1.8.1',expectedSignerSha256='f0'*32))
+
     def test_publication_rejects_a_changed_ipa_or_another_app_identity(self):
         version='1.8.0-custom.4';code=1804
         with tempfile.TemporaryDirectory() as temp:

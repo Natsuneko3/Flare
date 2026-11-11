@@ -25,27 +25,51 @@ def require_ci():
 def next_config(config, previous, reserved=()):
     publisher.validate_config(config)
     updated = dict(config)
-    base, counter = config['versionName'].rsplit('-custom.', 1)
-    code, number = int(config['versionCode']) + 1, int(counter) + 1
+    major, minor, patch = publisher.version_parts(config['versionName'])
+    code, number = int(config['versionCode']) + 1, patch + 1
     if previous:
         if previous.get('applicationId') != config['applicationId']:
             raise ValueError('Published applicationId differs; refusing to create another app')
         if type(previous.get('versionCode')) is not int:
             raise ValueError('Published versionCode is invalid')
-        if not re.fullmatch(publisher.VERSION_PATTERN, previous.get('versionName', '')):
-            raise ValueError('Published versionName is invalid')
-        old_base, old_counter = previous['versionName'].rsplit('-custom.', 1)
-        if tuple(map(int, base.split('.'))) < tuple(map(int, old_base.split('.'))):
+        old_major, old_minor, old_patch = publisher.version_parts(previous.get('versionName', ''))
+        if (major, minor) < (old_major, old_minor):
             raise ValueError('Source is based on an older upstream version than the published app')
         code = max(code, previous['versionCode'] + 1)
-        number = max(int(counter), int(old_counter)) + 1 if base == old_base else int(counter)
-    available = max(number, max(reserved, default=0) + 1)
-    code += available - number
-    updated.update(versionCode=str(code), versionName=f'{base}-custom.{available}')
+        number = max(patch, old_patch) + 1 if (major, minor) == (old_major, old_minor) else patch
+    for release in reserved:
+        reserved_code = release.get('versionCode')
+        if type(reserved_code) is not int or not 1780 < reserved_code <= publisher.MAX_VERSION_CODE:
+            raise ValueError('Reserved versionCode is invalid')
+        reserved_major, reserved_minor, reserved_patch = publisher.version_parts(release.get('versionName', ''))
+        if (major, minor) < (reserved_major, reserved_minor):
+            raise ValueError('Source is based on an older version line than a reserved release')
+        code = max(code, reserved_code + 1)
+        if (major, minor) == (reserved_major, reserved_minor) and '-custom.' not in release['versionName']:
+            number = max(number, reserved_patch + 1)
+    updated.update(versionCode=str(code), versionName=f'{major}.{minor}.{number}')
     publisher.validate_config(updated)
     if previous:
         publisher.validate_version_advance(updated, previous)
     return updated
+
+
+def reserved_releases():
+    root = publisher.ROOT
+    tags = publisher.run(['git', 'for-each-ref', '--format=%(refname:short)',
+                          'refs/tags/android-v*'], cwd=root).stdout.splitlines()
+    releases = []
+    for tag in tags:
+        version = tag.removeprefix('android-v')
+        if not re.fullmatch(publisher.VERSION_PATTERN, version):
+            continue
+        contents = publisher.run(['git', 'show', f'{tag}:android-release.properties'], cwd=root).stdout
+        value = publisher.parse_properties(contents)
+        publisher.validate_config(value)
+        if value['versionName'] != version:
+            raise ValueError('Reserved tag differs from its committed release version')
+        releases.append(dict(versionName=version, versionCode=int(value['versionCode'])))
+    return releases
 
 
 def latest_manifest():
@@ -116,11 +140,7 @@ def plan():
     source = require_ci()
     publisher.require_auth()
     original = publisher.load_properties(publisher.ROOT / 'android-release.properties')
-    base = original['versionName'].rsplit('-custom.', 1)[0]
-    refs = json.loads(publisher.run(['gh', 'api', f'repos/{publisher.REPO}/git/matching-refs/tags/android-v{base}-custom.']).stdout)
-    pattern = re.compile(r'refs/tags/android-v' + re.escape(base) + r'-custom\.([1-9][0-9]*)$')
-    reserved = [int(match.group(1)) for item in refs if (match := pattern.fullmatch(item['ref']))]
-    value = next_config(original, latest_manifest(), reserved)
+    value = next_config(original, latest_manifest(), reserved_releases())
     publisher.run(['git', 'checkout', '-B', 'ci-android-release', source])
     build_commit = commit_version(source, value)
     tag = 'android-v' + value['versionName']

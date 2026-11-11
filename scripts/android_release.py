@@ -24,7 +24,8 @@ MAX_VERSION_CODE = 2100000000
 MAX_METADATA_BYTES = 64 * 1024
 MAX_APK_BYTES = 256 * 1024 * 1024
 SAFE_PATH_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
-VERSION_PATTERN = r"[0-9]+\.[0-9]+\.[0-9]+-custom\.[1-9][0-9]*"
+# Read historical releases as well as the plain versions generated from now on.
+VERSION_PATTERN = r"[0-9]+\.[0-9]+\.[0-9]+(?:-custom\.[1-9][0-9]*)?"
 MANIFEST_NAME = "flare-update.json"
 PUBLIC_MANIFEST = f"https://github.com/{REPO}/releases/latest/download/{MANIFEST_NAME}"
 
@@ -40,8 +41,12 @@ def run(args, *, cwd=ROOT, capture=True, env=None, check=True):
 
 
 def load_properties(path):
+    return parse_properties(path.read_text(encoding="utf-8"))
+
+
+def parse_properties(text):
     properties = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line and not line.startswith(("#", "!")):
             key, value = line.split("=", 1)
@@ -51,14 +56,19 @@ def load_properties(path):
     return properties
 
 
+def version_parts(version):
+    if not isinstance(version, str) or not re.fullmatch(VERSION_PATTERN, version):
+        raise ValueError("versionName must use MAJOR.MINOR.PATCH (historical custom versions are also readable)")
+    return tuple(map(int, version.split("-custom.", 1)[0].split(".")))
+
+
 def validate_config(config):
     if config.get("applicationId") != APPLICATION_ID:
         raise ValueError("applicationId must preserve the installed fork's package ID")
     code = config.get("versionCode", "")
     if not re.fullmatch(r"[1-9][0-9]*", code) or not 1780 < int(code) <= MAX_VERSION_CODE:
         raise ValueError("versionCode must be greater than 1780 and at most 2100000000")
-    if not re.fullmatch(VERSION_PATTERN, config.get("versionName", "")):
-        raise ValueError("versionName must use MAJOR.MINOR.PATCH-custom.N")
+    version_parts(config.get("versionName", ""))
     validate_path_segment(f"android-v{config['versionName']}", "releaseTag")
     apk_filename(config["versionName"], ["arm64-v8a"])
     if not re.fullmatch(r"[0-9a-f]{64}", config.get("expectedSignerSha256", "")):
@@ -69,8 +79,8 @@ def bump_version(config):
     validate_config(config)
     result = dict(config)
     result["versionCode"] = str(int(config["versionCode"]) + 1)
-    prefix, number = config["versionName"].rsplit(".", 1)
-    result["versionName"] = f"{prefix}.{int(number) + 1}"
+    major, minor, patch = version_parts(config["versionName"])
+    result["versionName"] = f"{major}.{minor}.{patch + 1}"
     validate_config(result)
     return result
 
@@ -476,7 +486,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true", help="Test/build/verify without GitHub authentication or upload")
     mode.add_argument("--publish-existing", type=Path, metavar="DIRECTORY", help="Verify and publish a prepared release directory")
-    mode.add_argument("--bump-version", action="store_true", help="Increment versionCode and custom.N; commit this change before building")
+    mode.add_argument("--bump-version", action="store_true", help="Increment versionCode and PATCH; commit this change before building")
     parser.add_argument("--notes-file", help="UTF-8 release notes file (required when building)")
     parser.add_argument("--gradle-arg", action="append", default=[], help="Additional Gradle option; use --gradle-arg=--option")
     args = parser.parse_args()

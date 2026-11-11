@@ -28,23 +28,59 @@ class GithubReleaseTests(unittest.TestCase):
                         versionName='1.8.0-custom.9')
         actual = self.ci.next_config(self.config(), previous)
         self.assertEqual(actual['versionCode'], '1810')
-        self.assertEqual(actual['versionName'], '1.8.0-custom.10')
+        self.assertEqual(actual['versionName'], '1.8.1')
         self.assertEqual(actual['applicationId'], self.config()['applicationId'])
         self.assertEqual(actual['expectedSignerSha256'], self.config()['expectedSignerSha256'])
 
     def test_failed_draft_tags_do_not_block_the_next_build(self):
         previous = dict(applicationId='dev.dimension.flare.videofix',versionCode=1803,versionName='1.8.0-custom.3')
-        actual = self.ci.next_config(self.config(),previous,reserved=[3,4,6])
-        self.assertEqual(actual['versionName'],'1.8.0-custom.7')
+        actual = self.ci.next_config(self.config(),previous,reserved=[
+            dict(versionName='1.8.0-custom.3',versionCode=1803),
+            dict(versionName='1.8.0-custom.4',versionCode=1804),
+            dict(versionName='1.8.0-custom.6',versionCode=1806)])
+        self.assertEqual(actual['versionName'],'1.8.1')
         self.assertEqual(actual['versionCode'],'1807')
 
-    def test_new_upstream_base_keeps_its_custom_counter_and_advances_code(self):
+    def test_new_minor_base_keeps_its_version_and_advances_code(self):
         previous = dict(applicationId='dev.dimension.flare.videofix', versionCode=1809,
                         versionName='1.8.0-custom.9')
         config = self.config(); config['versionName'] = '1.9.0-custom.1'
         actual = self.ci.next_config(config, previous)
         self.assertEqual(actual['versionCode'], '1810')
-        self.assertEqual(actual['versionName'], '1.9.0-custom.1')
+        self.assertEqual(actual['versionName'], '1.9.0')
+
+    def test_plain_releases_increment_patch_without_a_custom_suffix(self):
+        config={**self.config(),'versionName':'1.8.0','versionCode':'1808'}
+        previous=dict(applicationId=config['applicationId'],versionName='1.8.12',versionCode=1820)
+        actual=self.ci.next_config(config,previous)
+        self.assertEqual(actual['versionName'],'1.8.13')
+        self.assertEqual(actual['versionCode'],'1821')
+
+    def test_reserved_plain_tags_skip_versions_and_use_their_real_build_codes(self):
+        config={**self.config(),'versionName':'1.8.0','versionCode':'1808'}
+        previous=dict(applicationId=config['applicationId'],versionName='1.8.0-custom.8',versionCode=1808)
+        actual=self.ci.next_config(config,previous,reserved=[
+            dict(versionName='1.8.0-custom.9',versionCode=1810),
+            dict(versionName='1.8.1',versionCode=1811),
+            dict(versionName='1.8.3',versionCode=1850)])
+        self.assertEqual(actual['versionName'],'1.8.4')
+        self.assertEqual(actual['versionCode'],'1851')
+
+    def test_reserved_tag_metadata_is_read_from_real_legacy_and_plain_commits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            def git(*args):
+                return subprocess.run(['git','-C',temp,*args],check=True,capture_output=True,text=True).stdout.strip()
+            git('init','-q');git('config','user.name','Test');git('config','user.email','test@example.invalid')
+            for version,code in [('1.8.0-custom.8',1808),('1.8.1',1820)]:
+                config={**self.config(),'versionName':version,'versionCode':str(code)}
+                (root/'android-release.properties').write_text(''.join(f'{k}={v}\n' for k,v in config.items()))
+                git('add','.');git('commit','-qm',version);git('tag','-a','android-v'+version,'-m',version)
+            git('tag','unrelated-tag')
+            with patch.object(self.ci.publisher,'ROOT',root):
+                reserved=self.ci.reserved_releases()
+            self.assertEqual({(r['versionName'],r['versionCode']) for r in reserved},
+                             {('1.8.0-custom.8',1808),('1.8.1',1820)})
 
     def test_stale_base_wrong_package_and_overflow_are_rejected(self):
         for previous in [dict(applicationId='other.app', versionCode=1804, versionName='1.8.0-custom.4'),

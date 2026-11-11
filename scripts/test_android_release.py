@@ -121,11 +121,20 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertEqual(self.release.apk_filename("1.7.8-custom.1", []),
                          "Flare-1.7.8-custom.1-universal.apk")
 
-    def test_custom_version_increments_code_and_name(self):
+    def test_legacy_version_bumps_to_a_plain_patch_version(self):
         updated = self.release.bump_version(self.config())
         self.assertEqual(updated["versionCode"], "1782")
-        self.assertEqual(updated["versionName"], "1.7.8-custom.2")
+        self.assertEqual(updated["versionName"], "1.7.9")
         self.assertEqual(updated["applicationId"], "dev.dimension.flare.videofix")
+
+    def test_plain_version_bumps_patch_and_preserves_the_signer(self):
+        config = self.config()
+        config.update(versionName="1.8.1", versionCode="1809")
+        updated = self.release.bump_version(config)
+        self.assertEqual(updated["versionName"], "1.8.2")
+        self.assertEqual(updated["versionCode"], "1810")
+        self.assertEqual(updated["expectedSignerSha256"], "f0" * 32)
+        self.assertEqual(self.release.apk_filename("1.8.2", ["arm64-v8a"]), "Flare-1.8.2-arm64-v8a.apk")
 
     def test_maximum_version_code_cannot_overflow(self):
         config = self.config()
@@ -317,7 +326,7 @@ class ReleaseContractTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             updated = self.release.load_properties(properties)
             self.assertEqual(updated["versionCode"], "1782")
-            self.assertEqual(updated["versionName"], "1.7.8-custom.2")
+            self.assertEqual(updated["versionName"], "1.7.9")
             self.assertEqual(updated["applicationId"], "dev.dimension.flare.videofix")
             self.assertEqual(updated["expectedSignerSha256"], "f0" * 32)
 

@@ -2,7 +2,7 @@
 
 This fork upgrades the installed `dev.dimension.flare.videofix` application in place. Its first managed release is `1.7.8-custom.1` / version code `1781`, following the installed `1.7.8-local-glass-animation` / `1780` build. Android requires the same package ID and signing certificate and a higher version code. Do not uninstall the existing app to work around a signing error: uninstalling removes its local data.
 
-The current Agent compatibility release is configured as `1.8.0-custom.3` / version code `1803`, retaining the previous performance release. This configuration does not mean a build has been verified or published.
+The version baseline is `1.8.0` / version code `1808`, following the published `1.8.0-custom.8` release. Future automatic releases use plain three-part versions such as `1.8.1`, then `1.8.2`, with tags such as `android-v1.8.1`. Historical `custom` tags remain readable and are never renamed. A source configuration does not mean a build has been verified or published.
 
 The authoritative version and package identity are committed in `android-release.properties`. `BUILD_NUMBER`, `BUILD_VERSION`, and upstream `fdroid.properties` do not override them. The Android release includes `arm64-v8a` native libraries; debug builds also support the x86_64 CI emulator. The tool inspects the APK and uses the actual ABI set in its filename.
 
@@ -25,7 +25,7 @@ Pushing application changes to `master` starts `.github/workflows/android-apk-re
 
 The workflow runs publisher contract tests and Android unit tests, builds the release APK with JDK 25, and reuses the existing certificate. The only signing Secret is `FLARE_ANDROID_KEYSTORE_BASE64`: the base64 encoding of the original Android debug keystore already used for this app. Its default alias and passwords are unchanged. Store this binary only in repository Actions Secrets, never in Git or an artifact. The runner restores it in its temporary directory with private permissions and removes it after the job. Both Gradle and APK inspection verify `expectedSignerSha256`.
 
-Versions are calculated from both `android-release.properties` and the latest published manifest, so every update has a higher Android version code. A planning job reserves a unique tag and creates a version-only child commit of the pushed source; both platform jobs build that exact commit. Tags left by failed builds are skipped by later plans and do not become public Releases. It never pushes the generated version commit back to `master`; the release tag contains the reproducible source and effective version. The publisher checks current `master` before upload and again immediately before exposing the release; a newer application commit keeps the obsolete build unpublished. Descendants that change only trigger-excluded documentation do not discard the running application build. Concurrent release jobs are serialized.
+Versions are calculated from `android-release.properties`, the latest published manifest, and all reserved Android release tags. Each new release increments PATCH in the current major/minor line. Moving to a new major/minor line uses its configured initial version. The Android version code and iOS build number exceed every published or reserved build code, including historical `custom` tags; codes are read from each tag's committed properties rather than inferred from its name. A planning job reserves a unique tag and creates a version-only child commit of the pushed source; both platform jobs build that exact commit. Tags left by failed builds are skipped by later plans and do not become public Releases. It never pushes the generated version commit back to `master`; the release tag contains the reproducible source and effective version. The publisher checks current `master` before upload and again immediately before exposing the release; a newer application commit keeps the obsolete build unpublished. Descendants that change only trigger-excluded documentation do not discard the running application build. Concurrent release jobs are serialized.
 
 Publication waits for both platform jobs, creates a draft, uploads the signed APK, signed IPA and their metadata, downloads and hashes every asset, then publishes the release as latest. A failed build or verification leaves the previous update available. Local release behavior is unchanged; local publishers must choose a version higher than the latest CI release instead of assuming the base configuration is the latest installed version.
 
@@ -37,7 +37,7 @@ The same workflow builds the iOS target in parallel on GitHub's `xcode-27` macOS
 
 The shared Kotlin libraries compile first with one worker and a 4 GiB heap. That JVM exits before a fresh process links the Release framework with a 6 GiB heap, keeping dependency compiler state out of the optimizer. A 5 GiB isolated link still ran out of memory; the 6 GiB isolated link passed local verification. An 8 GiB heap budget exceeds the hosted ARM runner's 7 GiB RAM and can page heavily. Progress streams directly to the job log. Xcode then reuses the framework and builds with one job to limit concurrent memory use.
 
-`ios-release.properties` records the existing iPhone identity: Bundle ID `dev.dimension.flare.xiamao`, its Open in Flare extension, development team, certificate fingerprint and installed build baseline. CI overrides only the generated Xcode project, preserving upstream project files. The iOS marketing version uses the numeric base (for example `1.8.0`); its build number matches the increasing Android release code. Both app and extension must match the existing identity and use physical iPhone builds.
+`ios-release.properties` records the existing iPhone identity: Bundle ID `dev.dimension.flare.xiamao`, its Open in Flare extension, development team, certificate fingerprint and installed build baseline. CI overrides only the generated Xcode project, preserving upstream project files. The iOS marketing version matches the plain release version (for example `1.8.1`); its build number matches the increasing Android release code. Both app and extension must match the existing identity and use physical iPhone builds.
 
 The encrypted repository Secrets are `FLARE_IOS_CERTIFICATE_P12_BASE64`, `FLARE_IOS_CERTIFICATE_PASSWORD`, `FLARE_IOS_APP_PROFILE_BASE64` and `FLARE_IOS_EXTENSION_PROFILE_BASE64`. They contain only the existing selected signing identity and its matching profiles. A temporary runner keychain holds the certificate; signing files and keychain are removed after the job. The private certificate is never uploaded as a release artifact.
 
@@ -45,13 +45,13 @@ The current personal development profiles expire on 2026-11-14 and cover the exi
 
 ## Release in one command
 
-1. Finish the source changes. For releases after `custom.1`, increment both version fields:
+1. Finish the source changes, then increment the patch version and build code:
 
    ```console
    python3 -B scripts/android_release.py --bump-version
    ```
 
-   From the current configuration, this changes `custom.3` / `1803` to `custom.4` / `1804`, and checks Android's maximum version code. When intentionally moving to a new upstream base, edit `versionName` to its `MAJOR.MINOR.PATCH-custom.1` value and continue increasing `versionCode` globally.
+   From the current baseline, this changes `1.8.0` / `1808` to `1.8.1` / `1809`, and checks Android's maximum version code. When intentionally moving to a new major/minor line, configure its initial plain version (for example `1.9.0`) and continue increasing `versionCode` globally. Check the latest CI release before a local release: the committed baseline may be older than published builds.
 
 2. Write UTF-8 release notes, then commit all source and version changes. Keep notes outside the repository or commit them too. The tool rejects tracked changes and untracked files; ignored build outputs are allowed.
 
@@ -63,7 +63,7 @@ The current personal development profiles expire on 2026-11-14 and cover the exi
 
 The command checks GitHub authentication, runs the release tool's tests and `:app:testDebugUnitTest`, builds `:app:assembleRelease`, and verifies the APK package ID, version, minimum SDK and signing certificate. Existing generated release APK output is moved into `build/android-release/.previous-apks/`, so an old APK cannot satisfy a failed or skipped build. Source content and the Git commit are checked before and after building.
 
-The prepared files are stored under `build/android-release/android-v1.8.0-custom.3/` (using the configured version). The folder contains the APK, `flare-update.json`, release notes and `build-receipt.json`. The receipt binds the commit, source content and file hashes to the successful test/build run. Do not hand-edit the manifest or receipt.
+The prepared files are stored under `build/android-release/android-v1.8.1/` (using the configured version). The folder contains the APK, `flare-update.json`, release notes and `build-receipt.json`. The receipt binds the commit, source content and file hashes to the successful test/build run. Do not hand-edit the manifest or receipt.
 
 Only after successful local preparation does the tool push the current branch and its annotated tag, create a **draft** GitHub Release, upload the APK and manifest, and download both assets to compare their hashes. It then publishes the release and marks it latest. The public unauthenticated manifest is checked after publishing. Existing published releases are never overwritten; a matching draft can be resumed. If an upload or verification fails, the draft stays unpublished, and the previous latest release remains usable.
 
@@ -80,7 +80,7 @@ python3 -B scripts/android_release.py --prepare-only --notes-file /path/to/relea
 After reviewing or installing the prepared APK, publish exactly that verified build:
 
 ```console
-python3 -B scripts/android_release.py --publish-existing build/android-release/android-v1.8.0-custom.3
+python3 -B scripts/android_release.py --publish-existing build/android-release/android-v1.8.1
 ```
 
 Publishing rechecks the source commit, clean tree, source fingerprint, APK hash, manifest hash, APK metadata and certificate. If the source or version changes after preparation, commit and rebuild. To deliberately rebuild the same unpublished version, move its existing prepared folder aside first. Generated backups can be reviewed and removed manually when no longer needed.
@@ -111,13 +111,13 @@ Example (hash and size come from the actual APK):
 {
   "schemaVersion": 1,
   "applicationId": "dev.dimension.flare.videofix",
-  "versionCode": 1801,
-  "versionName": "1.8.0-custom.1",
+  "versionCode": 1809,
+  "versionName": "1.8.1",
   "minSdk": 26,
-  "apkFileName": "Flare-1.8.0-custom.1-arm64-v8a.apk",
+  "apkFileName": "Flare-1.8.1-arm64-v8a.apk",
   "sha256": "<64 lowercase hexadecimal characters>",
   "sizeBytes": 12345678,
-  "releaseTag": "android-v1.8.0-custom.1",
+  "releaseTag": "android-v1.8.1",
   "releaseNotes": "Release notes shown in the app"
 }
 ```
