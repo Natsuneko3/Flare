@@ -15,6 +15,7 @@ import ai.koog.agents.core.utils.ConfigureAction
 import ai.koog.agents.features.eventHandler.feature.EventHandler
 import ai.koog.prompt.Prompt
 import ai.koog.prompt.dsl.PromptBuilder
+import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.message.AttachmentContent
 import ai.koog.prompt.message.AttachmentSource
 import ai.koog.prompt.message.Message
@@ -145,8 +146,12 @@ internal fun FlareAgentRuntime.createAgent(
             Prompt.build(request.agentId, params = params) {
                 system(request.systemPromptWithToolGuidance)
             },
-        ).temperature(request.temperature)
-        .maxIterations(request.maxIterations)
+        ).apply {
+            // Reasoning models may reject temperature even when tools and vision are supported.
+            if (model.capabilities?.contains(LLMCapability.Temperature) == true) {
+                temperature(request.temperature)
+            }
+        }.maxIterations(request.maxIterations)
         .graphStrategy(
             strategy<Prompt, String>(request.strategyName) {
                 val nodeAnalyze by node<Prompt, Message.Assistant>(request.analyzeNodeName) { inputPrompt ->
