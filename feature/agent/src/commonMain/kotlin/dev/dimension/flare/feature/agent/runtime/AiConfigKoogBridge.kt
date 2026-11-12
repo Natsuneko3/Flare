@@ -60,13 +60,25 @@ internal class AiConfigKoogBridge {
                 ?: OpenAIModels.models.firstOrNull { it.id == openAIConfig.model }?.contextLength
         val extraBody = openAIConfig.extraBody.takeIf { it.isNotBlank() }?.let { JSON.parseToJsonElement(it).jsonObject }
         // GPT-6 tool calls require Responses; other compatible providers retain Chat Completions.
-        val useResponses = openAIConfig.model.substringAfterLast('/').let { it.startsWith("gpt-6-") || it.startsWith("gpt-6.") }
+        val modelId = openAIConfig.model.substringAfterLast('/')
+        val useResponses = modelId.startsWith("gpt-6-") || modelId.startsWith("gpt-6.")
+        // Omit optional sampling settings for reasoning families, including provider-prefixed model IDs.
+        val supportsTemperature =
+            !useResponses &&
+                modelId != "gpt-5" &&
+                !modelId.startsWith("gpt-5-") &&
+                !modelId.startsWith("gpt-5.") &&
+                !Regex("o\\d+(-.*)?").matches(modelId)
         val params =
             LLMParams(
                 additionalProperties =
                     buildJsonObject {
                         extraBody
-                            ?.filterKeys { it !in AGENT_REQUEST_FIELDS && (!useResponses || it !in RESPONSES_REQUEST_FIELDS) }
+                            ?.filterKeys {
+                                it !in AGENT_REQUEST_FIELDS &&
+                                    (!useResponses || it !in RESPONSES_REQUEST_FIELDS) &&
+                                    (supportsTemperature || it != "temperature")
+                            }
                             ?.forEach { (key, value) -> put(key, value) }
                         if (useResponses) {
                             val reasoning =
@@ -116,8 +128,8 @@ internal class AiConfigKoogBridge {
                             add(LLMCapability.Thinking)
                         } else {
                             add(LLMCapability.OpenAIEndpoint.Completions)
-                            add(LLMCapability.Temperature)
                         }
+                        if (supportsTemperature) add(LLMCapability.Temperature)
                         add(LLMCapability.Tools)
                         add(LLMCapability.ToolChoice)
                         add(LLMCapability.Vision.Image)

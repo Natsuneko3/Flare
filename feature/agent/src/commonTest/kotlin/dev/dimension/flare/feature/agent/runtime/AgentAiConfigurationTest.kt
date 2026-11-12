@@ -158,7 +158,7 @@ class AgentAiConfigurationTest {
                 "gpt-6-sol" to "high",
                 "openai/gpt-6-astra" to "high",
             )) {
-                val config = independent.copy(model = model, reasoningEffort = effort)
+                val config = independent.copy(model = model, reasoningEffort = effort, extraBody = """{"seed":2,"temperature":0.7}""")
                 val requests = mutableListOf<JsonObject>()
                 val engine =
                     MockEngine { request ->
@@ -250,6 +250,66 @@ class AgentAiConfigurationTest {
                     } finally {
                         agent.close()
                         runtime.promptExecutor.close()
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun reasoningChatModelsOmitTemperatureAcrossToolCalls() =
+        runTest {
+            for (model in listOf("gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-5.4", "openai/gpt-5.4", "o1", "o3", "o4-mini", "o3-2025-04-16")) {
+                for (extraBody in listOf("", """{"temperature":0.7,"seed":2}""")) {
+                    val requests = mutableListOf<JsonObject>()
+                    val engine =
+                        MockEngine { request ->
+                            assertEquals("https://agent.example/custom/v1/chat/completions", request.url.toString())
+                            val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+                            requests += body
+                            assertFalse("temperature" in body, "$model must omit temperature on request ${requests.size}")
+                            assertEquals("high", body["reasoning_effort"]?.jsonPrimitive?.content)
+                            if (extraBody.isNotEmpty()) assertEquals("2", body["seed"]?.jsonPrimitive?.content)
+                            val message =
+                                if (requests.size == 1) {
+                                    """{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hello\"}"}}]}"""
+                                } else {
+                                    """{"role":"assistant","content":"done"}"""
+                                }
+                            val finishReason = if (requests.size == 1) "tool_calls" else "stop"
+                            respond(
+                                """{"id":"response","object":"chat.completion","created":0,"model":"$model","choices":[{"index":0,"message":$message,"finish_reason":"$finishReason"}]}""",
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                            )
+                        }
+                    HttpClient(engine).use { client ->
+                        val runtime =
+                            assertNotNull(
+                                AiConfigKoogBridge().createRuntime(
+                                    AppSettings.AiConfig(type = independent.copy(model = model, extraBody = extraBody)),
+                                    KtorKoogHttpClient.Factory(baseClient = client),
+                                ),
+                            )
+                        val tool = EchoTool()
+                        val request =
+                            FlareAgentRequest(
+                                prompt = Prompt.build("input") { user("echo hello") },
+                                systemPrompt = "Use echo to repeat the text.",
+                                agentId = "reasoning-temperature-test",
+                                strategyName = "reasoning-temperature-test",
+                                analyzeNodeName = "analyze",
+                                executeToolsNodeName = "tools",
+                                sendToolResultsNodeName = "results",
+                                toolSet = AgentToolSet.Empty.copy(toolRegistry = ToolRegistry { tool(tool) }),
+                            )
+                        val agent = runtime.createAgent(request, onTrace = {}, chatHistoryProvider = MemoryHistory())
+                        try {
+                            assertEquals("done", agent.run(request.prompt, "conversation"))
+                            assertEquals(1, tool.calls)
+                            assertEquals(2, requests.size)
+                        } finally {
+                            agent.close()
+                            runtime.promptExecutor.close()
+                        }
                     }
                 }
             }
