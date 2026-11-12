@@ -97,6 +97,7 @@ class AgentAiConfigurationTest {
                         val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                         requests += body
                         assertEquals(expected.model, body["model"]?.jsonPrimitive?.content)
+                        assertEquals("0.2", body["temperature"]?.jsonPrimitive?.content)
                         assertEquals(expected.reasoningEffort, body["reasoning_effort"]?.jsonPrimitive?.content)
                         assertEquals(Json.parseToJsonElement(expected.extraBody).jsonObject["seed"], body["seed"])
                         val message =
@@ -166,6 +167,7 @@ class AgentAiConfigurationTest {
                         val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                         requests += body
                         assertEquals(model, body["model"]?.jsonPrimitive?.content)
+                        assertFalse("temperature" in body, "Reasoning model requests must omit temperature, including tool follow-ups")
                         assertEquals(
                             effort,
                             body["reasoning"]
