@@ -123,6 +123,11 @@ def build(version, code):
     environment = dict(os.environ)
     for key in ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']:
         environment.pop(key, None)
+    # The optional KMP diagnostic eagerly resolves every target, including macOS
+    # and simulators. Resolve only the iPhone build's real dependencies here.
+    # GRADLE_OPTS also reaches Gradle invoked by Xcode's Compile Kotlin script.
+    environment['GRADLE_OPTS'] = (environment.get('GRADLE_OPTS', '') +
+        ' -Dorg.gradle.project.kotlin.kmp.unresolvedDependenciesDiagnostic=false').strip()
     # Compile klibs in a separate JVM so compiler state is released before LTO.
     # Keep the linker budget below the hosted ARM runner's 7 GiB RAM.
     gradle = ['./gradlew', '--no-daemon', '--max-workers=1', '--console=plain',
