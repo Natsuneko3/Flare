@@ -103,6 +103,7 @@ public class StatusInsightPresenter(
                 missingContextError = {
                     IllegalStateException("Current account does not support post data source")
                 },
+                autoRunOnContext = false,
             )
 
         return StateImpl(
