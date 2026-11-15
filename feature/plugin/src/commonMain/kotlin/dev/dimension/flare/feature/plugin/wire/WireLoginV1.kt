@@ -73,6 +73,19 @@ public data class CookieValueV1(
     val sourceUrl: String,
     val name: String,
     val value: String,
+    val attributes: CookieAttributesV2? = null,
+)
+
+@Serializable
+public data class CookieAttributesV2(
+    val domain: String? = null,
+    val hostOnly: Boolean? = null,
+    val path: String? = null,
+    val expiresAt: Long? = null,
+    val session: Boolean? = null,
+    val secure: Boolean? = null,
+    val httpOnly: Boolean? = null,
+    val sameSite: String? = null,
 )
 
 @Serializable
@@ -81,13 +94,24 @@ public data class CookieCheckRequestV1(
     val origin: String,
     val flowId: String,
     val cookies: CookieSnapshotV1,
+    val pendingPayload: JsonElement? = null,
+)
+
+@Serializable
+public data class QrPollRequestV2(
+    val methodId: String,
+    val origin: String,
+    val flowId: String,
+    val pendingPayload: JsonElement,
 )
 
 @Serializable
 public sealed interface LoginTransitionV1 {
     @Serializable
     @SerialName("pending")
-    public data object Pending : LoginTransitionV1
+    public data class Pending(
+        val pendingPayload: JsonElement? = null,
+    ) : LoginTransitionV1
 
     @Serializable
     @SerialName("externalBrowser")
@@ -101,6 +125,26 @@ public sealed interface LoginTransitionV1 {
     public data class WebCookie(
         val startUrl: String,
     ) : LoginTransitionV1
+
+    @Serializable
+    @SerialName("qrCode")
+    public data class QrCode(
+        val content: String,
+        val expiresInMillis: Long,
+        val pendingPayload: JsonElement,
+        val pollIntervalMillis: Long = 2_000,
+    ) : LoginTransitionV1
+
+    @Serializable
+    @SerialName("qrPending")
+    public data class QrPending(
+        val scanned: Boolean,
+        val pendingPayload: JsonElement? = null,
+    ) : LoginTransitionV1
+
+    @Serializable
+    @SerialName("qrExpired")
+    public data object QrExpired : LoginTransitionV1
 
     @Serializable
     @SerialName("success")
@@ -117,7 +161,21 @@ public data class LoginSuccessV1(
     val profile: ProfileV1,
     @Serializable(with = KnownCapabilitySetsV1Serializer::class)
     val capabilities: Map<String, Set<String>>,
-    val composeConfig: ComposeConfigV1? = null,
+    val composeConfig: ComposeConfigV2? = null,
+    val composeConfigV3: ComposeConfigV2? = null,
+)
+
+@Serializable
+public data class AccountCapabilitiesV1(
+    @Serializable(with = KnownCapabilitySetsV1Serializer::class)
+    val capabilities: Map<String, Set<String>>,
+    val composeConfig: ComposeConfigV2? = null,
+    val composeConfigV3: ComposeConfigV2? = null,
+)
+
+@Serializable
+public data class AccountCapabilitiesRequestV1(
+    val previous: AccountCapabilitiesV1,
 )
 
 @Serializable
@@ -132,8 +190,10 @@ public data class AccountPluginSnapshotV1(
     val manifestCapabilities: Map<String, Set<String>>,
     @Serializable(with = KnownCapabilitySetsV1Serializer::class)
     val negotiatedCapabilities: Map<String, Set<String>>,
-    val composeConfig: ComposeConfigV1? = null,
+    val composeConfig: ComposeConfigV2? = null,
     val credentialSchemaVersion: Int,
+    val composeConfigV3: ComposeConfigV2? = null,
+    val capabilitiesPackageHash: String? = null,
 )
 
 /** Host-owned credential envelope persisted in Flare's account store. */
@@ -141,4 +201,6 @@ public data class AccountPluginSnapshotV1(
 public data class PluginAccountCredentialV1(
     val snapshot: AccountPluginSnapshotV1,
     val credential: JsonElement,
+    val sessionEpoch: String? = null,
+    val credentialRevision: String? = null,
 )

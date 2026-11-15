@@ -2,23 +2,30 @@ package dev.dimension.flare.feature.agent.runtime
 
 import ai.koog.http.client.KoogHttpClient
 import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
-import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
 import ai.koog.prompt.executor.clients.openai.OpenAIModels
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.llm.LLMCapability
+import ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
+import ai.koog.prompt.message.Message
 import ai.koog.prompt.params.LLMParams
 import dev.dimension.flare.common.JSON
+import dev.dimension.flare.data.datastore.model.AgentOpenAIApi
 import dev.dimension.flare.data.datastore.model.AppSettings
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
+import dev.dimension.flare.feature.agent.common.AgentConfigurationException
+import io.ktor.http.Url
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import okio.ByteString.Companion.encodeUtf8
 
 internal class AiConfigKoogBridge {
+    private val lastSuccessfulEndpoint = MutableStateFlow<Pair<AppSettings.AiConfig.Type.OpenAI, OpenAIEndpoint>?>(null)
+
     fun availability(aiConfig: AppSettings.AiConfig): AgentAvailability =
         when (val type = aiConfig.effectiveAgentType) {
             AppSettings.AiConfig.Type.OnDevice -> {
@@ -49,22 +56,62 @@ internal class AiConfigKoogBridge {
     fun createRuntime(
         aiConfig: AppSettings.AiConfig,
         httpClientFactory: KoogHttpClient.Factory,
+        retryToolCalls: List<Message.Assistant> = emptyList(),
     ): FlareAgentRuntime? {
         if (availability(aiConfig) != AgentAvailability.Available) {
             return null
         }
 
         val openAIConfig = aiConfig.effectiveAgentType as? AppSettings.AiConfig.Type.OpenAI ?: return null
+        val baseUrl = openAIConfig.serverUrl.trimEnd('/')
+        val scope =
+            JsonPrimitive(
+                listOf(baseUrl, openAIConfig.model, openAIConfig.apiKey)
+                    .joinToString("\u0000")
+                    .encodeUtf8()
+                    .sha256()
+                    .hex(),
+            )
+        val explicitEndpoint =
+            when (aiConfig.agentOpenAIApi) {
+                AgentOpenAIApi.Auto -> null
+                AgentOpenAIApi.Responses -> OpenAIEndpoint.Responses
+                AgentOpenAIApi.ChatCompletions -> OpenAIEndpoint.Completions
+            }
+        val retryEndpoint =
+            retryToolCalls.lastOrNull()?.let { call ->
+                listOf(OpenAIEndpoint.Responses, OpenAIEndpoint.Completions)
+                    .firstOrNull { call.metaInfo.metadata?.containsKey(it.scopeKey) == true }
+                    ?: throw AgentConfigurationException(
+                        "The original API connection for this turn's completed tools could not be verified. Send a new message to continue.",
+                    )
+            }
+        if (retryEndpoint != null &&
+            (
+                (explicitEndpoint != null && explicitEndpoint != retryEndpoint) ||
+                    retryToolCalls.any { it.metaInfo.metadata?.get(retryEndpoint.scopeKey) != scope }
+            )
+        ) {
+            val apiName = if (retryEndpoint == OpenAIEndpoint.Responses) "Responses" else "Chat Completions"
+            throw AgentConfigurationException(
+                "This turn has completed tool results. Restore its API server, key, model, and $apiName protocol, or send a new message.",
+            )
+        }
+        // shortcut: Koog forces Chat Completions on Azure OpenAI, revisit when its client supports Azure Responses.
+        val azure = "openai.azure.com" in baseUrl
+        if (azure && (explicitEndpoint ?: retryEndpoint) == OpenAIEndpoint.Responses) {
+            throw AgentConfigurationException("This Azure connection uses Chat Completions. Select Auto or Chat Completions.")
+        }
+        val pinnedEndpoint = explicitEndpoint ?: retryEndpoint ?: OpenAIEndpoint.Completions.takeIf { azure }
         val contextWindow =
             openAIConfig.contextWindow?.also { require(it >= 1_024) { "Context window must be at least 1024 tokens" } }?.toLong()
                 ?: OpenAIModels.models.firstOrNull { it.id == openAIConfig.model }?.contextLength
         val extraBody = openAIConfig.extraBody.takeIf { it.isNotBlank() }?.let { JSON.parseToJsonElement(it).jsonObject }
-        // GPT-6 tool calls require Responses; other compatible providers retain Chat Completions.
         val modelId = openAIConfig.model.substringAfterLast('/')
-        val useResponses = modelId.startsWith("gpt-6-") || modelId.startsWith("gpt-6.")
-        // Omit optional sampling settings for reasoning families, including provider-prefixed model IDs.
+        val isGpt6 = modelId == "gpt-6" || modelId.startsWith("gpt-6-") || modelId.startsWith("gpt-6.")
+        // Reasoning families can reject sampling settings even on a compatible custom endpoint.
         val supportsTemperature =
-            !useResponses &&
+            !isGpt6 &&
                 modelId != "gpt-5" &&
                 !modelId.startsWith("gpt-5-") &&
                 !modelId.startsWith("gpt-5.") &&
@@ -74,48 +121,50 @@ internal class AiConfigKoogBridge {
                 additionalProperties =
                     buildJsonObject {
                         extraBody
-                            ?.filterKeys {
-                                it !in AGENT_REQUEST_FIELDS &&
-                                    (!useResponses || it !in RESPONSES_REQUEST_FIELDS) &&
-                                    (supportsTemperature || it != "temperature")
-                            }
+                            ?.filterKeys { it !in AGENT_REQUEST_FIELDS && (supportsTemperature || it != "temperature") }
                             ?.forEach { (key, value) -> put(key, value) }
-                        if (useResponses) {
-                            val reasoning =
-                                buildJsonObject {
-                                    extraBody?.get("reasoning_effort")?.let { put("effort", it) }
-                                    extraBody?.get("reasoning")?.jsonObject?.forEach { (key, value) -> put(key, value) }
-                                    openAIConfig.reasoningEffort.takeIf { it.isNotBlank() }?.let { put("effort", it) }
+                        openAIConfig.reasoningEffort
+                            .takeIf { it.isNotBlank() }
+                            ?.let { effort ->
+                                put("reasoning_effort", effort)
+                                (extraBody?.get("reasoning") as? JsonObject)?.let { reasoning ->
+                                    put(
+                                        "reasoning",
+                                        buildJsonObject {
+                                            reasoning.forEach { (key, value) -> put(key, value) }
+                                            put("effort", effort)
+                                        },
+                                    )
                                 }
-                            if (reasoning.isNotEmpty()) put("reasoning", reasoning)
-                            // The agent replays its own history, including opaque reasoning from tool calls.
-                            put("store", false)
-                            put(
-                                "include",
-                                buildJsonArray {
-                                    extraBody?.get("include")?.jsonArray?.forEach { add(it) }
-                                    add("reasoning.encrypted_content")
-                                },
-                            )
-                        } else {
-                            openAIConfig.reasoningEffort.takeIf { it.isNotBlank() }?.let { put("reasoning_effort", it) }
-                        }
+                            }
                     },
             )
+        val preferredEndpoint =
+            lastSuccessfulEndpoint.value?.takeIf { it.first == openAIConfig }?.second
+                ?: if (isGpt6 || runCatching { Url(baseUrl).host.equals("api.openai.com", ignoreCase = true) }.getOrDefault(false)) {
+                    OpenAIEndpoint.Responses
+                } else {
+                    OpenAIEndpoint.Completions
+                }
         val client =
-            OpenAILLMClient(
+            AgentOpenAIClient(
                 apiKey = openAIConfig.apiKey,
                 settings =
                     OpenAIClientSettings(
-                        baseUrl = openAIConfig.serverUrl.trimEnd('/'),
+                        baseUrl = baseUrl,
                         chatCompletionsPath = "chat/completions",
                         responsesAPIPath = "responses",
                         embeddingsPath = "embeddings",
                         moderationsPath = "moderations",
                         modelsPath = "models",
                     ),
-                httpClientFactory = if (useResponses) ResponsesHttpClientFactory(httpClientFactory) else httpClientFactory,
-            )
+                httpClientFactory = ResponsesHttpClientFactory(httpClientFactory),
+                scope = scope,
+                preferredEndpoint = preferredEndpoint,
+                pinnedEndpoint = pinnedEndpoint,
+            ) {
+                if (explicitEndpoint == null) lastSuccessfulEndpoint.value = openAIConfig to it
+            }
         val model =
             LLModel(
                 provider = LLMProvider.OpenAI,
@@ -123,12 +172,7 @@ internal class AiConfigKoogBridge {
                 capabilities =
                     buildList {
                         add(LLMCapability.Completion)
-                        if (useResponses) {
-                            add(LLMCapability.OpenAIEndpoint.Responses)
-                            add(LLMCapability.Thinking)
-                        } else {
-                            add(LLMCapability.OpenAIEndpoint.Completions)
-                        }
+                        add(LLMCapability.OpenAIEndpoint.Completions)
                         if (supportsTemperature) add(LLMCapability.Temperature)
                         add(LLMCapability.Tools)
                         add(LLMCapability.ToolChoice)
@@ -146,16 +190,6 @@ internal class AiConfigKoogBridge {
 
     private companion object {
         // The agent owns conversation history, tool selection and response transport.
-        val AGENT_REQUEST_FIELDS =
-            setOf(
-                "model",
-                "messages",
-                "tools",
-                "tool_choice",
-                "stream",
-                "stream_options",
-                "n",
-            )
-        val RESPONSES_REQUEST_FIELDS = setOf("input", "instructions", "previous_response_id", "conversation", "reasoning_effort")
+        val AGENT_REQUEST_FIELDS = setOf("model", "messages", "tools", "tool_choice", "stream", "stream_options", "n")
     }
 }

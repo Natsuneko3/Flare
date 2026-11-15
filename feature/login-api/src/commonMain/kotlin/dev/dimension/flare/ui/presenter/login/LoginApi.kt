@@ -92,6 +92,14 @@ public data class LoginFlowState(
     val actions: List<LoginAction> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+    val qrCode: LoginQrCode? = null,
+)
+
+public data class LoginQrCode(
+    /** The content is cleared when the challenge expires. */
+    val content: String?,
+    val hint: UiText? = null,
+    val scanned: Boolean = false,
 )
 
 public data class ReloginTarget(
@@ -125,6 +133,18 @@ public data class LoginCookieValue(
     val sourceUrl: String,
     val name: String,
     val value: String,
+    val attributes: LoginCookieAttributes? = null,
+)
+
+public data class LoginCookieAttributes(
+    val domain: String? = null,
+    val hostOnly: Boolean? = null,
+    val path: String? = null,
+    val expiresAt: Long? = null,
+    val session: Boolean? = null,
+    val secure: Boolean? = null,
+    val httpOnly: Boolean? = null,
+    val sameSite: String? = null,
 )
 
 public data class LoginCookieSnapshot(

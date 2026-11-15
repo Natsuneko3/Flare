@@ -33,6 +33,7 @@ struct ServiceSelectionScreen: View {
         List {
             Section {
                 header
+                    .flareTextBackground(.flareSystemGroupedBackground)
                     .listRowBackground(Color.clear)
             }
 
@@ -73,7 +74,7 @@ struct ServiceSelectionScreen: View {
                 .multilineTextAlignment(.center)
             Text(ServiceSelectCopy.welcomeMessage)
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: 520)
@@ -105,7 +106,7 @@ struct ServiceSelectionScreen: View {
                         .frame(width: 16, height: 16)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 .disabled(instanceInput.isEmpty)
                 .accessibilityLabel(Text(instanceInput.isEmpty ? ServiceSelectCopy.search : ServiceSelectCopy.clear))
             }
@@ -134,7 +135,7 @@ struct ServiceSelectionScreen: View {
                     .accessibilityLabel(Text("service_select_detecting_platform"))
             case .error:
                 Image(systemName: "questionmark.circle")
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
                     .transition(ServiceSelectionAnimation.inline)
                     .accessibilityLabel(Text("service_select_unknown_platform"))
             }
@@ -152,7 +153,7 @@ struct ServiceSelectionScreen: View {
                 if node.compatibleMode {
                     Text(ServiceSelectCopy.compatibilityWarning(node.software))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .flareSecondaryText()
                         .multilineTextAlignment(.center)
                         .transition(ServiceSelectionAnimation.inline)
                 }
@@ -185,7 +186,7 @@ struct ServiceSelectionScreen: View {
                     .font(.headline)
                 Text(node.host)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
             }
             Spacer()
         }
@@ -210,7 +211,7 @@ struct ServiceSelectionScreen: View {
             emptyContent: {
                 Text(ServiceSelectCopy.emptyMessage)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
                     .frame(maxWidth: .infinity)
                     .padding()
             }
@@ -270,6 +271,7 @@ struct ReloginScreen: View {
         List {
             Section {
                 header
+                    .flareTextBackground(.flareSystemGroupedBackground)
                     .listRowBackground(Color.clear)
             }
 
@@ -312,7 +314,7 @@ struct ReloginScreen: View {
                 .multilineTextAlignment(.center)
             Text(ServiceSelectCopy.loginExpiredMessage)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -366,9 +368,8 @@ private struct LoginFlowView: View {
 
     @State private var presenter: KotlinPresenter<LoginFlowPresenterState>
     @State private var qrContent: String?
-    @State private var webCookieUrl: String?
-    @State private var webCookieProbes: [LoginCookieProbe] = []
-    @State private var checkingCookies = false
+    @State private var webLogin: WebLoginSession?
+    @State private var webCookieCheck = WebLoginSession.CookieCheck()
 
     init(handler: @escaping () -> LoginMethodHandler) {
         self._presenter = .init(wrappedValue: .init(presenter: LoginFlowPresenter(handler: handler())))
@@ -387,7 +388,15 @@ private struct LoginFlowView: View {
                 .transition(ServiceSelectionAnimation.inline)
             }
 
-            if let qrContent, !presenter.state.flowState.loading, presenter.state.flowState.error == nil {
+            if let qr = presenter.state.flowState.qrCode {
+                if let content = qr.content {
+                    QRLoginView(content: content, qrCode: qr)
+                        .transition(ServiceSelectionAnimation.panel)
+                } else {
+                    Text(ServiceSelectCopy.pluginQRExpired)
+                        .multilineTextAlignment(.center)
+                }
+            } else if let qrContent, !presenter.state.flowState.loading, presenter.state.flowState.error == nil {
                 QRLoginView(content: qrContent)
                     .transition(ServiceSelectionAnimation.panel)
             }
@@ -417,23 +426,24 @@ private struct LoginFlowView: View {
             await collectEffects()
         }
         .sheet(isPresented: Binding(
-            get: { webCookieUrl != nil },
+            get: { webLogin != nil },
             set: { value in
                 if !value {
-                    webCookieUrl = nil
+                    closeWebLogin()
                 }
             }
         )) {
-            if let webCookieUrl {
+            if let webLogin {
                 if #available(iOS 26.0, *) {
-                    WebLoginScreen(onCookie: { cookies in
-                        checkCookies(cookies, sourceUrl: webCookieUrl)
-                    }, url: webCookieUrl)
+                    WebLoginScreen(session: webLogin)
                 } else {
-                    BackportWebLoginScreen(onCookie: { cookies in
-                        checkCookies(cookies, sourceUrl: webCookieUrl)
-                    }, url: webCookieUrl)
+                    BackportWebLoginScreen(session: webLogin)
                 }
+            }
+        }
+        .onChange(of: webLogin?.completed) { _, completed in
+            if completed == true {
+                closeWebLogin()
             }
         }
     }
@@ -448,22 +458,21 @@ private struct LoginFlowView: View {
                     qrContent = showQr.content
                 }
             case .openWebCookieLogin(let webCookie):
-                webCookieProbes = webCookie.probes
-                webCookieUrl = webCookie.url
+                // Built-in requests can repeat before the sheet appears. Plugin attempts carry probes.
+                if webCookie.probes.isEmpty, webLogin?.url == webCookie.url { continue }
+                closeWebLogin()
+                let presenter = presenter
+                webLogin = WebLoginSession(url: webCookie.url, cookieCheck: webCookieCheck) { cookies in
+                    let snapshot = loginCookieSnapshot(cookies: cookies, probes: webCookie.probes, fallbackUrl: webCookie.url)
+                    return (try? await presenter.state.checkCookies(snapshot: snapshot)) == true
+                }
             }
         }
     }
 
-    private func checkCookies(_ cookies: [HTTPCookie], sourceUrl: String) {
-        Task { @MainActor in
-            guard !checkingCookies else { return }
-            checkingCookies = true
-            defer { checkingCookies = false }
-            let snapshot = loginCookieSnapshot(cookies: cookies, probes: webCookieProbes, fallbackUrl: sourceUrl)
-            if (try? await presenter.state.checkCookies(snapshot: snapshot)) == true {
-                webCookieUrl = nil
-            }
-        }
+    private func closeWebLogin() {
+        webLogin?.close()
+        webLogin = nil
     }
 
     private func progressButtonLabel(title: String, isLoading: Bool) -> some View {
@@ -563,7 +572,7 @@ private struct LoginFieldView: View {
             case .displayText:
                 Text(field.value)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
                     .multilineTextAlignment(.center)
             default:
                 TextField(field.label.text, text: $value)
@@ -587,30 +596,35 @@ private struct LoginFieldView: View {
 
 private struct QRLoginView: View {
     let content: String
+    var qrCode: LoginQrCode? = nil
 
     var body: some View {
         VStack(spacing: 10) {
-            Text(ServiceSelectCopy.nostrQRHint)
+            Text(qrCode.map { $0.hint?.text ?? ServiceSelectCopy.pluginQRHint } ?? ServiceSelectCopy.nostrQRHint)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 .multilineTextAlignment(.center)
             QRCodeView(text: content)
                 .frame(width: 220, height: 220)
                 .background(.white, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityLabel(qrCode == nil ? ServiceSelectCopy.nostrQRLinkLabel : ServiceSelectCopy.pluginQRLabel)
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text(ServiceSelectCopy.nostrQRWaiting)
+                Text(qrCode.map { $0.scanned ? ServiceSelectCopy.pluginQRScanned : ServiceSelectCopy.pluginQRWaiting }
+                    ?? ServiceSelectCopy.nostrQRWaiting)
                     .font(.caption)
             }
-            Text(ServiceSelectCopy.nostrQRLinkLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(content)
-                .font(.caption2)
-                .textSelection(.enabled)
-                .multilineTextAlignment(.center)
-                .lineLimit(4)
+            if qrCode == nil {
+                Text(ServiceSelectCopy.nostrQRLinkLabel)
+                    .font(.caption)
+                    .flareSecondaryText()
+                Text(content)
+                    .font(.caption2)
+                    .textSelection(.enabled)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+            }
         }
     }
 }
@@ -690,7 +704,7 @@ private struct LoginAgreementView: View {
         if let urlString, let url = URL(string: urlString) {
             Text(agreement(url: url))
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 .multilineTextAlignment(.center)
         }
     }
@@ -715,6 +729,11 @@ private enum ServiceSelectCopy {
     static let nostrQRHint = String(localized: "nostr_login_qr_hint", defaultValue: "Scan with Amber, Alby, or another Nostr Connect signer.")
     static let nostrQRWaiting = String(localized: "nostr_login_qr_waiting", defaultValue: "Waiting for signer approval...")
     static let nostrQRLinkLabel = String(localized: "nostr_login_qr_link_label", defaultValue: "Nostr Connect link")
+    static let pluginQRHint = localizedPresentationString("plugin_login_qr_hint", fallback: "Scan this code with your phone.")
+    static let pluginQRLabel = localizedPresentationString("plugin_login_qr_label", fallback: "Sign-in QR code")
+    static let pluginQRWaiting = localizedPresentationString("plugin_login_qr_waiting", fallback: "Waiting for you to scan…")
+    static let pluginQRScanned = localizedPresentationString("plugin_login_qr_scanned", fallback: "Confirm sign-in on your phone.")
+    static let pluginQRExpired = localizedPresentationString("plugin_login_qr_expired", fallback: "This QR code has expired.")
     static let eulaPrivacyPolicy = String(localized: "eula_privacy_policy", defaultValue: "EULA and Privacy Policy")
     static let loginAgreementPrefix = String(localized: "login_agreement_prefix", defaultValue: "By logging in, you agree to the ")
     static let loginExpired = String(localized: "login_expired", defaultValue: "Login session expired")

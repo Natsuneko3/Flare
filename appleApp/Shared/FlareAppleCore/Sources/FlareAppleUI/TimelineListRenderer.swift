@@ -36,7 +36,7 @@ public struct TimelineListHeader {
         Self(id: key, isPinned: true) {
             Text(FlareAppleUILocalization.string(key))
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -61,7 +61,6 @@ public extension EnvironmentValues {
 
 struct TimelineListUserStrip: View {
     let users: PagingStateSuccess<UiProfile>
-    @Environment(\.openURL) private var openURL
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 76
 
     var body: some View {
@@ -71,10 +70,7 @@ struct TimelineListUserStrip: View {
                     ListCardView {
                         Group {
                             if let user = users.peek(index: Int32(index)) {
-                                UserCompatView(data: user)
-                                    .onTapGesture {
-                                        user.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
-                                    }
+                                SearchResultProfileView(user: user)
                             } else {
                                 UserLoadingView()
                             }
@@ -89,5 +85,29 @@ struct TimelineListUserStrip: View {
         }
         .frame(height: max(rowHeight, 76))
         .scrollIndicators(.hidden)
+    }
+}
+
+struct SearchResultProfileView: View {
+    let user: UiProfile
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if case .deeplink = onEnum(of: user.clickEvent) {
+            UserCompatView(data: user)
+                .onTapGesture {
+                    user.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
+                }
+        } else {
+            UserCompatView(data: user)
+        }
+    }
+}
+
+struct SearchSectionProgress: View {
+    var body: some View {
+        ProgressView()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
     }
 }

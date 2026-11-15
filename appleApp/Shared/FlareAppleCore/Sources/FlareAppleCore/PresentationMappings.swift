@@ -19,17 +19,27 @@ public func loginCookieSnapshot(
         if domains[0].count != domains[1].count { return domains[0].count > domains[1].count }
         return !$0.domain.hasPrefix(".") && $1.domain.hasPrefix(".")
     }
+    var seen = Set<[String]>()
     let values = probes.flatMap { probe -> [LoginCookieValue] in
         let url = URL(string: probe.url)
-        var names = Set(probe.names)
+        let names = Set(probe.names)
         return preferredCookies.compactMap { cookie in
-            guard cookie.matchesLogin(url: url), names.remove(cookie.name) != nil else { return nil }
-            return LoginCookieValue(sourceUrl: probe.url, name: cookie.name, value: cookie.value)
+            guard cookie.matchesLogin(url: url), names.contains(cookie.name),
+                seen.insert([probe.url, cookie.name, cookie.domain, cookie.path]).inserted else { return nil }
+            let attributes = LoginCookieAttributes(
+                domain: cookie.domain,
+                hostOnly: nil,
+                path: cookie.path,
+                expiresAt: cookie.expiresDate.map { KotlinLong(longLong: Int64($0.timeIntervalSince1970 * 1000)) },
+                session: KotlinBoolean(bool: cookie.isSessionOnly),
+                secure: KotlinBoolean(bool: cookie.isSecure),
+                httpOnly: KotlinBoolean(bool: cookie.isHTTPOnly),
+                sameSite: nil
+            )
+            return LoginCookieValue(sourceUrl: probe.url, name: cookie.name, value: cookie.value, attributes: attributes)
         }
     }
-    var capturedNames: [String: Set<String>] = [:]
-    let uniqueValues = values.filter { capturedNames[$0.sourceUrl, default: []].insert($0.name).inserted }
-    return LoginCookieSnapshot(values: uniqueValues, rawHeader: rawHeader.isEmpty ? nil : rawHeader)
+    return LoginCookieSnapshot(values: values, rawHeader: rawHeader.isEmpty ? nil : rawHeader)
 }
 
 private extension HTTPCookie {
@@ -182,6 +192,10 @@ public extension UiStrings {
             localizedPresentationString("bluesky_login_use_password_button", fallback: "Password Login")
         case .qrConnect:
             localizedPresentationString("nostr_login_qr_button", fallback: "QR Connect")
+        case .qrLoginNewCode:
+            localizedPresentationString("plugin_login_qr_new_code", fallback: "Generate a new code")
+        case .qrLoginRetrySave:
+            localizedPresentationString("plugin_login_qr_retry_save", fallback: "Retry saving account")
         case .credentialImport:
             localizedPresentationString("nostr_login_title", fallback: "Credential Import")
         case .externalSigner:
@@ -195,15 +209,23 @@ public extension UiStrings {
         case .pixivRankingMonth:
             localizedPresentationString("pixiv_ranking_month_title", fallback: "Monthly Ranking")
         case .pixivRankingDayMale:
-            localizedPresentationString("pixiv_ranking_day_male_title", fallback: "Male Ranking")
+            localizedPresentationString("pixiv_ranking_day_male_title", fallback: "Popular with men")
         case .pixivRankingDayFemale:
-            localizedPresentationString("pixiv_ranking_day_female_title", fallback: "Female Ranking")
+            localizedPresentationString("pixiv_ranking_day_female_title", fallback: "Popular with women")
         case .pixivRankingWeekOriginal:
             localizedPresentationString("pixiv_ranking_week_original_title", fallback: "Original Ranking")
         case .pixivRankingWeekRookie:
             localizedPresentationString("pixiv_ranking_week_rookie_title", fallback: "Rookie Ranking")
         case .pixivRankingDayManga:
             localizedPresentationString("pixiv_ranking_day_manga_title", fallback: "Manga Ranking")
+        case .pixivRankingDayAi:
+            localizedPresentationString("pixiv_ranking_day_ai_title", fallback: "AI Daily Ranking")
+        case .pixivRankingDayR18:
+            localizedPresentationString("pixiv_ranking_day_r18_title", fallback: "R-18 Daily Ranking")
+        case .pixivRankingWeekR18:
+            localizedPresentationString("pixiv_ranking_week_r18_title", fallback: "R-18 Weekly Ranking")
+        case .pixivRankingDayR18Ai:
+            localizedPresentationString("pixiv_ranking_day_r18_ai_title", fallback: "R-18 AI Daily Ranking")
         case .pixivPrivateFollowing:
             localizedPresentationString("pixiv_private_following_title", fallback: "Private Following")
         case .pixivPrivateBookmarks, .pixivPrivateFavourites:

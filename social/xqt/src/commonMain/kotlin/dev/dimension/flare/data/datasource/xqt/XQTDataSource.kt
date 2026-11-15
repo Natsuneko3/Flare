@@ -15,6 +15,7 @@ import dev.dimension.flare.data.datasource.microblog.NotificationFilter
 import dev.dimension.flare.data.datasource.microblog.NotificationTimelineDataSource
 import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
+import dev.dimension.flare.data.datasource.microblog.SearchOperation
 import dev.dimension.flare.data.datasource.microblog.datasource.ArticleDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.ListDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.NotificationDataSource
@@ -612,6 +613,8 @@ internal class XQTDataSource(
         )
     }
 
+    override val searchOperations: Set<SearchOperation> = SearchOperation.entries.toSet() - SearchOperation.DiscoverPosts
+
     override fun searchStatus(query: String) =
         SearchStatusPagingSource(
             service,
@@ -644,7 +647,7 @@ internal class XQTDataSource(
             text = ComposeConfig.Text.withLength(280, String::xWeightedLength),
             media =
                 ComposeConfig.Media(
-                    maxCount = 4,
+                    maxCount = 20,
                     canSensitive = true,
                     altTextMaxLength = 1000,
                     allowMediaOnly = true,
@@ -843,7 +846,8 @@ internal class XQTDataSource(
                                     ?.render(accountKey = accountKey)
                             }.toImmutableList()
                     UiPodcast(
-                        proxy = ProxyRef.forAccount(accountKey),                        id = id,
+                        proxy = ProxyRef.forAccount(accountKey),
+                        id = id,
                         title = title ?: "",
                         playbackUrl = null,
                         ended = ended,

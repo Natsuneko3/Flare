@@ -12,7 +12,9 @@ import app.cash.molecule.moleculeFlow
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.feature.agent.common.AgentChatHistoryProvider
 import dev.dimension.flare.feature.agent.common.AgentChatRoom
+import dev.dimension.flare.feature.agent.common.AgentConfigurationException
 import dev.dimension.flare.feature.agent.common.AgentConversationEvent
+import dev.dimension.flare.feature.agent.common.AgentFailureKind
 import dev.dimension.flare.feature.agent.common.AgentPendingInputRequest
 import dev.dimension.flare.feature.agent.common.AgentRetryMode
 import dev.dimension.flare.feature.agent.common.AgentRetryableException
@@ -23,6 +25,7 @@ import dev.dimension.flare.feature.agent.runtime.AgentAvailability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -30,6 +33,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
@@ -147,10 +151,12 @@ class AgentChatRetryTest {
                     assertEquals(null, nextGrant.await(), failurePoint)
                     finished.first { it == 2 }
                 } finally {
-                    collection.cancelAndJoin()
-                    AgentChatRunRegistry.resetForTesting()
-                    stopKoin()
-                    database.close()
+                    withContext(NonCancellable) {
+                        collection.cancelAndJoin()
+                        AgentChatRunRegistry.resetForTesting()
+                        stopKoin()
+                        database.close()
+                    }
                 }
             }
         }
@@ -167,6 +173,7 @@ class AgentChatRetryTest {
             val history = AgentChatHistoryProvider(database) { null }
             val persistenceStarted = CompletableDeferred<Unit>()
             val allowPersistence = CompletableDeferred<Unit>()
+            val allowRetryToFail = CompletableDeferred<Unit>()
             val requests = mutableListOf<Pair<String?, AgentRetryMode?>>()
             val states = MutableStateFlow<AgentChatPresenterController<Unit, Unit>?>(null)
             val contextReady = CompletableDeferred<Unit>()
@@ -190,8 +197,15 @@ class AgentChatRetryTest {
                             runAgent = { _, input, _, retryMode ->
                                 flow<AgentConversationEvent<Unit, AgentTrace>> {
                                     requests += input to retryMode
-                                    if (requests.size == 1) {
-                                        throw AgentRetryableException(IllegalStateException("Provider failure"), AgentRetryMode.Resume)
+                                    when (requests.size) {
+                                        1 -> {
+                                            throw AgentRetryableException(IllegalStateException("Provider failure"), AgentRetryMode.Resume)
+                                        }
+
+                                        2 -> {
+                                            allowRetryToFail.await()
+                                            throw AgentConfigurationException("Restore the original protocol to retry this turn.")
+                                        }
                                     }
                                 }
                             },
@@ -226,20 +240,27 @@ class AgentChatRetryTest {
                 assertEquals("My next draft", failed.input)
                 failed.retry()
                 failed.retry()
+                allowRetryToFail.complete(Unit)
                 Snapshot.sendApplyNotifications()
-                val retried = states.filterNotNull().first { requests.size == 2 && !it.room.isRunning && it.room.error == null }
+                val rejected =
+                    states.filterNotNull().first { !it.room.isRunning && it.room.error?.kind == AgentFailureKind.Configuration }
+                assertTrue(rejected.room.error?.canRetry == true)
+                rejected.retry()
+                val retried = states.filterNotNull().first { requests.size == 3 && !it.room.isRunning && it.room.error == null }
                 assertEquals("My next draft", retried.input)
                 assertEquals<List<Pair<String?, AgentRetryMode?>>>(
-                    listOf("Original question" to null, "Original question" to AgentRetryMode.Resume),
+                    listOf("Original question" to null) + List(2) { "Original question" to AgentRetryMode.Resume },
                     requests,
                 )
                 assertEquals(1, history.observeMessages("retry-test").first().count { it.isUser })
                 assertTrue(retried.canSend)
             } finally {
-                collection.cancelAndJoin()
-                AgentChatRunRegistry.resetForTesting()
-                stopKoin()
-                database.close()
+                withContext(NonCancellable) {
+                    collection.cancelAndJoin()
+                    AgentChatRunRegistry.resetForTesting()
+                    stopKoin()
+                    database.close()
+                }
             }
         }
 }

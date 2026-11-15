@@ -3,6 +3,7 @@ package dev.dimension.flare.ui.route
 import androidx.compose.runtime.Immutable
 import androidx.navigation3.runtime.NavKey
 import dev.dimension.flare.common.SerializableImmutableList
+import dev.dimension.flare.data.database.app.model.SubscriptionType
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.model.tab.TimelineDeepLinkRouteResolver
 import dev.dimension.flare.data.model.tab.UiSourceTimelineTabItem
@@ -12,6 +13,7 @@ import dev.dimension.flare.feature.agent.localhistory.LocalHistoryAgentTarget
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiMedia
+import dev.dimension.flare.ui.model.UiRssSource
 import dev.dimension.flare.ui.presenter.login.LoginCookieSnapshot
 import dev.dimension.flare.ui.presenter.login.LoginEffect
 import dev.dimension.flare.ui.presenter.login.ReloginTarget
@@ -110,6 +112,19 @@ internal sealed interface Route : NavKey {
         data object Plugins : Settings
 
         @Serializable
+        data class PluginExtensions(
+            val pluginId: String,
+        ) : Settings
+
+        @Serializable
+        data class PluginSettings(
+            val pluginId: String,
+        ) : Settings
+
+        @Serializable
+        data object PluginMarketplace : Settings
+
+        @Serializable
         data object AppearanceTheme : Settings
 
         @Serializable
@@ -182,7 +197,16 @@ internal sealed interface Route : NavKey {
             val url: String,
             val title: String?,
             val favIcon: String?,
-        ) : Rss
+            val type: SubscriptionType,
+        ) : Rss {
+            constructor(source: UiRssSource) : this(
+                id = source.id,
+                url = source.url,
+                title = source.title,
+                favIcon = source.favIcon,
+                type = source.type,
+            )
+        }
 
         @Serializable
         data class Detail(
@@ -208,6 +232,11 @@ internal sealed interface Route : NavKey {
 
     @Serializable
     data object Home : Route
+
+    @Serializable
+    data class TimelinePage(
+        val page: DeeplinkRoute.Timeline.Page,
+    ) : Route
 
     data class Timeline(
         val tabItem: UiTimelineTabItem,
@@ -548,6 +577,10 @@ internal sealed interface Route : NavKey {
 
         public fun from(deeplinkRoute: DeeplinkRoute): Route? {
             return when (deeplinkRoute) {
+                is DeeplinkRoute.Timeline.Page -> {
+                    TimelinePage(deeplinkRoute)
+                }
+
                 is DeeplinkRoute.Timeline.Source -> {
                     TimelineDeepLinkRouteResolver.resolve(deeplinkRoute)?.let(Route::Timeline)
                 }

@@ -28,7 +28,6 @@ public sealed interface UiMedia {
 
     public fun cacheKeyFor(url: String): String {
         val headers = customHeaders.orEmpty().entries.sortedBy { it.key.lowercase() }
-        val authenticated = headers.any { it.key.equals("Authorization", true) || it.key.equals("Cookie", true) }
         return buildString {
             append(url)
             if (headers.isNotEmpty()) {
@@ -41,7 +40,7 @@ public sealed interface UiMedia {
                             .hex(),
                 )
             }
-            if (authenticated) append("|$proxy")
+            if (headers.isNotEmpty()) append("|$proxy")
         }
     }
 
@@ -97,7 +96,16 @@ public sealed interface UiMedia {
         override val customHeaders: SerializableImmutableMap<String, String>? = null,
         @Transient override val proxy: ProxyRef = ProxyRef.Unbound,
         override val downloadUrl: String? = null,
+        // shortcut: legacy cached media defaults to video until the next source refresh restores its kind.
+        val kind: Kind = Kind.Video,
     ) : UiMedia {
+        @Serializable
+        public enum class Kind {
+            Video,
+            Gif,
+            LivePhoto,
+        }
+
         val aspectRatio: Float
             get() = (width / (height.takeUnless { it == 0f } ?: 1f)).takeUnless { it == 0f } ?: 1f
     }

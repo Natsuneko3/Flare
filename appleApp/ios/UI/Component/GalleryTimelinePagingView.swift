@@ -16,6 +16,9 @@ struct UIGalleryTimelinePagingView: UIViewControllerRepresentable {
     @Environment(\.openURL) private var openURL
     @Environment(\.refresh) private var refreshAction: RefreshAction?
     @Environment(\.timelineReading) private var reading
+    @Environment(\.tabBarNotificationCenter) private var tabBarNotificationCenter
+
+    func makeCoordinator() -> TabBarScrollToTopObserver { TabBarScrollToTopObserver() }
 
     func makeUIViewController(context: Context) -> UIGalleryTimelineController {
         let controller = UIGalleryTimelineController()
@@ -39,6 +42,9 @@ struct UIGalleryTimelinePagingView: UIViewControllerRepresentable {
             timeline: timelineAppearance,
             showOriginalWithTranslation: translateConfig.showOriginalWithTranslation
         )
+        context.coordinator.observe(tabBarNotificationCenter) { [weak controller] in
+            controller?.scrollToTop()
+        }
     }
 
     private func apply(to controller: UIGalleryTimelineController) {
@@ -222,6 +228,7 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
         NotificationCenter.default.addObserver(self, selector: #selector(saveReadingBookmark),
             name: UIApplication.willResignActiveNotification, object: nil)
         view.backgroundColor = .systemGroupedBackground
+        view.traitOverrides[FlareTextBackgroundTrait.self] = .systemGroupedBackground
         setupCollectionView()
         setupDataSource()
         setupRefreshControl()
@@ -892,6 +899,13 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
         finishScrollInteraction()
     }
 
+    func scrollToTop() {
+        guard let collectionView else { return }
+        collectionView.scrollToTopFromTabBar {
+            reading == nil || scrollViewShouldScrollToTop(collectionView)
+        }
+    }
+
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
         guard let reading else { return true }
         gapScrollAnchor = nil
@@ -1081,6 +1095,7 @@ private final class GalleryPostTileUIView: UIView, UIGestureRecognizerDelegate {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .secondarySystemGroupedBackground
+        traitOverrides[FlareTextBackgroundTrait.self] = .secondarySystemGroupedBackground
         layer.cornerRadius = 12
         clipsToBounds = true
 
@@ -1310,6 +1325,7 @@ private final class GalleryFeedTileUIView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .secondarySystemGroupedBackground
+        traitOverrides[FlareTextBackgroundTrait.self] = .secondarySystemGroupedBackground
         layer.cornerRadius = 12
         clipsToBounds = true
 
@@ -1334,6 +1350,7 @@ private final class GalleryFeedTileUIView: UIView {
         textStack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
         stack.addArrangedSubview(textStack)
 
+        titleLabel.textColor = .flareLabel
         titleLabel.font = .preferredFont(forTextStyle: .caption1).bold()
         titleLabel.numberOfLines = 2
         textStack.addArrangedSubview(titleLabel)
@@ -1435,6 +1452,7 @@ private final class GalleryPlaceholderTileUIView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .secondarySystemGroupedBackground
+        traitOverrides[FlareTextBackgroundTrait.self] = .secondarySystemGroupedBackground
         layer.cornerRadius = 12
         clipsToBounds = true
 

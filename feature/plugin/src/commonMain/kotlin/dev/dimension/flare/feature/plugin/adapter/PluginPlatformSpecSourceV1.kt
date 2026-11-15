@@ -8,6 +8,7 @@ import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.model.tab.toUiTimelineTabItem
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.di.koinInject
+import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
 import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
 import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
@@ -21,6 +22,7 @@ import dev.dimension.flare.feature.plugin.login.PluginFormLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthStartV1
+import dev.dimension.flare.feature.plugin.login.PluginQrLoginV2
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieRequestV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieSessionV1
@@ -33,6 +35,7 @@ import dev.dimension.flare.feature.plugin.manifest.LoginInteractionV1
 import dev.dimension.flare.feature.plugin.manifest.LoginMethodManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
 import dev.dimension.flare.feature.plugin.manifest.fallbackText
+import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimePool
@@ -70,6 +73,7 @@ import dev.dimension.flare.ui.presenter.login.LoginMethodHandler
 import dev.dimension.flare.ui.presenter.login.LoginMethodSpec
 import dev.dimension.flare.ui.presenter.login.LoginMethodType
 import dev.dimension.flare.ui.presenter.login.LoginPlatformProvider
+import dev.dimension.flare.ui.presenter.login.LoginQrCode
 import dev.dimension.flare.ui.presenter.login.NodeDetection
 import dev.dimension.flare.ui.presenter.login.PlatformDetector
 import dev.dimension.flare.ui.presenter.login.requireReloginAccount
@@ -84,12 +88,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -118,7 +126,9 @@ public class PluginPlatformSpecSourceV1(
         return running.plugins.values
             .sortedBy { it.installed.pluginId }
             .mapNotNull { plugin ->
-                val platformId = plugin.installed.manifest.platform.id
+                val platformId =
+                    plugin.installed.manifest.platform
+                        ?.id ?: return@mapNotNull null
                 if (!occupied.add(platformId.lowercase())) {
                     onIssue(
                         PluginStateIssueV1(
@@ -167,7 +177,8 @@ private class PluginPlatformSpecV1(
     private val accountService: AccountService by koinInject()
     private val oauthCallbacks: PluginOAuthCallbackCoordinatorV1 by koinInject()
     private val manifest = plugin.installed.manifest
-    private val platform = manifest.platform
+    private val platform = manifest.socialPlatform
+    private val accountCapabilities = PluginAccountCapabilitiesV1(plugin, runtimePool, coroutineScope)
 
     val pluginId: String = plugin.installed.pluginId
     override val platformId: String = platform.id
@@ -213,7 +224,29 @@ private class PluginPlatformSpecV1(
         platform.deepLinks.map { it.toPlatformDeepLink(accountKey) }.toImmutableList()
 
     override fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource =
-        PluginDataSourceV1.authenticated(plugin, runtimePool, context, specs, dynamicTimelineSpec, coroutineScope)
+        PluginDataSourceV1
+            .authenticated(plugin, runtimePool, context, specs, dynamicTimelineSpec, coroutineScope)
+            .also { accountCapabilities.start(context) }
+
+    override fun prepareCredential(credentialJson: String): String = plugin.prepareAccountCredential(credentialJson)
+
+    override fun restoreCredential(credentialJson: String): String {
+        if (plugin.installed.manifest.apiVersion < 2) return credentialJson
+        val account = PluginJsonV1.decodeFromString<dev.dimension.flare.feature.plugin.wire.PluginAccountCredentialV1>(credentialJson)
+        account.requireValid(plugin)
+        return PluginJsonV1.encodeToString(
+            dev.dimension.flare.feature.plugin.wire.PluginAccountCredentialV1
+                .serializer(),
+            account.copy(
+                sessionEpoch =
+                    dev.dimension.flare.feature.plugin.host
+                        .platformUuid(),
+                credentialRevision =
+                    dev.dimension.flare.feature.plugin.host
+                        .platformUuid(),
+            ),
+        )
+    }
 
     override fun guestDataSource(
         host: String,
@@ -295,7 +328,7 @@ private class PluginPlatformSpecV1(
                 result.instance.takeUnless { result.match == DetectorMatchV1.None }
             }
         val domain = detected?.domain ?: Url(origin).accountHost()
-        val compose = platform.composeDefaults
+        val compose = platform.composeDefaultsV3 ?: platform.composeDefaults
         return UiInstanceMetadata(
             instance =
                 UiInstance(
@@ -353,6 +386,7 @@ private class PluginPlatformSpecV1(
             webCookie = webCookie,
             accountService = accountService,
             coroutineScope = coroutineScope,
+            runtimePool = runtimePool,
         )
     }
 
@@ -448,16 +482,22 @@ internal class PluginLoginMethodHandlerV1(
     private val webCookie: PluginWebCookieLoginCoordinatorV1,
     private val accountService: AccountService,
     private val coroutineScope: CoroutineScope,
+    private val runtimePool: PluginRuntimePool,
 ) : LoginMethodHandler {
     private val values = method.fields.associate { it.id to "" }.toMutableMap()
-    private val mutableState = MutableStateFlow(state())
     private val mutableEffects = MutableSharedFlow<LoginEffect>(extraBufferCapacity = 1)
     private var cookieSession: PluginWebCookieSessionV1? = null
+    private val cookieCheckMutex = Mutex()
+    private val qrAttempt = MutableStateFlow<Job?>(null)
+    private val qrSuccess = MutableStateFlow<LoginSuccessV1?>(null)
     private var oauthFlowId: String? = null
-    private var retired = false
+    private val retired = MutableStateFlow(false)
+    private val closed = MutableStateFlow(false)
+    private val mutableState = MutableStateFlow(state())
     private val removeCleanup =
         plugin.session.onRetire {
-            retired = true
+            retired.value = true
+            closeQr()?.join()
             cookieSession?.close()
             cookieSession = null
             oauthFlowId?.let {
@@ -482,9 +522,15 @@ internal class PluginLoginMethodHandlerV1(
     }
 
     override suspend fun perform(actionId: String) {
-        if (retired) return
+        if (retired.value || closed.value) return
+        if (method.interaction == LoginInteractionV1.QrCode && actionId == CANCEL_QR_ACTION) {
+            val attempt = closeQr()
+            attempt?.join()
+            if (qrAttempt.value == null && !retired.value && !closed.value) mutableState.value = state()
+            return
+        }
         if (actionId != LOGIN_ACTION || mutableState.value.loading) return
-        mutableState.value = state(loading = true)
+        if (method.interaction != LoginInteractionV1.QrCode) mutableState.value = state(loading = true)
         try {
             when (method.interaction) {
                 LoginInteractionV1.OAuth -> {
@@ -534,7 +580,7 @@ internal class PluginLoginMethodHandlerV1(
                 }
 
                 LoginInteractionV1.WebCookie -> {
-                    cookieSession?.close()
+                    closeCookieSession()?.join()
                     val session =
                         webCookie.begin(
                             plugin = plugin,
@@ -558,11 +604,69 @@ internal class PluginLoginMethodHandlerV1(
                     )
                     mutableState.value = state()
                 }
+
+                LoginInteractionV1.QrCode -> {
+                    performQr()
+                }
             }
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             mutableState.value = state(error = error.message ?: "Plugin login failed")
         }
+    }
+
+    private suspend fun performQr() =
+        coroutineScope {
+            val attempt = requireNotNull(currentCoroutineContext()[Job])
+            if (!qrAttempt.compareAndSet(null, attempt)) return@coroutineScope
+            try {
+                if (retired.value || closed.value) return@coroutineScope
+                mutableState.value = state(loading = true)
+                val success =
+                    qrSuccess.value ?: PluginQrLoginV2(
+                        runtimePool = runtimePool,
+                        plugin = plugin,
+                        methodId = method.id,
+                        origin = context.host.toHttpsOrigin(),
+                        locale = Locale.language,
+                        expectedAccountId = context.reloginTarget?.accountKey?.id,
+                    ).login { content, scanned ->
+                        if (attempt.isActive) {
+                            mutableState.value =
+                                state(qrCode = LoginQrCode(content, method.description?.toUiText(plugin.installed.pluginId), scanned))
+                        }
+                    }
+                attempt.ensureActive()
+                if (success == null) {
+                    mutableState.value = state(qrCode = LoginQrCode(content = null))
+                    return@coroutineScope
+                }
+                qrSuccess.value = success
+                mutableState.value = state(loading = true)
+                plugin.session.invoke("login.${method.id}.save") {
+                    complete(success, beforeCommit = {
+                        attempt.ensureActive()
+                        if (closed.value || retired.value) throw CancellationException("QR login was closed")
+                    })
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    qrSuccess.value = null
+                    throw error
+                }
+                if (attempt.isActive) {
+                    mutableState.value = state(error = error.message ?: "Plugin login failed")
+                }
+            } finally {
+                qrAttempt.compareAndSet(attempt, null)
+            }
+        }
+
+    private fun closeQr(): Job? {
+        val attempt = qrAttempt.value
+        attempt?.cancel()
+        qrSuccess.value = null
+        return attempt
     }
 
     override suspend fun resume(value: String) {
@@ -590,23 +694,55 @@ internal class PluginLoginMethodHandlerV1(
             } == true
 
     override suspend fun checkCookies(snapshot: LoginCookieSnapshot): Boolean {
+        if (!cookieCheckMutex.tryLock()) return false
+        try {
+            return checkCookieSession(snapshot)
+        } finally {
+            cookieCheckMutex.unlock()
+        }
+    }
+
+    private suspend fun checkCookieSession(snapshot: LoginCookieSnapshot): Boolean {
         val session = cookieSession ?: return false
         return try {
             val result =
                 session.check(
                     CookieSnapshotV1(
                         cookies =
-                            snapshot.values.map { cookie ->
-                                CookieValueV1(
-                                    sourceUrl = cookie.sourceUrl,
-                                    name = cookie.name,
-                                    value = cookie.value,
-                                )
-                            },
+                            snapshot.values
+                                .map { cookie ->
+                                    CookieValueV1(
+                                        sourceUrl = cookie.sourceUrl,
+                                        name = cookie.name,
+                                        value = cookie.value,
+                                        attributes =
+                                            cookie.attributes
+                                                ?.let { attributes ->
+                                                    dev.dimension.flare.feature.plugin.wire.CookieAttributesV2(
+                                                        attributes.domain,
+                                                        attributes.hostOnly,
+                                                        attributes.path,
+                                                        attributes.expiresAt,
+                                                        attributes.session,
+                                                        attributes.secure,
+                                                        attributes.httpOnly,
+                                                        attributes.sameSite,
+                                                    )
+                                                }.takeIf { plugin.installed.manifest.apiVersion >= 2 },
+                                    )
+                                }.let { cookies ->
+                                    if (plugin.installed.manifest.apiVersion ==
+                                        1
+                                    ) {
+                                        cookies.distinctBy { it.sourceUrl to it.name }
+                                    } else {
+                                        cookies
+                                    }
+                                },
                     ),
                 )
             if (result is PluginCookieCheckResultV1.Success) {
-                complete(result.value)
+                complete(result.value, session)
             } else if (result !is PluginCookieCheckResultV1.Busy) {
                 mutableState.value = state()
             }
@@ -619,7 +755,8 @@ internal class PluginLoginMethodHandlerV1(
     }
 
     override fun clear() {
-        if (retired) return
+        if (retired.value || closed.value) return
+        closeQr()
         values.keys.forEach { values[it] = "" }
         closeCookieSession()
         closeOAuthFlow(cancelPending = true)
@@ -627,17 +764,35 @@ internal class PluginLoginMethodHandlerV1(
     }
 
     override fun close() {
+        closed.value = true
         removeCleanup()
+        closeQr()
         closeCookieSession()
         // Keep the pending flow for unattended completion after its UI is disposed.
         closeOAuthFlow(cancelPending = false)
     }
 
-    private suspend fun complete(success: LoginSuccessV1) {
+    private suspend fun complete(
+        success: LoginSuccessV1,
+        expectedCookieSession: PluginWebCookieSessionV1? = null,
+        beforeCommit: () -> Unit = {},
+    ) {
         plugin.session.ensureActive()
         val accountKey = MicroBlogKey(success.accountId, Url(success.origin).accountHost())
         context.requireReloginAccount(accountKey)
-        accountService.addPluginAccount(plugin, success)
+        accountService.addPluginAccount(plugin, success) {
+            beforeCommit()
+            if (expectedCookieSession != null) {
+                if (cookieSession !== expectedCookieSession) throw CancellationException("Cookie login flow was replaced")
+                if (plugin.installed.manifest.apiVersion >= 2) expectedCookieSession.requireActive()
+            }
+        }
+        if (expectedCookieSession != null) {
+            expectedCookieSession.close()
+            if (cookieSession !== expectedCookieSession) return
+            cookieSession = null
+        }
+        qrSuccess.value = null
         mutableState.value = state()
         context.onSuccess()
     }
@@ -662,6 +817,7 @@ internal class PluginLoginMethodHandlerV1(
     private fun state(
         loading: Boolean = false,
         error: String? = null,
+        qrCode: LoginQrCode? = null,
     ): LoginFlowState =
         LoginFlowState(
             fields =
@@ -675,15 +831,52 @@ internal class PluginLoginMethodHandlerV1(
                     )
                 },
             actions =
-                listOf(
-                    LoginAction(
-                        id = LOGIN_ACTION,
-                        label = UiStrings.Next,
-                        enabled = !retired && !loading && method.fields.filter { it.required }.all { !values[it.id].isNullOrBlank() },
-                    ),
-                ),
+                if (method.interaction == LoginInteractionV1.QrCode) {
+                    val title = method.title.toUiText(plugin.installed.pluginId)
+                    when {
+                        retired.value || closed.value -> {
+                            emptyList()
+                        }
+
+                        loading -> {
+                            listOf(LoginAction(LOGIN_ACTION, title, enabled = false))
+                        }
+
+                        qrCode?.content != null -> {
+                            listOf(LoginAction(CANCEL_QR_ACTION, UiStrings.Cancel))
+                        }
+
+                        qrCode != null -> {
+                            listOf(
+                                LoginAction(LOGIN_ACTION, UiStrings.QrLoginNewCode),
+                                LoginAction(CANCEL_QR_ACTION, UiStrings.Cancel),
+                            )
+                        }
+
+                        qrSuccess.value != null -> {
+                            listOf(
+                                LoginAction(LOGIN_ACTION, UiStrings.QrLoginRetrySave),
+                                LoginAction(CANCEL_QR_ACTION, UiStrings.Cancel),
+                            )
+                        }
+
+                        else -> {
+                            listOf(LoginAction(LOGIN_ACTION, title))
+                        }
+                    }
+                } else {
+                    listOf(
+                        LoginAction(
+                            id = LOGIN_ACTION,
+                            label = UiStrings.Next,
+                            enabled =
+                                !retired.value && !loading && method.fields.filter { it.required }.all { !values[it.id].isNullOrBlank() },
+                        ),
+                    )
+                },
             loading = loading,
             error = error,
+            qrCode = qrCode,
         )
 }
 
@@ -743,6 +936,7 @@ private fun LoginInteractionV1.toLoginMethodType(): LoginMethodType =
         LoginInteractionV1.CredentialImport -> LoginMethodType.CredentialImport
         LoginInteractionV1.WebCookie -> LoginMethodType.WebCookie
         LoginInteractionV1.Form -> LoginMethodType.Form
+        LoginInteractionV1.QrCode -> LoginMethodType.QrConnect
     }
 
 private fun LoginFieldTypeV1.toLoginFieldType(): LoginFieldType =
@@ -769,4 +963,5 @@ private fun String.render(values: Map<String, String>): String =
 
 private val DEEP_LINK_CAPTURE = Regex("\\{([A-Za-z][A-Za-z0-9_.-]{0,127})\\}")
 private const val LOGIN_ACTION = "login"
+private const val CANCEL_QR_ACTION = "cancel"
 private const val MAX_DEEP_LINK_CAPTURE_LENGTH = 4_096

@@ -36,9 +36,14 @@ final class RichTextUIView: UIView, TimelineHeightProviding {
             invalidateIntrinsicContentSize()
         }
     }
+    var clipsToVisibleHeight = false {
+        didSet {
+            if oldValue != clipsToVisibleHeight { updateVerticalLayoutPolicy() }
+        }
+    }
     var onOpenURL: ((URL) -> Void)?
     var baseTextStyle: UIFont.TextStyle = .body { didSet { if !isBatchUpdating { update() } } }
-    var baseTextColor: UIColor = .label { didSet { if !isBatchUpdating { update() } } }
+    var baseTextColor: UIColor = .flareLabel { didSet { if !isBatchUpdating { update() } } }
     var preferredContentSizeCategory: UIContentSizeCategory = .medium {
         didSet {
             guard !isBatchUpdating, oldValue != preferredContentSizeCategory else { return }
@@ -140,7 +145,9 @@ final class RichTextUIView: UIView, TimelineHeightProviding {
         setContentCompressionResistancePriority(.required, for: .vertical)
         updateHorizontalLayoutPolicy()
         traitRegistration = registerForTraitChanges([
+            FlareTextBackgroundTrait.self,
             UITraitUserInterfaceStyle.self,
+            UITraitUserInterfaceLevel.self,
             UITraitPreferredContentSizeCategory.self,
             UITraitLegibilityWeight.self,
             UITraitAccessibilityContrast.self,
@@ -158,7 +165,7 @@ final class RichTextUIView: UIView, TimelineHeightProviding {
         isTextSelectionEnabled: Bool,
         onOpenURL: ((URL) -> Void)?,
         baseTextStyle: UIFont.TextStyle = .body,
-        baseTextColor: UIColor = .label,
+        baseTextColor: UIColor = .flareLabel,
         preferredContentSizeCategory: UIContentSizeCategory = .medium,
         contentKey: Int? = nil,
         collapseAboveLineCount: Int? = nil
@@ -427,7 +434,7 @@ final class RichTextUIView: UIView, TimelineHeightProviding {
     }
 
     private func updateVerticalLayoutPolicy() {
-        let clipsWholeRichText = collapseAboveLineCount != nil
+        let clipsWholeRichText = clipsToVisibleHeight || collapseAboveLineCount != nil
         stackBottomConstraint?.isActive = !clipsWholeRichText
         clipsToBounds = clipsWholeRichText
         invalidateIntrinsicContentSize()
@@ -1358,7 +1365,7 @@ private final class RichTextLabel: UILabel, RichTextTextRendering, RichTextFitti
     func configure(attributedText: NSAttributedString, alignment: NSTextAlignment, lineLimit: Int?) {
         self.attributedText = attributedText
         textAlignment = alignment
-        update(lineLimit: lineLimit, selectionEnabled: false, linkColor: .label, onOpenURL: nil)
+        update(lineLimit: lineLimit, selectionEnabled: false, linkColor: .flareLabel, onOpenURL: nil)
     }
 
     func applyAttributedText(_ attributedText: NSAttributedString) {
@@ -1648,6 +1655,7 @@ private final class RichTextQuoteBlockView: UIView, RichTextFittingPreparing {
         self.contentView = contentView
         super.init(frame: .zero)
         backgroundColor = UIColor.secondaryLabel.withAlphaComponent(0.08)
+        traitOverrides[FlareTextBackgroundTrait.self] = backgroundColor
         layer.cornerRadius = 8
         layer.masksToBounds = true
 

@@ -33,6 +33,7 @@ private struct UiListRow: View {
         ) {
             Label {
                 Text(data.title)
+                    .flarePrimaryText()
             } icon: {
                 if let image = data.media {
                     NetworkImage(data: image)
@@ -43,10 +44,15 @@ private struct UiListRow: View {
                         .frame(width: 24, height: 24)
                 }
             }
+            if let creator = data.creator {
+                Text(verbatim: creator.handle.display)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let desc = data.description_, !desc.isEmpty {
                 Text(desc)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
             }
         }
     }
@@ -61,6 +67,7 @@ private struct UiFeedRow: View {
         ) {
             Label {
                 Text(data.title)
+                    .flarePrimaryText()
             } icon: {
                 if let image = data.media {
                     NetworkImage(data: image)
@@ -74,7 +81,7 @@ private struct UiFeedRow: View {
             if let desc = data.description_, !desc.isEmpty {
                 Text(desc)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
             }
         }
     }
@@ -89,6 +96,7 @@ private struct UiAntennaRow: View {
         ) {
             Label {
                 Text(data.title)
+                    .flarePrimaryText()
             } icon: {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .frame(width: 24, height: 24)
@@ -106,6 +114,7 @@ private struct UiChannelRow: View {
         ) {
             Label {
                 Text(data.title)
+                    .flarePrimaryText()
             } icon: {
                 if let image = data.media {
                     NetworkImage(data: image)
@@ -119,7 +128,7 @@ private struct UiChannelRow: View {
             if let desc = data.description_, !desc.isEmpty {
                 RichText(text: desc)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
             }
         }
     }
@@ -142,7 +151,7 @@ public struct UiListPlaceholder: View {
             }
             Text("#loading", bundle: FlareAppleUILocalization.bundle)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
         }
         .redacted(reason: .placeholder)
     }

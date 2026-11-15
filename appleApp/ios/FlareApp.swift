@@ -31,8 +31,15 @@ struct FlareApp: App {
             }
             .modifier(IOSTimelineListEnvironment())
         .ugoiraExportStatus()
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase, initial: true) { _, phase in
                 MediaCacheMaintenance.handleScenePhase(phase)
+                PluginRuntimeLifecycleFacadeV1().setForeground(active: phase == .active)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                MediaProxy.shared.setRelayForeground(active: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                MediaProxy.shared.setRelayForeground(active: true)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                 Task.detached {

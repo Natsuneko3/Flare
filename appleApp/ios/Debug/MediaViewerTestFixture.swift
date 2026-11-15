@@ -18,6 +18,7 @@ struct MediaViewerTestFixture: View {
     private let withoutPost = ProcessInfo.processInfo.arguments.contains("--without-post")
     private let hidePostActions = ProcessInfo.processInfo.arguments.contains("--hide-post-actions")
     private let translationSettings = ProcessInfo.processInfo.arguments.contains("--translation-settings")
+    private let tallImage = ProcessInfo.processInfo.arguments.contains("--tall-image")
 
     var body: some View {
         VStack {
@@ -137,8 +138,11 @@ struct MediaViewerTestFixture: View {
     }
 
     private func makeMedia(index: Int = 0) async -> any UiMedia {
+        if tallImage, !video {
+            return await makeTallImage()
+        }
         let image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 240)).image { context in
-            UIColor.systemTeal.setFill()
+            (index == 0 ? UIColor.systemTeal : UIColor.systemOrange).setFill()
             context.fill(CGRect(x: 0, y: 0, width: 320, height: 240))
         }
         let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent("media-fixture-\(index).png")
@@ -172,7 +176,25 @@ struct MediaViewerTestFixture: View {
         } catch {
             assertionFailure("Could not create video fixture: \(error)")
         }
-        return UiMediaVideo(url: videoURL.absoluteString, thumbnailUrl: imageURL.absoluteString, description: "Fixture video", height: 240, width: 320, customHeaders: nil, proxy: ProxyRef.Unbound.shared, downloadUrl: nil)
+        return UiMediaVideo(url: videoURL.absoluteString, thumbnailUrl: imageURL.absoluteString, description: "Fixture video", height: 240, width: 320, customHeaders: nil, proxy: ProxyRef.Unbound.shared, downloadUrl: nil,
+                            kind: ProcessInfo.processInfo.arguments.contains("--live-photo") ? .livePhoto : ProcessInfo.processInfo.arguments.contains("--gif-video") ? .gif : .video)
+    }
+
+    /// A long screenshot-style image that the viewer shows at full width inside a vertical scroll view.
+    private func makeTallImage() async -> any UiMedia {
+        let size = CGSize(width: 320, height: 2_400)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+            for band in 0..<Int(size.height / 200) {
+                (band.isMultiple(of: 2) ? UIColor.systemTeal : UIColor.systemIndigo).setFill()
+                context.fill(CGRect(x: 0, y: CGFloat(band) * 200, width: size.width, height: 200))
+            }
+        }
+        let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent("media-fixture-tall.png")
+        try? image.pngData()?.write(to: imageURL)
+        try? await ImageCache.default.store(image, forKey: imageURL.absoluteString, toDisk: false)
+        return UiMediaImage(url: imageURL.absoluteString, previewUrl: imageURL.absoluteString, description: "Fixture tall image", height: 2_400, width: 320, sensitive: false, customHeaders: nil, proxy: ProxyRef.Unbound.shared)
     }
 
     private func richText(_ text: String) -> UiRichText {
@@ -181,9 +203,24 @@ struct MediaViewerTestFixture: View {
     }
 
     private func makePost(medias: [any UiMedia]) -> UiTimelineV2.Post {
-        let profile = UiProfile(key: MicroBlogKey(id: "reader", host: "example.invalid"), handle: UiHandle(raw: "reader", host: "example.invalid", displayOverride: nil), avatar: nil as UiMediaImage?, nameInternal: richText("Media Test User"), platformId: "mastodon", platformIcon: IconType.Material(icon: .world), clickEvent: ClickEventNoop.shared, banner: nil, description: nil, sourceLanguages: [], translationDisplayState: .hidden, matrices: UiProfile.Matrices(fansCount: 0, followsCount: 0, statusesCount: 0, platformFansCount: nil), mark: [], bottomContent: nil, pluginId: nil)
+        let profile = UiProfile(key: MicroBlogKey(id: "reader", host: "example.invalid"), handle: UiHandle(raw: "reader", host: "example.invalid", displayOverride: nil), avatar: nil as UiMediaImage?, nameInternal: richText("Media Test User"), platformId: "mastodon", platformIcon: IconType.Material(icon: .world), clickEvent: ClickEventNoop.shared, banner: nil, description: nil, sourceLanguages: [], translationDisplayState: .hidden, matrices: UiProfile.Matrices(fansCount: 0, followsCount: 0, statusesCount: 0, platformFansCount: nil), mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [])
         let action = ActionMenu.Item(updateKey: "like", icon: .like, text: nil, count: UiNumber(value: 1), color: .contentColor, clickEvent: ClickEventNoop.shared, actionFamily: .like, enabled: true)
         return UiTimelineV2.Post(platformId: "mastodon", images: medias, sensitive: false, contentWarning: nil, user: profile, platformIcon: IconType.Material(icon: .world), sourceLanguages: [], translationDisplayState: .hidden, content: UiTranslatableText(original: richText(String(repeating: "Post details for the native media sheet. ", count: 40)), translation: nil), actions: [action], poll: nil, statusKey: MicroBlogKey(id: "media-fixture", host: "example.invalid"), card: nil, createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0).toUi(), emojiReactions: [], sourceChannel: nil, visibility: nil, replyToHandle: nil, references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia, accountType: AccountType.Guest.shared, itemKey: "media-fixture", pluginId: nil, authorSubtitleInternal: nil)
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func mediaViewerTestSheetLayout(isCompact: Bool) -> some View {
+        if isCompact,
+           ProcessInfo.processInfo.arguments.contains("--media-viewer-test"),
+           ProcessInfo.processInfo.arguments.contains("--zero-height-media-summary") {
+            // Simulate a zero-height layout proposal while keeping the native sheet at its measured detent.
+            frame(height: 0)
+                .frame(maxHeight: .infinity, alignment: .top)
+        } else {
+            self
+        }
     }
 }
 #endif

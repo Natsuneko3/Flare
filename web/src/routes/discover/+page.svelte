@@ -6,19 +6,15 @@
 	import TimelineList from '$lib/components/UiTimeline/TimelineList.svelte';
 	import UserDisplay from '$lib/components/user/UserDisplay.svelte';
 	import { m } from '$lib/paraglide/messages.js';
-	import { useReactiveRetainedPresenter, useRetainedPresenter } from '$lib/presenter/presenterStore.svelte';
+	import { useRetainedPresenter } from '$lib/presenter/presenterStore.svelte';
 	import {
 		createDiscoverPresenterController,
+		type AccountType,
+		type MicroBlogKey,
 		type PagingState as DiscoverPagingState,
 		type UiHashtag,
 		type UiProfile as DiscoverUiProfile,
 	} from '@flare/web-presenters/discover.svelte';
-	import {
-		createSearchPresenterController,
-		type AccountType,
-		type MicroBlogKey,
-		type UiProfile as SearchUiProfile,
-	} from '@flare/web-presenters/search.svelte';
 	import type {
 		PagingState as TimelinePagingState,
 		UiProfile as TimelineUiProfile,
@@ -32,30 +28,27 @@
 	);
 
 	let query = $state('');
-	let submittedQuery = $state('');
+	let pendingQuery = $state('');
 	let showAccountMenu = $state(false);
-	const isSearching = $derived(submittedQuery.trim().length > 0);
-	const accountKey = $derived(accountTypeKey(discover.selectedAccountType));
-	const search = useReactiveRetainedPresenter(
-		() => !discover.isAccountReady ? 'discover:search:restoring' : `discover:search:${accountKey}:${submittedQuery}`,
-		() => createSearchPresenterController(discover.selectedAccountType, !discover.isAccountReady ? '' : submittedQuery),
-		{ ttlMs: 0 }
-	);
 	const accounts = $derived(discover.accounts.type === 'Success' ? discover.accounts.data : []);
 	const canSwitchAccount = $derived(discover.canSwitchAccount);
+	const accountKey = $derived(accountTypeKey(discover.selectedAccountType));
 
+
+	$effect(() => {
+		if (!pendingQuery || !discover.isAccountReady) return;
+		const next = pendingQuery;
+		pendingQuery = '';
+		void goto(searchUrl(next));
+	});
 
 	function submitSearch(): void {
-		const next = query.trim();
-		submittedQuery = next;
-		if (next && discover.isAccountReady) {
-			void goto(searchUrl(next));
-		}
+		pendingQuery = query.trim();
 	}
 
 	function clearSearch(): void {
 		query = '';
-		submittedQuery = '';
+		pendingQuery = '';
 	}
 
 	function selectAccount(profile: DiscoverUiProfile): void {
@@ -64,19 +57,16 @@
 	}
 
 	function searchHashtag(hashtag: UiHashtag): void {
-		if (!discover.isAccountReady) return;
+		if (!discover.isAccountReady || !discover.canSearchPosts) return;
 		query = hashtag.searchContent;
-		submittedQuery = hashtag.searchContent;
-		void goto(searchUrl(hashtag.searchContent));
+		submitSearch();
 	}
 
 	function searchUrl(nextQuery: string): string {
-		const params = new URLSearchParams();
-		const account = accountSegment(discover.selectedAccountType);
-		if (account !== 'guest') {
-			params.set('account', account);
-		}
-		params.set('q', nextQuery);
+		const params = new URLSearchParams({
+			account: accountSegment(discover.selectedAccountType),
+			q: nextQuery,
+		});
 		return `/search?${params.toString()}`;
 	}
 
@@ -165,7 +155,7 @@
 						aria-label={m.discoverSearchPlaceholder()}
 					/>
 				</label>
-				{#if isSearching}
+				{#if query}
 					<button class="btn btn-ghost btn-square btn-sm rounded-box" type="button" aria-label={m.discoverClearSearch()} title={m.discoverClearSearch()} onclick={clearSearch}>
 						<FaIcon name="Close" size={14} />
 					</button>
@@ -207,7 +197,7 @@
 		{/snippet}
 
 		{#snippet bottom()}
-			{#if (isSearching && (search.users.type === 'Success' && search.users.isRefreshing || search.status.type === 'Success' && search.status.isRefreshing)) || (!isSearching && (discover.users.type === 'Success' && discover.users.isRefreshing || discover.hashtags.type === 'Success' && discover.hashtags.isRefreshing || discover.status.type === 'Success' && discover.status.isRefreshing))}
+			{#if discover.users.type === 'Success' && discover.users.isRefreshing || discover.hashtags.type === 'Success' && discover.hashtags.isRefreshing || discover.status.type === 'Success' && discover.status.isRefreshing}
 				<progress class="progress progress-primary block h-0.5 w-full"></progress>
 			{/if}
 		{/snippet}
@@ -231,12 +221,18 @@
 			</div>
 		{/if}
 
-		{#if isSearching}
-			<DiscoverSection title={m.discoverUsers()} state={search.users}>
-				<div class="user-row">
-					{#each indexes(search.users, 12) as index (index)}
-						{@const user = search.users.type === 'Success' ? search.users.peek(index) : null}
-						<div class="user-card card rounded-box border border-base-300 bg-base-100" use:loadWhenVisible={{ state: search.users, index }}>
+		<DiscoverSection title={m.discoverUsers()} state={discover.users}>
+			<div class="user-row">
+				{#if discover.users.type === 'Loading'}
+					{#each Array.from({ length: 4 }) as _, index (index)}
+						<div class="user-card card rounded-box border border-base-300 bg-base-100">
+							{@render UserSkeleton()}
+						</div>
+					{/each}
+				{:else}
+					{#each indexes(discover.users, 12) as index (index)}
+						{@const user = discover.users.type === 'Success' ? discover.users.peek(index) : null}
+						<div class="user-card card rounded-box border border-base-300 bg-base-100" use:loadWhenVisible={{ state: discover.users, index }}>
 							{#if user}
 								<UserDisplay user={user as unknown as TimelineUiProfile} variant="compact" />
 							{:else}
@@ -244,62 +240,35 @@
 							{/if}
 						</div>
 					{/each}
-				</div>
-			</DiscoverSection>
+				{/if}
+			</div>
+		</DiscoverSection>
 
-			<DiscoverSection title={m.discoverStatus()} state={search.status}>
-				<TimelineList listState={search.status as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={`search:${accountKey}:${submittedQuery}`} />
-			</DiscoverSection>
-		{:else}
-			<DiscoverSection title={m.discoverUsers()} state={discover.users}>
-				<div class="user-row">
-					{#if discover.users.type === 'Loading'}
-						{#each Array.from({ length: 4 }) as _, index (index)}
-							<div class="user-card card rounded-box border border-base-300 bg-base-100">
-								{@render UserSkeleton()}
-							</div>
-						{/each}
-					{:else}
-						{#each indexes(discover.users, 12) as index (index)}
-							{@const user = discover.users.type === 'Success' ? discover.users.peek(index) : null}
-							<div class="user-card card rounded-box border border-base-300 bg-base-100" use:loadWhenVisible={{ state: discover.users, index }}>
-								{#if user}
-									<UserDisplay user={user as unknown as TimelineUiProfile} variant="compact" />
-								{:else}
-									{@render UserSkeleton()}
-								{/if}
-							</div>
-						{/each}
-					{/if}
-				</div>
-			</DiscoverSection>
-
-			<DiscoverSection title={m.discoverHashtags()} state={discover.hashtags}>
-				<div class="hashtag-cloud">
-					{#each indexes(discover.hashtags, 28) as index (index)}
-						{@const hashtag = discover.hashtags.type === 'Success' ? discover.hashtags.peek(index) : null}
-						<button
-							class="btn btn-outline btn-sm rounded-box hashtag-chip"
-							type="button"
-							disabled={!hashtag}
-							use:loadWhenVisible={{ state: discover.hashtags, index }}
-							onclick={() => hashtag && searchHashtag(hashtag)}
-						>
-							{hashtag?.hashtag ?? '#'}
-						</button>
+		<DiscoverSection title={m.discoverHashtags()} state={discover.hashtags}>
+			<div class="hashtag-cloud">
+				{#each indexes(discover.hashtags, 28) as index (index)}
+					{@const hashtag = discover.hashtags.type === 'Success' ? discover.hashtags.peek(index) : null}
+					<button
+						class="btn btn-outline btn-sm rounded-box hashtag-chip"
+						type="button"
+						disabled={!hashtag || !discover.canSearchPosts}
+						use:loadWhenVisible={{ state: discover.hashtags, index }}
+						onclick={() => hashtag && searchHashtag(hashtag)}
+					>
+						{hashtag?.hashtag ?? '#'}
+					</button>
+				{/each}
+				{#if discover.hashtags.type === 'Loading'}
+					{#each Array.from({ length: 8 }) as _, index (index)}
+						<div class="skeleton h-8 w-24 rounded-box"></div>
 					{/each}
-					{#if discover.hashtags.type === 'Loading'}
-						{#each Array.from({ length: 8 }) as _, index (index)}
-							<div class="skeleton h-8 w-24 rounded-box"></div>
-						{/each}
-					{/if}
-				</div>
-			</DiscoverSection>
+				{/if}
+			</div>
+		</DiscoverSection>
 
-			<DiscoverSection title={m.discoverStatus()} state={discover.status}>
-				<TimelineList listState={discover.status as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={`discover:${accountKey}`} />
-			</DiscoverSection>
-		{/if}
+		<DiscoverSection title={m.discoverStatus()} state={discover.status}>
+			<TimelineList listState={discover.status as unknown as TimelinePagingState<UiTimelineV2>} sourceKey={`discover:${accountKey}`} />
+		</DiscoverSection>
 	</section>
 </div>
 

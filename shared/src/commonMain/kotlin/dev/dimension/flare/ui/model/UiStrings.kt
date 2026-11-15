@@ -67,6 +67,12 @@ public enum class UiStrings {
     Articles,
     WeiboFriendsCircle,
     WeiboPrivateFollowing,
+    PixivRankingDayAi,
+    PixivRankingDayR18,
+    PixivRankingWeekR18,
+    PixivRankingDayR18Ai,
+    QrLoginNewCode,
+    QrLoginRetrySave,
 }
 
 public fun UiStrings.asText(): UiText = UiText.Localized(this)

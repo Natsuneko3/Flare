@@ -10,6 +10,7 @@ import dev.dimension.flare.createTestFileSystem
 import dev.dimension.flare.createTestRootPath
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.createDataStoreStorage
+import dev.dimension.flare.data.datastore.model.AgentOpenAIApi
 import dev.dimension.flare.data.datastore.model.AppSettings
 import dev.dimension.flare.data.datastore.model.OpenAIConfigDefaults
 import dev.dimension.flare.data.io.OkioFileStorage
@@ -272,6 +273,10 @@ class AiConfigPresenterIsolationTest : RobolectricTest() {
                         .first()
                         .aiConfig.agentType,
                 )
+                inherited.second.setAgentOpenAIApi(AgentOpenAIApi.Responses)
+                val configured = states.first { (_, agent) -> agent.agentOpenAIApi == AgentOpenAIApi.Responses }
+                assertTrue(configured.second.useSharedConfig)
+                assertTrue(configured.first.hasConfig(updatedBasic))
                 inherited.first.setOpenAIModel("inherited-model")
                 val changedBasic = updatedBasic.copy(model = "inherited-model")
                 val following = states.first { (base, override) -> base.hasConfig(changedBasic) && override.hasConfig(changedBasic) }
@@ -297,7 +302,11 @@ class AiConfigPresenterIsolationTest : RobolectricTest() {
                     val expectedAgent = changedBasic.copy(model = "independent-again", reasoningEffort = agentEffort.value)
                     states.first { (base, override) -> base.hasConfig(expectedBasic) && override.hasConfig(expectedAgent) }
                     assertEquals(
-                        AppSettings.AiConfig(type = expectedBasic, agentType = expectedAgent),
+                        AppSettings.AiConfig(
+                            type = expectedBasic,
+                            agentType = expectedAgent,
+                            agentOpenAIApi = AgentOpenAIApi.Responses,
+                        ),
                         dataStore.appSettingsStore.data
                             .first()
                             .aiConfig,

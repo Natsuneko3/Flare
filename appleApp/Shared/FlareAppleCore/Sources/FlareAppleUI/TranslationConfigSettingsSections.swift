@@ -134,15 +134,26 @@ private struct TranslationConfigSettingsSectionsContent: View {
         Section {
             Picker(
                 selection: Binding(
-                    get: { state.presenter.state.translateProvider },
-                    set: { provider in
-                        state.presenter.state.selectTranslateProvider(type: provider)
+                    get: { state.presenter.state.selectedTranslationPluginId.map { "plugin:" + $0 } ?? state.presenter.state.translateProvider.name },
+                    set: { value in
+                        if value.hasPrefix("plugin:") {
+                            state.presenter.state.selectTranslationPlugin(pluginId: String(value.dropFirst(7)))
+                        } else if let provider = state.presenter.state.supportedTranslateProviders.first(where: { $0.name == value }) {
+                            state.presenter.state.selectTranslateProvider(type: provider)
+                        }
                     }
                 )
             ) {
                 ForEach(state.presenter.state.supportedTranslateProviders, id: \.name) { provider in
                     Text(translateProviderOptionTitleKey(option: provider), bundle: FlareAppleUILocalization.bundle)
-                        .tag(provider)
+                        .tag(provider.name)
+                }
+                ForEach(state.presenter.state.pluginTranslateProviders, id: \.pluginId) { plugin in
+                    Text(plugin.name.text).tag("plugin:" + plugin.pluginId)
+                }
+                if let selected = state.presenter.state.selectedTranslationPluginId,
+                   !state.presenter.state.pluginTranslateProviders.contains(where: { $0.pluginId == selected }) {
+                    Text(selected + " — " + FlareAppleUILocalization.string("plugin_operation_failed")).tag("plugin:" + selected)
                 }
             } label: {
                 Text("Translation Provider", bundle: FlareAppleUILocalization.bundle)
@@ -219,10 +230,10 @@ private struct TranslationConfigSettingsSectionsContent: View {
                     bundle: FlareAppleUILocalization.bundle
                 )
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .flareSecondaryText()
                 Text("Sample text", bundle: FlareAppleUILocalization.bundle)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
                 RichText(text: state.aiTranslationTestPresenter.state.sampleText)
                 Button {
                     state.aiTranslationTestPresenter.state.runTest()
@@ -240,7 +251,7 @@ private struct TranslationConfigSettingsSectionsContent: View {
                 if let translatedText = state.aiTranslationTestPresenter.state.translatedText {
                     Text("Translated text", bundle: FlareAppleUILocalization.bundle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .flareSecondaryText()
                     RichText(text: translatedText)
                 }
             }
@@ -269,7 +280,7 @@ private struct TranslationConfigSettingsSectionsContent: View {
             editButton(field: .libreTranslateBaseUrl, value: state.presenter.state.libreTranslateBaseUrl)
             editButton(field: .libreTranslateApiKey, value: state.presenter.state.libreTranslateApiKey)
 
-        case .googleWeb:
+        case .googleWeb, .plugin:
             EmptyView()
         }
     }
@@ -292,6 +303,8 @@ private struct TranslationConfigSettingsSectionsContent: View {
 
     private func translateProviderOptionTitleKey(option: TranslateProviderOption) -> LocalizedStringKey {
         switch option {
+        case .plugin:
+            "settings_plugins_title"
         case .ai:
             "AI"
         case .googleWeb:
@@ -424,7 +437,7 @@ private struct TranslationExcludedLanguagesSheet: View {
             if option.title != option.tag {
                 Text(option.tag)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .flareSecondaryText()
             }
         } icon: {
             EmptyView()

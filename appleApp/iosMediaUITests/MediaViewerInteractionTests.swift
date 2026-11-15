@@ -3,15 +3,26 @@ import XCTest
 
 final class MediaViewerInteractionTests: XCTestCase {
     @MainActor
-    private func openMedia(video: Bool = false, withoutPost: Bool = false, indicator: Bool = false, hidePostActions: Bool = false, translation: Bool = false, translationError: Bool = false) -> XCUIApplication {
+    private func openMedia(
+        video: Bool = false,
+        withoutPost: Bool = false,
+        indicator: Bool = false,
+        hidePostActions: Bool = false,
+        translation: Bool = false,
+        translationError: Bool = false,
+        zeroHeightSummary: Bool = false,
+        tallImage: Bool = false
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--media-viewer-test", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         if video { app.launchArguments.append("--video") }
+        if tallImage { app.launchArguments.append("--tall-image") }
         if translation { app.launchArguments.append("--image-translation-fixture") }
         if translationError { app.launchArguments.append("--image-translation-error-fixture") }
         if withoutPost { app.launchArguments.append("--without-post") }
         if indicator { app.launchArguments.append("--indicator") }
         if hidePostActions { app.launchArguments.append("--hide-post-actions") }
+        if zeroHeightSummary { app.launchArguments.append("--zero-height-media-summary") }
         app.launch()
         let open = app.buttons["media-fixture-open"]
         XCTAssertTrue(open.waitForExistence(timeout: 15))
@@ -253,6 +264,67 @@ final class MediaViewerInteractionTests: XCTestCase {
     }
 
     @MainActor
+    func testVideoSpeedPersistsAcrossViewerAndApplicationRelaunch() {
+        let app = openMedia(video: true, withoutPost: true)
+        defer { app.terminate() }
+        let speed = app.buttons["video-playback-speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 10))
+        app.buttons["Pause"].tap()
+        XCTAssertEqual(speed.frame.height, app.buttons["Play"].frame.height, accuracy: 1)
+        for label in ["4×", "8×", "16×"] {
+            speed.tap()
+            app.buttons[label].tap()
+            let selected = NSPredicate(format: "value == %@", label)
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: selected, object: speed)], timeout: 5), .completed)
+        }
+        let control = XCTAttachment(screenshot: app.screenshot())
+        control.name = "ios-video-speed-control"
+        control.lifetime = .keepAlways
+        add(control)
+        speed.tap()
+        XCTAssertTrue(app.buttons["0.75×"].waitForExistence(timeout: 5))
+        let menu = XCTAttachment(screenshot: app.screenshot())
+        menu.name = "ios-video-speed-menu"
+        menu.lifetime = .keepAlways
+        add(menu)
+        app.buttons["16×"].tap()
+        app.buttons["Close"].tap()
+        app.buttons["media-fixture-open"].tap()
+        XCTAssertTrue(speed.waitForExistence(timeout: 10))
+        XCTAssertEqual(speed.value as? String, "16×")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["media-fixture-open"].waitForExistence(timeout: 15))
+        app.buttons["media-fixture-open"].tap()
+        XCTAssertTrue(speed.waitForExistence(timeout: 10))
+        XCTAssertEqual(speed.value as? String, "16×")
+        app.buttons["Pause"].tap()
+        speed.tap()
+        app.buttons["0.75×"].tap()
+        XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 5))
+        let center = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        center.press(forDuration: 0.8)
+        XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 5))
+        XCTAssertEqual(speed.value as? String, "0.75×")
+        speed.tap()
+        app.buttons["1×"].tap()
+    }
+
+    @MainActor
+    func testAnimatedVideosDoNotOfferPlaybackSpeed() {
+        for kind in ["--live-photo", "--gif-video"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--media-viewer-test", "--video", "--without-post", kind, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+            app.launch()
+            XCTAssertTrue(app.buttons["media-fixture-open"].waitForExistence(timeout: 15))
+            app.buttons["media-fixture-open"].tap()
+            XCTAssertTrue(app.buttons["Pause"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["video-playback-speed"].exists)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testVideoDoesNotOfferImageTranslation() {
         let app = openMedia(video: true, withoutPost: true)
         defer { app.terminate() }
@@ -372,6 +444,107 @@ final class MediaViewerInteractionTests: XCTestCase {
     @MainActor func testImageSwipeUpWithoutPost() { assertDismisses(upward: true, withoutPost: true) }
     @MainActor func testVideoSwipeDownWithSummary() { assertDismisses(upward: false, video: true) }
     @MainActor func testVideoSwipeUpWithSummary() { assertDismisses(upward: true, video: true) }
+
+    @MainActor
+    func testTallImageDragContinuedPastTopEdgeDismisses() {
+        let app = openMedia(withoutPost: true, tallImage: true)
+        defer { app.terminate() }
+        // Scroll into the image without momentum.
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertFalse(app.staticTexts["Media dismissed"].exists, "Scrolling into a tall image must not dismiss")
+
+        // One drag scrolls back to the top and keeps pulling about 17% of the screen past it:
+        // short of a regular 25% dismiss, enough for the 12% overscroll threshold.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertTrue(
+            app.staticTexts["Media dismissed"].waitForExistence(timeout: 4),
+            "Pulling a tall image past its top edge in the same drag must dismiss the viewer"
+        )
+    }
+
+    @MainActor
+    func testTallImageDragContinuedPastBottomEdgeDismisses() {
+        let app = openMedia(withoutPost: true, tallImage: true)
+        defer { app.terminate() }
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        var drags = 0
+        // Momentum-free drags scroll through the image; the one that runs past the bottom closes it.
+        while drags < 8, !app.staticTexts["Media dismissed"].exists {
+            lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.1)
+            drags += 1
+            _ = app.staticTexts["Media dismissed"].waitForExistence(timeout: 1.5)
+        }
+        XCTAssertTrue(app.staticTexts["Media dismissed"].exists, "Pushing past a tall image's bottom edge must dismiss")
+        XCTAssertGreaterThanOrEqual(drags, 3, "The image must scroll before the bottom edge dismisses it")
+    }
+
+    @MainActor
+    func testTallImageDragWithinContentDoesNotDismiss() {
+        let app = openMedia(withoutPost: true, tallImage: true)
+        defer { app.terminate() }
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.3)
+        // Scrolling back less than was scrolled down stays inside the image.
+        let middle = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        let lowerMiddle = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        middle.press(forDuration: 0.05, thenDragTo: lowerMiddle, withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertFalse(app.staticTexts["Media dismissed"].waitForExistence(timeout: 1.5))
+        XCTAssertTrue(app.buttons["Close"].exists)
+    }
+
+    @MainActor
+    func testImagePagingAndCloseWithSummary() {
+        assertImagePagingAndClose(withoutPost: false)
+    }
+
+    @MainActor
+    func testImagePagingAndCloseWithoutPost() {
+        assertImagePagingAndClose(withoutPost: true)
+    }
+
+    @MainActor
+    private func assertImagePagingAndClose(withoutPost: Bool) {
+        let app = openMedia(withoutPost: withoutPost, indicator: true)
+        defer { app.terminate() }
+        let left = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.45))
+        let right = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45))
+        for (start, end, orange) in [(right, left, true), (left, right, false)] {
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
+            let displayed = NSPredicate { _, _ in
+                self.fixtureImageMatches(in: app.screenshot(), orange: orange)
+            }
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: displayed, object: nil)], timeout: 3),
+                .completed,
+                "Horizontal swipes must change the rendered image in both directions"
+            )
+        }
+        // Tap inside the 44pt button but outside the small custom symbol.
+        app.buttons["Close"].coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+        XCTAssertTrue(app.staticTexts["Media dismissed"].waitForExistence(timeout: 4))
+    }
+
+    @MainActor
+    private func fixtureImageMatches(in screenshot: XCUIScreenshot, orange: Bool) -> Bool {
+        guard let image = screenshot.image.cgImage else { return false }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        return pixel.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ) else { return false }
+            context.draw(image, in: CGRect(x: -image.width / 2, y: -image.height / 2, width: image.width, height: image.height))
+            return orange ? Int(buffer[0]) > Int(buffer[2]) + 80 : Int(buffer[2]) > Int(buffer[0]) + 80
+        }
+    }
 
     @MainActor
     func testCancelledImageDragsWithSummary() throws {
@@ -506,6 +679,18 @@ final class MediaViewerInteractionTests: XCTestCase {
     @MainActor
     func testVideoSummaryLayout() {
         checkSummaryLayout(video: true)
+    }
+
+    @MainActor
+    func testVideoSummaryControlsStayBelowGrabberWithZeroHeightProposal() {
+        let app = openMedia(video: true, zeroHeightSummary: true)
+        defer { app.terminate() }
+
+        let grabber = app.buttons["Sheet Grabber"]
+        let slider = app.sliders["Playback position"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(slider.frame.minY, grabber.frame.maxY, "The playback slider should be below the sheet grabber")
+        XCTAssertTrue(slider.isHittable)
     }
 
     @MainActor

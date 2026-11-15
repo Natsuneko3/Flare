@@ -159,11 +159,12 @@ classes = android.match(/-Pandroid\.testInstrumentationRunnerArguments\.class=([
 expected_classes = %w[
   dev.dimension.flare.ui.screen.settings.ProxySettingsContentTest
   dev.dimension.flare.ui.screen.settings.PluginManagementMenuTest
+  dev.dimension.flare.ui.screen.settings.PluginExtensionScreenTest
   dev.dimension.flare.common.WebViewProxyTest
   dev.dimension.flare.ui.screen.gallery.GalleryDetailScreenTest
   dev.dimension.flare.ui.screen.media.ImageTranslationErrorDialogTest
 ]
-check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must retain all five regression classes')
+check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must retain all six regression classes')
 check(android.scan(':app:connectedDebugAndroidTest').size == 1, 'App Android regressions must use one instrumentation invocation')
 playback = android.lines.find { |line| line.include?(':compose-ui:connectedAndroidDeviceTest') }
 check(playback&.include?('-Pandroid.testInstrumentationRunnerArguments.class=dev.dimension.flare.ui.component.SurfaceBindingManagerTest'), 'Android CI must run the playback foreground regression in its owning module')
@@ -182,10 +183,17 @@ expected_selectors = %w[
   TimelineControllerTests/WebViewProxyTests
   TimelineControllerTests/LoginCookieSnapshotTests
   TimelineControllerTests/UgoiraPlaybackTests
+  TimelineControllerTests/VideoControlViewTests
   TimelineControllerTests/TimelineControllerIntegrationTests/testSingleMediaLimitUsesStableWindowAndEmbeddedViewportGeometry
   TimelineControllerTests/TimelineControllerIntegrationTests/testViewportHeightChangeResizesSingleMediaAndPreservesReadingPosition
   TimelineControllerTests/TimelineControllerIntegrationTests/testSingleMediaLimitSwitchKeepsReadingPosition
+  TimelineControllerTests/TimelineControllerIntegrationTests/testLongPostExpandsDownwardFromItsPreview
+  TimelineControllerTests/TimelineControllerIntegrationTests/testContentWarningRevealsTextDownward
+  TimelineControllerTests/TimelineControllerIntegrationTests/testLongPostExpansionKeepsTimelineColumns
   TimelineControllerTests/TimelineRefreshAnimationTests
+  TimelineControllerTests/FlareTextColorTests
+  TimelineControllerTests/FlareTextColorIntegrationTests
+  TimelineControllerTests/StatusShareTests
   TimelineControllerTests/TimelineMediaPreviewTests/testSwiftUIMediaKeepsItsInitialHeightWhenLazyRowsAppearAndReturn
   TimelineControllerTests/TimelineMediaPreviewTests/testSwiftUIMediaIgnoresPlaybackViewportAndChromeInsetsButRespondsToResize
   iOSTests/VideoPlaybackSessionTests
@@ -195,10 +203,11 @@ expected_selectors = %w[
   iOSTests/StateViewTests
   iOSTests/TimelineCollectionViewTests/testRefreshCollapseAppliesAPendingPrependBookmarkBeforeAnimating
   MediaViewerInteractionTests/TimelineMediaScrollTests
+  MediaViewerInteractionTests/MediaViewerInteractionTests/testVideoSummaryControlsStayBelowGrabberWithZeroHeightProposal
   MediaViewerInteractionTests/MediaViewerInteractionTests/testTranslationErrorDetailsAreOnlyAccessibleFromFailureAlertWithPost
   MediaViewerInteractionTests/MediaViewerInteractionTests/testTranslationErrorDetailsAreOnlyAccessibleFromFailureAlertWithoutPost
 ]
-check(ios.scan(/-only-testing:([^\s]+)/).flatten.to_set == expected_selectors.to_set, 'iOS regression coverage must remain unchanged')
+check(ios.scan(/-only-testing:([^\s]+)/).flatten.to_set == expected_selectors.to_set, 'iOS CI must select the expected regressions')
 check(ios.scan('xcodebuild build-for-testing').size == 1, 'iOS regression targets must be built once')
 check(ios.scan('xcodebuild test-without-building').size == 3 && !ios.match?(/xcodebuild test\s/), 'iOS regressions must reuse the built products')
 check(ios.scan('-scheme CI-iOS').size == 4, 'iOS builds and tests must use the same scheme')
