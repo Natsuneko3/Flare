@@ -167,9 +167,7 @@ internal fun AppUpdateSettingContent(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 when (state) {
-                    AppUpdateState.Idle -> {
-                        Unit
-                    }
+                    AppUpdateState.Idle -> {}
 
                     AppUpdateState.Checking -> {
                         CircularProgressIndicator()
@@ -226,9 +224,7 @@ internal fun AppUpdateSettingContent(
                     TextButton(onClick = onDismiss) { Text(stringResource(R.string.app_update_done)) }
                 }
 
-                else -> {
-                    Unit
-                }
+                else -> {}
             }
         },
         dismissButton = {
