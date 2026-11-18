@@ -16,6 +16,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 
 class GitHubPluginClientTest {
     @Test
@@ -217,6 +219,160 @@ class GitHubPluginClientTest {
             }
             withClient(MockEngine { respond(ByteArray(2 * 1024 * 1024 + 1)) }) { client ->
                 assertContains(assertFails { client.catalog(REPOSITORY.url) }.message.orEmpty(), "size limit")
+            }
+        }
+
+    @Test
+    fun updateDateUsesThePinnedPluginFilesIncludingRenamesAndIgnoresSiblingChanges() =
+        runBlocking {
+            val parent = "b".repeat(40)
+            val requests = mutableListOf<String>()
+            withClient(
+                MockEngine { request ->
+                    val sha = request.url.encodedPath.substringAfterLast('/')
+                    requests += sha
+                    val files =
+                        if (sha == SHA) {
+                            """[{"filename":"plugins/a/README.md","status":"added","changes":1},{"filename":"plugins/ab/plugin.js","status":"added","changes":1}]"""
+                        } else {
+                            """[{"filename":"docs/old.js","previous_filename":"plugins/a/plugin.js","status":"renamed","changes":0}]"""
+                        }
+                    respond(
+                        """{"sha":"$sha","parents":[{"sha":"$parent"}],"commit":{"committer":{"date":"2026-11-09T23:00:00-03:00"}},"files":$files}""",
+                    )
+                },
+            ) { client ->
+                assertEquals("2026-11-10", client.packageUpdateDate(REPOSITORY, SHA, "plugins/a"))
+                assertEquals(listOf(SHA, parent), requests)
+            }
+        }
+
+    @Test
+    fun historyResumesOnTheNextFilePageAndCachesTheCompletedDate() =
+        runBlocking {
+            val commits = (1..9).map { it.toString().padStart(40, '0') }
+            val requests = mutableListOf<Pair<String, Int>>()
+            val start = Instant.parse("2026-11-15T00:00:00Z")
+            val docs = (1..100).joinToString(",") { """{"filename":"docs/$it.md","status":"added","changes":1}""" }
+            withClient(
+                MockEngine { request ->
+                    val sha = request.url.encodedPath.substringAfterLast('/')
+                    val page = request.url.parameters["page"]?.toInt() ?: 1
+                    requests += sha to page
+                    val next = sha == commits[7] && page == 1
+                    val files =
+                        when {
+                            page == 2 -> """{"filename":"plugins/a/plugin.js","status":"removed","changes":1}"""
+                            sha == commits.first() || next -> docs
+                            else -> ""
+                        }
+                    val headers = if (next) headersOf(HttpHeaders.Link, "<https://api.github.com/?page=2>; rel=\"next\"") else headersOf()
+                    val parent = commits[commits.indexOf(sha) + 1]
+                    respond(
+                        """{"sha":"$sha","parents":[{"sha":"$parent"}],"commit":{"committer":{"date":"2026-11-09T23:30:00-03:00"}},"files":[$files]}""",
+                        headers = headers,
+                    )
+                },
+            ) { client ->
+                assertNull(client.packageUpdateDate(REPOSITORY, commits.first(), "plugins/a", start))
+                assertNull(client.packageUpdateDate(REPOSITORY, commits.first(), "plugins/a", start + 1.minutes))
+                assertEquals(commits.take(8).map { it to 1 }, requests)
+                assertEquals("2026-11-10", client.packageUpdateDate(REPOSITORY, commits.first(), "plugins/a", start + 5.minutes))
+                assertEquals("2026-11-10", client.packageUpdateDate(REPOSITORY, commits.first(), "plugins/a", start + 20.minutes))
+                assertEquals(commits.take(8).map { it to 1 } + (commits[7] to 2), requests)
+            }
+        }
+
+    @Test
+    fun failedHistoryRequestsWaitBeforeRetryingTheSameSnapshot() =
+        runBlocking {
+            var calls = 0
+            val start = Instant.parse("2026-11-15T00:00:00Z")
+            withClient(
+                MockEngine {
+                    calls++
+                    if (calls == 1) {
+                        respond("{}", HttpStatusCode.NotFound)
+                    } else {
+                        respond(
+                            """{"sha":"$SHA","parents":[],"commit":{"committer":{"date":"2026-11-09T12:00:00Z"}},"files":[{"filename":"plugin.js","status":"added","changes":1}]}""",
+                        )
+                    }
+                },
+            ) { client ->
+                assertNull(client.packageUpdateDate(REPOSITORY, SHA, "", start))
+                assertNull(client.packageUpdateDate(REPOSITORY, SHA, "", start + 1.minutes))
+                assertEquals(1, calls)
+                assertEquals("2026-11-09", client.packageUpdateDate(REPOSITORY, SHA, "", start + 5.minutes))
+                assertEquals(2, calls)
+            }
+        }
+
+    @Test
+    fun zeroLineChangesOnlyCountWhenTheBlobChanges() =
+        runBlocking {
+            val parent = "b".repeat(40)
+            val oldBlob = "c".repeat(40)
+            val otherCommit = "e".repeat(40)
+            withClient(
+                MockEngine { request ->
+                    val url = request.url.encodedPath
+                    when {
+                        "/contents/" in url -> {
+                            assertEquals(parent, request.url.parameters["ref"])
+                            respond("""{"sha":"$oldBlob"}""")
+                        }
+
+                        url.endsWith(parent) -> {
+                            respond(
+                                """{"sha":"$parent","parents":[],"commit":{"committer":{"date":"2026-11-09T12:00:00Z"}},"files":[{"filename":"plugin.js","status":"added","changes":0}]}""",
+                            )
+                        }
+
+                        else -> {
+                            val sha = url.substringAfterLast('/')
+                            val blob = if (sha == SHA) oldBlob else "d".repeat(40)
+                            respond(
+                                """{"sha":"$sha","parents":[{"sha":"$parent"}],"commit":{"committer":{"date":"2026-11-11T12:00:00Z"}},"files":[{"filename":"plugin.js","status":"modified","changes":0,"sha":"$blob"}]}""",
+                            )
+                        }
+                    }
+                },
+            ) { client ->
+                assertEquals("2026-11-09", client.packageUpdateDate(REPOSITORY, SHA, ""))
+                assertEquals("2026-11-11", client.packageUpdateDate(REPOSITORY, otherCommit, ""))
+            }
+        }
+
+    @Test
+    fun blobChecksShareTheRequestBudgetAndResumeAtTheNextFile() =
+        runBlocking {
+            val parent = "b".repeat(40)
+            val blob = "c".repeat(40)
+            val files =
+                (1..8).joinToString(",") {
+                    """{"filename":"plugins/My Plugin/settings/$it.png","status":"modified","changes":0,"sha":"$blob"}"""
+                }
+            val start = Instant.parse("2026-11-15T00:00:00Z")
+            val requests = mutableListOf<String>()
+            withClient(
+                MockEngine { request ->
+                    val name = request.url.encodedPath.substringAfterLast('/')
+                    requests += name
+                    if (name == SHA) {
+                        respond(
+                            """{"sha":"$SHA","parents":[{"sha":"$parent"}],"commit":{"committer":{"date":"2026-11-11T12:00:00Z"}},"files":[$files]}""",
+                        )
+                    } else {
+                        assertContains(request.url.encodedPath, "/contents/plugins/My%20Plugin/settings/")
+                        respond("""{"sha":"${if (name == "8.png") "d".repeat(40) else blob}"}""")
+                    }
+                },
+            ) { client ->
+                assertNull(client.packageUpdateDate(REPOSITORY, SHA, "plugins/My Plugin", start))
+                assertEquals(listOf(SHA) + (1..7).map { "$it.png" }, requests)
+                assertEquals("2026-11-11", client.packageUpdateDate(REPOSITORY, SHA, "plugins/My Plugin", start + 5.minutes))
+                assertEquals(listOf(SHA, "8.png"), requests.drop(8))
             }
         }
 

@@ -3,10 +3,13 @@ package dev.dimension.flare.feature.plugin.marketplace
 import dev.dimension.flare.data.io.AppFileStore
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.network.proxyHttpClientEngine
+import dev.dimension.flare.feature.plugin.github.COMMIT_SHA
+import dev.dimension.flare.feature.plugin.github.gitHubPluginLocationOrNull
 import dev.dimension.flare.feature.plugin.github.parseRepositoryUrl
 import dev.dimension.flare.feature.plugin.installer.FppLimits
 import dev.dimension.flare.feature.plugin.installer.pluginIconExtension
 import dev.dimension.flare.feature.plugin.installer.validatePluginIconImage
+import dev.dimension.flare.feature.plugin.manifest.PLUGIN_SEMVER
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.request.prepareGet
@@ -20,6 +23,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.LocalDate
 import kotlinx.io.readByteArray
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -37,27 +41,32 @@ public data class PluginMarketplaceEntryV1(
     val description: String,
     val repository: String,
     val icon: String,
+    val version: String? = null,
+    val updatedAt: String? = null,
+    val commitSha: String? = null,
 ) {
     public val ownerHandle: String
-        get() = parsedLocation()?.owner?.let { "@$it" }.orEmpty()
+        get() =
+            repository
+                .gitHubPluginLocationOrNull()
+                ?.owner
+                ?.let { "@$it" }
+                .orEmpty()
 
     public val repositoryDisplayPath: String
         get() =
-            parsedLocation()?.let { location ->
+            repository.gitHubPluginLocationOrNull()?.let { location ->
                 if (location.path.isEmpty()) location.name else "${location.name}/${location.path}"
             } ?: repository.trim()
 
-    internal val searchableSource: String
-        get() =
-            parsedLocation()?.let { location ->
-                if (location.path.isEmpty()) {
-                    "@${location.owner}/${location.name}"
-                } else {
-                    "@${location.owner}/${location.name}/${location.path}"
-                }
-            } ?: repository.trim()
+    public val repositoryFullName: String
+        get() = repository.gitHubPluginLocationOrNull()?.fullName ?: repository.trim()
 
-    private fun parsedLocation() = runCatching { parseRepositoryUrl(repository) }.getOrNull()
+    public val repositoryWebUrl: String
+        get() = repository.gitHubPluginLocationOrNull()?.webUrl(commitSha).orEmpty()
+
+    internal val searchableSource: String
+        get() = repository.gitHubPluginLocationOrNull()?.let { "@${it.fullName}" } ?: repository.trim()
 }
 
 @Serializable
@@ -163,7 +172,7 @@ public class PluginMarketplace(
                     json
                         .decodeFromString<CachedCatalog>(
                             read(cachePath, MAX_CATALOG_BYTES + 1024).decodeToString(throwOnInvalidSequence = true),
-                        ).also { validate(it.catalog) }
+                        ).let { it.copy(catalog = validatedCatalog(it.catalog)) }
                 } catch (_: Exception) {
                     null
                 }
@@ -172,9 +181,9 @@ public class PluginMarketplace(
     }
 
     private fun decode(bytes: ByteArray): PluginMarketplaceCatalogV1 =
-        json.decodeFromString<PluginMarketplaceCatalogV1>(bytes.decodeToString(throwOnInvalidSequence = true)).also(::validate)
+        validatedCatalog(json.decodeFromString<PluginMarketplaceCatalogV1>(bytes.decodeToString(throwOnInvalidSequence = true)))
 
-    private fun validate(catalog: PluginMarketplaceCatalogV1) {
+    private fun validatedCatalog(catalog: PluginMarketplaceCatalogV1): PluginMarketplaceCatalogV1 {
         require(catalog.schemaVersion == 1) { "Unsupported plugin marketplace format" }
         require(catalog.plugins.size <= 500) { "Too many marketplace plugins" }
         require(
@@ -183,13 +192,27 @@ public class PluginMarketplace(
                 .distinct()
                 .size == catalog.plugins.size,
         ) { "Duplicate marketplace plugin ID" }
-        catalog.plugins.forEach { entry ->
-            require(entry.id.length <= 256 && PLUGIN_ID.matches(entry.id)) { "Invalid marketplace plugin ID" }
-            require(entry.name.isNotBlank() && entry.name.length <= 128 && entry.name.none(Char::isISOControl)) { "Invalid plugin name" }
-            require(entry.description.isNotBlank() && entry.description.length <= 4096) { "Invalid plugin description" }
-            parseRepositoryUrl(entry.repository)
-            requireValidIconUrl(entry.icon)
-        }
+        val entries =
+            catalog.plugins.mapNotNull { entry ->
+                require(entry.id.length <= 256 && PLUGIN_ID.matches(entry.id)) { "Invalid marketplace plugin ID" }
+                require(
+                    entry.name.isNotBlank() && entry.name.length <= 128 && entry.name.none(Char::isISOControl),
+                ) { "Invalid plugin name" }
+                require(entry.description.isNotBlank() && entry.description.length <= 4096) { "Invalid plugin description" }
+                parseRepositoryUrl(entry.repository)
+                requireValidIconUrl(entry.icon)
+                if (entry.commitSha != null && !COMMIT_SHA.matches(entry.commitSha)) return@mapNotNull null
+                entry.copy(
+                    version = entry.version?.takeIf { it.length <= 128 && PLUGIN_SEMVER.matches(it) },
+                    updatedAt =
+                        entry.updatedAt?.takeIf {
+                            it.length == 10 && LocalDate.Formats.ISO
+                                .parseOrNull(it)
+                                ?.toString() == it
+                        },
+                )
+            }
+        return catalog.copy(plugins = entries)
     }
 
     private suspend fun request(
