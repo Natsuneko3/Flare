@@ -40,8 +40,10 @@ kotlin {
 }
 
 android {
-    sourceSets.getByName("androidTest").assets.srcDir(
+    sourceSets.getByName("androidTest").assets.srcDirs(
         rootProject.file("feature/plugin/sdk/skill/flare-plugin/examples/translation-settings"),
+        rootProject.file("feature/plugin/sdk/skill/flare-plugin/examples/pixelfed/assets"),
+        rootProject.file("feature/plugin/test-fixtures"),
     )
 
     val fdroid = rootProject.file("fdroid.properties")

@@ -834,6 +834,8 @@
     <string name="plugin_warning_compatibility">Предупреждение о совместимости</string>
     <string name="plugin_install_github">Установить из GitHub</string>
     <string name="plugin_check_updates">Проверить обновления</string>
+    <string name="plugin_local_import">Локальный импорт</string>
+    <string name="plugin_updated_at">Обновлено %1$s</string>
     <string name="plugin_warning_source_changed">Эта установка изменяет источник плагина</string>
     <string name="plugin_warning_tag_moved">Этот тег теперь указывает на другой коммит</string>
     <string name="plugin_unverified_github_warning">Этот плагин GitHub не проверен. Устанавливайте, только если доверяете автору.</string>

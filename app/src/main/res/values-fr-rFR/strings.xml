@@ -947,6 +947,8 @@
     <string name="plugin_install_github">Installer depuis GitHub</string>
     <string name="plugin_github_repository">URL du dépôt GitHub</string>
     <string name="plugin_check_updates">Rechercher des mises à jour</string>
+    <string name="plugin_local_import">Import local</string>
+    <string name="plugin_updated_at">Mis à jour le %1$s</string>
     <string name="plugin_update">Mettre à jour</string>
     <string name="plugin_up_to_date">Les plugins GitHub sont à jour</string>
     <string name="plugin_warning_source_changed">Cette installation modifie la source du plugin</string>

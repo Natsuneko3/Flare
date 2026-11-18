@@ -831,6 +831,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitetsadvarsel</string>
     <string name="plugin_install_github">Installer fra GitHub</string>
     <string name="plugin_check_updates">Sjekk etter oppdateringer</string>
+    <string name="plugin_local_import">Lokal import</string>
+    <string name="plugin_updated_at">Oppdatert %1$s</string>
     <string name="plugin_warning_source_changed">Denne installasjonen endrer plugin-kilden</string>
     <string name="plugin_warning_tag_moved">Denne taggen peker nå til et annet commit</string>
     <string name="plugin_unverified_github_warning">Denne GitHub-pluginen er ikke verifisert. Installer den kun hvis du stoler på forfatteren.</string>

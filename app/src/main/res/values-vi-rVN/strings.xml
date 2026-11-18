@@ -935,6 +935,8 @@
     <string name="plugin_warning_compatibility">Cảnh báo tương thích</string>
     <string name="plugin_install_github">Cài đặt từ GitHub</string>
     <string name="plugin_check_updates">Kiểm tra cập nhật</string>
+    <string name="plugin_local_import">Nhập từ thiết bị</string>
+    <string name="plugin_updated_at">Cập nhật ngày %1$s</string>
     <string name="plugin_warning_source_changed">Cài đặt này thay đổi nguồn plugin</string>
     <string name="plugin_warning_tag_moved">Thẻ này hiện trỏ đến một commit khác</string>
     <string name="plugin_unverified_github_warning">Plugin GitHub này chưa được xác minh. Chỉ cài đặt nếu bạn tin tưởng tác giả.</string>
