@@ -44,12 +44,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -67,6 +70,7 @@ import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -93,7 +97,10 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -149,6 +156,7 @@ import dev.dimension.flare.ui.component.SurfaceBindingManager
 import dev.dimension.flare.ui.component.UgoiraPlayer
 import dev.dimension.flare.ui.component.VideoPlayer
 import dev.dimension.flare.ui.component.accessibleDescription
+import dev.dimension.flare.ui.component.onMediaDownloadProgress
 import dev.dimension.flare.ui.component.placeholder
 import dev.dimension.flare.ui.component.rememberMediaImageRequest
 import dev.dimension.flare.ui.component.status.CommonStatusComponent
@@ -161,8 +169,7 @@ import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asTimelinePostItem
 import dev.dimension.flare.ui.model.contentPostOrNull
-import dev.dimension.flare.ui.model.isSuccess
-import dev.dimension.flare.ui.model.onLoading
+import dev.dimension.flare.ui.model.map
 import dev.dimension.flare.ui.model.onSuccess
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.model.toUiImage
@@ -406,14 +413,17 @@ internal fun MediaViewerScreen(
                                 // Keep the loading placeholder attached to the image originally tapped.
                                 key = { index -> if (medias is UiState.Success) index else initialIndex },
                             ) { index ->
-                                AnimatedContent(
-                                    medias,
-                                    transitionSpec = {
-                                        fadeIn() togetherWith fadeOut()
-                                    },
-                                ) {
-                                    it
-                                        .onSuccess { medias ->
+                                val pageImage = mediaItems.getOrNull(index)?.takeIf { it is UiMedia.Image || it is UiMedia.Gif }
+                                val displayedImage = pageImage?.let(translation::displayed)
+                                var pageLoad by remember(displayedImage) { mutableStateOf<ViewerImageLoad?>(null) }
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    AnimatedContent(
+                                        medias,
+                                        transitionSpec = {
+                                            fadeIn() togetherWith fadeOut()
+                                        },
+                                    ) { pageState ->
+                                        pageState.onSuccess { medias ->
                                             val media = medias.getOrNull(index)
                                             if (media == null) {
                                                 CompositionLocalProvider(
@@ -429,6 +439,7 @@ internal fun MediaViewerScreen(
                                             }
                                             if (pagerState.currentPage != index || media is UiMedia.Image || media is UiMedia.Gif) {
                                                 ImageItem(
+                                                    onOriginalLoad = if (media == pageImage) { load -> pageLoad = load } else null,
                                                     translating = translation.item(media).loading,
                                                     modifier =
                                                         Modifier
@@ -466,7 +477,9 @@ internal fun MediaViewerScreen(
                                                 )
                                             } else if (media is UiMedia.Ugoira) {
                                                 val zoom = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 10f))
-                                                LaunchedEffect(zoom.zoomFraction) { state.setLockPager((zoom.zoomFraction ?: 0f) > .01f) }
+                                                LaunchedEffect(zoom.zoomFraction) {
+                                                    state.setLockPager((zoom.zoomFraction ?: 0f) > .01f)
+                                                }
                                                 UgoiraPlayer(media, Modifier.fillMaxSize().zoomable(zoom))
                                             } else if (media is UiMedia.Video) {
                                                 val selectedSpeed = playbackSettings.speedFor(media)
@@ -523,7 +536,8 @@ internal fun MediaViewerScreen(
                                                     },
                                                 )
                                             }
-                                        }.onLoading {
+                                        }
+                                        if (pageState !is UiState.Success) {
                                             if (preview != null) {
                                                 ImageItem(
                                                     media = preview.toUiImage(proxy = previewProxy),
@@ -546,10 +560,17 @@ internal fun MediaViewerScreen(
                                                         Modifier
                                                             .aspectRatio(1f)
                                                             .fillMaxSize()
-                                                            .placeholder(true),
+                                                            .placeholder(pageState is UiState.Loading),
                                                 )
                                             }
                                         }
+                                    }
+                                    val loadingOriginal =
+                                        pageImage != null && displayedImage?.isRemote == true && !translation.item(pageImage).loading
+                                    ImageLoadingIndicator(
+                                        pending = medias is UiState.Loading || (loadingOriginal && pageLoad?.finished != true),
+                                        progress = { pageLoad?.fraction },
+                                    )
                                 }
                             }
                         }
@@ -1430,6 +1451,56 @@ private const val NORMAL_PLAYBACK_SPEED = 1f
 private const val FAST_PLAYBACK_SPEED = 2f
 private const val MEDIA_VIEWER_PRESENTER_KEY = "media_viewer"
 
+internal class ViewerImageLoad {
+    var fraction by mutableStateOf<Float?>(null)
+    var finished by mutableStateOf(false)
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+internal fun ImageLoadingIndicator(
+    pending: Boolean,
+    progress: () -> Float?,
+) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(pending) {
+        if (pending) delay(300)
+        visible = pending
+    }
+    AnimatedVisibility(
+        visible = visible && pending,
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        val description = stringResource(R.string.media_image_loading)
+        val colors = IconButtonDefaults.filledTonalIconButtonColors()
+        val shape = IconButtonDefaults.filledShape
+        val fraction = progress()
+        Box(
+            Modifier.size(IconButtonDefaults.smallContainerSize()).clearAndSetSemantics {
+                contentDescription = description
+                progressBarRangeInfo = fraction?.let { ProgressBarRangeInfo(it, 0f..1f) } ?: ProgressBarRangeInfo.Indeterminate
+            },
+        ) {
+            if (fraction == null) {
+                ContainedLoadingIndicator(
+                    modifier = Modifier.matchParentSize(),
+                    containerColor = colors.containerColor,
+                    indicatorColor = colors.contentColor,
+                    containerShape = shape,
+                )
+            } else {
+                CircularWavyProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.matchParentSize().background(colors.containerColor, shape).padding(7.dp),
+                    color = colors.contentColor,
+                    trackColor = colors.contentColor.copy(alpha = 0.25f),
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalTelephotoApi::class)
 @Composable
 internal fun ImageItem(
@@ -1441,6 +1512,7 @@ internal fun ImageItem(
     modifier: Modifier = Modifier,
     onLoadError: () -> Unit = {},
     translating: Boolean = false,
+    onOriginalLoad: ((ViewerImageLoad) -> Unit)? = null,
 ) {
     val loadingEffect by animateFloatAsState(
         targetValue = if (translating) 1f else 0f,
@@ -1455,6 +1527,7 @@ internal fun ImageItem(
     val scope = rememberCoroutineScope()
     val zoomableState =
         rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 10f))
+    val imageState = rememberZoomableImageState(zoomableState)
     LaunchedEffect(zoomableState.zoomFraction) {
         zoomableState.zoomFraction?.let {
             currentSetLockPager(it > 0.01f)
@@ -1468,26 +1541,31 @@ internal fun ImageItem(
         }
     }
     var imageAspect by remember { mutableFloatStateOf(0f) }
-    var loadedMediaKey by remember { mutableStateOf<String?>(null) }
     var previousCacheKey by remember { mutableStateOf<MemoryCache.Key?>(null) }
     val currentMediaKey by rememberUpdatedState(media?.cacheKey)
     val baseRequest = rememberMediaImageRequest(media, crossfade = false)
+    val load = remember(baseRequest) { ViewerImageLoad() }
+    var requestEnded by remember(baseRequest) { mutableStateOf(false) }
+    val trackDownload = onOriginalLoad != null && media?.isRemote == true
     val request =
-        remember(baseRequest) {
+        remember(baseRequest, trackDownload) {
             val requestedKey = media?.cacheKey
             baseRequest
                 .newBuilder()
                 .size(Size.ORIGINAL)
-                .apply { previousCacheKey?.let { placeholderMemoryCacheKey(it) } }
-                .listener(onError = { _, _ ->
-                    if (requestedKey == currentMediaKey) {
-                        loadedMediaKey = requestedKey
+                .apply {
+                    previousCacheKey?.let { placeholderMemoryCacheKey(it) }
+                    if (trackDownload) onMediaDownloadProgress { load.fraction = it }
+                }.listener(onError = { _, _ ->
+                    if (requestedKey == currentMediaKey && baseRequest.data == media?.url) {
+                        load.finished = true
+                        requestEnded = true
                         currentOnLoadError()
                     }
                 }, onSuccess = { _, result ->
                     if (requestedKey == currentMediaKey) {
                         previousCacheKey = result.memoryCacheKey
-                        loadedMediaKey = requestedKey
+                        requestEnded = true
                         if (result.image.width > 0) imageAspect = result.image.height.toFloat() / result.image.width
                     }
                 })
@@ -1496,12 +1574,19 @@ internal fun ImageItem(
     val isLongImage = imageAspect > 19.5f / 9f
     val alignment = if (isLongImage) Alignment.TopCenter else Alignment.Center
     val contentScale = if (isLongImage) ContentScale.FillWidth else ContentScale.Fit
+    if (onOriginalLoad != null) {
+        val displayed = requestEnded && imageState.isImageDisplayed
+        SideEffect {
+            if (displayed) load.finished = true
+            onOriginalLoad(load)
+        }
+    }
 
     Box(modifier) {
         ZoomableAsyncImage(
             model = request,
             contentDescription = description,
-            state = rememberZoomableImageState(zoomableState),
+            state = imageState,
             modifier =
                 Modifier
                     .matchParentSize()
@@ -1518,7 +1603,7 @@ internal fun ImageItem(
             onDoubleClick = DoubleClickToZoomListener.cycle(2f),
         )
         AnimatedVisibility(
-            visible = translating || (media != null && !media.isRemote && loadedMediaKey != media.cacheKey),
+            visible = translating || (media != null && !media.isRemote && !requestEnded),
             modifier = Modifier.align(Alignment.Center),
             enter = fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
             exit = fadeOut(MaterialTheme.motionScheme.defaultEffectsSpec()),
@@ -1539,24 +1624,18 @@ private fun statusMediaPresenter(
         remember(accountType, statusKey) {
             StatusPresenter(accountType = accountType, statusKey = statusKey)
         }.invoke()
-    var medias: UiState<ImmutableList<UiMedia>> by remember(accountType, statusKey) {
-        mutableStateOf(UiState.Loading())
-    }
     // Prevent media changes after the first successful load so the visible page stays stable.
-    if (!medias.isSuccess) {
-        LaunchedEffect(state) {
-            state.status
-                .onSuccess {
-                    medias =
-                        UiState.Success(
-                            it
-                                .contentPostOrNull()
-                                ?.images
-                                .orEmpty()
-                                .toImmutableList(),
-                        )
-                }
+    var firstMediaList by remember(accountType, statusKey) { mutableStateOf<UiState.Success<ImmutableList<UiMedia>>?>(null) }
+    val medias =
+        firstMediaList ?: state.status.map {
+            it
+                .contentPostOrNull()
+                ?.images
+                .orEmpty()
+                .toImmutableList()
         }
+    if (firstMediaList == null && medias is UiState.Success) {
+        SideEffect { firstMediaList = medias }
     }
     object {
         val status = state.status
