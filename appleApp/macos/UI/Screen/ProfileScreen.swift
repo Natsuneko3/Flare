@@ -13,7 +13,7 @@ struct ProfileScreen: View {
     @Environment(\.timelineAppearance.aiConfig.agent) private var agentEnabled
 
     @State private var presenter: KotlinPresenter<ProfileState>
-    @State private var selectedTab = 0
+    @State private var tabSelection = ProfileTabSelection()
 
     init(
         accountType: AccountType,
@@ -94,6 +94,9 @@ struct ProfileScreen: View {
         .navigationTitle(title)
         .background(timelineDisplayMode == .card ? Color(.secondarySystemFill) : Color(.windowBackgroundColor))
         .detectScrolling()
+        .onSuccessOf(of: tabsState) { tabs in
+            tabSelection.update(availableIDs: tabs.cast(ProfileState.Tab.self).map(\.id))
+        }
         .toolbar {
 //            ToolbarItem(placement: .automatic) {
 //                switch onEnum(of: presenter.state.userState) {
@@ -137,19 +140,11 @@ struct ProfileScreen: View {
 
     @ViewBuilder
     private func profileTabsContent(tabs: [ProfileState.Tab]) -> some View {
-        Group {
-            if tabs.isEmpty {
-                ListEmptyView()
-                    .padding()
-            } else {
-                profileTabContent(tab: tabs[clampedSelectedTabIndex(for: tabs)])
-            }
-        }
-        .onAppear {
-            normalizeSelectedTab(tabCount: tabs.count)
-        }
-        .onChange(of: tabs.count) { _, count in
-            normalizeSelectedTab(tabCount: count)
+        if tabs.isEmpty {
+            ListEmptyView()
+                .padding()
+        } else {
+            profileTabContent(tab: tabs[tabSelection[indexIn: tabs.map(\.id)]])
         }
     }
 
@@ -170,7 +165,7 @@ struct ProfileScreen: View {
         case .success(let tabState):
             let tabs = tabState.data.cast(ProfileState.Tab.self)
             if tabs.count > 1 {
-                ProfileTabBar(tabs: tabs, selectedTab: $selectedTab)
+                ProfileTabBar(tabs: tabs, selectedTab: $tabSelection[indexIn: tabs.map(\.id)])
                     .frame(maxWidth: .infinity)
                     .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
                     .background(background)
@@ -193,18 +188,6 @@ struct ProfileScreen: View {
             )
             .id(ObjectIdentifier(media.presenter))
         }
-    }
-
-    private func clampedSelectedTabIndex(for tabs: [ProfileState.Tab]) -> Int {
-        min(max(selectedTab, 0), max(tabs.count - 1, 0))
-    }
-
-    private func normalizeSelectedTab(tabCount: Int) {
-        guard tabCount > 0 else {
-            selectedTab = 0
-            return
-        }
-        selectedTab = min(max(selectedTab, 0), tabCount - 1)
     }
 
     private func handleFollowAction(user: UiProfile, followButtonState: FollowButtonState) {

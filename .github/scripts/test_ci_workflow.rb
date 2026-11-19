@@ -144,8 +144,9 @@ expected_classes = %w[
   dev.dimension.flare.common.WebViewProxyTest
   dev.dimension.flare.ui.screen.gallery.GalleryDetailScreenTest
   dev.dimension.flare.ui.screen.media.ImageTranslationErrorDialogTest
+  dev.dimension.flare.ui.component.status.PostAppearanceTest#profileTabsStaySelectedWhenTheLastPageIsRemoved
 ]
-check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must retain all six regression classes')
+check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must select the expected regressions')
 check(android.scan(':app:connectedDebugAndroidTest').size == 1, 'App Android regressions must use one instrumentation invocation')
 playback = android.lines.find { |line| line.include?(':compose-ui:connectedAndroidDeviceTest') }
 check(playback&.include?('-Pandroid.testInstrumentationRunnerArguments.class=dev.dimension.flare.ui.component.SurfaceBindingManagerTest'), 'Android CI must run the playback foreground regression in its owning module')
@@ -165,6 +166,7 @@ expected_selectors = %w[
   TimelineControllerTests/LoginCookieSnapshotTests
   TimelineControllerTests/UgoiraPlaybackTests
   TimelineControllerTests/VideoControlViewTests
+  TimelineControllerTests/ProfileTimelinePagerTests
   TimelineControllerTests/TimelineControllerIntegrationTests/testSingleMediaLimitUsesStableWindowAndEmbeddedViewportGeometry
   TimelineControllerTests/TimelineControllerIntegrationTests/testViewportHeightChangeResizesSingleMediaAndPreservesReadingPosition
   TimelineControllerTests/TimelineControllerIntegrationTests/testSingleMediaLimitSwitchKeepsReadingPosition
@@ -190,6 +192,7 @@ expected_selectors = %w[
   iOSTests/MediaPlaybackMemoryTests
   iOSTests/TimelinePlaybackCoordinatorTests
   iOSTests/MediaTransferCancellationTests
+  iOSTests/ProfileTabSelectionTests
   iOSTests/StateViewTests
   iOSTests/TimelineCollectionViewTests/testRefreshCollapseAppliesAPendingPrependBookmarkBeforeAnimating
   MediaViewerInteractionTests/TimelineMediaScrollTests

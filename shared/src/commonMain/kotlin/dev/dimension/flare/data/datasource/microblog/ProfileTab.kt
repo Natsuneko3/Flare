@@ -32,12 +32,11 @@ public data class ProfileTab(
         id = id,
     )
 
-    public fun toCached(extra: Map<String, String> = emptyMap()): CachedProfileTab =
+    public fun toCached(): CachedProfileTab =
         CachedProfileTab(
             id = id,
             displayType = displayType,
             showAllImagesInGallery = showAllImagesInGallery,
-            extra = extra,
         )
 
     @Serializable
@@ -52,7 +51,6 @@ public data class CachedProfileTab(
     public val id: String,
     public val displayType: ProfileTab.DisplayType = ProfileTab.DisplayType.Timeline,
     public val showAllImagesInGallery: Boolean = true,
-    public val extra: Map<String, String> = emptyMap(),
 )
 
 private fun profileTabId(

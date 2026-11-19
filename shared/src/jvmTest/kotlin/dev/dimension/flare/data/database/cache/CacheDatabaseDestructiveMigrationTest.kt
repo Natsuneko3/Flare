@@ -4,17 +4,54 @@ import androidx.room3.Room
 import androidx.room3.useWriterConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.execSQL
-import kotlinx.coroutines.Dispatchers
+import dev.dimension.flare.data.database.buildCacheDatabase
+import dev.dimension.flare.data.database.cache.model.DbEmojiHistory
+import dev.dimension.flare.data.database.cache.model.DbProfileTabs
+import dev.dimension.flare.data.database.cache.model.DbUserHistory
+import dev.dimension.flare.model.AccountType
+import dev.dimension.flare.model.MicroBlogKey
 import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class CacheDatabaseDestructiveMigrationTest {
     @Test
-    fun cachesWithoutProfileTabsAreRebuilt() =
+    fun addingProfileTabsPreservesVersion53History() =
         runTest {
-            assertCacheIsRebuilt(fromVersion = 53)
+            val databasePath = Files.createTempFile("flare-cache-v53", ".db")
+            val path = databasePath.toString()
+            val owner = AccountType.Specific(MicroBlogKey("me", "example.social"))
+            val profile = MicroBlogKey("alice", "example.social")
+            val emoji = DbEmojiHistory(owner, "wave", 456)
+            try {
+                withCache(path) { database ->
+                    database.userDao().insertHistory(DbUserHistory(profile, owner, 123))
+                    database.emojiDao().insertHistory(emoji)
+                }
+                // v53 has the same tables and indexes as v54 except for DbProfileTabs.
+                BundledSQLiteDriver().open(path).use { connection ->
+                    connection.execSQL("DROP TABLE DbProfileTabs")
+                    connection.execSQL("UPDATE room_master_table SET identity_hash = 'e7c0d60666bbe4c211548b18b12df19b' WHERE id = 42")
+                    connection.execSQL("PRAGMA user_version = 53")
+                }
+                withCache(path) { database ->
+                    assertEquals(listOf(emoji), database.emojiDao().getHistory(owner))
+                    val tabs = DbProfileTabs(owner, profile, "[]")
+                    database.userDao().insertProfileTabs(tabs)
+                    assertEquals(tabs, database.userDao().getProfileTabsSync(owner, profile))
+                }
+                BundledSQLiteDriver().open(path).use { connection ->
+                    connection.prepare("SELECT lastVisit FROM DbUserHistory WHERE userKey = ?").use { query ->
+                        query.bindText(1, profile.toString())
+                        assertTrue(query.step())
+                        assertEquals(123L, query.getLong(0))
+                    }
+                }
+            } finally {
+                Files.deleteIfExists(databasePath)
+            }
         }
 
     @Test
@@ -65,15 +102,7 @@ class CacheDatabaseDestructiveMigrationTest {
                 connection.execSQL("PRAGMA user_version = $fromVersion")
             }
 
-            val database =
-                Room
-                    .databaseBuilder<CacheDatabase>(name = path)
-                    .fallbackToDestructiveMigration(dropAllTables = true)
-                    .setDriver(BundledSQLiteDriver())
-                    .setQueryCoroutineContext(Dispatchers.Unconfined)
-                    .build()
-            database.useWriterConnection { }
-            database.close()
+            withCache(path) { it.useWriterConnection { } }
 
             BundledSQLiteDriver().open(path).use { connection ->
                 connection.prepare("PRAGMA user_version").use { statement ->
@@ -91,6 +120,18 @@ class CacheDatabaseDestructiveMigrationTest {
             }
         } finally {
             Files.deleteIfExists(databasePath)
+        }
+    }
+
+    private suspend fun withCache(
+        path: String,
+        block: suspend (CacheDatabase) -> Unit,
+    ) {
+        val database = buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path))
+        try {
+            block(database)
+        } finally {
+            database.close()
         }
     }
 }

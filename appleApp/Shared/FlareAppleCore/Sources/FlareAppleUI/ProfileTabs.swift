@@ -13,8 +13,8 @@ public struct ProfileTabPicker: View {
 
     public var body: some View {
         Picker(selection: $selectedTab) {
-            ForEach(0..<tabs.count, id: \.self) { index in
-                Text(profileTabTitle(for: tabs[index]))
+            ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                Text(profileTabTitle(for: tab))
                     .tag(index)
             }
         } label: {
@@ -49,7 +49,7 @@ public struct ProfileTabBar: View {
 
             ScrollView(.horizontal) {
                 HStack {
-                    ForEach(0..<tabs.count, id: \.self) { index in
+                    ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                         Button {
                             if selectionProgress == nil {
                                 withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
@@ -59,7 +59,7 @@ public struct ProfileTabBar: View {
                                 selectedTab = index
                             }
                         } label: {
-                            let title = profileTabTitle(for: tabs[index])
+                            let title = profileTabTitle(for: tab)
                             Text(title)
                                 .foregroundStyle(Color.secondary)
                                 .overlay {

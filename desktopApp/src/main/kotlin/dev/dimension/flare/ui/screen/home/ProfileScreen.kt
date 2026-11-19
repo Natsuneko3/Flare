@@ -28,7 +28,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,13 +78,13 @@ import dev.dimension.flare.ui.component.status.StatusPlaceholder
 import dev.dimension.flare.ui.component.status.status
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiRelation
-import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.contentPostOrNull
 import dev.dimension.flare.ui.model.map
 import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.model.takeSuccessOr
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.profile.ProfileMedia
@@ -211,11 +213,14 @@ internal fun ProfileScreen(
     onMediaClick: (statusKey: MicroBlogKey, index: Int, preview: String?) -> Unit = { _, _, _ -> },
     onRawMediaClick: (media: UiMedia.Image) -> Unit = {},
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit = {},
+    profileState: @Composable () -> ProfileState = {
+        remember(accountType, userKey) { ProfilePresenter(accountType, userKey) }.invoke()
+    },
 ) {
     val state by producePresenter(
         key = "profile_${accountType}_$userKey",
     ) {
-        presenter(accountType, userKey)
+        presenter(profileState())
     }
     val listState = rememberLazyStaggeredGridState()
     val profileHeaderScrollState = rememberScrollState()
@@ -361,7 +366,7 @@ internal fun ProfileScreen(
                                                     UnderlinedTabs(
                                                         titles = tabs.map { it.name },
                                                         selectedIndex = state.selectedTabIndex,
-                                                        onTabSelected = state::setSelectedTab,
+                                                        onTabSelected = { index -> state.setSelectedTab(tabs[index].id) },
                                                     )
                                                 }
                                                 Spacer(
@@ -434,7 +439,7 @@ internal fun ProfileScreen(
                                             PillButton(
                                                 selected = state.selectedTabIndex == index,
                                                 onSelectedChanged = {
-                                                    state.setSelectedTab(index)
+                                                    state.setSelectedTab(tab.id)
                                                 },
                                             ) {
                                                 dev.dimension.flare.ui.component.Text(
@@ -446,7 +451,7 @@ internal fun ProfileScreen(
                                 }
                             }
                         }
-                        state.selectedTabItem.onSuccess { tab ->
+                        state.selectedTabItem?.let { tab ->
                             when (tab) {
                                 is ProfileTabItem.Media -> {
                                     items(
@@ -509,7 +514,7 @@ internal fun ProfileScreen(
         }
 
         if (!shouldGateBlockedProfile) {
-            state.selectedTabItem.onSuccess {
+            state.selectedTabItem?.let {
                 val isRefreshing =
                     when (it) {
                         is ProfileTabItem.Media -> it.data.isRefreshing
@@ -588,85 +593,81 @@ private fun ProfileInsightAction(
 }
 
 @Composable
-private fun presenter(
-    accountType: AccountType,
-    userKey: MicroBlogKey?,
-) = run {
-    val scope = rememberCoroutineScope()
-    val state =
-        remember(accountType, userKey) {
-            ProfilePresenter(accountType, userKey)
-        }.invoke()
-    var selectedTabIndex by remember {
-        mutableStateOf(0)
-    }
+private fun presenter(state: ProfileState) =
+    run {
+        val scope = rememberCoroutineScope()
+        var selectedTabId by remember { mutableStateOf<String?>(null) }
 
-    val tabs =
-        state.tabs.map {
-            it.map {
-                when (it) {
-                    is ProfileState.Tab.Timeline -> {
-                        ProfileTabItem.Timeline(
-                            name = it.name,
-                            data = it.presenter.body().listState,
-                        )
-                    }
+        val tabs =
+            state.tabs
+                .map { tabs ->
+                    tabs.map { tab ->
+                        key(tab) {
+                            when (tab) {
+                                is ProfileState.Tab.Timeline -> {
+                                    ProfileTabItem.Timeline(
+                                        id = tab.id,
+                                        data = tab.presenter.body().listState,
+                                    )
+                                }
 
-                    is ProfileState.Tab.Media -> {
-                        ProfileTabItem.Media(
-                            name = it.name,
-                            data = it.presenter.body().mediaState,
-                        )
-                    }
-                }
-            }
-        }
-
-    val selectedTab =
-        tabs.map {
-            it.singleOrNull() ?: it[selectedTabIndex]
-        }
-
-    object {
-        val state = state
-        val selectedTabIndex = selectedTabIndex
-        val selectedTabItem = selectedTab
-
-        fun refresh() {
-            scope.launch {
-                selectedTabItem.onSuccess { tab ->
-                    when (tab) {
-                        is ProfileTabItem.Media -> {
-                            tab.data.refreshSuspend()
+                                is ProfileState.Tab.Media -> {
+                                    ProfileTabItem.Media(
+                                        id = tab.id,
+                                        data = tab.presenter.body().mediaState,
+                                    )
+                                }
+                            }
                         }
+                    }
+                }.takeSuccess()
 
-                        is ProfileTabItem.Timeline -> {
-                            tab.data.refreshSuspend()
+        val selectedTabIndex = tabs?.indexOfFirst { it.id == selectedTabId }?.coerceAtLeast(0) ?: 0
+        val selectedTab = tabs?.getOrNull(selectedTabIndex)
+        if (tabs != null && selectedTabId != selectedTab?.id) {
+            SideEffect { selectedTabId = selectedTab?.id }
+        }
+
+        object {
+            val state = state
+            val selectedTabIndex = selectedTabIndex
+            val selectedTabItem = selectedTab
+
+            fun refresh() {
+                scope.launch {
+                    selectedTabItem?.let { tab ->
+                        when (tab) {
+                            is ProfileTabItem.Media -> {
+                                tab.data.refreshSuspend()
+                            }
+
+                            is ProfileTabItem.Timeline -> {
+                                tab.data.refreshSuspend()
+                            }
                         }
                     }
                 }
             }
-        }
 
-        fun setSelectedTab(value: Int) {
-            if (selectedTabIndex == value) {
-                refresh()
+            fun setSelectedTab(id: String) {
+                if (selectedTabItem?.id == id) {
+                    refresh()
+                }
+                selectedTabId = id
             }
-            selectedTabIndex = value
         }
     }
-}
 
 private sealed interface ProfileTabItem {
-    val name: UiText
+    val id: String
 
     data class Timeline(
-        override val name: UiText,
+        override val id: String,
         val data: PagingState<UiTimelineV2>,
     ) : ProfileTabItem
 
     data class Media(
-        override val name: UiText,
+        override val id: String,
         val data: PagingState<ProfileMedia>,
     ) : ProfileTabItem
 }

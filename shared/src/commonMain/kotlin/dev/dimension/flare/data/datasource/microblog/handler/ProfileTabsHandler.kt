@@ -6,6 +6,7 @@ import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.datasource.microblog.CachedProfileTab
 import dev.dimension.flare.data.datasource.microblog.ProfileCapability
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
+import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.DbAccountType
@@ -22,23 +23,22 @@ public class ProfileTabsHandler(
     private val profile: ProfileCapability,
 ) {
     private val database: CacheDatabase by koinInject()
+    private val accounts: AccountRepository by koinInject()
 
     public fun profileTabs(userKey: MicroBlogKey): Cacheable<ImmutableList<ProfileTab>> {
         val dbAccountType = accountType as DbAccountType
         return Cacheable(
             fetchSource = {
-                val tabs = profile.profileTabs(userKey)
-                val tabsJson = profileTabsJson.encodeToString(tabs.map { it.toCached() })
-                val existing = database.userDao().getProfileTabsSync(dbAccountType, userKey)
-                if (existing?.tabsJson != tabsJson) {
-                    database.userDao().insertProfileTabs(
-                        DbProfileTabs(
-                            accountType = dbAccountType,
-                            userKey = userKey,
-                            tabsJson = tabsJson,
-                        ),
-                    )
-                }
+                accounts.refreshAccountCache(
+                    accountType,
+                    fetch = { profileTabsJson.encodeToString(profile.profileTabs(userKey).map { it.toCached() }) },
+                    save = { tabsJson ->
+                        val dao = database.userDao()
+                        if (dao.getProfileTabsSync(dbAccountType, userKey)?.tabsJson != tabsJson) {
+                            dao.insertProfileTabs(DbProfileTabs(dbAccountType, userKey, tabsJson))
+                        }
+                    },
+                )
             },
             cacheSource = {
                 database

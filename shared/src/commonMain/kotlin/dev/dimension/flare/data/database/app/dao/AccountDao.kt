@@ -34,6 +34,9 @@ internal interface AccountDao {
     @Query("SELECT * FROM DbAccount WHERE account_key = :accountKey")
     suspend fun getAccount(accountKey: MicroBlogKey): DbAccount?
 
+    @Query("SELECT session_id FROM DbAccount WHERE account_key = :accountKey")
+    suspend fun getSessionId(accountKey: MicroBlogKey): String?
+
     @Query("DELETE FROM DbAccount WHERE account_key = :accountKey")
     suspend fun delete(accountKey: MicroBlogKey)
 
