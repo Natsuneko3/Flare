@@ -9,6 +9,12 @@ import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.ImageRequest
 import coil3.request.ImageResult
+import dev.dimension.flare.ui.component.mediaDownloadProgressListener
+import dev.dimension.flare.ui.component.onMediaDownloadProgress
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -25,31 +31,40 @@ internal class CorruptImageRetryInterceptor(
             return chain.proceed()
         }
         val key = request.diskCacheKey ?: url
-        val pending =
-            synchronized(requests) {
-                requests.getOrPut(key) { PendingRequest() }.also { it.users++ }
-            }
-        try {
-            // Serialize readers too, so a late failed decode cannot evict a repaired entry.
-            return pending.mutex.withLock {
-                val result = chain.proceed()
-                if (!result.isCorruptImage()) return@withLock result
-                evict(request, key)
-                if (!request.networkCachePolicy.readEnabled) return@withLock result
-
-                val retry =
-                    request
-                        .newBuilder()
-                        .diskCachePolicy(if (request.diskCachePolicy.writeEnabled) CachePolicy.WRITE_ONLY else CachePolicy.DISABLED)
-                        .memoryCachePolicy(if (request.memoryCachePolicy.writeEnabled) CachePolicy.WRITE_ONLY else CachePolicy.DISABLED)
-                        .build()
-                chain.withRequest(retry).proceed().also {
-                    if (it.isCorruptImage()) evict(retry, key)
+        return coroutineScope {
+            val pending =
+                synchronized(requests) {
+                    requests.getOrPut(key) { PendingRequest() }.also { it.users++ }
                 }
-            }
-        } finally {
-            synchronized(requests) {
-                if (--pending.users == 0) requests.remove(key)
+            // A viewer can join a thumbnail download before it gets the cache lock.
+            val observer =
+                request.mediaDownloadProgressListener?.let { listener ->
+                    launch(start = CoroutineStart.UNDISPATCHED) { pending.progress.collect(listener) }
+                }
+            try {
+                // Serialize readers too, so a late failed decode cannot evict a repaired entry.
+                pending.mutex.withLock {
+                    val tracked = request.newBuilder().onMediaDownloadProgress { pending.progress.value = it }.build()
+                    val result = chain.withRequest(tracked).proceed()
+                    if (!result.isCorruptImage()) return@withLock result
+                    evict(request, key)
+                    if (!request.networkCachePolicy.readEnabled) return@withLock result
+
+                    val retry =
+                        tracked
+                            .newBuilder()
+                            .diskCachePolicy(if (request.diskCachePolicy.writeEnabled) CachePolicy.WRITE_ONLY else CachePolicy.DISABLED)
+                            .memoryCachePolicy(if (request.memoryCachePolicy.writeEnabled) CachePolicy.WRITE_ONLY else CachePolicy.DISABLED)
+                            .build()
+                    chain.withRequest(retry).proceed().also {
+                        if (it.isCorruptImage()) evict(retry, key)
+                    }
+                }
+            } finally {
+                observer?.cancel()
+                synchronized(requests) {
+                    if (--pending.users == 0) requests.remove(key)
+                }
             }
         }
     }
@@ -74,6 +89,7 @@ internal class CorruptImageRetryInterceptor(
 
     private class PendingRequest {
         val mutex = Mutex()
+        val progress = MutableStateFlow<Float?>(null)
         var users = 0
     }
 }
