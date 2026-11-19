@@ -7,8 +7,8 @@ import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
 import androidx.room3.withWriteTransaction
 
-// Platform icons now serialize as IconType instead of UiIcon.
-internal const val CACHE_DATABASE_VERSION = 53
+// Added DbProfileTabs cache table for profile tabs persistence.
+internal const val CACHE_DATABASE_VERSION = 54
 
 @Database(
     entities = [
@@ -29,6 +29,7 @@ internal const val CACHE_DATABASE_VERSION = 53
         dev.dimension.flare.data.database.cache.model.DbListPaging::class,
         dev.dimension.flare.data.database.cache.model.DbListMember::class,
         dev.dimension.flare.data.database.cache.model.DbUserRelation::class,
+        dev.dimension.flare.data.database.cache.model.DbProfileTabs::class,
         dev.dimension.flare.data.database.cache.model.DbTranslation::class,
     ],
     version = CACHE_DATABASE_VERSION,

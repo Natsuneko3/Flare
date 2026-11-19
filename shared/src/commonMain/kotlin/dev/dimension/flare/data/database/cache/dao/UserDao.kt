@@ -8,6 +8,7 @@ import androidx.room3.OnConflictStrategy
 import androidx.room3.Query
 import androidx.room3.Transaction
 import androidx.room3.paging.PagingSourceDaoReturnTypeConverter
+import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.database.cache.model.DbUser
 import dev.dimension.flare.data.database.cache.model.DbUserHistory
 import dev.dimension.flare.data.database.cache.model.DbUserHistoryWithUser
@@ -111,4 +112,31 @@ internal interface UserDao {
 
     @Query("DELETE FROM DbUserRelation WHERE accountType = :accountType")
     suspend fun deleteRelationsByAccountType(accountType: DbAccountType)
+
+    @Query("SELECT * FROM DbProfileTabs WHERE accountType = :accountType AND userKey = :userKey")
+    fun getProfileTabs(
+        accountType: DbAccountType,
+        userKey: MicroBlogKey,
+    ): Flow<DbProfileTabs?>
+
+    @Query("SELECT * FROM DbProfileTabs WHERE accountType = :accountType AND userKey = :userKey")
+    suspend fun getProfileTabsSync(
+        accountType: DbAccountType,
+        userKey: MicroBlogKey,
+    ): DbProfileTabs?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProfileTabs(profileTabs: DbProfileTabs)
+
+    @Query("DELETE FROM DbProfileTabs WHERE accountType = :accountType AND userKey = :userKey")
+    suspend fun deleteProfileTabs(
+        accountType: DbAccountType,
+        userKey: MicroBlogKey,
+    )
+
+    @Query("DELETE FROM DbProfileTabs WHERE accountType = :accountType")
+    suspend fun deleteProfileTabsByAccountType(accountType: DbAccountType)
+
+    @Query("DELETE FROM DbProfileTabs")
+    suspend fun clearProfileTabs()
 }

@@ -380,6 +380,7 @@ internal class AccountRepository internal constructor(
             cacheDatabase.listDao().deletePagingByAccountType(accountType)
             cacheDatabase.listDao().deleteByAccountType(accountType)
             cacheDatabase.userDao().deleteRelationsByAccountType(accountType)
+            cacheDatabase.userDao().deleteProfileTabsByAccountType(accountType)
             cacheDatabase.translationDao().deleteByAccountType(accountType)
             cacheDatabase.statusReferenceDao().deleteByAccountType(accountType)
             cacheDatabase.pagingTimelineDao().deletePresentationReferencesByAccountType(accountType)

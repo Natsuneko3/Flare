@@ -20,6 +20,7 @@ import dev.dimension.flare.data.database.cache.model.DbMessageItem
 import dev.dimension.flare.data.database.cache.model.DbMessageRoom
 import dev.dimension.flare.data.database.cache.model.DbMessageRoomReference
 import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
+import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.database.cache.model.DbStatus
 import dev.dimension.flare.data.database.cache.model.DbStatusReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationReference
@@ -426,6 +427,7 @@ class AccountRepositoryTest : RobolectricTest() {
                     val status = DbStatus(sample.statusKey, type, sample.copy(accountType = type), 0, "private post")
                     cacheDatabase.statusDao().insertAll(listOf(status))
                     cacheDatabase.userDao().insertUserRelation(DbUserRelation(type, user.key, UiRelation(following = true)))
+                    cacheDatabase.userDao().insertProfileTabs(DbProfileTabs(type, user.key, """[{"id":"posts"}]"""))
                     cacheDatabase.translationDao().insert(
                         DbTranslation(TranslationEntityType.Status, status.id, "en", "hash", TranslationStatus.Completed, updatedAt = 0),
                     )
@@ -475,6 +477,8 @@ class AccountRepositoryTest : RobolectricTest() {
             assertNotNull(cacheDatabase.listDao().getList(sharedRoom, survivor).first())
             assertNull(cacheDatabase.userDao().getUserRelation(owned, user.key).first())
             assertNotNull(cacheDatabase.userDao().getUserRelation(survivor, user.key).first())
+            assertNull(cacheDatabase.userDao().getProfileTabs(owned, user.key).first())
+            assertNotNull(cacheDatabase.userDao().getProfileTabs(survivor, user.key).first())
             assertNull(cacheDatabase.translationDao().get(TranslationEntityType.Status, statuses[0].id, "en"))
             assertNotNull(cacheDatabase.translationDao().get(TranslationEntityType.Status, statuses[1].id, "en"))
             assertTrue(cacheDatabase.statusReferenceDao().getByStatusId(statuses[0].id).isEmpty())
