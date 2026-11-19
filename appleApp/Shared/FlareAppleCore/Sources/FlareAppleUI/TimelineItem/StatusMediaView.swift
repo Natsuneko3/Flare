@@ -38,6 +38,7 @@ struct StatusMediaView: View {
         allowsCarousel: Bool,
         carouselLeadingPadding: CGFloat,
         carouselTrailingPadding: CGFloat,
+        initialIsBlur: Bool? = nil,
         onMediaClicked: @escaping (any UiMedia, Int) -> Void
     ) {
         self.post = post
@@ -48,18 +49,23 @@ struct StatusMediaView: View {
         self.allowsCarousel = allowsCarousel
         self.carouselLeadingPadding = carouselLeadingPadding
         self.carouselTrailingPadding = carouselTrailingPadding
-        self.isBlur = sensitive
+        self._isBlur = State(initialValue: initialIsBlur ?? sensitive)
         self._activeCarouselIndex = State(initialValue: nil)
     }
+
+    private var showsBlur: Bool { sensitive && isBlur }
 
     var body: some View {
         mediaContent
         .onAppear { registerMediaSelection() }
         .onChange(of: data.map(\.url)) { _, _ in registerMediaSelection() }
+        .onChange(of: sensitive) { _, newValue in
+            isBlur = newValue
+        }
         .onDisappear { playback?.mediaSelections.remove(id: carouselID) }
-        .blur(radius: isBlur ? 20 : 0)
+        .blur(radius: showsBlur ? 20 : 0)
         .overlay(
-            alignment: isBlur ? .center : .topLeading
+            alignment: showsBlur ? .center : .topLeading
         ) {
             if sensitive {
                 if isBlur {
@@ -172,7 +178,7 @@ struct StatusMediaView: View {
                                     data[index],
                                     index: index,
                                     overflowCount: 0,
-                                    allowsAutoplay: !isBlur
+                                    allowsAutoplay: !showsBlur
                                 )
                                 .environment(\.timelineCarouselItem, TimelineCarouselItem(
                                     groupID: carouselID,
@@ -255,7 +261,7 @@ struct StatusMediaView: View {
                     visibleData[index],
                     index: index,
                     overflowCount: index == visibleData.count - 1 ? overflowCount : 0,
-                    allowsAutoplay: !isBlur
+                    allowsAutoplay: !showsBlur
                 )
                 .overlay { mediaOutline(gridShape(at: index, count: visibleData.count)) }
             }
@@ -314,7 +320,7 @@ struct StatusMediaView: View {
                     AltTextOverlay(altText: alt)
                 }
             }
-            .if(!isBlur && timelineMediaActionHandler != nil) { view in
+            .if(!showsBlur && timelineMediaActionHandler != nil) { view in
                 view.contextMenu {
                     if let timelineMediaActionHandler {
                         TimelineMediaContextMenu(

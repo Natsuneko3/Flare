@@ -255,7 +255,7 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
             collectionView.prepareForLayoutChange()
             clearHeightCache()
             applyLayoutForColumnCount()
-            reconfigureVisibleCells()
+            reconfigureLoadedCells()
             updateAutoplayConfiguration()
             updateBackgroundColors()
         }
@@ -264,7 +264,7 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
         didSet {
             guard oldValue != aiTldrEnabled, isViewLoaded else { return }
             clearHeightCache()
-            reconfigureVisibleCells()
+            reconfigureLoadedCells()
         }
     }
     var networkKind: NetworkKind = .cellular {
@@ -1875,6 +1875,10 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
         guard !itemIDs.isEmpty else { return }
         pendingReconfigureIDs.formUnion(itemIDs)
         scheduleSubmission()
+    }
+
+    private func reconfigureLoadedCells() {
+        reconfigureItems(dataSource.snapshot().itemIdentifiers)
     }
 
     private func reconfigureVisibleCells() {
