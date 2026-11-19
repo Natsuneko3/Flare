@@ -209,6 +209,58 @@ class TimelinePlaybackCoordinatorTest {
         }
 
     @Test
+    fun scrollChecksOnlyTheActiveVideosVisibilityUntilSelectionSettles() =
+        runTest {
+            class LayoutCandidate(
+                override val id: String,
+                var distance: Float,
+            ) : TimelineAutoplayPolicy.CandidateSource {
+                var inViewport = true
+                var visibilityReads = 0
+                var snapshots = 0
+                override val visible: Boolean
+                    get() {
+                        visibilityReads++
+                        return inViewport
+                    }
+
+                override fun snapshot(): TimelineAutoplayPolicy.Candidate {
+                    snapshots++
+                    return TimelineAutoplayPolicy.Candidate(id, visible = inViewport, canStart = inViewport, distance = distance)
+                }
+            }
+
+            val playback = TimelinePlaybackCoordinator(this, VideoPlaybackArbiter())
+            val first = LayoutCandidate("first", 0f)
+            val second = LayoutCandidate("second", 10f)
+            val events = mutableListOf<String>()
+            for (candidate in listOf(first, second)) {
+                playback.register(candidate.id) { events += "${candidate.id}:$it" }
+                playback.update(candidate)
+            }
+            advanceTimeBy(200)
+            runCurrent()
+            assertEquals(listOf("first:true"), events)
+
+            playback.setScrolling("vertical", scrolling = true, vertical = true)
+            second.distance = 0f
+            playback.candidateBoundsChanged(second.id)
+            first.inViewport = false
+            playback.candidateBoundsChanged(first.id)
+            advanceTimeBy(1000)
+            assertEquals(listOf("first:true", "first:false"), events)
+            assertEquals(0, second.visibilityReads)
+            assertEquals(listOf(1, 1), listOf(first.snapshots, second.snapshots))
+
+            playback.setScrolling("vertical", scrolling = false, vertical = true)
+            advanceTimeBy(200)
+            runCurrent()
+            assertEquals(listOf("first:true", "first:false", "second:true"), events)
+            assertEquals(2, second.snapshots)
+            playback.close()
+        }
+
+    @Test
     fun closingTimelineCancelsPendingAutoplay() =
         runTest {
             val playback = TimelinePlaybackCoordinator(this, VideoPlaybackArbiter())

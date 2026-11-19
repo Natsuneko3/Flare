@@ -6,16 +6,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,13 +40,23 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.node.LayoutModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.invalidateMeasurement
+import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
@@ -97,6 +105,7 @@ import dev.dimension.flare.ui.component.platform.PlatformText
 import dev.dimension.flare.ui.component.platform.PlatformVideoPlayer
 import dev.dimension.flare.ui.humanizer.humanize
 import dev.dimension.flare.ui.model.TimelineCarouselLayout
+import dev.dimension.flare.ui.model.TimelineCarouselLayoutSpec
 import dev.dimension.flare.ui.model.TimelineSingleMediaLayout
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiTimelineV2
@@ -213,76 +222,35 @@ internal fun StatusMediaComponent(
             DisposableEffect(playback, carouselId) {
                 onDispose { playback?.setScrolling(source = carouselId, scrolling = false, vertical = false) }
             }
-            BoxWithConstraints(
-                modifier =
-                    mediaContentModifier
-                        .fillMaxWidth(),
-            ) {
-                val layoutSpec =
-                    remember(
-                        data.size,
-                        data[0].carouselAspectRatio,
-                        data[1].carouselAspectRatio,
-                    ) {
-                        TimelineCarouselLayout.spec(
-                            mediaCount = data.size,
-                            firstAspectRatio = data[0].carouselAspectRatio,
-                            secondAspectRatio = data[1].carouselAspectRatio,
-                        )
-                    }
-                val horizontalInsets = carouselLeadingPadding + carouselTrailingPadding
-                val contentWidth = (maxWidth - horizontalInsets).coerceAtLeast(0.dp)
-                val carouselHeight =
-                    layoutSpec
-                        .height(
-                            viewportWidth = maxWidth.value,
-                            horizontalInsets = horizontalInsets.value,
-                            itemSpacing = CarouselItemSpacing.value,
-                        ).dp
-
-                LazyRow(
-                    state = carouselState,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(carouselHeight),
-                    contentPadding =
-                        PaddingValues(
-                            start = carouselLeadingPadding,
-                            end = carouselTrailingPadding,
-                        ),
-                    horizontalArrangement = Arrangement.spacedBy(CarouselItemSpacing),
-                    verticalAlignment = Alignment.CenterVertically,
+            val firstAspectRatio = data[0].carouselAspectRatio
+            val secondAspectRatio = data[1].carouselAspectRatio
+            val layoutSpec =
+                remember(data.size, firstAspectRatio, secondAspectRatio) {
+                    TimelineCarouselLayout.spec(data.size, firstAspectRatio, secondAspectRatio)
+                }
+            StatusMediaCarousel(
+                state = carouselState,
+                layoutSpec = layoutSpec,
+                itemCount = data.size,
+                itemAspectRatio = { data[it].timelineAspectRatio },
+                leadingPadding = carouselLeadingPadding,
+                trailingPadding = carouselTrailingPadding,
+                modifier = mediaContentModifier,
+            ) { index, itemModifier ->
+                CompositionLocalProvider(
+                    LocalTimelineCarouselItem provides TimelineCarouselItem(carouselId, index, index == selectedIndex),
                 ) {
-                    items(count = data.size) { index ->
-                        val media = data[index]
-                        val itemWidth =
-                            layoutSpec
-                                .itemWidth(
-                                    contentWidth = contentWidth.value,
-                                    height = carouselHeight.value,
-                                    aspectRatio = media.timelineAspectRatio,
-                                ).dp
-                        CompositionLocalProvider(
-                            LocalTimelineCarouselItem provides TimelineCarouselItem(carouselId, index, index == selectedIndex),
-                        ) {
-                            StatusMediaItem(
-                                post = post,
-                                media = media,
-                                mediaCount = data.size,
-                                onMediaClick = { openMedia(index) },
-                                hideSensitive = hideSensitive,
-                                keepAspectRatio = false,
-                                shape = shape,
-                                fillContainer = true,
-                                modifier =
-                                    Modifier
-                                        .fillParentMaxHeight()
-                                        .width(itemWidth)
-                                        .clip(shape),
-                            )
-                        }
-                    }
+                    StatusMediaItem(
+                        post = post,
+                        media = data[index],
+                        mediaCount = data.size,
+                        onMediaClick = { openMedia(index) },
+                        hideSensitive = hideSensitive,
+                        keepAspectRatio = false,
+                        shape = shape,
+                        fillContainer = true,
+                        modifier = itemModifier.clip(shape),
+                    )
                 }
             }
         } else {
@@ -386,6 +354,120 @@ internal fun StatusMediaComponent(
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun StatusMediaCarousel(
+    state: LazyListState,
+    layoutSpec: TimelineCarouselLayoutSpec,
+    itemCount: Int,
+    itemAspectRatio: (Int) -> Float,
+    leadingPadding: Dp,
+    trailingPadding: Dp,
+    modifier: Modifier = Modifier,
+    itemContent: @Composable (index: Int, modifier: Modifier) -> Unit,
+) {
+    val itemSizing = remember { CarouselItemSizing() }
+    val horizontalInsets = (leadingPadding + trailingPadding).value
+
+    LazyRow(
+        state = state,
+        modifier =
+            modifier.fillMaxWidth().layout { measurable, constraints ->
+                val viewportWidth = constraints.maxWidth.toDp().value
+                val preferredHeight = layoutSpec.height(viewportWidth, horizontalInsets, CarouselItemSpacing.value)
+                itemSizing.update(
+                    isLookingAhead = isLookingAhead,
+                    contentWidth = (viewportWidth - horizontalInsets).coerceAtLeast(0f),
+                    preferredHeight = preferredHeight,
+                )
+                val height = constraints.constrainHeight(preferredHeight.dp.roundToPx())
+                val row = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
+                layout(row.width, row.height) { row.placeRelative(0, 0) }
+            },
+        contentPadding = PaddingValues(start = leadingPadding, end = trailingPadding),
+        horizontalArrangement = Arrangement.spacedBy(CarouselItemSpacing),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(count = itemCount) { index ->
+            itemContent(
+                index,
+                Modifier.fillParentMaxHeight().then(CarouselItemWidthElement(itemSizing, layoutSpec, itemAspectRatio(index))),
+            )
+        }
+    }
+}
+
+private class CarouselItemSizing {
+    class Dimensions {
+        var contentWidth = 0f
+        var preferredHeight = 0f
+    }
+
+    val attachedItems = mutableSetOf<CarouselItemWidthNode>()
+    private val current = Dimensions()
+    private val lookahead = Dimensions()
+
+    fun dimensions(isLookingAhead: Boolean): Dimensions = if (isLookingAhead) lookahead else current
+
+    fun update(
+        isLookingAhead: Boolean,
+        contentWidth: Float,
+        preferredHeight: Float,
+    ) {
+        val dimensions = dimensions(isLookingAhead)
+        if (dimensions.contentWidth == contentWidth && dimensions.preferredHeight == preferredHeight) return
+        dimensions.contentWidth = contentWidth
+        dimensions.preferredHeight = preferredHeight
+        // LazyRow can reuse item measurements when the row's clamped height stays the same.
+        attachedItems.forEach { it.invalidateMeasurement() }
+    }
+}
+
+private data class CarouselItemWidthElement(
+    val sizing: CarouselItemSizing,
+    val layoutSpec: TimelineCarouselLayoutSpec,
+    val aspectRatio: Float,
+) : ModifierNodeElement<CarouselItemWidthNode>() {
+    override fun create(): CarouselItemWidthNode = CarouselItemWidthNode(this)
+
+    override fun update(node: CarouselItemWidthNode) = node.update(this)
+
+    override fun InspectorInfo.inspectableProperties() {
+        name = "carouselItemWidth"
+    }
+}
+
+private class CarouselItemWidthNode(
+    private var item: CarouselItemWidthElement,
+) : Modifier.Node(), LayoutModifierNode {
+    fun update(item: CarouselItemWidthElement) {
+        if (isAttached && this.item.sizing !== item.sizing) {
+            this.item.sizing.attachedItems.remove(this)
+            item.sizing.attachedItems.add(this)
+        }
+        this.item = item
+    }
+
+    override fun onAttach() {
+        item.sizing.attachedItems.add(this)
+    }
+
+    override fun onDetach() {
+        item.sizing.attachedItems.remove(this)
+    }
+
+    override fun MeasureScope.measure(
+        measurable: Measurable,
+        constraints: Constraints,
+    ): MeasureResult {
+        val (sizing, layoutSpec, aspectRatio) = item
+        val dimensions = sizing.dimensions(isLookingAhead)
+        val width =
+            constraints.constrainWidth(layoutSpec.itemWidth(dimensions.contentWidth, dimensions.preferredHeight, aspectRatio).dp.roundToPx())
+        val child = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        return layout(child.width, child.height) { child.placeRelative(0, 0) }
     }
 }
 
