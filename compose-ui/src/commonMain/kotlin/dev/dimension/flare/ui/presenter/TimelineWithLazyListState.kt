@@ -240,15 +240,17 @@ internal fun rememberTimelineWithLazyListState(
                         ?.key
             }.drop(1)
                 .collect { (index, key) ->
+                    if (newPostCount == 0) return@collect
                     // Consume posts on viewport changes, not paging updates whose
                     // new indices may arrive before the grid preserves its position.
                     // A measured item's key also excludes any leading header cards.
                     val pagingState = currentPagingState
+                    val visiblePostIndex = index - currentLeadingItemCount
                     val postIndex =
-                        if (key == null) {
-                            index
-                        } else {
-                            (0 until pagingState.itemCount).indexOfFirst { pagingState.peek(it)?.itemKey == key }
+                        when {
+                            key == null -> index
+                            pagingState.peek(visiblePostIndex)?.itemKey == key -> visiblePostIndex
+                            else -> (0 until pagingState.itemCount).indexOfFirst { pagingState.peek(it)?.itemKey == key }
                         }
                     if (postIndex >= 0) {
                         newPostCount = minOf(newPostCount, postIndex)
