@@ -502,6 +502,23 @@ final class TimelineMediaPreviewTests: XCTestCase {
 
         XCTAssertTrue(blur.isHidden)
         XCTAssertTrue(toggle.isHidden)
+
+        mediaContent.configure(
+            data: [image],
+            sensitive: true,
+            cornerRadius: 16,
+            appearanceShowMedia: true,
+            appearanceShowSensitive: false,
+            appearanceExpandMediaSize: true,
+            appearanceLimitMediaGridToNine: true,
+            appearanceMediaLayout: .grid,
+            carouselLeadingPadding: 0,
+            carouselTrailingPadding: 0
+        )
+        mediaContent.layoutIfNeeded()
+
+        XCTAssertFalse(blur.isHidden)
+        XCTAssertFalse(toggle.isHidden)
     }
 
     func testTabViewPropagatesTimelineAppearanceUpdateToTabContent() async throws {
@@ -574,14 +591,14 @@ final class TimelineMediaPreviewTests: XCTestCase {
         let appearance = helper.resolve(base: singleMediaAppearance(),
                                         patch: helper.setVideoAutoplay(patch: helper.empty, value: .never))
         var mediaBounds = CGRect.zero
-        func content(width: Float, sensitive: Bool) -> some View {
+        func content(width: Float, initialIsBlur: Bool) -> some View {
             let video = UiMediaVideo(url: "https://timeline-preview.invalid/movie.mp4",
                 thumbnailUrl: "https://timeline-preview.invalid/thumbnail.png", description: nil,
                 height: 1_000, width: width, customHeaders: ["X-Preview-Test": "fixture"],
                 proxy: ProxyRef.Global.shared, downloadUrl: nil, kind: .video, livePhotoCoverUrl: nil)
-            return StatusMediaView(post: singleMediaPost(video, sensitive: true), data: [video], sensitive: sensitive,
+            return StatusMediaView(post: singleMediaPost(video, sensitive: true), data: [video], sensitive: true,
                 cornerRadius: 12, allowsCarousel: false, carouselLeadingPadding: 0, carouselTrailingPadding: 0,
-                onMediaClicked: { _, _ in })
+                initialIsBlur: initialIsBlur, onMediaClicked: { _, _ in })
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { mediaBounds = $0 }
                 .frame(width: 360, alignment: .leading)
                 .tint(.red)
@@ -589,14 +606,13 @@ final class TimelineMediaPreviewTests: XCTestCase {
                 .inMediaViewport(height: 400)
         }
         for startsHidden in [true, false] {
-            // Preserve the initial blur state when enabling controls to render both toggle states.
-            let host = UIHostingController(rootView: content(width: 80, sensitive: startsHidden))
+            let host = UIHostingController(rootView: content(width: 80, initialIsBlur: startsHidden))
             host.view.backgroundColor = .black
             let window = try fixture.show(host)
             window.overrideUserInterfaceStyle = .light
             defer { window.isHidden = true; window.rootViewController = nil }
             for width: Float in [80, 200, 900] {
-                host.rootView = content(width: width, sensitive: true)
+                host.rootView = content(width: width, initialIsBlur: startsHidden)
                 host.view.layoutIfNeeded()
                 try await Task.sleep(for: .milliseconds(150))
                 XCTAssertEqual(mediaBounds.width, CGFloat(width / 5), accuracy: 0.5)
@@ -620,6 +636,104 @@ final class TimelineMediaPreviewTests: XCTestCase {
                                      "The \(startsHidden ? "reveal" : "hide") control must be visible in a \(mediaBounds.width)pt video")
             }
         }
+    }
+
+    func testSwiftUIShowSensitiveContentRoundTripRestoresBlur() async throws {
+        let fixture = try await Fixture()
+        let helper = TimelinePresentationAppearancePatchHelper.shared
+        let baseAppearance = helper.resolve(
+            base: singleMediaAppearance(),
+            patch: helper.setVideoAutoplay(patch: helper.empty, value: .never)
+        )
+        let video = UiMediaVideo(
+            url: "https://timeline-preview.invalid/movie.mp4",
+            thumbnailUrl: "https://timeline-preview.invalid/thumbnail.png",
+            description: nil,
+            height: 600,
+            width: 800,
+            customHeaders: ["X-Preview-Test": "fixture"],
+            proxy: ProxyRef.Global.shared,
+            downloadUrl: nil,
+            kind: .video,
+            livePhotoCoverUrl: nil
+        )
+        let post = singleMediaPost(video, sensitive: true)
+        var mediaBounds = CGRect.zero
+
+        func content(showSensitive: Bool) -> some View {
+            let appearance = helper.resolve(
+                base: baseAppearance,
+                patch: helper.setShowSensitiveContent(patch: helper.empty, value: showSensitive)
+            )
+            return StatusMediaContent(
+                post: post,
+                data: [video],
+                sensitive: true,
+                cornerRadius: 12,
+                allowsCarousel: false,
+                carouselLeadingPadding: 0,
+                carouselTrailingPadding: 0,
+                onMediaClicked: { _, _ in }
+            )
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { mediaBounds = $0 }
+            .frame(width: 320, alignment: .leading)
+            .tint(.red)
+            .environment(\.timelineAppearance, appearance)
+            .inMediaViewport(height: 400)
+        }
+
+        let host = UIHostingController(rootView: content(showSensitive: false))
+        host.view.backgroundColor = .black
+        let window = try fixture.show(host)
+        window.overrideUserInterfaceStyle = .light
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        func redPixelCount(in rect: CGRect) throws -> Int {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 3
+            let screenshot = UIGraphicsImageRenderer(size: window.bounds.size, format: format).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let crop = rect.applying(CGAffineTransform(scaleX: format.scale, y: format.scale))
+            let image = try XCTUnwrap(screenshot.cgImage?.cropping(to: crop))
+            var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            let context = try XCTUnwrap(CGContext(
+                data: &pixels,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return stride(from: 0, to: pixels.count, by: 4).filter {
+                Int(pixels[$0]) > Int(pixels[$0 + 1]) + 60 && Int(pixels[$0]) > Int(pixels[$0 + 2]) + 60
+            }.count
+        }
+
+        func centerRect() -> CGRect {
+            CGRect(
+                x: mediaBounds.midX - 60,
+                y: mediaBounds.midY - 30,
+                width: 120,
+                height: 60
+            ).intersection(mediaBounds)
+        }
+
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertGreaterThan(try redPixelCount(in: centerRect()), 20, "Initial sensitive media should render the centered reveal button")
+
+        host.rootView = content(showSensitive: true)
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(try redPixelCount(in: mediaBounds), 0, "Enabling showSensitiveContent should hide sensitive controls")
+
+        host.rootView = content(showSensitive: false)
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertGreaterThan(try redPixelCount(in: centerRect()), 20, "Disabling showSensitiveContent should restore blur and the centered reveal button")
     }
 
     func testSwiftUIPlaybackBadgesStayInsideNarrowMedia() async throws {

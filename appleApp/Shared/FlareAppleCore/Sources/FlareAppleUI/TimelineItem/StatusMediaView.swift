@@ -38,6 +38,7 @@ struct StatusMediaView: View {
         allowsCarousel: Bool,
         carouselLeadingPadding: CGFloat,
         carouselTrailingPadding: CGFloat,
+        initialIsBlur: Bool? = nil,
         onMediaClicked: @escaping (any UiMedia, Int) -> Void
     ) {
         self.post = post
@@ -48,7 +49,7 @@ struct StatusMediaView: View {
         self.allowsCarousel = allowsCarousel
         self.carouselLeadingPadding = carouselLeadingPadding
         self.carouselTrailingPadding = carouselTrailingPadding
-        self.isBlur = sensitive
+        self._isBlur = State(initialValue: initialIsBlur ?? sensitive)
         self._activeCarouselIndex = State(initialValue: nil)
     }
 
@@ -59,9 +60,7 @@ struct StatusMediaView: View {
         .onAppear { registerMediaSelection() }
         .onChange(of: data.map(\.url)) { _, _ in registerMediaSelection() }
         .onChange(of: sensitive) { _, newValue in
-            if !newValue {
-                isBlur = false
-            }
+            isBlur = newValue
         }
         .onDisappear { playback?.mediaSelections.remove(id: carouselID) }
         .blur(radius: showsBlur ? 20 : 0)
