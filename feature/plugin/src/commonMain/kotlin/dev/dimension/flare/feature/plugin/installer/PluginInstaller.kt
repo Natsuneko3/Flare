@@ -205,6 +205,13 @@ public class PluginInstaller(
         preview: PreparedPluginInstallV1,
         confirmed: Boolean,
         activate: suspend (InstalledPluginV1) -> Unit,
+    ): InstalledPluginV1 = commit(preview, confirmed, null, activate)
+
+    internal suspend fun commit(
+        preview: PreparedPluginInstallV1,
+        confirmed: Boolean,
+        updatedAt: String?,
+        activate: suspend (InstalledPluginV1) -> Unit,
     ): InstalledPluginV1 =
         mutex.withLock {
             require(activePreview === preview) { "Install preview is no longer active" }
@@ -229,6 +236,8 @@ public class PluginInstaller(
                             .toLong(),
                     iconExtension = preview.validated.iconExtension,
                     source = preview.source,
+                    updatedAt =
+                        updatedAt ?: existing?.takeIf { it.packageHash == preview.packageHash && it.source == preview.source }?.updatedAt,
                     manifest = preview.validated.manifest,
                     catalogs = preview.validated.catalogs,
                     ownedPlatformId =

@@ -840,6 +840,8 @@
     <string name="plugin_install_github">Εγκατάσταση από GitHub</string>
     <string name="plugin_github_repository">URL αποθετηρίου GitHub</string>
     <string name="plugin_check_updates">Έλεγχος ενημερώσεων</string>
+    <string name="plugin_local_import">Τοπική εισαγωγή</string>
+    <string name="plugin_updated_at">Ενημερώθηκε στις %1$s</string>
     <string name="plugin_update">Ενημέρωση</string>
     <string name="plugin_up_to_date">Τα plugins GitHub είναι ενημερωμένα</string>
     <string name="plugin_warning_source_changed">Αυτή η εγκατάσταση αλλάζει την πηγή του plugin</string>

@@ -840,6 +840,8 @@
     <string name="plugin_install_github">Asenna GitHub:stä</string>
     <string name="plugin_github_repository">GitHub -repositoriolinkki</string>
     <string name="plugin_check_updates">Tarkista päivitykset</string>
+    <string name="plugin_local_import">Paikallinen tuonti</string>
+    <string name="plugin_updated_at">Päivitetty %1$s</string>
     <string name="plugin_update">Päivitä</string>
     <string name="plugin_up_to_date">GitHub -lisäosat ovat ajan tasalla</string>
     <string name="plugin_warning_source_changed">Tämä asennus muuttaa pluginin lähdettä</string>

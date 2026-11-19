@@ -841,6 +841,8 @@
     <string name="plugin_install_github">Инсталирай от GitHub</string>
     <string name="plugin_github_repository">URL на репозиториума GitHub</string>
     <string name="plugin_check_updates">Проверете за актуализации</string>
+    <string name="plugin_local_import">Локално импортиране</string>
+    <string name="plugin_updated_at">Актуализирано на %1$s</string>
     <string name="plugin_update">Актуализиране</string>
     <string name="plugin_up_to_date">Плагините GitHub са актуални</string>
     <string name="plugin_warning_source_changed">Тази инсталация променя източника на плагина</string>

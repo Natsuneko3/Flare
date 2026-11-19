@@ -928,6 +928,8 @@
     <string name="plugin_warning_compatibility">נקה קבצים לא בשימוש</string>
     <string name="plugin_install_github">התקן מ-GitHub</string>
     <string name="plugin_check_updates">בדוק עדכונים</string>
+    <string name="plugin_local_import">ייבוא מקומי</string>
+    <string name="plugin_updated_at">עודכן ב־%1$s</string>
     <string name="plugin_warning_source_changed">ההתקנה הזו משנה את מקור התוסף</string>
     <string name="plugin_add">הוסף תוסף</string>
     <string name="settings_ai_config_context_window_hint">הקשר המודל נמדד בטוקנים, לא באותיות. השאר ריק כדי להשתמש במגבלת המודל הידועה. מודלים לא ידועים משתמשים בתקציב משוער של 8192 טוקנים. הזן לפחות 1024 טוקנים כדי לדרוס.</string>

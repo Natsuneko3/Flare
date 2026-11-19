@@ -912,6 +912,8 @@
     <string name="plugin_install_github">从 GitHub 安装</string>
     <string name="plugin_github_repository">GitHub 仓库链接</string>
     <string name="plugin_check_updates">检查更新</string>
+    <string name="plugin_local_import">本地导入</string>
+    <string name="plugin_updated_at">更新于 %1$s</string>
     <string name="plugin_update">更新</string>
     <string name="plugin_up_to_date">GitHub 插件均为最新版本</string>
     <string name="plugin_warning_source_changed">此次安装将更改插件来源</string>

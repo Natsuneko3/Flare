@@ -945,6 +945,8 @@
     <string name="plugin_install_github">Instalar des de GitHub</string>
     <string name="plugin_github_repository">URL del repòsitori GitHub</string>
     <string name="plugin_check_updates">Comprova actualitzacions</string>
+    <string name="plugin_local_import">Importació local</string>
+    <string name="plugin_updated_at">Actualitzat el %1$s</string>
     <string name="plugin_update">Actualitzar</string>
     <string name="plugin_up_to_date">Els plugins GitHub estan actualitzats</string>
     <string name="plugin_warning_source_changed">El plugin s\'ha posat en pausa després d\'errors fatals repetits.</string>

@@ -843,6 +843,8 @@
     <string name="plugin_install_github">Instalovat z GitHub</string>
     <string name="plugin_github_repository">URL úložiště GitHub</string>
     <string name="plugin_check_updates">Kontrolovat aktualizace</string>
+    <string name="plugin_local_import">Místní import</string>
+    <string name="plugin_updated_at">Aktualizováno %1$s</string>
     <string name="plugin_update">Aktualizovat</string>
     <string name="plugin_up_to_date">GitHub pluginy jsou aktuální</string>
     <string name="plugin_warning_source_changed">Toto nainstalování mění zdroj pluginu</string>

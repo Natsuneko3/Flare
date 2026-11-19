@@ -814,6 +814,8 @@
     <string name="plugin_warning_compatibility">Avertisment de compatibilitate</string>
     <string name="plugin_install_github">Instalează din GitHub</string>
     <string name="plugin_check_updates">Verifică actualizări</string>
+    <string name="plugin_local_import">Import local</string>
+    <string name="plugin_updated_at">Actualizat la %1$s</string>
     <string name="plugin_development">Dezvoltare plugin</string>
     <string name="plugin_development_description">Alege directorul de ieșire al compilării care conține manifest.json și plugin.js. Salvarele sunt validate automat; reîncărcarea le aplică tuturor conturilor și paginilor acestui plugin.</string>
     <string name="plugin_development_open">Alege director…</string>

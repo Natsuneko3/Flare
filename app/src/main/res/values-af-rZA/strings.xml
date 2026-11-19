@@ -949,6 +949,8 @@
     <string name="plugin_install_github">Installeer van GitHub</string>
     <string name="plugin_github_repository">GitHub repositorium URL</string>
     <string name="plugin_check_updates">Soek na opdaterings</string>
+    <string name="plugin_local_import">Plaaslik ingevoer</string>
+    <string name="plugin_updated_at">Bygewerk op %1$s</string>
     <string name="plugin_update">Opdateer</string>
     <string name="plugin_up_to_date">GitHub plugins is op datum</string>
     <string name="plugin_warning_source_changed">Hierdie installasie verander die plugin-bron</string>

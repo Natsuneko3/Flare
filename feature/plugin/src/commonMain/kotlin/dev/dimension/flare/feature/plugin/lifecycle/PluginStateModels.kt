@@ -31,6 +31,7 @@ public data class InstalledPluginV1(
     val iconExtension: String = "png",
     val removing: Boolean = false,
     val ownedPlatformId: String? = manifest.platform?.id,
+    val updatedAt: String? = null,
 )
 
 @Serializable

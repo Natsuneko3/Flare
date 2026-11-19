@@ -840,6 +840,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitetsadvarsel</string>
     <string name="plugin_install_github">Installer fra GitHub</string>
     <string name="plugin_check_updates">Tjek for opdateringer</string>
+    <string name="plugin_local_import">Lokal import</string>
+    <string name="plugin_updated_at">Opdateret %1$s</string>
     <string name="plugin_update">Opdater</string>
     <string name="plugin_up_to_date">GitHub plugins er opdaterede</string>
     <string name="plugin_warning_source_changed">Denne installation ændrer plugin-kilden</string>
