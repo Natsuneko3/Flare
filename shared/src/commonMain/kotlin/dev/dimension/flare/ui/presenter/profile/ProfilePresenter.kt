@@ -11,6 +11,7 @@ import dev.dimension.flare.data.datasource.microblog.ProfileTab
 import dev.dimension.flare.data.datasource.microblog.accountKeyOrNull
 import dev.dimension.flare.data.datasource.microblog.accountProfileFlow
 import dev.dimension.flare.data.datasource.microblog.capabilities
+import dev.dimension.flare.data.datasource.microblog.handler.ProfileTabsHandler
 import dev.dimension.flare.data.datasource.microblog.loader.RelationActionType
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.repository.AccountRepository
@@ -45,11 +46,13 @@ import dev.dimension.flare.ui.presenter.status.LogUserHistoryPresenter
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -137,41 +140,70 @@ public class ProfilePresenter(
                             ?: service.accountKeyOrNull ?: run {
                             throw NoActiveAccountException
                         }
+                    val profile = service.capabilities.profile
+                    val rawTabsFlow: Flow<UiState<ImmutableList<ProfileTab>>> =
+                        when {
+                            profile == null -> {
+                                flowOf(UiState.Success(persistentListOf()))
+                            }
 
-                    val tabs =
-                        service.capabilities.profile
-                            ?.profileTabs(actualUserKey)
-                            .orEmpty()
-                            .map { tab ->
-                                val tabId = "${accountType}_${actualUserKey}_${tab.id}"
-                                val timelinePresenter =
-                                    object : TimelinePresenter() {
-                                        override val loader: Flow<RemoteLoader<UiTimelineV2>>
-                                            get() = flowOf(tab.loader)
-                                    }
-                                when (tab.displayType) {
-                                    ProfileTab.DisplayType.Timeline -> {
-                                        ProfileState.Tab.Timeline(
-                                            id = tabId,
-                                            name = tab.name,
-                                            presenter = timelinePresenter,
-                                        )
-                                    }
+                            profile.supportsProfileTabsCache -> {
+                                ProfileTabsHandler(
+                                    accountType = accountType,
+                                    profile = profile,
+                                ).profileTabs(actualUserKey).toUi()
+                            }
 
-                                    ProfileTab.DisplayType.Gallery -> {
-                                        ProfileState.Tab.Media(
-                                            id = tabId,
-                                            name = tab.name,
-                                            presenter =
-                                                ProfileMediaPresenter(
-                                                    mediaTimelinePresenter = timelinePresenter,
-                                                    showAllImages = tab.showAllImagesInGallery,
-                                                ),
-                                        )
-                                    }
-                                }
-                            }.toImmutableList()
-                    flowOf(UiState.Success(tabs))
+                            else -> {
+                                flowOf(UiState.Success(profile.profileTabs(actualUserKey)))
+                            }
+                        }
+
+                    val cachedTabs = mutableMapOf<ProfileTabReuseKey, ProfileState.Tab>()
+                    rawTabsFlow
+                        .map { state ->
+                            state.map { profileTabs ->
+                                profileTabs
+                                    .map { tab ->
+                                        val tabId = "${accountType}_${actualUserKey}_${tab.id}"
+                                        val reuseKey =
+                                            ProfileTabReuseKey(
+                                                id = tabId,
+                                                name = tab.name,
+                                                displayType = tab.displayType,
+                                                showAllImagesInGallery = tab.showAllImagesInGallery,
+                                            )
+                                        cachedTabs.getOrPut(reuseKey) {
+                                            val timelinePresenter =
+                                                object : TimelinePresenter() {
+                                                    override val loader: Flow<RemoteLoader<UiTimelineV2>>
+                                                        get() = flowOf(tab.loader)
+                                                }
+                                            when (tab.displayType) {
+                                                ProfileTab.DisplayType.Timeline -> {
+                                                    ProfileState.Tab.Timeline(
+                                                        id = tabId,
+                                                        name = tab.name,
+                                                        presenter = timelinePresenter,
+                                                    )
+                                                }
+
+                                                ProfileTab.DisplayType.Gallery -> {
+                                                    ProfileState.Tab.Media(
+                                                        id = tabId,
+                                                        name = tab.name,
+                                                        presenter =
+                                                            ProfileMediaPresenter(
+                                                                mediaTimelinePresenter = timelinePresenter,
+                                                                showAllImages = tab.showAllImagesInGallery,
+                                                            ),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }.toImmutableList()
+                            }
+                        }.distinctUntilChanged()
                 }
         }
     }
@@ -290,6 +322,13 @@ public class ProfilePresenter(
         }
     }
 }
+
+private data class ProfileTabReuseKey(
+    val id: String,
+    val name: UiText,
+    val displayType: ProfileTab.DisplayType,
+    val showAllImagesInGallery: Boolean,
+)
 
 private fun buildProfileMenus(
     isMe: Boolean,

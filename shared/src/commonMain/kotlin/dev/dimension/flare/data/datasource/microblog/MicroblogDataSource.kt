@@ -48,7 +48,15 @@ public interface MicroblogDataSource {
 
     public fun fans(userKey: MicroBlogKey): RemoteLoader<UiProfile>
 
+    public val supportsProfileTabsCache: Boolean
+        get() = false
+
     public suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab>
+
+    public fun restoreProfileTabs(
+        userKey: MicroBlogKey,
+        cached: List<CachedProfileTab>,
+    ): ImmutableList<ProfileTab>? = null
 }
 
 private val defaultSearchOperations = SearchOperation.entries.toSet()

@@ -19,23 +19,29 @@ import kotlinx.serialization.Serializable
 internal enum class UserProfileTimelineType(
     val queryId: String,
     val operationName: String,
-    val pagingKey: String,
+    private val id: String,
 ) {
     Highlights(
         queryId = XQTTimelineQueryIds.USER_HIGHLIGHTS,
         operationName = "UserHighlightsTweets",
-        pagingKey = "highlights",
+        id = "highlights",
     ),
     Articles(
         queryId = XQTTimelineQueryIds.USER_ARTICLES,
         operationName = "UserArticlesTweets",
-        pagingKey = "articles",
+        id = "articles",
     ),
     Reposts(
         queryId = XQTTimelineQueryIds.USER_REPOSTS,
         operationName = "UserRepostsTimeline",
-        pagingKey = "reposts",
+        id = "reposts",
     ),
+    ;
+
+    fun pagingKey(
+        userKey: MicroBlogKey,
+        accountKey: MicroBlogKey,
+    ): String = "user_${id}_${userKey}_$accountKey"
 }
 
 @OptIn(ExperimentalPagingApi::class)
@@ -45,7 +51,7 @@ internal class UserProfileTimelineRemoteMediator(
     private val service: XQTService,
     private val accountKey: MicroBlogKey,
 ) : CacheableRemoteLoader<UiTimelineV2> {
-    override val pagingKey: String = "user_${type.pagingKey}_${userKey}_$accountKey"
+    override val pagingKey: String = type.pagingKey(userKey, accountKey)
 
     override suspend fun load(
         pageSize: Int,

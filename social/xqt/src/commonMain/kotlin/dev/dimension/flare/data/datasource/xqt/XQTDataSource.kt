@@ -5,6 +5,7 @@ import androidx.paging.map
 import dev.dimension.flare.common.decodeJson
 import dev.dimension.flare.common.encodeJson
 import dev.dimension.flare.data.datasource.microblog.AuthenticatedMicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.CachedProfileTab
 import dev.dimension.flare.data.datasource.microblog.ComposeConfig
 import dev.dimension.flare.data.datasource.microblog.ComposeData
 import dev.dimension.flare.data.datasource.microblog.ComposeDataSource
@@ -45,6 +46,7 @@ import dev.dimension.flare.data.model.tab.ShortcutSpec
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.network.xqt.XQTMediaUploader
 import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.UserApi
 import dev.dimension.flare.data.network.xqt.api.XQT_POLL_CONFIG
 import dev.dimension.flare.data.network.xqt.api.createPoll
 import dev.dimension.flare.data.network.xqt.api.publishTweet
@@ -114,6 +116,7 @@ private val MEDIA_COMPRESSION =
 internal class XQTDataSource(
     override val accountKey: MicroBlogKey,
     sourceCredentialFlow: Flow<XQTCredential>,
+    profileTabApi: UserApi? = null,
 ) : AuthenticatedMicroblogDataSource,
     NotificationTimelineDataSource,
     ComposeDataSource,
@@ -140,6 +143,7 @@ internal class XQTDataSource(
                     .map { it.chocolate },
         )
     }
+    private val profileTabApi = profileTabApi ?: service
     private val loader by lazy {
         XQTLoader(
             accountKey = accountKey,
@@ -721,16 +725,43 @@ internal class XQTDataSource(
             accountKey = accountKey,
         )
 
-    override suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab> {
-        val user =
-            service
-                .userById(userKey.id)
-                .body()
-                ?.data
-                ?.user
-                ?.result as? User
+    override val supportsProfileTabsCache: Boolean = true
 
-        return listOfNotNull(
+    override suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab> {
+        val response = profileTabApi.userById(userKey.id)
+        check(response.isSuccessful) { "Could not load X profile tabs (HTTP ${response.code})" }
+        val body = checkNotNull(response.body()) { "X returned no profile data" }
+        check(body.errors.isNullOrEmpty()) { "Could not load X profile tabs: ${body.errors?.firstOrNull()?.message}" }
+        val user = checkNotNull(body.data.user.result) { "X returned no user for profile tabs" } as? User
+
+        return buildProfileTabs(
+            userKey = userKey,
+            includeHighlights = user?.hasHighlightsTab == true,
+            includeArticles = user?.hasArticlesTab == true,
+        )
+    }
+
+    override fun restoreProfileTabs(
+        userKey: MicroBlogKey,
+        cached: List<CachedProfileTab>,
+    ): ImmutableList<ProfileTab>? {
+        val cachedIds = cached.map { it.id }
+        val remaining =
+            buildProfileTabs(
+                userKey = userKey,
+                includeHighlights = UserProfileTimelineType.Highlights.pagingKey(userKey, accountKey) in cachedIds,
+                includeArticles = UserProfileTimelineType.Articles.pagingKey(userKey, accountKey) in cachedIds,
+            ).associateByTo(mutableMapOf()) { it.toCached() }
+        val restored = cached.map { remaining.remove(it) ?: return null }
+        return restored.takeIf { remaining.isEmpty() }?.toPersistentList()
+    }
+
+    private fun buildProfileTabs(
+        userKey: MicroBlogKey,
+        includeHighlights: Boolean,
+        includeArticles: Boolean,
+    ): ImmutableList<ProfileTab> =
+        listOfNotNull(
             ProfileTab(
                 name = UiStrings.Posts,
                 loader = userTimeline(userKey, false),
@@ -754,7 +785,7 @@ internal class XQTDataSource(
                         userKey = userKey,
                     ),
             ),
-            if (user?.hasHighlightsTab == true) {
+            if (includeHighlights) {
                 ProfileTab(
                     name = UiStrings.Highlights,
                     loader =
@@ -773,7 +804,7 @@ internal class XQTDataSource(
                 displayType = ProfileTab.DisplayType.Gallery,
                 loader = userTimeline(userKey, mediaOnly = true),
             ),
-            if (user?.hasArticlesTab == true) {
+            if (includeArticles) {
                 ProfileTab(
                     name = UiStrings.Articles,
                     loader =
@@ -801,7 +832,6 @@ internal class XQTDataSource(
                 null
             },
         ).toPersistentList()
-    }
 
     override fun listTimeline(listId: String) =
         ListTimelineRemoteMediator(

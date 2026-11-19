@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import compose.icons.FontAwesomeIcons
@@ -123,7 +124,6 @@ import dev.dimension.flare.ui.presenter.profile.ProfileWithUserNameAndHostPresen
 import dev.dimension.flare.ui.screen.home.RegisterTabCallback
 import dev.dimension.flare.ui.theme.isLightTheme
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
-import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.launch
 import moe.tlaster.nestedscrollview.VerticalNestedScrollView
 import moe.tlaster.nestedscrollview.rememberNestedScrollViewState
@@ -516,61 +516,14 @@ internal fun ProfileScreen(
                                     Column(
                                         verticalArrangement = Arrangement.spacedBy(tabSpacing),
                                     ) {
-                                        if (tabs.size > 1) {
-                                            val selectedIndex = minOf(pagerState.currentPage, tabs.lastIndex)
-                                            SecondaryScrollableTabRow(
-                                                containerColor = headerBackground,
-                                                selectedTabIndex = pagerState.currentPage,
-                                                modifier = Modifier.fillMaxWidth(),
-                                                edgePadding = if (plainProfile) 0.dp else screenHorizontalPadding,
-                                                divider = {
-                                                    if (plainProfile) {
-                                                        HorizontalDivider()
-                                                    }
-                                                },
-                                                indicator = {
-                                                    if (plainProfile) {
-                                                        TabRowDefaults.SecondaryIndicator(
-                                                            Modifier.tabIndicatorOffset(selectedIndex, matchContentSize = false),
-                                                        )
-                                                    } else {
-                                                        TabRowIndicator(selectedIndex)
-                                                    }
-                                                },
-                                            ) {
-                                                val tabModifier =
-                                                    if (plainProfile) {
-                                                        Modifier.heightIn(min = profileTabHeight)
-                                                    } else {
-                                                        Modifier.clip(CircleShape)
-                                                    }
-                                                val tabColors = MaterialTheme.colorScheme
-                                                val contentColor = LocalContentColor.current
-                                                tabs
-                                                    .toImmutableList()
-                                                    .forEachIndexed { index, profileTab ->
-                                                        Tab(
-                                                            modifier = tabModifier,
-                                                            selected = pagerState.currentPage == index,
-                                                            selectedContentColor = if (plainProfile) tabColors.primary else contentColor,
-                                                            unselectedContentColor =
-                                                                if (plainProfile) tabColors.onSurfaceVariant else contentColor,
-                                                            onClick = {
-                                                                scope.launch {
-                                                                    pagerState.animateScrollToPage(index)
-                                                                }
-                                                            },
-                                                        ) {
-                                                            dev.dimension.flare.ui.component.Text(
-                                                                text = profileTab.name,
-                                                                modifier =
-                                                                    Modifier
-                                                                        .padding(8.dp),
-                                                            )
-                                                        }
-                                                    }
-                                            }
-                                        }
+                                        ProfileTabRow(
+                                            titles = tabs.map { it.name },
+                                            currentPage = pagerState.currentPage,
+                                            plainProfile = plainProfile,
+                                            tabHeight = profileTabHeight,
+                                            headerBackground = headerBackground,
+                                            onTabSelected = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+                                        )
                                         HorizontalPager(
                                             state = pagerState,
                                             key = { index ->
@@ -696,6 +649,49 @@ internal fun ProfileScreen(
                     }
                 },
             )
+        }
+    }
+}
+
+@Composable
+internal fun ProfileTabRow(
+    titles: List<UiText>,
+    currentPage: Int,
+    plainProfile: Boolean,
+    tabHeight: Dp,
+    headerBackground: Color,
+    onTabSelected: (Int) -> Unit,
+) {
+    if (titles.size <= 1) return
+    val selectedIndex = minOf(currentPage, titles.lastIndex)
+    SecondaryScrollableTabRow(
+        selectedTabIndex = selectedIndex,
+        containerColor = headerBackground,
+        modifier = Modifier.fillMaxWidth(),
+        edgePadding = if (plainProfile) 0.dp else screenHorizontalPadding,
+        divider = { if (plainProfile) HorizontalDivider() },
+        indicator = {
+            if (plainProfile) {
+                TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(selectedIndex, matchContentSize = false))
+            } else {
+                TabRowIndicator(selectedIndex)
+            }
+        },
+    ) {
+        val tabModifier = if (plainProfile) Modifier.heightIn(min = tabHeight) else Modifier.clip(CircleShape)
+        val tabColors = MaterialTheme.colorScheme
+        val contentColor = LocalContentColor.current
+        titles.forEachIndexed { index, title ->
+            Tab(
+                modifier = tabModifier,
+                selected = selectedIndex == index,
+                selectedContentColor = if (plainProfile) tabColors.primary else contentColor,
+                unselectedContentColor = if (plainProfile) tabColors.onSurfaceVariant else contentColor,
+                onClick = { onTabSelected(index) },
+            ) {
+                dev.dimension.flare.ui.component
+                    .Text(text = title, modifier = Modifier.padding(8.dp))
+            }
         }
     }
 }

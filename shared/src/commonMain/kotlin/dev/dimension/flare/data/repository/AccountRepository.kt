@@ -187,6 +187,21 @@ internal class AccountRepository internal constructor(
         return accountMutationMutex.withLock { block() }
     }
 
+    internal suspend fun <T> refreshAccountCache(
+        accountType: AccountType,
+        fetch: suspend () -> T,
+        save: suspend (T) -> Unit,
+    ) {
+        if (accountType !is AccountType.Specific) return save(fetch())
+        val key = accountType.accountKey
+        val sessionId = appDatabase.accountDao().getSessionId(key) ?: throw NoActiveAccountException
+        val result = fetch()
+        withAccountChanges {
+            if (!isSessionActive(key, sessionId)) throw NoActiveAccountException
+            save(result)
+        }
+    }
+
     internal suspend fun <T> restoreAccounts(
         keys: List<MicroBlogKey>,
         block: suspend () -> T,
@@ -380,6 +395,7 @@ internal class AccountRepository internal constructor(
             cacheDatabase.listDao().deletePagingByAccountType(accountType)
             cacheDatabase.listDao().deleteByAccountType(accountType)
             cacheDatabase.userDao().deleteRelationsByAccountType(accountType)
+            cacheDatabase.userDao().deleteProfileTabsByAccountType(accountType)
             cacheDatabase.translationDao().deleteByAccountType(accountType)
             cacheDatabase.statusReferenceDao().deleteByAccountType(accountType)
             cacheDatabase.pagingTimelineDao().deletePresentationReferencesByAccountType(accountType)
@@ -588,7 +604,7 @@ internal class AccountRepository internal constructor(
         sessionId: String,
     ): Boolean =
         accountKey.toString() !in proxyRepository.settings.first().removedAccounts &&
-            appDatabase.accountDao().getAccount(accountKey)?.session_id == sessionId
+            appDatabase.accountDao().getSessionId(accountKey) == sessionId
 }
 
 private fun DbAccount.toUi(platformRegistry: PlatformRegistry): UiAccount {

@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -62,6 +63,7 @@ import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiNumber
 import dev.dimension.flare.ui.model.UiState
+import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.createSampleStatus
@@ -71,6 +73,7 @@ import dev.dimension.flare.ui.presenter.profile.FollowButtonState
 import dev.dimension.flare.ui.presenter.profile.ProfileState
 import dev.dimension.flare.ui.render.toUi
 import dev.dimension.flare.ui.render.toUiPlainText
+import dev.dimension.flare.ui.screen.profile.ProfileTabRow
 import dev.dimension.flare.ui.theme.FlareTheme
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
@@ -659,6 +662,27 @@ class PostAppearanceTest {
         val style = layouts.single().layoutInput.style
         assertEquals(expectedSize, style.fontSize.value, 0.01f)
         assertEquals(FontWeight.Bold, style.fontWeight)
+    }
+
+    @Test
+    fun profileTabsStaySelectedWhenTheLastPageIsRemoved() {
+        var titles by mutableStateOf(listOf(UiText.Raw("Posts"), UiText.Raw("Articles"), UiText.Raw("Likes")))
+        compose.setContent {
+            MaterialTheme {
+                ProfileTabRow(
+                    titles = titles,
+                    currentPage = 2,
+                    plainProfile = true,
+                    tabHeight = 48.dp,
+                    headerBackground = MaterialTheme.colorScheme.surface,
+                    onTabSelected = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Likes").assertIsSelected()
+        compose.runOnIdle { titles = titles.dropLast(1) }
+        compose.onNodeWithText("Articles").assertIsDisplayed().assertIsSelected()
+        compose.onNodeWithText("Likes").assertDoesNotExist()
     }
 
     private val avatar by lazy {
