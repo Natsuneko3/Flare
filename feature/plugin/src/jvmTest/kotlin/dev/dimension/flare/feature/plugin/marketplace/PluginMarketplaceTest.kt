@@ -64,6 +64,14 @@ class PluginMarketplaceTest {
         assertEquals("flare-zhihu-plugin", rootEntry.repositoryDisplayPath)
         assertEquals("@alice", subPathEntry.ownerHandle)
         assertEquals("flare-plugins/plugins/My Plugin", subPathEntry.repositoryDisplayPath)
+        assertEquals("alice/flare-plugins/plugins/My Plugin", subPathEntry.repositoryFullName)
+        assertEquals("https://github.com/alice/flare-plugins/tree/HEAD/plugins/My%20Plugin", subPathEntry.repositoryWebUrl)
+        val sha = "a".repeat(40)
+        assertEquals(
+            "https://github.com/alice/flare-plugins/tree/$sha/plugins/My%20Plugin",
+            subPathEntry.copy(commitSha = sha).repositoryWebUrl,
+        )
+        assertEquals(rootEntry.repository, rootEntry.repositoryWebUrl)
         assertEquals("", malformed.ownerHandle)
         assertEquals("not-a-github-url", malformed.repositoryDisplayPath)
     }
@@ -161,6 +169,8 @@ class PluginMarketplaceTest {
                 assertNull(client.cachedCatalog())
                 val catalog = client.load()
                 assertEquals("example.plugin", catalog.plugins.single().id)
+                assertNull(catalog.plugins.single().updatedAt)
+                assertNull(catalog.plugins.single().version)
                 assertEquals(catalog, client.load())
                 assertEquals(1, requests)
                 client.load(forceRefresh = true)
@@ -210,6 +220,24 @@ class PluginMarketplaceTest {
                 assertEquals("example.plugin", assertNotNull(unavailable.cachedCatalog()).plugins.single().id)
             } finally {
                 unavailable.close()
+            }
+        }
+
+    @Test
+    fun invalidOptionalLabelsDoNotHideOtherEntriesOrTurnABadSnapshotIntoAnUnpinnedInstall() =
+        runBlocking {
+            val badDate = ENTRY.replace("\"name\":", "\"version\":\"1.2.0\",\"updatedAt\":\"2026-02-30\",\"name\":")
+            val healthy = ENTRY.replace("example.plugin", "healthy.plugin")
+            val badPin = ENTRY.replace("example.plugin", "bad.pin").replace("\"name\":", "\"commitSha\":\"HEAD\",\"name\":")
+            val client = PluginMarketplace(files, MockEngine { respond(CATALOG.replace(ENTRY, "$badDate,$healthy,$badPin")) })
+            try {
+                val catalog = client.load()
+                assertEquals(listOf("example.plugin", "healthy.plugin"), catalog.plugins.map { it.id })
+                assertEquals("1.2.0", catalog.plugins.first().version)
+                assertNull(catalog.plugins.first().updatedAt)
+                assertEquals(catalog, client.cachedCatalog())
+            } finally {
+                client.close()
             }
         }
 

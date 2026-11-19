@@ -839,6 +839,8 @@
     <string name="plugin_install_github">GitHub에서 설치</string>
     <string name="plugin_github_repository">GitHub 저장소 URL</string>
     <string name="plugin_check_updates">업데이트 확인</string>
+    <string name="plugin_local_import">로컬에서 가져옴</string>
+    <string name="plugin_updated_at">%1$s 업데이트</string>
     <string name="plugin_update">업데이트</string>
     <string name="plugin_up_to_date">GitHub 플러그인이 최신 상태입니다</string>
     <string name="plugin_warning_source_changed">이 설치는 플러그인 소스를 변경합니다</string>

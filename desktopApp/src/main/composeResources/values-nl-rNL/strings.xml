@@ -831,6 +831,8 @@
     <string name="plugin_warning_compatibility">Compatibiliteitswaarschuwing</string>
     <string name="plugin_install_github">Installeer vanaf GitHub</string>
     <string name="plugin_check_updates">Op updates controleren</string>
+    <string name="plugin_local_import">Lokale import</string>
+    <string name="plugin_updated_at">Bijgewerkt op %1$s</string>
     <string name="plugin_warning_source_changed">Deze installatie wijzigt de plugin-bron</string>
     <string name="plugin_warning_tag_moved">Dit tag verwijst nu naar een andere commit</string>
     <string name="plugin_unverified_github_warning">Deze GitHub plugin is niet geverifieerd. Installeer deze alleen als u de auteur vertrouwt.</string>

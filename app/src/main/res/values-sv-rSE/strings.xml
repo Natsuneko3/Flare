@@ -935,6 +935,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitetsvarning</string>
     <string name="plugin_install_github">Installera från GitHub</string>
     <string name="plugin_check_updates">Kontrollera uppdateringar</string>
+    <string name="plugin_local_import">Lokal import</string>
+    <string name="plugin_updated_at">Uppdaterad %1$s</string>
     <string name="plugin_warning_source_changed">Denna installation ändrar pluginkällan</string>
     <string name="plugin_warning_tag_moved">Denna tag pekar nu på ett annat commit</string>
     <string name="plugin_unverified_github_warning">Detta GitHub-plugin har inte verifierats. Installera det endast om du litar på skaparen.</string>

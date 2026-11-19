@@ -834,6 +834,8 @@
     <string name="plugin_warning_compatibility">Ostrzeżenie o kompatybilności</string>
     <string name="plugin_install_github">Zainstaluj z GitHub</string>
     <string name="plugin_check_updates">Sprawdź aktualizacje</string>
+    <string name="plugin_local_import">Import lokalny</string>
+    <string name="plugin_updated_at">Zaktualizowano %1$s</string>
     <string name="plugin_warning_source_changed">Ta instalacja zmienia źródło pluginu</string>
     <string name="plugin_warning_tag_moved">Ten tag wskazuje teraz inny commit</string>
     <string name="plugin_unverified_github_warning">Ten plugin GitHub nie został zweryfikowany. Instaluj go tylko, jeśli ufasz autorowi.</string>

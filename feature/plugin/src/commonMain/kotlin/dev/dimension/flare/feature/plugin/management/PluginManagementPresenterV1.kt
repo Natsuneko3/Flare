@@ -10,6 +10,7 @@ import dev.dimension.flare.feature.plugin.github.GitHubPluginCatalogV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginClient
 import dev.dimension.flare.feature.plugin.github.GitHubPluginVersionV1
 import dev.dimension.flare.feature.plugin.github.GitHubRepositorySizeConfirmationRequired
+import dev.dimension.flare.feature.plugin.github.gitHubPluginLocationOrNull
 import dev.dimension.flare.feature.plugin.github.stableGitHubVersion
 import dev.dimension.flare.feature.plugin.installer.PluginInstallWarningV1
 import dev.dimension.flare.feature.plugin.installer.PreparedPluginInstallV1
@@ -20,6 +21,7 @@ import dev.dimension.flare.feature.plugin.lifecycle.PluginRuntimeSwitcherV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginStateIssueV1
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplace
+import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceEntryV1
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceStateV1
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeIssueV1
 import dev.dimension.flare.model.PlatformRegistry
@@ -104,7 +106,12 @@ public data class PluginManagementItemV1(
     val authoring: AuthoredPlugin? = null,
     val hasSettings: Boolean = false,
     val hasPlatformExtension: Boolean = false,
-)
+    val updatedAt: String? = null,
+    val sourceCommitSha: String? = null,
+) {
+    public val repositoryFullName: String? get() = sourceUrl?.gitHubPluginLocationOrNull()?.fullName
+    public val repositoryWebUrl: String? get() = sourceUrl?.gitHubPluginLocationOrNull()?.webUrl(sourceCommitSha)
+}
 
 public data class PluginInstallReviewV1(
     val pluginId: String,
@@ -242,7 +249,15 @@ public class PluginManagementPresenterV1(
                 ) { "Plugin is no longer in the marketplace" }
             clearPreview()
             val catalog = github.catalog(entry.repository, forceRefresh = true)
-            prepareGitHub(catalog, catalog.versions.first(), marketplacePluginId = entry.id)
+            val version =
+                if (entry.commitSha == null) {
+                    catalog.versions.first()
+                } else {
+                    checkNotNull(catalog.versions.firstOrNull { it.commitSha == entry.commitSha }) {
+                        "The listed plugin version is no longer available. Refresh the marketplace and try again."
+                    }
+                }
+            prepareGitHub(catalog, version, marketplaceEntry = entry)
         }
     }
 
@@ -262,6 +277,7 @@ public class PluginManagementPresenterV1(
                     subsystem.stateStore.desired.value.plugins.values
                         .filter { !it.removing && it.source is PluginInstallSourceV1.GitHub }
                 val refreshedRepositories = mutableSetOf<Long>()
+                val missingDates = mutableListOf<Pair<InstalledPluginV1, Boolean>>()
                 installed.forEach { plugin ->
                     val source = plugin.source as PluginInstallSourceV1.GitHub
                     var failure: PluginStateIssueV1? = null
@@ -280,7 +296,8 @@ public class PluginManagementPresenterV1(
                             null
                         }
                     actionMutex.withLock {
-                        if (subsystem.stateStore.desired.value.plugins[plugin.pluginId] == plugin) {
+                        val current = subsystem.stateStore.desired.value.plugins[plugin.pluginId]
+                        if (current != null && !current.removing && current.source == source && current.packageHash == plugin.packageHash) {
                             updates.update { if (update == null) it - plugin.pluginId else it + (plugin.pluginId to update) }
                             if (failure == null) {
                                 updateIssues.update { it - plugin.pluginId }
@@ -290,7 +307,20 @@ public class PluginManagementPresenterV1(
                             refreshState()
                         }
                     }
+                    if (plugin.updatedAt == null) missingDates += plugin to (failure == null)
                 }
+                // Check every install for updates before spending any GitHub requests on optional dates.
+                missingDates.forEach { (plugin, allowNetwork) ->
+                    val source = plugin.source as PluginInstallSourceV1.GitHub
+                    try {
+                        packageUpdateDate(plugin.pluginId, plugin.version, source, allowNetwork)?.let { date ->
+                            subsystem.stateStore.recordUpdateDate(plugin, date)
+                        }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                    }
+                }
+                refreshState()
             }
         }
     }
@@ -311,22 +341,25 @@ public class PluginManagementPresenterV1(
         version: GitHubPluginVersionV1,
         expectedPluginId: String? = null,
         allowLargeRepository: Boolean = false,
-        marketplacePluginId: String? = null,
+        marketplaceEntry: PluginMarketplaceEntryV1? = null,
     ) = subsystem.installer.withRepositoryDownload { archive ->
         val fileSystem = subsystem.appFiles.fileSystem
         try {
             github.archive(catalog.repository, version, fileSystem, archive, allowLargeRepository)
         } catch (_: GitHubRepositorySizeConfirmationRequired) {
-            pendingDownload = PendingGitHubDownload(catalog, version, expectedPluginId, marketplacePluginId)
+            pendingDownload = PendingGitHubDownload(catalog, version, expectedPluginId, marketplaceEntry)
             mutableState.update { it.copy(needsRepositoryDownloadConfirmation = true) }
             return@withRepositoryDownload
         }
         val source = PluginInstallSourceV1.GitHub(catalog.repository, version.tag, version.commitSha, catalog.path)
         val prepared = subsystem.installer.inspect(archive, source, expectedPluginId)
         try {
-            if (marketplacePluginId != null) {
-                check(prepared.pluginId == marketplacePluginId) { "Downloaded plugin ID does not match the marketplace entry" }
-                requireInstallTargetAvailable(marketplacePluginId, fromMarketplace = true)
+            if (marketplaceEntry != null) {
+                check(prepared.pluginId == marketplaceEntry.id) { "Downloaded plugin ID does not match the marketplace entry" }
+                check(marketplaceEntry.version == null || prepared.version == marketplaceEntry.version) {
+                    "Downloaded plugin version does not match the marketplace entry"
+                }
+                requireInstallTargetAvailable(marketplaceEntry.id, fromMarketplace = true)
             }
             if (expectedPluginId != null &&
                 prepared.packageHash ==
@@ -335,7 +368,10 @@ public class PluginManagementPresenterV1(
             ) {
                 updates.update { it - expectedPluginId }
             } else {
-                preview = InstallPreview(prepared, fromMarketplace = marketplacePluginId != null)
+                val updatedAt =
+                    marketplaceEntry?.takeIf { it.commitSha == source.commitSha }?.updatedAt
+                        ?: packageUpdateDate(prepared.pluginId, prepared.version, source)
+                preview = InstallPreview(prepared, fromMarketplace = marketplaceEntry != null, updatedAt = updatedAt)
             }
         } finally {
             if (preview?.prepared !== prepared) {
@@ -344,18 +380,39 @@ public class PluginManagementPresenterV1(
         }
     }
 
+    private suspend fun packageUpdateDate(
+        pluginId: String,
+        pluginVersion: String,
+        source: PluginInstallSourceV1.GitHub,
+        allowNetwork: Boolean = true,
+    ): String? {
+        val entry =
+            marketplace.cachedCatalog()?.plugins?.find {
+                it.id == pluginId && it.version == pluginVersion &&
+                    it.commitSha == source.commitSha
+            }
+        val location = entry?.repository?.gitHubPluginLocationOrNull()
+        if (entry?.updatedAt != null && location?.path == source.path &&
+            location.owner.equals(source.repository.owner, ignoreCase = true) &&
+            location.name.equals(source.repository.name, ignoreCase = true)
+        ) {
+            return entry.updatedAt
+        }
+        return if (allowNetwork) github.packageUpdateDate(source.repository, source.commitSha, source.path) else null
+    }
+
     public suspend fun confirmRepositoryDownload() {
         runAction(gitHubInstall = mutableState.value.gitHubInstall != null) {
             val pending = requireNotNull(pendingDownload) { "No repository download is pending" }
             pendingDownload = null
             mutableState.update { it.copy(needsRepositoryDownloadConfirmation = false) }
-            pending.marketplacePluginId?.let { requireInstallTargetAvailable(it, fromMarketplace = true) }
+            pending.marketplaceEntry?.let { requireInstallTargetAvailable(it.id, fromMarketplace = true) }
             prepareGitHub(
                 pending.catalog,
                 pending.version,
                 pending.expectedPluginId,
                 allowLargeRepository = true,
-                marketplacePluginId = pending.marketplacePluginId,
+                marketplaceEntry = pending.marketplaceEntry,
             )
         }
     }
@@ -407,14 +464,14 @@ public class PluginManagementPresenterV1(
 
     public suspend fun confirmInstall() {
         runMutation(gitHubInstall = mutableState.value.gitHubInstall != null) {
-            val (prepared, fromMarketplace) = requireNotNull(preview) { "No plugin installation is pending" }
+            val (prepared, fromMarketplace, updatedAt) = requireNotNull(preview) { "No plugin installation is pending" }
             try {
                 requireInstallTargetAvailable(prepared.pluginId, fromMarketplace)
             } catch (error: IllegalStateException) {
                 if (fromMarketplace) clearPreview()
                 throw error
             }
-            subsystem.installer.commit(prepared, confirmed = true, activate = switcher::install)
+            subsystem.installer.commit(prepared, confirmed = true, updatedAt = updatedAt, activate = switcher::install)
             updates.update { it - prepared.pluginId }
             updateIssues.update { it - prepared.pluginId }
             preview = null
@@ -593,13 +650,14 @@ public class PluginManagementPresenterV1(
     private data class InstallPreview(
         val prepared: PreparedPluginInstallV1,
         val fromMarketplace: Boolean = false,
+        val updatedAt: String? = null,
     )
 
     private data class PendingGitHubDownload(
         val catalog: GitHubPluginCatalogV1,
         val version: GitHubPluginVersionV1,
         val expectedPluginId: String?,
-        val marketplacePluginId: String?,
+        val marketplaceEntry: PluginMarketplaceEntryV1?,
     )
 }
 
@@ -615,6 +673,8 @@ private fun InstalledPluginV1.toItem(
         iconPath = iconPath,
         sourceUrl = (source as? PluginInstallSourceV1.GitHub)?.url,
         availableUpdate = availableUpdate,
+        updatedAt = updatedAt,
+        sourceCommitSha = (source as? PluginInstallSourceV1.GitHub)?.commitSha,
         hasSettings = manifest.settings != null,
         hasPlatformExtension = manifest.platformExtension != null,
     )

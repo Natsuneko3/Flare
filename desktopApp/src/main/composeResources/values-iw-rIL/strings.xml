@@ -823,6 +823,8 @@
     <string name="plugin_warning_compatibility">נקה קבצים לא בשימוש</string>
     <string name="plugin_install_github">התקן מ-GitHub</string>
     <string name="plugin_check_updates">בדוק עדכונים</string>
+    <string name="plugin_local_import">ייבוא מקומי</string>
+    <string name="plugin_updated_at">עודכן ב־%1$s</string>
     <string name="plugin_warning_source_changed">ההתקנה הזו משנה את מקור התוסף</string>
     <string name="plugin_development">ניהול תוספים פיתוח תוספים</string>
     <string name="plugin_development_description">בחרו את תיקיית תוצרי הבנייה המכילה את manifest.json ואת plugin.js. השינויים נבדקים אוטומטית בעת השמירה, וטעינה מחדש מחילה אותם על כל החשבונות והדפים של התוסף.</string>

@@ -487,6 +487,7 @@
     <string name="service_select_empty_message">No servers found</string>
 
     <string name="media_viewer_title">Media viewer</string>
+    <string name="media_image_loading">Loading image</string>
 
     <string name="settings_accounts_remove">Remove</string>
     <string name="settings_accounts_remove_confirm">Are you sure you want to remove account %1$s from this device?</string>
@@ -982,6 +983,8 @@
     <string name="plugin_install_github">Install from GitHub</string>
     <string name="plugin_github_repository">GitHub repository URL</string>
     <string name="plugin_check_updates">Check for updates</string>
+    <string name="plugin_local_import">Local import</string>
+    <string name="plugin_updated_at">Updated %1$s</string>
     <string name="plugin_update">Update</string>
     <string name="plugin_up_to_date">GitHub plugins are up to date</string>
     <string name="plugin_warning_source_changed">This installation changes the plugin source</string>

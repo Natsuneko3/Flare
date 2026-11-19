@@ -162,6 +162,7 @@ class PluginManagementMenuTest {
         compose.setContent {
             MaterialTheme {
                 PluginItemMenu(
+                    pluginId = "example.plugin",
                     name = "Example",
                     busy = state.busy,
                     onUninstall = { uninstalls++ },

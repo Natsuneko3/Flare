@@ -936,6 +936,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitási figyelmeztetés</string>
     <string name="plugin_install_github">Telepítés GitHub-ből</string>
     <string name="plugin_check_updates">Frissítés ellenőrzése</string>
+    <string name="plugin_local_import">Helyi importálás</string>
+    <string name="plugin_updated_at">Frissítve: %1$s</string>
     <string name="plugin_warning_source_changed">Ez a telepítés megváltoztatja a plugin forrását</string>
     <string name="plugin_warning_tag_moved">Ez a címke most egy másik commitot mutat</string>
     <string name="plugin_unverified_github_warning">Ez az GitHub plugin nem ellenőrzött. Csak akkor telepítse, ha megbízik a szerzőben.</string>

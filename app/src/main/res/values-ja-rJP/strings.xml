@@ -946,6 +946,8 @@
     <string name="plugin_install_github">GitHubからインストール</string>
     <string name="plugin_github_repository">GitHubリポジトリURL</string>
     <string name="plugin_check_updates">更新を確認</string>
+    <string name="plugin_local_import">ローカルから読み込み</string>
+    <string name="plugin_updated_at">%1$s 更新</string>
     <string name="plugin_update">更新</string>
     <string name="plugin_up_to_date">GitHubプラグインは最新です</string>
     <string name="plugin_warning_source_changed">このインストールはプラグインのソースを変更します</string>

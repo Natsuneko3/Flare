@@ -5,6 +5,7 @@ import dev.dimension.flare.data.network.proxyHttpClientEngine
 import dev.dimension.flare.feature.plugin.installer.FppLimits
 import dev.dimension.flare.feature.plugin.installer.FppPaths
 import dev.dimension.flare.feature.plugin.installer.compareSemVer
+import dev.dimension.flare.feature.plugin.installer.isPluginPath
 import dev.dimension.flare.feature.plugin.manifest.isPluginSettingsPath
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
@@ -12,16 +13,21 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
+import io.ktor.http.appendPathSegments
+import io.ktor.http.parseHeaderValue
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -86,6 +92,8 @@ public class GitHubPluginClient(
     private val mutex = Mutex()
     private val catalogs = mutableMapOf<String, Pair<Instant, GitHubPluginCatalogV1>>()
     private val trees = mutableMapOf<String, List<TreeEntry>>()
+    private val historyMutex = Mutex()
+    private val histories = mutableMapOf<Triple<Long, String, String>, PackageHistoryCursor>()
     private val retryAfter = MutableStateFlow<Instant?>(null)
 
     public suspend fun catalog(
@@ -241,6 +249,108 @@ public class GitHubPluginClient(
             files
         }
 
+    internal suspend fun packageUpdateDate(
+        repository: GitHubPluginRepositoryV1,
+        commitSha: String,
+        path: String,
+        now: Instant = Clock.System.now(),
+    ): String? =
+        withTimeoutOrNull(5.seconds) {
+            historyMutex.withLock {
+                val key = Triple(repository.id, commitSha, path)
+                val cursor = histories.getOrPut(key) { PackageHistoryCursor(commitSha) }
+                if (histories.size > FppLimits.MAX_PLUGIN_COUNT * 2) histories.remove(histories.keys.first())
+                if (cursor.sha == null || now < cursor.retryAt) return@withLock cursor.date
+                cursor.retryAt = now + 5.minutes
+                try {
+                    advancePackageHistory(repository, path, cursor)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                }
+                cursor.date
+            }
+        }
+
+    private suspend fun advancePackageHistory(
+        repository: GitHubPluginRepositoryV1,
+        path: String,
+        cursor: PackageHistoryCursor,
+    ) {
+        val root = "https://api.github.com/repos/${repository.owner}/${repository.name}"
+        val prefix = if (path.isEmpty()) "" else "$path/"
+
+        fun packaged(name: String): Boolean {
+            if (!name.startsWith(prefix)) return false
+            val relative = name.removePrefix(prefix)
+            return isPluginPath(relative) &&
+                (!relative.startsWith(FppPaths.LOCALE_PREFIX) || '/' !in relative.removePrefix(FppPaths.LOCALE_PREFIX))
+        }
+
+        var requestsLeft = 8
+        while (requestsLeft > 0) {
+            val sha = cursor.sha ?: return
+            require(COMMIT_SHA.matches(sha))
+            var hasNext = false
+            val bytes =
+                request("$root/commits/$sha?per_page=100&page=${cursor.page}") { headers ->
+                    hasNext =
+                        headers.getAll(HttpHeaders.Link).orEmpty().flatMap { parseHeaderValue(it) }.any { link ->
+                            link.params.any { it.name.equals("rel", ignoreCase = true) && it.value == "next" }
+                        }
+                }
+            requestsLeft--
+            val commit = json.decodeFromString<PackageCommit>(bytes.decodeToString())
+            require(commit.sha == sha)
+            val parent = commit.parents.firstOrNull()?.sha
+            require(parent == null || COMMIT_SHA.matches(parent))
+            while (cursor.fileIndex < commit.files.size) {
+                val file = commit.files[cursor.fileIndex]
+                if (packaged(file.filename) || file.previousFilename?.let(::packaged) == true) {
+                    val changed =
+                        if (file.status != "modified" || file.changes > 0 || parent == null) {
+                            true
+                        } else {
+                            // A binary edit and chmod both report zero lines. Compare their blob IDs.
+                            if (requestsLeft == 0) return
+                            requestsLeft--
+                            require(file.sha != null && COMMIT_SHA.matches(file.sha))
+                            blobSha(root, parent, file.filename) != file.sha
+                        }
+                    if (changed) {
+                        cursor.date = Instant.parse(commit.commit.committer.date).toString().substringBefore('T')
+                        cursor.sha = null
+                        return
+                    }
+                }
+                cursor.fileIndex++
+            }
+            cursor.fileIndex = 0
+            if (hasNext) {
+                cursor.page++
+            } else {
+                // GitHub silently caps the diff at 3,000 files. A later page could contain a package change.
+                cursor.sha = if (cursor.page * 100 >= 3_000 && commit.files.size >= 100) null else parent
+                cursor.page = 1
+            }
+        }
+    }
+
+    private suspend fun blobSha(
+        repositoryApiUrl: String,
+        commit: String,
+        filename: String,
+    ): String {
+        val url =
+            URLBuilder("$repositoryApiUrl/contents").apply {
+                appendPathSegments(filename)
+                parameters.append("ref", commit)
+            }
+        val bytes = request(url.buildString(), accept = "application/vnd.github.object+json")
+        val sha = json.decodeFromString<ShaResponse>(bytes.decodeToString()).sha
+        require(COMMIT_SHA.matches(sha))
+        return sha
+    }
+
     private suspend fun tree(
         repository: GitHubPluginRepositoryV1,
         sha: String,
@@ -277,6 +387,8 @@ public class GitHubPluginClient(
         limit: Long = 2L * 1024 * 1024,
         sink: BufferedSink? = null,
         confirmationThreshold: Long? = null,
+        accept: String = "application/vnd.github+json",
+        onHeaders: ((Headers) -> Unit)? = null,
     ): ByteArray =
         withTimeout(120_000) {
             require(retryAfter.value?.let { Clock.System.now() >= it } != false) { "GitHub is rate limited; try again later" }
@@ -292,7 +404,7 @@ public class GitHubPluginClient(
                     client
                         .prepareGet(url) {
                             header(HttpHeaders.UserAgent, "Flare-Plugin-Installer")
-                            header(HttpHeaders.Accept, "application/vnd.github+json")
+                            header(HttpHeaders.Accept, accept)
                             header("X-GitHub-Api-Version", "2022-11-28")
                         }.execute { response ->
                             if (response.status.value in setOf(301, 302, 303, 307, 308)) {
@@ -310,6 +422,7 @@ public class GitHubPluginClient(
                             }
                             require(response.status.value != 404) { "Public GitHub repository or version not found" }
                             require(response.status.value == 200) { "GitHub request failed (${response.status.value})" }
+                            onHeaders?.invoke(response.headers)
                             val channel = response.bodyAsChannel()
                             require(response.headers[HttpHeaders.ContentLength]?.toLongOrNull()?.let { it <= limit } != false) {
                                 channel.cancel()
@@ -347,11 +460,30 @@ public class GitHubPluginClient(
         }
 }
 
+private class PackageHistoryCursor(
+    var sha: String?,
+) {
+    var page = 1
+    var fileIndex = 0
+    var retryAt = Instant.DISTANT_PAST
+    var date: String? = null
+}
+
 internal data class GitHubPluginLocation(
     val owner: String,
     val name: String,
     val path: String,
-)
+) {
+    val fullName: String get() = if (path.isEmpty()) "$owner/$name" else "$owner/$name/$path"
+
+    fun webUrl(commitSha: String?): String {
+        val root = "https://github.com/$owner/$name"
+        if (path.isEmpty()) return root
+        return URLBuilder(root).apply { appendPathSegments("tree", commitSha?.takeIf(COMMIT_SHA::matches) ?: "HEAD", path) }.buildString()
+    }
+}
+
+internal fun String.gitHubPluginLocationOrNull(): GitHubPluginLocation? = runCatching { parseRepositoryUrl(this) }.getOrNull()
 
 internal fun parseRepositoryUrl(value: String): GitHubPluginLocation {
     require(value.length <= 2_048) { "Invalid GitHub repository URL" }
@@ -425,7 +557,7 @@ private data class OwnerResponse(
 @Serializable
 private data class TagResponse(
     val name: String,
-    val commit: CommitResponse,
+    val commit: ShaResponse,
 )
 
 @Serializable
@@ -444,6 +576,33 @@ private data class TreeEntry(
 )
 
 @Serializable
-private data class CommitResponse(
+private data class ShaResponse(
     val sha: String,
 )
+
+@Serializable
+private data class PackageCommit(
+    val sha: String,
+    val commit: Details,
+    val parents: List<ShaResponse>,
+    val files: List<File>,
+) {
+    @Serializable
+    data class Details(
+        val committer: Committer,
+    )
+
+    @Serializable
+    data class Committer(
+        val date: String,
+    )
+
+    @Serializable
+    data class File(
+        val filename: String,
+        val status: String,
+        val changes: Int,
+        val sha: String? = null,
+        @SerialName("previous_filename") val previousFilename: String? = null,
+    )
+}

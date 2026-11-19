@@ -833,6 +833,8 @@
     <string name="plugin_warning_compatibility">Упозорење о компатибилности</string>
     <string name="plugin_install_github">Инсталирај из GitHub</string>
     <string name="plugin_check_updates">Провери ажурирања</string>
+    <string name="plugin_local_import">Локални увоз</string>
+    <string name="plugin_updated_at">Ажурирано %1$s</string>
     <string name="plugin_warning_source_changed">Ова инсталација мења извор плагина</string>
     <string name="plugin_warning_tag_moved">Овај таг сада указује на другачији коммит</string>
     <string name="plugin_unverified_github_warning">Овај GitHub плагин није верификован. Инсталирајте га само ако верујете у аутора.</string>

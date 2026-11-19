@@ -144,6 +144,7 @@ expected_classes = %w[
   dev.dimension.flare.common.WebViewProxyTest
   dev.dimension.flare.ui.screen.gallery.GalleryDetailScreenTest
   dev.dimension.flare.ui.screen.media.ImageTranslationErrorDialogTest
+  dev.dimension.flare.ui.screen.media.ImageLoadingIndicatorTest
   dev.dimension.flare.ui.component.status.PostAppearanceTest#profileTabsStaySelectedWhenTheLastPageIsRemoved
 ]
 check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must select the expected regressions')

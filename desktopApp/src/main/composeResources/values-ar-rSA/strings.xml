@@ -850,6 +850,8 @@
     <string name="plugin_install_github">تثبيت من GitHub</string>
     <string name="plugin_github_repository">إدارة الإضافات GitHub رابط المستودع</string>
     <string name="plugin_check_updates">التحقق من التحديثات</string>
+    <string name="plugin_local_import">استيراد محلي</string>
+    <string name="plugin_updated_at">آخر تحديث في %1$s</string>
     <string name="plugin_update">تحديث</string>
     <string name="plugin_up_to_date">إدارة الإضافات GitHub الإضافات محدثة</string>
     <string name="plugin_warning_source_changed">هذا التثبيت يغير مصدر الإضافة</string>
