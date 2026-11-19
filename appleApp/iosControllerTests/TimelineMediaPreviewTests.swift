@@ -445,6 +445,129 @@ final class TimelineMediaPreviewTests: XCTestCase {
         }
     }
 
+    func testUIKitShowSensitiveContentToggleRevealsAndHidesMediaGate() async throws {
+        let fixture = try await Fixture()
+        let host = UIViewController()
+        let window = try fixture.show(host)
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        let mediaContent = StatusMediaContentUIView()
+        mediaContent.frame = CGRect(x: 16, y: 100, width: 320, height: 200)
+        host.view.addSubview(mediaContent)
+
+        let image = UiMediaImage(
+            url: "https://timeline-preview.invalid/sensitive.png",
+            previewUrl: "https://timeline-preview.invalid/sensitive.png",
+            description: nil,
+            height: 600,
+            width: 800,
+            sensitive: true,
+            customHeaders: nil,
+            proxy: ProxyRef.Global.shared
+        )
+
+        mediaContent.configure(
+            data: [image],
+            sensitive: true,
+            cornerRadius: 16,
+            appearanceShowMedia: true,
+            appearanceShowSensitive: false,
+            appearanceExpandMediaSize: true,
+            appearanceLimitMediaGridToNine: true,
+            appearanceMediaLayout: .grid,
+            carouselLeadingPadding: 0,
+            carouselTrailingPadding: 0
+        )
+        mediaContent.layoutIfNeeded()
+
+        let grid = try XCTUnwrap(mediaContent.subviews.compactMap { $0 as? StatusMediaUIView }.first)
+        let blur = try XCTUnwrap(grid.subviews.compactMap { $0 as? UIVisualEffectView }.first)
+        let toggle = try XCTUnwrap(grid.subviews.compactMap { $0 as? UIButton }.first)
+        XCTAssertFalse(blur.isHidden)
+        XCTAssertFalse(toggle.isHidden)
+
+        mediaContent.configure(
+            data: [image],
+            sensitive: true,
+            cornerRadius: 16,
+            appearanceShowMedia: true,
+            appearanceShowSensitive: true,
+            appearanceExpandMediaSize: true,
+            appearanceLimitMediaGridToNine: true,
+            appearanceMediaLayout: .grid,
+            carouselLeadingPadding: 0,
+            carouselTrailingPadding: 0
+        )
+        mediaContent.layoutIfNeeded()
+
+        XCTAssertTrue(blur.isHidden)
+        XCTAssertTrue(toggle.isHidden)
+    }
+
+    func testTabViewPropagatesTimelineAppearanceUpdateToTabContent() async throws {
+        guard #available(iOS 18.0, *) else { return }
+
+        final class ObservedState {
+            var showSensitiveContent: Bool?
+        }
+
+        struct TabChild: View {
+            @Environment(\.timelineAppearance) private var timelineAppearance
+            let observed: ObservedState
+
+            var body: some View {
+                let _ = (observed.showSensitiveContent = timelineAppearance.showSensitiveContent)
+                Color.clear
+            }
+        }
+
+        struct HostView: View {
+            let timelineAppearance: TimelineAppearance
+            let observed: ObservedState
+
+            var body: some View {
+                TabHost(observed: observed)
+                    .environment(\.timelineAppearance, timelineAppearance)
+            }
+        }
+
+        struct TabHost: View {
+            @Environment(\.timelineAppearance) private var timelineAppearance
+            let observed: ObservedState
+
+            var body: some View {
+                TabView {
+                    Tab("Home", systemImage: "house") {
+                        TabChild(observed: observed)
+                            .environment(\.timelineAppearance, timelineAppearance)
+                    }
+                }
+            }
+        }
+
+        let fixture = try await Fixture()
+        let observed = ObservedState()
+        let helper = TimelinePresentationAppearancePatchHelper.shared
+        let initial = TimelineAppearance.companion.Default
+        let revealed = helper.resolve(
+            base: initial,
+            patch: helper.setShowSensitiveContent(patch: helper.empty, value: true)
+        )
+
+        let host = UIHostingController(rootView: HostView(timelineAppearance: initial, observed: observed))
+        let window = try fixture.show(host)
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(observed.showSensitiveContent, false)
+
+        host.rootView = HostView(timelineAppearance: revealed, observed: observed)
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(observed.showSensitiveContent, true)
+    }
+
     func testSwiftUINarrowSensitiveMediaShowsRevealAndHideControls() async throws {
         let fixture = try await Fixture()
         let helper = TimelinePresentationAppearancePatchHelper.shared

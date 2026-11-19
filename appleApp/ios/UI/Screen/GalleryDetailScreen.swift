@@ -763,6 +763,7 @@ private struct GalleryDetailLoadingView: View {
 struct GalleryCommentsScreen: View {
     let accountType: AccountType
     let statusKey: MicroBlogKey
+    @Environment(\.timelineAppearance) private var timelineAppearance
     @State private var presenter: KotlinPresenter<GalleryDetailPresenterState>
 
     init(accountType: AccountType, statusKey: MicroBlogKey) {
@@ -782,7 +783,7 @@ struct GalleryCommentsScreen: View {
             key: "gallery_comments_\(statusKey.description())",
             suppressInitialRefreshIndicator: true
         )
-        .environment(\.timelineAppearance, TimelineAppearance.companion.Default.galleryCardTimeline())
+        .environment(\.timelineAppearance, timelineAppearance.galleryCardTimeline())
         .flareTextBackground(.flareSystemGroupedBackground)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Comments")

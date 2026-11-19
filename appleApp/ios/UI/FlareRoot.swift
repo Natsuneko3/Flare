@@ -32,6 +32,10 @@ final class TabBarScrollToTopObserver {
 struct FlareRoot: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.globalAppearance) private var globalAppearance
+    @Environment(\.timelineAppearance) private var timelineAppearance
+    @Environment(\.appSettings) private var appSettings
+    @Environment(\.aiConfig) private var aiConfig
+    @Environment(\.translateConfig) private var translateConfig
     @State private var homeTabsPresenter = KotlinPresenter(presenter: HomeTabsPresenter())
     @State private var notificationBadgePresenter = KotlinPresenter(presenter: AllNotificationBadgePresenter())
     @State private var secondaryTabsPresenter = KotlinPresenter(presenter: SecondaryTabsPresenter())
@@ -46,9 +50,11 @@ struct FlareRoot: View {
             TabView(selection: $selectedTab) {
                 ForEach(items, id: \.name) { tab in
                     Tab(value: homeTabKey(tab), role: homeTabRoute(tab) == .discover ? .some(.search) : .none) {
-                        Router { onNavigate in
-                            homeTabRoute(tab).view(onNavigate: onNavigate, goBack: {})
-                        }
+                        propagateThemeEnvironment(
+                            Router { onNavigate in
+                                homeTabRoute(tab).view(onNavigate: onNavigate, goBack: {})
+                            }
+                        )
                     } label: {
                         Label {
                             Text(homeTabTitle(tab))
@@ -116,10 +122,21 @@ struct FlareRoot: View {
         }
     }
 
+    // iOS 18's TabView { Tab(...) } does not reliably propagate updates to custom
+    // @Environment values injected above TabView into already-mounted Tab contents.
+    private func propagateThemeEnvironment<Content: View>(_ content: Content) -> some View {
+        content
+            .environment(\.aiConfig, aiConfig)
+            .environment(\.translateConfig, translateConfig)
+            .environment(\.appSettings, appSettings)
+            .environment(\.globalAppearance, globalAppearance)
+            .environment(\.timelineAppearance, timelineAppearance)
+    }
+
     @TabContentBuilder<String?>
     private func secondarySidebarShortcut(_ tab: SecondaryTabsPresenter.Tab, route: Route) -> some TabContent<String?> {
         Tab(value: "secondary:\(tab.hashValue)") {
-            SidebarRouteScreen(route: route)
+            propagateThemeEnvironment(SidebarRouteScreen(route: route))
         } label: {
             Label {
                 Text(tab.title.text)
@@ -133,7 +150,7 @@ struct FlareRoot: View {
     @TabContentBuilder<String?>
     private func secondarySidebarStaticRoute(_ route: SecondarySidebarStaticRoute) -> some TabContent<String?> {
         Tab(value: route.selectionValue) {
-            SidebarRouteScreen(route: route.route)
+            propagateThemeEnvironment(SidebarRouteScreen(route: route.route))
         } label: {
             Label {
                 Text(route.title)
