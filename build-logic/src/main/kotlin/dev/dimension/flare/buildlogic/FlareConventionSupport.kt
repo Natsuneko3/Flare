@@ -76,7 +76,7 @@ class FlareAndroidApplicationSpec internal constructor(
             this.namespace = androidNamespace
             compileSdk {
                 version = release(project.intVersion("compileSdk")) {
-                    minorApiLevel = 0
+                    minorApiLevel = 2
                 }
             }
             defaultConfig {
@@ -200,7 +200,7 @@ class FlareModuleSpec internal constructor(
             kotlin.targets.getByName<KotlinMultiplatformAndroidLibraryTarget>("android") {
                 compileSdk {
                     version = release(project.intVersion("compileSdk")) {
-                        minorApiLevel = 0
+                        minorApiLevel = 2
                     }
                 }
                 this.namespace = this@FlareModuleSpec.namespace

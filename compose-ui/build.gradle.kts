@@ -78,6 +78,7 @@ kotlin {
                 optIn("androidx.compose.material3.ExperimentalMaterial3ExpressiveApi")
             }
             dependencies {
+                implementation(project.dependencies.platform(libs.compose.bom))
                 implementation(libs.material3.adaptive)
                 implementation(libs.material3)
                 implementation(libs.bundles.media3)
