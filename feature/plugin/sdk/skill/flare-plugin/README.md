@@ -13,13 +13,18 @@ for that build. Check the feature's [Host API requirements](references/manifest.
 | Target build | SDK and skill |
 | --- | --- |
 | [Flare 1.8.0](https://github.com/flaresocialapp/Flare/releases/tag/1.8.0) | Host API v1. Pin `flare-plugin-sdk@0.1.0-beta.10` and use the [skill from that SDK tag](https://github.com/flaresocialapp/Flare/tree/plugin-sdk-v0.1.0-beta.10/feature/plugin/sdk/skill/flare-plugin). |
-| Flare build with Host API v2 | Pin [`flare-plugin-sdk@0.1.0-beta.11`](https://www.npmjs.com/package/flare-plugin-sdk/v/0.1.0-beta.11) and use the [skill from that SDK tag](https://github.com/flaresocialapp/Flare/tree/plugin-sdk-v0.1.0-beta.11/feature/plugin/sdk/skill/flare-plugin). |
+| Flare build with Host API v2 before QR login support | Pin [`flare-plugin-sdk@0.1.0-beta.11`](https://www.npmjs.com/package/flare-plugin-sdk/v/0.1.0-beta.11) and use the [skill from that SDK tag](https://github.com/flaresocialapp/Flare/tree/plugin-sdk-v0.1.0-beta.11/feature/plugin/sdk/skill/flare-plugin). |
+| Flare build with QR login or configurable post detail tabs | Pin [`flare-plugin-sdk@0.1.0-beta.12`](https://www.npmjs.com/package/flare-plugin-sdk/v/0.1.0-beta.12) and use the [skill from that SDK tag](https://github.com/flaresocialapp/Flare/tree/plugin-sdk-v0.1.0-beta.12/feature/plugin/sdk/skill/flare-plugin). |
 
 Host API v2 is included on `master` starting with the [V2 merge commit](https://github.com/flaresocialapp/Flare/commit/85c82a46d7738cb4010bda6a9bd09e4e50bb6e68).
-SDK `0.1.0-beta.11` includes the V2 schema and the WebView settings module at
+SDK `0.1.0-beta.11` introduced the V2 schema and the WebView settings module at
 `flare-plugin-sdk/settings`. The settings page runs in a V2 Host with
 `apiVersion: 2` and `settings.bridgeVersion: 1` in the manifest. See the
 [settings page contract](references/storage-and-settings.md#offline-settings-page).
+
+SDK `0.1.0-beta.12` adds the QR login and configurable post detail tab contracts.
+Each feature requires a Flare build that includes its host implementation.
+[QR login](https://github.com/flaresocialapp/Flare/pull/2843) · [Post detail tabs](https://github.com/flaresocialapp/Flare/pull/2853)
 
 `npm view flare-plugin-sdk dist-tags --json` shows the rolling `next` channel.
 Pin the SDK version for reproducible builds. For features newer than the
@@ -200,16 +205,17 @@ cases matter. It should identify gaps rather than invent website endpoints.
 
 ## Start a plugin repository
 
-1. With Node 22 or newer, create the social starter for a build with Host API v2.
+1. With Node 22 or newer, create the social starter for a Flare build with QR
+   login or configurable post detail tabs.
 
    ```sh
-   npx flare-plugin-sdk@0.1.0-beta.11 init my-plugin
+   npx flare-plugin-sdk@0.1.0-beta.12 init my-plugin
    cd my-plugin
    npm install
    ```
 
-   For Flare 1.8.0, use `flare-plugin-sdk@0.1.0-beta.10`. For features newer than
-   the published SDK, [install from the matching checkout](#use-the-sdk-from-a-flare-checkout).
+   For earlier Flare builds, choose the SDK in the [version guide](#match-flare-and-the-sdk).
+   For features newer than the published SDK, [install from the matching checkout](#use-the-sdk-from-a-flare-checkout).
    Both workflows generate a TS project with unique plugin/platform IDs and a
    prebuilt root `plugin.js`. Edit `src/plugin.ts` and use `npm run dev` while
    developing. `npm run build` checks types before rebuilding the root script.
