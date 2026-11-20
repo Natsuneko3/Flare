@@ -142,7 +142,8 @@ public struct StatusView: View {
         let hasQuotes = !quoteItems.isEmpty
         let showsQuotes = hasQuotes && !isQuote
         let showsCard = card != nil && showMedia && !hasImages && !hasQuotes && showLinkPreview
-        let showsAttachments = showsImages || showsCard || showsQuotes
+        let communityNote = showAttachments ? data.communityNote : nil
+        let showsAttachments = showsImages || showsCard || showsQuotes || communityNote != nil
         let sourceChannelName = data.sourceChannel?.name
         let emojiReactions = Array(data.emojiReactions)
         let hasEmojiReactions = showEmojiReactions && !emojiReactions.isEmpty
@@ -478,6 +479,11 @@ public struct StatusView: View {
                             .padding(.top, showsImages ? 8 : firstAttachmentSpacing)
                         }
 
+                        if let note = communityNote {
+                            communityNoteCard(note)
+                                .padding(.top, firstAttachmentSpacing)
+                        }
+
                         if showMedia, !isQuote {
                             if sourceChannelName != nil || hasEmojiReactions {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -545,7 +551,51 @@ public struct StatusView: View {
             overflowingTextIndexes.removeAll()
         }
     }
-    
+
+    private func communityNoteCard(_ note: UiCommunityNote) -> some View {
+        let outline = Color.flareSeparator
+        let borderWidth: CGFloat = 1
+        let cornerRadius: CGFloat = 12
+        let padding: CGFloat = 12
+        let titleVerticalPadding: CGFloat = 8
+        let title = Text(verbatim: note.title)
+            .bold()
+            .flarePrimaryText()
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, padding - borderWidth)
+            .padding(.top, titleVerticalPadding - borderWidth)
+            .padding(.bottom, titleVerticalPadding)
+            .contentShape(Rectangle())
+
+        return VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if let url = note.url.flatMap(URL.init(string:)) {
+                    Link(destination: url) { title }
+                        .buttonStyle(.plain)
+                } else {
+                    title
+                }
+            }
+            .accessibilityAddTraits(.isHeader)
+            .background(outline)
+
+            RichText(text: note.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, padding - borderWidth)
+                .padding(.top, padding)
+                .padding(.bottom, padding - borderWidth)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius - borderWidth))
+        .padding(borderWidth)
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .strokeBorder(outline, lineWidth: borderWidth)
+                .allowsHitTesting(false)
+        }
+    }
+
     private func topEndContent(
         visibility: UiTimelineV2.PostVisibility?,
         translationDisplayState: TranslationDisplayState,

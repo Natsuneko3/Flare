@@ -915,6 +915,7 @@ internal fun Tweet.renderStatus(
         poll = poll,
         statusKey = statusKey,
         card = uiCard,
+        communityNote = renderCommunityNote(),
         createdAt = createAt.toUi(),
         emojiReactions = persistentListOf(),
         sourceChannel = null,

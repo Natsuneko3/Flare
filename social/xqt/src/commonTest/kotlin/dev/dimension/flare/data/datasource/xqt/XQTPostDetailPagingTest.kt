@@ -3,6 +3,9 @@ package dev.dimension.flare.data.datasource.xqt
 import de.jensklingenberg.ktorfit.Ktorfit
 import de.jensklingenberg.ktorfit.converter.ResponseConverterFactory
 import de.jensklingenberg.ktorfit.ktorfit
+import dev.dimension.flare.common.decodeJson
+import dev.dimension.flare.common.encodeJson
+import dev.dimension.flare.data.database.cache.mapper.tweets
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PostContextLoader
 import dev.dimension.flare.data.network.nullableFallbackJson
@@ -17,6 +20,9 @@ import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.mapper.XqtRenderTestModule
+import dev.dimension.flare.ui.model.mapper.render
+import dev.dimension.flare.ui.render.RenderContent
+import dev.dimension.flare.ui.render.RenderRun
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -41,6 +47,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class XQTPostDetailPagingTest {
     private val accountKey = MicroBlogKey("1", "x.com")
@@ -57,6 +64,136 @@ class XQTPostDetailPagingTest {
     fun tearDown() {
         stopKoin()
     }
+
+    @Test
+    fun publicCommunityNoteIsPreservedInDetailAndTimelinePosts() =
+        runTest {
+            val entry = tweetEntry(120, birdwatchPivot = publicCommunityNote)
+            val timeline = """{"instructions":[${addEntries(entry)}]}"""
+            withTweetApi(
+                response = { request ->
+                    val body =
+                        when (request.url.segments.last()) {
+                            "TweetDetail" -> detailPage(entry)
+                            "SearchTimeline" -> searchPage(addEntries(entry))
+                            "HomeTimeline", "HomeLatestTimeline" -> """{"data":{"home":{"home_timeline_urt":$timeline}}}"""
+                            "UserTweets" -> """{"data":{"user":{"result":{"__typename":"User","timeline_v2":{"timeline":$timeline}}}}}"""
+                            "ListLatestTweetsTimeline" -> """{"data":{"list":{"tweets_timeline":{"timeline":$timeline}}}}"""
+                            else -> error("Unexpected X operation")
+                        }
+                    HttpStatusCode.OK to body
+                },
+            ) { service ->
+                val detail = RankedStatusDetailLoader(focalKey, service, accountKey, rankingMode = ReplyRanking.Likes)
+                val search = SearchStatusPagingSource(service, accountKey, "example")
+                val home = assertNotNull(service.getHomeTimeline().body()).data.home
+                val following = assertNotNull(service.getHomeLatestTimeline().body()).data.home
+                val author = assertNotNull(service.getUserTweets().body()).data.user.result
+                val list = assertNotNull(service.getListLatestTweetsTimeline().body()).data.list
+                val timelinePosts =
+                    listOf(
+                        home.homeTimelineUrt,
+                        following.homeTimelineUrt,
+                        author.timelineV2?.timeline,
+                        list.tweetsTimeline.timeline,
+                    ).map { timeline -> assertNotNull(timeline).tweets().single().render(accountKey) }
+                val posts = detail.load(20, PagingRequest.Refresh).data + search.load(20, PagingRequest.Refresh).data + timelinePosts
+                assertEquals(6, posts.size)
+                posts.forEach { item ->
+                    val post = assertIs<UiTimelineV2.Post>(item)
+                    val note = assertNotNull(post.communityNote)
+                    val body = assertIs<RenderContent.Text>(note.body.renderRuns.single())
+                    assertEquals("Readers added context", note.title)
+                    assertEquals("https://x.com/i/birdwatch/n/321", note.url)
+                    val (intro, source) = body.runs.filterIsInstance<RenderRun.Text>()
+                    assertEquals("See ", intro.text)
+                    assertEquals("source.example/article", source.text)
+                    assertEquals("https://t.co/example", source.style.link)
+                    assertEquals(note, post.encodeJson().decodeJson<UiTimelineV2.Post>().communityNote)
+                }
+            }
+        }
+
+    @Test
+    fun communityNoteWithAlternateFieldsKeepsItsCitationAndLanguageDirection() =
+        runTest {
+            val pivot =
+                publicCommunityNote
+                    .replace("\"visualStyle\"", "\"visual_style\"")
+                    .replace("\"destinationUrl\"", "\"destination_url\"")
+                    .replace("\"type\":\"TimelineUrl\"", "\"__typename\":\"TimelineUrl\"")
+                    .replace("\"language\":\"en\"", "\"language\":\"ar\"")
+                    .replace("See source.example/article", "source.example/article يوضح السياق")
+                    .replace("\"fromIndex\":4,\"toIndex\":26", "\"fromIndex\":0,\"toIndex\":22")
+            withTweetApi(
+                response = { HttpStatusCode.OK to searchPage(addEntries(tweetEntry(120, birdwatchPivot = pivot))) },
+            ) { service ->
+                val item = SearchStatusPagingSource(service, accountKey, "example").load(20, PagingRequest.Refresh).data.single()
+                val post = assertIs<UiTimelineV2.Post>(item).encodeJson().decodeJson<UiTimelineV2.Post>()
+                val note = assertNotNull(post.communityNote)
+                assertEquals("https://x.com/i/birdwatch/n/321", note.url)
+                assertTrue(note.body.isRtl)
+                val body = assertIs<RenderContent.Text>(note.body.renderRuns.single())
+                val source = assertIs<RenderRun.Text>(body.runs.first())
+                assertEquals("source.example/article", source.text)
+                assertEquals("https://t.co/example", source.style.link)
+            }
+        }
+
+    @Test
+    fun nonPublicOrInvalidCommunityNotesDoNotHideTimelinePosts() =
+        runTest {
+            val tentative = publicCommunityNote.replace("Default", "Tentative")
+            val hidden = publicCommunityNote.replace("\"visualStyle\"", "\"footer_icon_type\":\"BirdwatchEyeOff\",\"visualStyle\"")
+            withTweetApi(
+                response = {
+                    HttpStatusCode.OK to
+                        searchPage(
+                            addEntries(
+                                tweetEntry(120),
+                                tweetEntry(121, birdwatchPivot = tentative),
+                                tweetEntry(122, birdwatchPivot = "[]"),
+                                tweetEntry(123, birdwatchPivot = tentative.replace("visualStyle", "visual_style")),
+                                tweetEntry(124, birdwatchPivot = hidden),
+                            ),
+                        )
+                },
+            ) { service ->
+                val posts = SearchStatusPagingSource(service, accountKey, "example").load(20, PagingRequest.Refresh).data
+                assertEquals(listOf("120", "121", "122", "123", "124"), posts.map { it.statusKey.id })
+                posts.forEach { item -> assertNull(assertIs<UiTimelineV2.Post>(item).communityNote) }
+            }
+        }
+
+    @Test
+    fun invalidCommunityNoteCitationsStayPlainText() =
+        runTest {
+            val unsafeLink = publicCommunityNote.replace("https://t.co/example", "javascript:alert(1)")
+            val invalidRange = publicCommunityNote.replace("\"toIndex\":26", "\"toIndex\":1000")
+            val splitSurrogate =
+                publicCommunityNote
+                    .replace("See source.example/article", "🔗 See source.example/article")
+                    .replace("\"fromIndex\":4,\"toIndex\":26", "\"fromIndex\":1,\"toIndex\":29")
+            val entries =
+                addEntries(
+                    tweetEntry(120, birdwatchPivot = unsafeLink),
+                    tweetEntry(121, birdwatchPivot = invalidRange),
+                    tweetEntry(122, birdwatchPivot = splitSurrogate),
+                )
+            withTweetApi(
+                response = { HttpStatusCode.OK to searchPage(entries) },
+            ) { service ->
+                val posts = SearchStatusPagingSource(service, accountKey, "example").load(20, PagingRequest.Refresh).data
+                assertEquals(listOf("120", "121", "122"), posts.map { it.statusKey.id })
+                posts.forEachIndexed { index, item ->
+                    val note = assertNotNull(assertIs<UiTimelineV2.Post>(item).communityNote)
+                    val body = assertIs<RenderContent.Text>(note.body.renderRuns.single())
+                    val text = assertIs<RenderRun.Text>(body.runs.single())
+                    assertEquals(if (index == 2) "🔗 See source.example/article" else "See source.example/article", text.text)
+                    assertNull(text.style.link)
+                }
+            }
+        }
 
     @Test
     fun replyFiltersPreserveTheLegacyDefaultCacheAndIsolateOtherOrders() =
@@ -339,9 +476,11 @@ class XQTPostDetailPagingTest {
         quotedId: Int? = null,
         embeddedQuoteId: Int? = null,
         retweetedId: Int? = null,
+        birdwatchPivot: String? = null,
     ): String {
         val embeddedQuote =
             embeddedQuoteId?.let { ",\"quoted_status_result\":{\"result\":{\"__typename\":\"Tweet\",\"rest_id\":\"$it\"}}" }.orEmpty()
+        val communityNote = birdwatchPivot?.let { ",\"birdwatch_pivot\":$it" }.orEmpty()
         return """
             {
               "entryId":"tweet-$id","sortIndex":"$id",
@@ -353,9 +492,20 @@ class XQTPostDetailPagingTest {
                   "is_quote_status":${quotedId != null || embeddedQuoteId != null},"lang":"en","quote_count":0,"reply_count":0,
                   "retweet_count":0,"retweeted":false,"quoted_status_id_str":${quotedId?.let { "\"$it\"" }},
                   "retweeted_status_id_str":${retweetedId?.let { "\"$it\"" }}
-                }$embeddedQuote
+                }$embeddedQuote$communityNote
               }}}}
             }
             """.trimIndent()
     }
+
+    private val publicCommunityNote =
+        """
+        {
+          "title":"Readers added context","visualStyle":"Default","destinationUrl":"https://x.com/i/birdwatch/n/321",
+          "note":{"rest_id":"321","language":"en"},"iconType":"BirdwatchV1Icon",
+          "subtitle":{"text":"See source.example/article","entities":[
+            {"fromIndex":4,"toIndex":26,"ref":{"type":"TimelineUrl","urlType":"ExternalUrl","url":"https://t.co/example"}}
+          ]}
+        }
+        """.trimIndent()
 }

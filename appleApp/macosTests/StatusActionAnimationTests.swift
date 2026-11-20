@@ -388,7 +388,7 @@ final class MacStatusActionAnimationTests: XCTestCase {
             createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000) - (isCalibration ? 39_000 : 600_000)).toUi(),
             emojiReactions: [], sourceChannel: nil, visibility: isCalibration ? nil : .public, replyToHandle: nil,
             references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
-            accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil)
+            accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil)
     }
 
     private func pixelError(_ actual: Data, _ expected: Data) -> Double {
