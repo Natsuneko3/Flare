@@ -109,6 +109,18 @@ internal interface TranslationDao {
     )
 
     @Query(
+        "SELECT EXISTS(" +
+            "SELECT 1 FROM DbTranslation " +
+            "WHERE status IN (:pendingStatus, :translatingStatus) AND updatedAt < :staleBefore" +
+            ")",
+    )
+    suspend fun hasStaleInFlight(
+        staleBefore: Long,
+        pendingStatus: TranslationStatus = TranslationStatus.Pending,
+        translatingStatus: TranslationStatus = TranslationStatus.Translating,
+    ): Boolean
+
+    @Query(
         "UPDATE DbTranslation SET " +
             "status = :failedStatus, " +
             "payload = NULL, " +
