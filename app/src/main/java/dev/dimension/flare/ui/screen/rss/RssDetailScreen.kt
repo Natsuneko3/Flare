@@ -37,9 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Brands
@@ -374,7 +374,7 @@ private fun presenter(
                 state.data.flatMap {
                     AiTLDRPresenter(
                         it.encodeJson(DocumentData.serializer()),
-                        Locale.current.toLanguageTag(),
+                        LocalLocale.current.toLanguageTag(),
                     ).invoke()
                 }
             }

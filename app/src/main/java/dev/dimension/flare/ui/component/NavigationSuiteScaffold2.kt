@@ -1,5 +1,7 @@
 package dev.dimension.flare.ui.component
 
+import androidx.collection.MutableObjectList
+import androidx.collection.mutableObjectListOf
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
@@ -64,8 +66,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.collection.MutableVector
-import androidx.compose.runtime.collection.mutableVectorOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
@@ -656,7 +656,7 @@ private fun SharedTransitionScope.BottomBar(
 
 private interface NavigationSuiteItemProvider {
     val itemsCount: Int
-    val itemList: MutableVector<NavigationSuiteItem>
+    val itemList: MutableObjectList<NavigationSuiteItem>
 }
 
 private data class SegmentedGroupPosition(
@@ -929,7 +929,7 @@ private sealed interface NavigationSuiteItem {
         val label: @Composable (() -> Unit)?,
         val alwaysShowLabel: Boolean,
         val colors: NavigationSuiteItemColors?,
-        val children: MutableVector<NavigationSuiteItem>,
+        val children: MutableObjectList<NavigationSuiteItem>,
     ) : NavigationSuiteItem
 }
 
@@ -1047,7 +1047,7 @@ private class NavigationSuiteScopeImpl :
         )
     }
 
-    override val itemList: MutableVector<NavigationSuiteItem> = mutableVectorOf()
+    override val itemList: MutableObjectList<NavigationSuiteItem> = mutableObjectListOf()
 
     override val itemsCount: Int
         get() = itemList.size

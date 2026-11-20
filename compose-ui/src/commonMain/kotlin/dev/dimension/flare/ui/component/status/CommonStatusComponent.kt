@@ -45,6 +45,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -54,7 +55,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -1013,13 +1013,14 @@ private fun TranslationComponent(
     }
     if (enabledTldr) {
         Spacer(modifier = Modifier.height(8.dp))
+        val targetLanguage = LocalLocale.current.language
         val state by producePresenter(
-            "tldr_${contentWarning}_${rawContent}_${Locale.current.language}",
+            "tldr_${contentWarning}_${rawContent}_$targetLanguage",
         ) {
             statusTldrPresenter(
                 contentWarning = contentWarning,
                 content = content,
-                targetLanguage = Locale.current.language,
+                targetLanguage = targetLanguage,
             )
         }
         state
@@ -1036,14 +1037,15 @@ private fun TranslationComponent(
     }
     if (enabledTranslate) {
         Spacer(modifier = Modifier.height(8.dp))
+        val targetLanguage = LocalLocale.current.language
         val state by producePresenter(
-            "translate_${contentWarning}_${rawContent}_${Locale.current.language}_${timelineAppearance.aiConfig.translation}",
+            "translate_${contentWarning}_${rawContent}_${targetLanguage}_${timelineAppearance.aiConfig.translation}",
         ) {
             statusTranslatePresenter(
                 item = item,
                 contentWarning = contentWarning,
                 content = content,
-                targetLanguage = Locale.current.language,
+                targetLanguage = targetLanguage,
             )
         }
         state.contentWarning
