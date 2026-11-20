@@ -3,6 +3,7 @@
 	import type { TimelineAppearance } from '$lib/environment/environmentSettings.svelte';
 	import type { UiTimelineV2Post } from '@flare/web-presenters/timeline.svelte';
 	import PostCard from './PostCard.svelte';
+	import PostCommunityNote from './PostCommunityNote.svelte';
 	import PostBody from './PostBody.svelte';
 	import PostHeader from './PostHeader.svelte';
 	import PostMediaGrid from './PostMediaGrid.svelte';
@@ -69,6 +70,9 @@
 	{/if}
 	{#if quote.card && appearance.showLinkPreview && quote.images.length === 0}
 		<PostCard card={quote.card} {appearance} />
+	{/if}
+	{#if quote.communityNote}
+		<PostCommunityNote note={quote.communityNote} />
 	{/if}
 </div>
 

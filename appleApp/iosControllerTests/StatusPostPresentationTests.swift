@@ -528,6 +528,6 @@ final class StatusPostPresentationTests: XCTestCase {
                                 createdAt: createdAt ?? KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0).toUi(),
                                 emojiReactions: [], sourceChannel: nil, visibility: visibility, replyToHandle: replyToHandle,
                                 references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
-                                accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil)
+                                accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil)
     }
 }

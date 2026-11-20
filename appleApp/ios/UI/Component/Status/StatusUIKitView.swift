@@ -148,6 +148,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
     private var mediaViewStorage: StatusMediaContentUIView?
     private var normalCardViewStorage: StatusCardUIView?
     private var compatCardViewStorage: StatusCompatCardUIView?
+    private var communityNoteViewStorage: CommunityNoteUIView?
 
     private var quotesContainerStorage: QuotesContainerView?
     private var quoteChildren: [StatusUIKitView] = []
@@ -668,7 +669,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         let followsHeader = previousChild === currentHeaderView
         let isText = child is RichTextUIView || child === translateViewStorage
         let isAttachment = child === mediaViewStorage || child === normalCardViewStorage ||
-            child === compatCardViewStorage || child === quotesContainerStorage
+            child === compatCardViewStorage || child === quotesContainerStorage || child === communityNoteViewStorage
         if followsHeader && !usesSideAvatar && !isQuote { return 8 }
         if followsHeader && isText { return isQuote ? 4 : 2 }
         if child === actionsContainerStorage { return 2 }
@@ -1035,6 +1036,18 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             updateQuotes(quotes: [])
         }
 
+        if let note = data.communityNote {
+            let view = communityNoteViewStorage ?? CommunityNoteUIView()
+            communityNoteViewStorage = view
+            view.configure(
+                note,
+                isDetail: isDetail,
+                preferredContentSizeCategory: appearance.preferredContentSizeCategory,
+                onOpenURL: { [weak self] url in self?.openURL?(url) }
+            )
+            items.append(view)
+        }
+
         // source channel + reactions
         if showMediaInput, !isQuote {
             if let channel = data.sourceChannel {
@@ -1295,6 +1308,10 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
 
         if touchedView.firstSuperview(of: UIControl.self) != nil {
+            return false
+        }
+
+        if touchedView.firstSuperview(of: CommunityNoteUIView.self) != nil {
             return false
         }
 
@@ -1639,6 +1656,94 @@ private final class QuotesContainerView: UIView, ManualLayoutMeasurable, Timelin
         verticalFittingPriority: UILayoutPriority
     ) -> CGSize {
         sizeThatFits(CGSize(width: targetSize.width, height: .greatestFiniteMagnitude))
+    }
+}
+
+private final class CommunityNoteUIView: UIView, TimelineHeightProviding {
+    private static let borderWidth: CGFloat = 1
+    private static let padding: CGFloat = 12
+    private static let titleVerticalPadding: CGFloat = 8
+
+    private let titleBand = UIButton(type: .custom)
+    private let titleLabel = UILabel()
+    private let noteBody = RichTextUIView()
+    private var openTitle: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        layer.cornerRadius = 12
+        layer.borderWidth = Self.borderWidth
+        useSeparatorBorderColor()
+        clipsToBounds = true
+
+        titleBand.backgroundColor = .separator
+        titleBand.layer.cornerRadius = layer.cornerRadius - Self.borderWidth
+        titleBand.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        titleBand.clipsToBounds = true
+        titleBand.accessibilityTraits = [.header, .link]
+        titleBand.addAction(UIAction { [weak self] _ in self?.openTitle?() }, for: .primaryActionTriggered)
+
+        titleLabel.numberOfLines = 0
+        titleLabel.textColor = .flarePostLabel
+        titleLabel.accessibilityTraits = .header
+        titleBand.addSubview(titleLabel)
+        addSubview(titleBand)
+        addSubview(noteBody)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(
+        _ note: UiCommunityNote,
+        isDetail: Bool,
+        preferredContentSizeCategory: UIContentSizeCategory,
+        onOpenURL: @escaping (URL) -> Void
+    ) {
+        let titleURL = note.url.flatMap(URL.init(string:))
+        openTitle = titleURL.map { url in { onOpenURL(url) } }
+        titleBand.isUserInteractionEnabled = titleURL != nil
+        titleBand.isAccessibilityElement = titleURL != nil
+        titleBand.accessibilityLabel = note.title
+        titleLabel.isAccessibilityElement = titleURL == nil
+        titleLabel.text = note.title
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body, compatibleWith: UITraitCollection(
+            preferredContentSizeCategory: preferredContentSizeCategory
+        ))
+        titleLabel.font = .boldSystemFont(ofSize: bodyFont.pointSize)
+        noteBody.configure(
+            text: note.body,
+            lineLimit: nil,
+            isTextSelectionEnabled: isDetail,
+            onOpenURL: onOpenURL,
+            baseTextColor: .flarePostLabel,
+            preferredContentSizeCategory: preferredContentSizeCategory
+        )
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let padding = Self.padding
+        let border = Self.borderWidth
+        let titlePadding = Self.titleVerticalPadding
+        let contentWidth = max(bounds.width - padding * 2, 0)
+        let titleHeight = titleHeight(for: contentWidth)
+        let bandBottom = titleHeight + titlePadding * 2
+        titleBand.frame = CGRect(x: border, y: border, width: max(bounds.width - border * 2, 0), height: bandBottom - border)
+        titleLabel.frame = CGRect(x: padding - border, y: titlePadding - border, width: contentWidth, height: titleHeight)
+        noteBody.frame = CGRect(x: padding, y: bandBottom + padding, width: contentWidth,
+                               height: max(bounds.height - bandBottom - padding * 2, 0))
+    }
+
+    func timelineHeight(for width: CGFloat) -> CGFloat? {
+        guard width.isFinite, width > 0 else { return nil }
+        let contentWidth = max(width - Self.padding * 2, 0)
+        return titleHeight(for: contentWidth) + Self.titleVerticalPadding * 2
+            + childHeight(of: noteBody, for: contentWidth) + Self.padding * 2
+    }
+
+    private func titleHeight(for width: CGFloat) -> CGFloat {
+        ceil(titleLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
     }
 }
 

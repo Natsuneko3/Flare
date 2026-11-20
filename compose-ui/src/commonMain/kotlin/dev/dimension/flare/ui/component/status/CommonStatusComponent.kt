@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -46,9 +47,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -141,6 +146,7 @@ import dev.dimension.flare.ui.component.HorizontalDivider
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
+import dev.dimension.flare.ui.component.allowLinkAnnotation
 import dev.dimension.flare.ui.component.placeholder
 import dev.dimension.flare.ui.component.platform.PlatformCard
 import dev.dimension.flare.ui.component.platform.PlatformCheckbox
@@ -159,6 +165,7 @@ import dev.dimension.flare.ui.component.toImageVector
 import dev.dimension.flare.ui.model.ClickContext
 import dev.dimension.flare.ui.model.TranslationDisplayState
 import dev.dimension.flare.ui.model.UiCard
+import dev.dimension.flare.ui.model.UiCommunityNote
 import dev.dimension.flare.ui.model.UiPoll
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
@@ -166,6 +173,7 @@ import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
 import dev.dimension.flare.ui.render.RenderContent
+import dev.dimension.flare.ui.render.RenderRun
 import dev.dimension.flare.ui.render.UiRichText
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
@@ -234,7 +242,8 @@ public fun CommonStatusComponent(
         val showsImages = item.images.isNotEmpty() && showMedia
         val showsCard = item.card != null && appearanceSettings.showLinkPreview && item.images.isEmpty() && quotes.isEmpty()
         val showsQuotes = quotes.isNotEmpty() && !isQuote
-        val showsAttachments = showsImages || showsCard || showsQuotes
+        val communityNote = item.communityNote
+        val showsAttachments = showsImages || showsCard || showsQuotes || communityNote != null
         val hasVisibleEmojiReactions = appearanceSettings.showEmojiReactions && item.emojiReactions.isNotEmpty()
         val showsReactions = !isQuote && (hasVisibleEmojiReactions || item.sourceChannel != null)
         val showsActions = (appearanceSettings.postActionStyle != PostActionStyle.Hidden || isDetail) && !forceHideActions
@@ -563,6 +572,11 @@ public fun CommonStatusComponent(
                     )
                 }
 
+                communityNote?.let { note ->
+                    Spacer(modifier = Modifier.height(firstAttachmentSpacing))
+                    StatusCommunityNoteComponent(note)
+                }
+
                 if (showsReactions) {
                     Spacer(modifier = Modifier.height(if (replyBeforeFooter) 0.dp else 8.dp))
                     StatusReactionComponent(
@@ -601,6 +615,73 @@ public fun CommonStatusComponent(
             }
         }
     }
+
+@Composable
+private fun StatusCommunityNoteComponent(note: UiCommunityNote) {
+    val uriHandler = LocalUriHandler.current
+    val textColor = if (SystemUtils.isAndroid) PlatformTheme.colorScheme.onCard else PlatformContentColor.current
+    val outline =
+        if (SystemUtils.isAndroid) {
+            val background = LocalStatusBackgroundColor.current ?: PlatformTheme.colorScheme.background
+            textColor
+                .copy(alpha = 0.10f)
+                .compositeOver(background)
+        } else {
+            FlareDividerDefaults.color
+        }
+    val shape = PlatformTheme.shapes.medium
+    val titleLink =
+        note.url?.let { url ->
+            Modifier.pointerHoverIcon(PointerIcon.Hand).clickable { uriHandler.openUri(url) }
+        } ?: Modifier
+    val sourceLinkSemantics =
+        if (allowLinkAnnotation) {
+            Modifier
+        } else {
+            val actions =
+                remember(note.body, uriHandler) {
+                    note.body.renderRuns
+                        .filterIsInstance<RenderContent.Text>()
+                        .flatMap { it.runs.filterIsInstance<RenderRun.Text>() }
+                        .mapNotNull { run ->
+                            val link = run.style.link ?: return@mapNotNull null
+                            CustomAccessibilityAction(run.text) {
+                                uriHandler.openUri(link)
+                                true
+                            }
+                        }
+                }
+            Modifier.semantics(mergeDescendants = true) { customActions = actions }
+        }
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .border(FlareDividerDefaults.thickness, outline, shape),
+    ) {
+        PlatformText(
+            text = note.title,
+            color = textColor,
+            fontWeight = FontWeight.Bold,
+            style = PlatformTheme.typography.postBody,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .background(outline)
+                    .then(titleLink)
+                    .semantics { heading() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+        RichText(
+            text = note.body,
+            modifier = Modifier.then(sourceLinkSemantics).padding(12.dp),
+            color = textColor,
+            textStyle = PlatformTheme.typography.postBody,
+        )
+    }
+}
 
 @Composable
 internal fun StatusMediasComponent(

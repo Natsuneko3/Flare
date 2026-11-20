@@ -21,6 +21,14 @@ import kotlin.time.Instant
 
 @Serializable
 @Immutable
+public data class UiCommunityNote(
+    val title: String,
+    val url: String?,
+    val body: UiRichText,
+)
+
+@Serializable
+@Immutable
 public sealed class UiTimelineV2 {
     public val id: String? by lazy {
         itemKey
@@ -334,6 +342,7 @@ public sealed class UiTimelineV2 {
         override val itemKey: String? = null,
         val pluginId: String? = null,
         internal val authorSubtitleInternal: String? = null,
+        @WebExport val communityNote: UiCommunityNote? = null,
     ) : UiTimelineV2() {
         @WebExport
         val authorSubtitle: String
@@ -376,6 +385,7 @@ public sealed class UiTimelineV2 {
                 .add(translationDisplayState)
                 .add(content.original.renderSummaryHash())
                 .add(content.translation?.renderSummaryHash())
+                .add(communityNote)
                 .add(actions.renderSummaryHash { it.renderSummaryHash() })
                 .add(poll?.renderSummaryHash())
                 .add(statusKey)
@@ -578,6 +588,7 @@ private fun UiTimelineV2.Post.renderSummaryHash(): Int =
         .add(contentWarning?.translation?.renderSummaryHash())
         .add(content.original.renderSummaryHash())
         .add(content.translation?.renderSummaryHash())
+        .add(communityNote)
         .add(images.renderSummaryHash { it.renderSummaryHash() })
         .add(sensitive)
         .add(poll?.renderSummaryHash())

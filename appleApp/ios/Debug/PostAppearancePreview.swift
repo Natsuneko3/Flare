@@ -122,7 +122,7 @@ private struct PostAppearanceTimeline: UIViewControllerRepresentable {
             createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: Int64(Date().timeIntervalSince1970 * 1000) - secondsAgo * 1000).toUi(),
             emojiReactions: [], sourceChannel: nil, visibility: nil, replyToHandle: replyTo,
             references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
-            accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil)
+            accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil)
     }
 
     private func action(_ id: String, icon: UiIcon, count: Int64?, family: PostActionFamily?) -> ActionMenu.Item {
