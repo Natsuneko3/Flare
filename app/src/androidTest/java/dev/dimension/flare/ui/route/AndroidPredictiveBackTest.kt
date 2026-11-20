@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.ComposeUiTestConfig
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -55,7 +56,7 @@ class AndroidPredictiveBackTest {
         }
 
     @get:Rule
-    val compose = createComposeRule(effectContext = motionDurationScale)
+    val compose = createComposeRule(ComposeUiTestConfig(effectContext = motionDurationScale))
     private val stack = mutableStateListOf(0, 1)
     private val input = DirectNavigationEventInput()
     private var eventTime = 1_000L
