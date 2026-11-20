@@ -63,6 +63,7 @@ API on a build that implements the capability.
 | Social adapter using API v1 features | `1` |
 | Application response headers, manual redirects, credential revisions or V2 WebCookie state and metadata | `2` |
 | QR login (`QrCode`) | `2` |
+| Configurable post detail tabs (`contextTabs` and `contextPage`) | `2` |
 | Plugin storage, text translation or offline settings | `2` |
 | Existing-account actions or `flare.datasource.account-http/v1` | `2` |
 | Temporary timelines using `flare.datasource.timeline-page/v1` | `2` |
