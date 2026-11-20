@@ -451,6 +451,17 @@ internal class PixivDataSource(
                         type = PixivWorkType.Manga,
                     ),
             ),
+            ProfileTab(
+                name = UiStrings.Favourite,
+                displayType = ProfileTab.DisplayType.Gallery,
+                showAllImagesInGallery = false,
+                loader =
+                    PixivUserBookmarkTimelineLoader(
+                        service = service,
+                        accountKey = accountKey,
+                        userKey = userKey,
+                    ),
+            ),
         )
 
     override suspend fun handle(

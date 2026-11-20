@@ -26,7 +26,9 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpHeaders
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlin.time.Clock
@@ -75,7 +77,7 @@ private fun createPixivServiceClients(proxy: ProxyRef = ProxyRef.Global, configu
     )
 }
 
-internal class PixivService private constructor(
+internal class PixivService(
     private val authResources: PixivAuthResources,
     private val appResources: PixivAppResources,
     private val appClient: HttpClient,
@@ -221,11 +223,12 @@ internal class PixivService private constructor(
         restrict: PixivRestrict = PixivRestrict.Public,
         tag: String? = null,
     ): PixivIllustListResponse =
-        appResources.userBookmarkedIllusts(
-            userId = userId,
-            restrict = restrict.value,
-            tag = tag,
-        )
+        appResources
+            .userBookmarkedIllusts(
+                userId = userId,
+                restrict = restrict.value,
+                tag = tag,
+            ).decodeIllustPage()
 
     suspend fun userDetail(userId: Long): PixivUserDetailResponse =
         appResources.userDetail(
@@ -284,11 +287,16 @@ internal class PixivService private constructor(
             userId = userId,
         )
 
-    suspend fun nextIllusts(nextUrl: String): PixivIllustListResponse = appClient.get(nextUrl).body()
+    suspend fun nextIllusts(nextUrl: String): PixivIllustListResponse = appClient.get(nextUrl).decodeIllustPage()
 
     suspend fun nextComments(nextUrl: String): PixivCommentListResponse = appClient.get(nextUrl).body()
 
     suspend fun nextUsers(nextUrl: String): PixivUserListResponse = appClient.get(nextUrl).body()
+}
+
+private suspend fun HttpResponse.decodeIllustPage(): PixivIllustListResponse {
+    check(status.isSuccess()) { "Pixiv illustration request failed with HTTP ${status.value}" }
+    return body()
 }
 
 private suspend fun PixivTokenResponse.toCredentialFallback(credentialFlow: Flow<PixivCredential>): PixivCredential? {
