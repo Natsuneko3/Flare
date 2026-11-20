@@ -3,14 +3,24 @@ package dev.dimension.flare.data.database.cache
 import androidx.room3.RoomDatabase
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.async.executeSQL
+import androidx.sqlite.async.prepare
+import androidx.sqlite.async.step
 
 internal object TimelineRevisionCallback : RoomDatabase.Callback() {
     override suspend fun onOpen(connection: SQLiteConnection) {
+        if (triggersUpToDate(connection)) {
+            return
+        }
         TRIGGERS.forEach { (oldName, sql) ->
             connection.executeSQL("DROP TRIGGER IF EXISTS $oldName")
             connection.executeSQL(sql)
         }
     }
+
+    private suspend fun triggersUpToDate(connection: SQLiteConnection): Boolean =
+        connection.prepare(CHECK_TRIGGERS_SQL).use { statement ->
+            statement.step() && statement.getLong(0) == 1L
+        }
 
     private val TRIGGERS =
         listOf(
@@ -84,6 +94,23 @@ internal object TimelineRevisionCallback : RoomDatabase.Callback() {
                     "OR (pagingKey = NEW.pagingKey AND _id = NEW.timelineId)",
             ),
         )
+
+    // Trigger existence is checked by versioned name (*_v2) to avoid running 22 DDL statements on every open.
+    // When modifying any trigger definition in TRIGGERS, bump the version suffix (e.g. _v3) and include the
+    // previous versioned names in the legacy drop list.
+    private val CHECK_TRIGGERS_SQL =
+        buildString {
+            val currentNames = TRIGGERS.joinToString(", ") { (name, _) -> "'${name}_v2'" }
+            val legacyNames = TRIGGERS.joinToString(", ") { (name, _) -> "'$name'" }
+            append("SELECT ")
+            append("(SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (")
+            append(currentNames)
+            append(")) = ")
+            append(TRIGGERS.size)
+            append(" AND NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name IN (")
+            append(legacyNames)
+            append("))")
+        }
 
     private fun contentTrigger(
         name: String,

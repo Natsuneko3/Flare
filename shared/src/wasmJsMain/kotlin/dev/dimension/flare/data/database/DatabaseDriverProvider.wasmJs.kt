@@ -11,6 +11,8 @@ public actual fun createDatabaseDriver(): SQLiteDriver =
         delegate = WebWorkerSQLiteDriver(createSQLiteWorker()),
     )
 
+internal actual val DEFAULT_READER_POOL_SIZE: Int = 1
+
 @OptIn(ExperimentalWasmJsInterop::class)
 private fun createSQLiteWorker(): Worker =
     js("new Worker(new URL('@androidx/sqlite-web-worker/worker.js', import.meta.url), { type: 'module' })")
