@@ -950,6 +950,7 @@
     <string name="plugin_uninstall_confirm_title">Uninstall plugin?</string>
     <string name="plugin_uninstall_confirm_message">Delete %1$s and its accounts, credentials, and account data from this device? This takes effect immediately.</string>
     <string name="plugin_confirm_install">Install</string>
+    <string name="plugin_install_auto_add_tabs">Automatically add default tabs after installing</string>
     <string name="plugin_issues">Plugin issues</string>
     <string name="plugin_operation_failed">The plugin operation failed. Try again or restart Flare.</string>
     <string name="plugin_issue_index_corrupt">The plugin index is damaged. Rebuild it to recover valid packages.</string>

@@ -114,8 +114,8 @@ public class PluginAppleFacadeV1 : PresenterBase<PluginManagementStateV1>() {
     }
 
     @Throws(Exception::class)
-    public suspend fun confirmInstall() {
-        presenter.confirmInstall()
+    public suspend fun confirmInstall(addDefaultTabs: Boolean = true) {
+        presenter.confirmInstall(addDefaultTabs)
     }
 
     @Throws(Exception::class)

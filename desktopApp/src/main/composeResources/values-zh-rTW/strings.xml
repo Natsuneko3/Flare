@@ -840,6 +840,7 @@
     <string name="plugin_uninstall">解除安裝</string>
     <string name="plugin_uninstall_confirm_title">是否解除安裝外掛程式？</string>
     <string name="plugin_confirm_install">安裝</string>
+    <string name="plugin_install_auto_add_tabs">安裝後自動新增預設分頁</string>
     <string name="plugin_issues">外掛程式問題</string>
     <string name="plugin_operation_failed">外掛程式操作失敗。請重試或重新啟動 Flare。</string>
     <string name="plugin_issue_index_corrupt">外掛程式索引已損壞。請重建以恢復有效的套件。</string>

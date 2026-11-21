@@ -34,7 +34,10 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
 @WebPresenter("discover")
@@ -44,31 +47,47 @@ public class DiscoverPresenter : PresenterBase<DiscoverState>() {
     private val appScope: CoroutineScope by koinInject()
     private val searchActive = MutableStateFlow(false)
     private val accountSelection by lazy {
-        RememberedAccountSelection(appDataStore.discoverPreferences, appScope, accountRepository.accountMutationMutex) {
-            accountRepository.find(it) !=
-                null
+        RememberedAccountSelection(appDataStore.discoverPreferences, appScope, accountRepository.accountMutationMutex) { key ->
+            when (val type = key.toSearchAccountType()) {
+                is AccountType.GuestPlugin -> {
+                    accountRepository.platformRegistry.get(type.platformId)?.standaloneGuestHost == type.host
+                }
+
+                else -> {
+                    accountRepository.find(key) != null
+                }
+            }
         }
     }
 
+    private val guestSourcesFlow by lazy {
+        accountRepository.platformRegistry.platforms
+            .map { specs ->
+                specs
+                    .mapNotNull { spec ->
+                        spec.guestSearchSourceOrNull()?.takeIf { it.dataSource.capabilities.search != null }
+                    }.toImmutableList()
+            }.distinctUntilChangedBy { list -> list.map { it.key to it.profile } }
+    }
+
     private val accountKeysFlow by lazy {
-        allAccountServicesFlow(accountRepository)
-            .map { sources ->
-                sources
-                    .filter { it.capabilities.search != null && it.accountProfileFlow() != null }
-                    .mapNotNull { it.accountKeyOrNull }
-            }.distinctUntilChanged()
+        combine(allAccountServicesFlow(accountRepository), guestSourcesFlow) { sources, guestSources ->
+            sources
+                .filter { it.capabilities.search != null && it.accountProfileFlow() != null }
+                .mapNotNull { it.accountKeyOrNull } + guestSources.map { it.key }
+        }.distinctUntilChanged()
     }
 
     private val accountsFlow by lazy {
-        allAccountServicesFlow(accountRepository)
-            .map {
-                it
-                    .mapNotNull { dataSource ->
-                        val capabilities = dataSource.capabilities
-                        if (capabilities.search == null) return@mapNotNull null
-                        dataSource.accountProfileFlow()
-                    }.toImmutableList()
-            }.combineLatestFlowLists()
+        combine(allAccountServicesFlow(accountRepository), guestSourcesFlow) { sources, guestSources ->
+            (
+                sources.mapNotNull { dataSource ->
+                    val capabilities = dataSource.capabilities
+                    if (capabilities.search == null) return@mapNotNull null
+                    dataSource.accountProfileFlow()
+                } + guestSources.map { flowOf(UiState.Success(it.profile)) }
+            ).toImmutableList()
+        }.combineLatestFlowLists()
             .map {
                 it
                     .mapNotNull {
@@ -82,7 +101,7 @@ public class DiscoverPresenter : PresenterBase<DiscoverState>() {
         val accounts by accountsFlow.collectAsUiState()
         val restoredAccountType by accountSelection.selectedAccountType.collectAsState()
         val searching by searchActive.collectAsState()
-        val selectedAccountKey = (restoredAccountType as? AccountType.Specific)?.accountKey
+        val selectedAccountKey = restoredAccountType.toSearchSelectionKeyOrNull()
         val selectedAccount = accounts.takeSuccess()?.firstOrNull { it.key == selectedAccountKey }
         val (serviceState, retryService) = rememberSearchAccountService(restoredAccountType, accountRepository)
         val dataSource = serviceState.takeSuccess()

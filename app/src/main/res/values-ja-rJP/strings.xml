@@ -926,6 +926,7 @@
     <string name="plugin_uninstall">アンインストール</string>
     <string name="plugin_uninstall_confirm_title">プラグインをアンインストールしますか？</string>
     <string name="plugin_confirm_install">インストール</string>
+    <string name="plugin_install_auto_add_tabs">インストール後にデフォルトタブを自動追加</string>
     <string name="plugin_issues">プラグインの問題</string>
     <string name="plugin_operation_failed">プラグインの操作に失敗しました。再試行するか、Flareを再起動してください。</string>
     <string name="plugin_issue_index_corrupt">プラグインインデックスが破損しています。有効なパッケージを復元するために再構築してください。</string>

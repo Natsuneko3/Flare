@@ -483,6 +483,29 @@ struct HomeSidebarAddTabPopover: View {
                 }
             }
 
+            if !presenter.state.guestPluginTabs.isEmpty {
+                Section {
+                    ForEach(presenter.state.guestPluginTabs, id: \.platformId) { group in
+                        DisclosureGroup(isExpanded: binding(for: "guest-plugin-\(group.platformId)")) {
+                            ForEach(group.tabs, id: \.id) { tab in
+                                HomeSidebarAddTabRow(
+                                    tab: tab,
+                                    isSelected: isSelected(tab),
+                                    onAdd: onAdd,
+                                    onDelete: onDelete
+                                )
+                            }
+                        } label: {
+                            Label {
+                                TimelineTabTitle(title: group.title)
+                            } icon: {
+                                TabIcon(icon: group.icon, size: 20)
+                            }
+                        }
+                    }
+                }
+            }
+
             StateView(state: presenter.state.flattenedAccountTabs) { accountTabs in
                 let accounts: [AllTabsPresenterStateFlattenedAccountTabs] = accountTabs
                     .cast(AllTabsPresenterStateFlattenedAccountTabs.self)

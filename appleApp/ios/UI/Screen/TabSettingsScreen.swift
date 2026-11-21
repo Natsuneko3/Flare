@@ -405,6 +405,28 @@ struct AddTabSheet: View {
                     }
                 }
             }
+            if !presenter.state.guestPluginTabs.isEmpty {
+                Section {
+                    ForEach(presenter.state.guestPluginTabs, id: \.platformId) { group in
+                        DisclosureGroup(isExpanded: binding(for: "guest-plugin-\(group.platformId)")) {
+                            ForEach(group.tabs, id: \.id) { tabItem in
+                                AddTabRow(
+                                    tabItem: tabItem,
+                                    isSelected: selectedTabs.contains(where: { $0.id == tabItem.id }),
+                                    onDelete: onDelete,
+                                    onAdd: onAdd
+                                )
+                            }
+                        } label: {
+                            Label {
+                                TimelineTabTitle(title: group.title)
+                            } icon: {
+                                TabIcon(icon: group.icon, size: 20)
+                            }
+                        }
+                    }
+                }
+            }
             StateView(state: presenter.state.accountTabs) { accountTabs in
                 let tabs = accountTabs.cast(AllTabsPresenterStateAccountTabs.self)
                 Section {

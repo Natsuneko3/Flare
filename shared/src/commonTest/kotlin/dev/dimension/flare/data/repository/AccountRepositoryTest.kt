@@ -37,6 +37,7 @@ import dev.dimension.flare.data.datasource.microblog.ComposeType
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.TimelineTabConfigurationDataSource
+import dev.dimension.flare.data.datasource.microblog.paging.notSupported
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AccountSelectionPreferences
 import dev.dimension.flare.data.io.OkioFileStorage
@@ -44,8 +45,12 @@ import dev.dimension.flare.data.model.IconType
 import dev.dimension.flare.data.model.ProxyMode
 import dev.dimension.flare.data.model.ProxyPolicy
 import dev.dimension.flare.data.model.ProxySettings
+import dev.dimension.flare.data.model.tab.GroupSource
+import dev.dimension.flare.data.model.tab.SYSTEM_HOME_MIXED_TIMELINE_ID
 import dev.dimension.flare.data.model.tab.ShortcutSpec
 import dev.dimension.flare.data.model.tab.TimelineResolver
+import dev.dimension.flare.data.model.tab.TimelineSlot
+import dev.dimension.flare.data.model.tab.TimelineSlotContent
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.platform.CommonTimelineSpecs
 import dev.dimension.flare.deleteTestRootPath
@@ -92,6 +97,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -615,6 +621,113 @@ class AccountRepositoryTest : RobolectricTest() {
                         settings.tabSettingsV2.first { it.homeSlots.none { slot -> slot.id == tabId } }
                     }
                 }
+            } finally {
+                job.cancelAndJoin()
+            }
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginDefaultTabsAreAddedAndCleanedUpWhenPlatformRemovedOrGuestDisabled() =
+        runTest {
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+            val guestSpec =
+                TimelineSpec(
+                    id = "plugin:manga:MangaGuest:schema1:guest-timeline:popular",
+                    title = UiText.Raw("Popular"),
+                    icon = UiIcon.World.asType(),
+                    serializer = TimelineSpec.GuestPluginResourceData.serializer(),
+                    targetId = { "${it.platformId}:${it.host}:${it.resourceId}" },
+                    loaderFactory = { _, _ ->
+                        flowOf(notSupported())
+                    },
+                )
+            val guestCandidate =
+                guestSpec.candidate(
+                    TimelineSpec.GuestPluginResourceData("MangaGuest", "api.manga.example", "popular"),
+                    title = UiText.Raw("Manga Guest"),
+                )
+
+            fun guestPlatform(guestHost: String?) =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaGuest"
+                    override val isDefaultGuest = false
+                    override val standaloneGuestHost = guestHost
+                    override val timelineSpecs = persistentListOf(guestSpec)
+                    override val guestDefaultTabs =
+                        if (guestHost != null) persistentListOf(guestCandidate) else persistentListOf()
+                    override val guestTimelineTabs =
+                        if (guestHost != null) persistentListOf(guestCandidate) else persistentListOf()
+                }
+
+            val accountPlatform =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "AccountTest"
+                    override val isDefaultGuest = false
+
+                    override fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource =
+                        object : MicroblogDataSource by UnavailableMicroblogDataSource, TimelineTabConfigurationDataSource {
+                            override val defaultTabs =
+                                persistentListOf(CommonTimelineSpecs.home.candidate(TimelineSpec.AccountBasedData(context.accountKey)))
+                            override val builtInTimelineTabs = defaultTabs
+                            override val shortcuts = persistentListOf<ShortcutSpec>()
+                        }
+                }
+            registry.replaceExternal("AccountTest", accountPlatform)
+
+            val repository = createRepository(backgroundScope, registry = registry)
+            val resolver = TimelineResolver(runtimeData, RepositoryAccountService(repository))
+            val settings = SettingsRepository(fileStorage, appDataStore, resolver, cacheDatabase)
+            val job = SupervisorJob()
+            val scope = CoroutineScope(backgroundScope.coroutineContext + job)
+            try {
+                val coordinator = AccountTabSyncCoordinator(repository, settings, scope, resolver)
+                repository.addAccount(UiAccount(accountKey, "AccountTest"), "valid")
+                val accountTabId = "common.home:$accountKey"
+                runCurrent()
+                settings.tabSettingsV2.first { it.homeSlots.any { slot -> slot.id == accountTabId } }
+
+                registry.replaceExternal("MangaGuest", guestPlatform("api.manga.example"))
+                coordinator.addGuestPluginDefaultTabs("MangaGuest")
+                runCurrent()
+
+                val afterAdd =
+                    settings.tabSettingsV2.first {
+                        it.homeSlots.any { slot -> slot.id == guestCandidate.id }
+                    }
+                assertEquals(
+                    listOf(
+                        SYSTEM_HOME_MIXED_TIMELINE_ID,
+                        accountTabId,
+                        guestCandidate.id,
+                    ),
+                    afterAdd.homeSlots.map { it.id },
+                )
+
+                // Also embed the guest slot inside a manual group to verify recursive cleanup.
+                val guestSlot = resolver.toSlot(guestCandidate)
+                val manualGroup =
+                    TimelineSlot(
+                        id = "manual_manga_group",
+                        content =
+                            TimelineSlotContent.Group(
+                                children = listOf(guestSlot),
+                                source = GroupSource.Manual,
+                            ),
+                    )
+                settings.updateTabSettingsV2 {
+                    copy(homeSlots = homeSlots + manualGroup)
+                }
+
+                // Disabling standalone guest host removes guest slots and collapses SystemHome back to the single account tab.
+                registry.replaceExternal("MangaGuest", guestPlatform(null))
+                runCurrent()
+                val afterDisable =
+                    settings.tabSettingsV2.first {
+                        it.homeSlots.map { slot -> slot.id } == listOf(accountTabId)
+                    }
+                assertEquals(listOf(accountTabId), afterDisable.homeSlots.map { it.id })
             } finally {
                 job.cancelAndJoin()
             }

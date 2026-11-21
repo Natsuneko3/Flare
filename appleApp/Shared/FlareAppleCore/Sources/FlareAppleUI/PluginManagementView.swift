@@ -30,6 +30,7 @@ public struct PluginManagementView: View {
     private let onCreateWithAI: () -> Void
     private var showsGitHubInstall: Bool { presenter.state.gitHubInstall != nil }
     @State private var gitHubURL = ""
+    @State private var addDefaultTabs = true
     @State private var settingsPluginId: String?
     @State private var extensionPluginId: String?
     @State private var pendingUninstallId: String?
@@ -142,26 +143,18 @@ public struct PluginManagementView: View {
         } message: {
             Text("plugin_large_repository_message")
         }
-        .alert(
-            presenter.state.pendingInstall.map { "\($0.name) \($0.version)" } ?? "",
-            isPresented: Binding(
-                get: { presenter.state.pendingInstall != nil && !showsGitHubInstall },
-                set: { _ in }
-            )
-        ) {
-            Button("Cancel", role: .cancel) {
-                Task { try? await facade.cancelInstall() }
+        .onChange(of: presenter.state.pendingInstall?.pluginId, initial: true) { _, _ in
+            addDefaultTabs = true
+        }
+        .sheet(isPresented: Binding(
+            get: { presenter.state.pendingInstall != nil && !showsGitHubInstall },
+            set: { visible in
+                if !visible && presenter.state.pendingInstall != nil && !showsGitHubInstall {
+                    Task { try? await facade.cancelInstall() }
+                }
             }
-            .disabled(presenter.state.busy)
-            Button("plugin_confirm_install") {
-                Task { try? await facade.confirmInstall() }
-            }
-            .keyboardShortcut(.defaultAction)
-            .disabled(presenter.state.busy)
-        } message: {
-            if let review = presenter.state.pendingInstall {
-                Text(installReviewText(review))
-            }
+        )) {
+            installReviewSheet
         }
         .alert(
             "plugin_uninstall_confirm_title",
@@ -752,6 +745,85 @@ public struct PluginManagementView: View {
     }
     #endif
 
+    private var installReviewSheet: some View {
+        let busy = presenter.state.busy
+        return NavigationStack {
+            Form {
+                if let review = presenter.state.pendingInstall {
+                    Section {
+                        Text(installReviewText(review))
+                    } header: {
+                        Text(verbatim: "\(review.name) \(review.version)")
+                    }
+                    installReviewAutoAddSection(review)
+                }
+            }
+            #if os(macOS)
+            .formStyle(.grouped)
+            #endif
+            .disabled(busy)
+            .navigationTitle(presenter.state.pendingInstall.map { "\($0.name) \($0.version)" } ?? String(localized: "plugin_confirm_install"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(role: .cancel) {
+                        Task { try? await facade.cancelInstall() }
+                    } label: {
+                        Label {
+                            Text("Cancel")
+                        } icon: {
+                            Image(fontAwesome: .xmark)
+                        }
+                    }
+                    #if os(iOS)
+                    .labelStyle(.iconOnly)
+                    #else
+                    .labelStyle(.titleOnly)
+                    #endif
+                    .disabled(busy)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { try? await facade.confirmInstall(addDefaultTabs: addDefaultTabs) }
+                    } label: {
+                        Label {
+                            Text("plugin_confirm_install")
+                        } icon: {
+                            Image(fontAwesome: .check)
+                        }
+                    }
+                    #if os(iOS)
+                    .labelStyle(.iconOnly)
+                    #else
+                    .labelStyle(.titleOnly)
+                    #endif
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(busy)
+                }
+            }
+            .overlay { if busy { ProgressView() } }
+        }
+        .interactiveDismissDisabled(busy)
+        #if os(macOS)
+        .frame(minWidth: 440, minHeight: 280)
+        #endif
+    }
+
+    @ViewBuilder
+    private func installReviewAutoAddSection(_ review: PluginInstallReviewV1) -> some View {
+        if review.canAutoAddDefaultTabs {
+            Section {
+                Toggle(isOn: $addDefaultTabs) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("plugin_install_auto_add_tabs")
+                        Text(verbatim: review.defaultGuestTabTitles.joined(separator: ", "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
     private var gitHubInstallSheet: some View {
         let busy = presenter.state.gitHubInstall?.busy == true
         return NavigationStack {
@@ -788,6 +860,9 @@ public struct PluginManagementView: View {
                         }
                     }
                 }
+                if let review = presenter.state.pendingInstall {
+                    installReviewAutoAddSection(review)
+                }
             }
             #if os(macOS)
             .formStyle(.grouped)
@@ -818,7 +893,7 @@ public struct PluginManagementView: View {
                         Task {
                             do {
                                 if isConfirming {
-                                    try await facade.confirmInstall()
+                                    try await facade.confirmInstall(addDefaultTabs: addDefaultTabs)
                                 } else {
                                     try await facade.inspectGitHub(url: gitHubURL)
                                 }

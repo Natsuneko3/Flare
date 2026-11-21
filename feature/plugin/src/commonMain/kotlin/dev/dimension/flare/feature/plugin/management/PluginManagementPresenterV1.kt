@@ -1,10 +1,13 @@
 package dev.dimension.flare.feature.plugin.management
 
+import dev.dimension.flare.common.Locale
 import dev.dimension.flare.data.model.PluginPermission
 import dev.dimension.flare.data.repository.AccountService
+import dev.dimension.flare.data.repository.AccountTabSyncCoordinator
 import dev.dimension.flare.data.repository.AuthoredPlugin
 import dev.dimension.flare.di.koinGet
 import dev.dimension.flare.feature.plugin.PluginSubsystemV1
+import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.development.PluginDevelopmentStateV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginCatalogV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginClient
@@ -19,6 +22,9 @@ import dev.dimension.flare.feature.plugin.lifecycle.InstalledPluginV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginInstallSourceV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginRuntimeSwitcherV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginStateIssueV1
+import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
+import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
+import dev.dimension.flare.feature.plugin.manifest.fallbackText
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplace
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceEntryV1
@@ -45,6 +51,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okio.Path.Companion.toPath
 import okio.Source
+import org.koin.mp.KoinPlatformTools
 import kotlin.native.HiddenFromObjC
 
 public data class PluginManagementStateV1(
@@ -124,7 +131,11 @@ public data class PluginInstallReviewV1(
     val permissions: List<PluginPermission>,
     val warnings: List<PluginInstallWarningV1>,
     val sourceUrl: String?,
-)
+    val defaultGuestTabTitles: List<String> = emptyList(),
+) {
+    public val canAutoAddDefaultTabs: Boolean
+        get() = defaultGuestTabTitles.isNotEmpty()
+}
 
 /** The scope belongs to the application so installed platforms outlive the management screen. */
 @HiddenFromObjC
@@ -136,6 +147,13 @@ public class PluginManagementPresenterV1(
     registry: () -> PlatformRegistry = { koinGet() },
     accounts: () -> AccountService = { koinGet() },
     private val marketplace: PluginMarketplace = subsystem.marketplace,
+    private val addGuestPluginDefaultTabs: suspend (String) -> Unit = { platformId ->
+        KoinPlatformTools
+            .defaultContext()
+            .getOrNull()
+            ?.getOrNull<AccountTabSyncCoordinator>()
+            ?.addGuestPluginDefaultTabs(platformId)
+    },
 ) {
     private val switcher by lazy { PluginRuntimeSwitcherV1(subsystem, registry(), accounts(), scope) }
     private val updates = MutableStateFlow(emptyMap<String, GitHubPluginVersionV1>())
@@ -453,7 +471,9 @@ public class PluginManagementPresenterV1(
                 .inspect(source)
                 .also { prepared ->
                     preview = InstallPreview(prepared)
-                }.toReview()
+                }.let { prepared ->
+                    prepared.toReview(isFreshInstall = prepared.pluginId !in subsystem.stateStore.desired.value.plugins)
+                }
         }
 
     public suspend fun inspect(path: String): PluginInstallReviewV1 =
@@ -463,10 +483,12 @@ public class PluginManagementPresenterV1(
                 .inspect(path.toPath())
                 .also { prepared ->
                     preview = InstallPreview(prepared)
-                }.toReview()
+                }.let { prepared ->
+                    prepared.toReview(isFreshInstall = prepared.pluginId !in subsystem.stateStore.desired.value.plugins)
+                }
         }
 
-    public suspend fun confirmInstall() {
+    public suspend fun confirmInstall(addDefaultTabs: Boolean = true) {
         runMutation(gitHubInstall = mutableState.value.gitHubInstall != null) {
             val (prepared, fromMarketplace, updatedAt) = requireNotNull(preview) { "No plugin installation is pending" }
             try {
@@ -475,9 +497,10 @@ public class PluginManagementPresenterV1(
                 if (fromMarketplace) clearPreview()
                 throw error
             }
-            val existingManifest =
-                subsystem.stateStore.desired.value.plugins[prepared.pluginId]
-                    ?.manifest
+            val existingPlugin = subsystem.stateStore.desired.value.plugins[prepared.pluginId]
+            val isFreshInstall = existingPlugin == null
+            val hasGuestDefaults = prepared.defaultGuestTabTitles(isFreshInstall).isNotEmpty()
+            val existingManifest = existingPlugin?.manifest
             val previousGrant = subsystem.timelineGrants.awaitCurrent()[prepared.pluginId]
             subsystem.installer.commit(
                 prepared,
@@ -506,6 +529,15 @@ public class PluginManagementPresenterV1(
             updateIssues.update { it - prepared.pluginId }
             preview = null
             mutableState.update { snapshot(it).copy(gitHubInstall = null) }
+            if (isFreshInstall && addDefaultTabs && hasGuestDefaults && prepared.platformId.isNotEmpty()) {
+                try {
+                    addGuestPluginDefaultTabs(prepared.platformId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    error.printStackTrace()
+                }
+            }
         }
     }
 
@@ -616,7 +648,7 @@ public class PluginManagementPresenterV1(
             development = subsystem.developmentState.value,
             authoredPlugins = subsystem.authoring.plugins.value,
             canRebuildIndex = !desired.indexHealthy,
-            pendingInstall = preview?.prepared?.toReview(),
+            pendingInstall = preview?.prepared?.let { it.toReview(isFreshInstall = it.pluginId !in desired.plugins) },
         )
     }
 
@@ -742,7 +774,7 @@ private fun InstalledPluginV1.toItem(
         timelineProcessorEnabled = timelineProcessorEnabled,
     )
 
-private fun PreparedPluginInstallV1.toReview(): PluginInstallReviewV1 =
+private fun PreparedPluginInstallV1.toReview(isFreshInstall: Boolean): PluginInstallReviewV1 =
     PluginInstallReviewV1(
         pluginId = pluginId,
         platformId = platformId,
@@ -755,4 +787,25 @@ private fun PreparedPluginInstallV1.toReview(): PluginInstallReviewV1 =
         permissions = permissions.sortedWith(compareBy({ it.type.name }, { it.origin }, { it.cookieName.orEmpty() })),
         warnings = warnings,
         sourceUrl = (source as? PluginInstallSourceV1.GitHub)?.url,
+        defaultGuestTabTitles = defaultGuestTabTitles(isFreshInstall),
     )
+
+private fun PreparedPluginInstallV1.defaultGuestTabTitles(isFreshInstall: Boolean): List<String> {
+    if (!isFreshInstall) return emptyList()
+    val manifest = validated.manifest
+    val platform = manifest.platform ?: return emptyList()
+    if (manifest.apiVersion < 2) return emptyList()
+    val guest = platform.guest ?: return emptyList()
+    if (!guest.enabled || guest.origin == null) return emptyList()
+    if ("page" !in platform.capabilities[PluginAbiV1.Capabilities.TIMELINE]?.operations.orEmpty()) return emptyList()
+    val bundle = PluginCatalogBundleV1(pluginId, manifest.defaultLocale, validated.catalogs)
+    return platform.timelines
+        .filter(TimelineManifestV1::defaultForNewAccount)
+        .map { timeline ->
+            when (val text = timeline.title.toUiText(pluginId)) {
+                is UiText.Raw -> text.string
+                is UiText.ExternalRef -> bundle.resolve(text, Locale.language)
+                is UiText.Localized -> timeline.title.fallbackText
+            }
+        }
+}

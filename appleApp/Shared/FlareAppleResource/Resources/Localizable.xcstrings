@@ -25866,6 +25866,34 @@
       }
     }
   },
+  "plugin_install_auto_add_tabs": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Automatically add default tabs after installing"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "安装后自动添加默认标签页"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "安裝後自動新增預設分頁"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "インストール後にデフォルトタブを自動追加"
+        }
+      }
+    }
+  },
   "plugin_confirm_install": {
     "localizations": {
       "en": {

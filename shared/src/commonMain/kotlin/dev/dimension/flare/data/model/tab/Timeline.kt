@@ -723,6 +723,13 @@ internal class TimelineResolver(
             is TimelineSlotContent.Group -> null
         }
 
+    @OptIn(ExperimentalSerializationApi::class)
+    fun resolveGuestPlatformId(slot: TimelineSlot): String? =
+        when (val content = slot.content) {
+            is TimelineSlotContent.Source -> resolveGuestPlatformId(content.source)
+            is TimelineSlotContent.Group -> null
+        }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun resolveLoader(source: TimelineSourceRef): Flow<RemoteLoader<UiTimelineV2>> =
         data.snapshots
@@ -773,6 +780,14 @@ internal class TimelineResolver(
         val spec = specs[source.specId] ?: return null
         val data = runCatching { spec.decode(source.data) }.getOrNull() ?: return null
         return (data as? TimelineSpec.AccountData)?.accountKey
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun resolveGuestPlatformId(source: TimelineSourceRef): String? {
+        source.ownerPlatformId?.let { return it }
+        val spec = specs[source.specId] ?: return null
+        val data = runCatching { spec.decode(source.data) }.getOrNull() ?: return null
+        return (data as? TimelineSpec.GuestPluginData)?.platformId
     }
 
     private fun <T : TimelineSpec.Data> TimelineSpec<T>.createLoader(encodedData: String): Flow<RemoteLoader<UiTimelineV2>> =

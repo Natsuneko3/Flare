@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -176,7 +177,7 @@ internal fun AndroidPluginManagementScreen(
         GitHubInstallDialog(
             state = state,
             onInstall = { url -> scope.launchPresenterAction { presenter.inspectGitHub(url) } },
-            onConfirm = { scope.launchPresenterAction { presenter.confirmInstall() } },
+            onConfirm = { addDefaultTabs -> scope.launchPresenterAction { presenter.confirmInstall(addDefaultTabs) } },
             onConfirmDownload = { scope.launchPresenterAction { presenter.confirmRepositoryDownload() } },
             onCancelDownload = { scope.launchPresenterAction { presenter.cancelRepositoryDownload() } },
             onUrlChanged = presenter::clearGitHubInstallError,
@@ -205,7 +206,7 @@ internal fun AndroidPluginManagementScreen(
         PluginInstallReviewDialog(
             review = review,
             busy = state.busy,
-            onConfirm = { scope.launchPresenterAction { presenter.confirmInstall() } },
+            onConfirm = { addDefaultTabs -> scope.launchPresenterAction { presenter.confirmInstall(addDefaultTabs) } },
             onCancel = { scope.launchPresenterAction { presenter.cancelInstall() } },
         )
     }
@@ -663,9 +664,10 @@ internal fun PluginManagementMenu(
 private fun PluginInstallReviewDialog(
     review: PluginInstallReviewV1,
     busy: Boolean,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
+    var addDefaultTabs by remember(review.pluginId) { mutableStateOf(true) }
     AlertDialog(
         onDismissRequest = { if (!busy) onCancel() },
         title = { Text("${review.name} ${review.version}") },
@@ -677,11 +679,15 @@ private fun PluginInstallReviewDialog(
                         .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PluginInstallReviewContent(review)
+                PluginInstallReviewContent(
+                    review = review,
+                    addDefaultTabs = addDefaultTabs,
+                    onAddDefaultTabsChange = { addDefaultTabs = it },
+                )
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm, enabled = !busy) {
+            Button(onClick = { onConfirm(addDefaultTabs) }, enabled = !busy) {
                 Text(stringResource(R.string.plugin_confirm_install))
             }
         },
@@ -694,7 +700,11 @@ private fun PluginInstallReviewDialog(
 }
 
 @Composable
-private fun PluginInstallReviewContent(review: PluginInstallReviewV1) {
+private fun PluginInstallReviewContent(
+    review: PluginInstallReviewV1,
+    addDefaultTabs: Boolean,
+    onAddDefaultTabsChange: (Boolean) -> Unit,
+) {
     Text(
         stringResource(
             if (review.sourceUrl ==
@@ -721,6 +731,30 @@ private fun PluginInstallReviewContent(review: PluginInstallReviewV1) {
     review.warnings
         .filterNot { it.type == PluginInstallWarningTypeV1.UnverifiedLocal }
         .forEach { Text("• ${it.localizedMessage()}") }
+    if (review.canAutoAddDefaultTabs) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = addDefaultTabs,
+                        role = Role.Checkbox,
+                        onValueChange = onAddDefaultTabsChange,
+                    ).padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Checkbox(checked = addDefaultTabs, onCheckedChange = null)
+            Column {
+                Text(stringResource(R.string.plugin_install_auto_add_tabs))
+                Text(
+                    review.defaultGuestTabTitles.joinToString(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -769,7 +803,7 @@ internal fun PluginPermission.localizedDescription(): String {
 internal fun GitHubInstallDialog(
     state: PluginManagementStateV1,
     onInstall: (String) -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     onConfirmDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onUrlChanged: () -> Unit,
@@ -778,6 +812,7 @@ internal fun GitHubInstallDialog(
     var url by remember { mutableStateOf("") }
     val install = state.gitHubInstall ?: return
     val review = state.pendingInstall
+    var addDefaultTabs by remember(review?.pluginId) { mutableStateOf(true) }
     val largeRepository = state.needsRepositoryDownloadConfirmation
     val dismiss = if (largeRepository) onCancelDownload else onDismiss
     AlertDialog(
@@ -812,7 +847,11 @@ internal fun GitHubInstallDialog(
                         enabled = !install.busy,
                     )
                 } else {
-                    PluginInstallReviewContent(review)
+                    PluginInstallReviewContent(
+                        review = review,
+                        addDefaultTabs = addDefaultTabs,
+                        onAddDefaultTabsChange = { addDefaultTabs = it },
+                    )
                 }
                 install.error?.let { Text(it.take(512), color = MaterialTheme.colorScheme.error) }
                 if (install.busy) {
@@ -829,7 +868,7 @@ internal fun GitHubInstallDialog(
                     } else if (review == null) {
                         onInstall(url)
                     } else {
-                        onConfirm()
+                        onConfirm(addDefaultTabs)
                     }
                 },
             ) {

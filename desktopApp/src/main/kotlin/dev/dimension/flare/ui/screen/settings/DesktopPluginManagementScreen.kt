@@ -100,6 +100,7 @@ import dev.dimension.flare.plugin_empty
 import dev.dimension.flare.plugin_github_path_hint
 import dev.dimension.flare.plugin_github_repository
 import dev.dimension.flare.plugin_install
+import dev.dimension.flare.plugin_install_auto_add_tabs
 import dev.dimension.flare.plugin_install_github
 import dev.dimension.flare.plugin_issue_files_missing
 import dev.dimension.flare.plugin_issue_index_corrupt
@@ -165,6 +166,7 @@ import io.github.composefluent.background.BackgroundSizing
 import io.github.composefluent.background.Layer
 import io.github.composefluent.component.AccentButton
 import io.github.composefluent.component.Button
+import io.github.composefluent.component.CheckBox
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.FluentDialog
@@ -256,7 +258,7 @@ internal fun DesktopPluginManagementContent(
         GitHubInstallDialog(
             state = state,
             onInstall = { url -> scope.launchPresenterAction { presenter.inspectGitHub(url) } },
-            onConfirm = { scope.launchPresenterAction { presenter.confirmInstall() } },
+            onConfirm = { addDefaultTabs -> scope.launchPresenterAction { presenter.confirmInstall(addDefaultTabs) } },
             onConfirmDownload = { scope.launchPresenterAction { presenter.confirmRepositoryDownload() } },
             onCancelDownload = { scope.launchPresenterAction { presenter.cancelRepositoryDownload() } },
             onUrlChanged = presenter::clearGitHubInstallError,
@@ -280,7 +282,7 @@ internal fun DesktopPluginManagementContent(
         PluginInstallReviewDialog(
             review = review,
             busy = state.busy,
-            onConfirm = { scope.launchPresenterAction { presenter.confirmInstall() } },
+            onConfirm = { addDefaultTabs -> scope.launchPresenterAction { presenter.confirmInstall(addDefaultTabs) } },
             onCancel = { scope.launchPresenterAction { presenter.cancelInstall() } },
         )
     }
@@ -652,9 +654,10 @@ internal fun PluginAddMenu(
 internal fun PluginInstallReviewDialog(
     review: PluginInstallReviewV1,
     busy: Boolean,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
+    var addDefaultTabs by remember(review.pluginId) { mutableStateOf(true) }
     ContentDialog(
         title = "${review.name} ${review.version}",
         visible = true,
@@ -666,20 +669,28 @@ internal fun PluginInstallReviewDialog(
                         .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PluginInstallReviewContent(review)
+                PluginInstallReviewContent(
+                    review = review,
+                    addDefaultTabs = addDefaultTabs,
+                    onAddDefaultTabsChange = { addDefaultTabs = it },
+                )
             }
         },
         primaryButtonText = stringResource(Res.string.plugin_confirm_install),
         closeButtonText = stringResource(Res.string.cancel),
         onButtonClick = { button ->
             if (busy) return@ContentDialog
-            if (button == ContentDialogButton.Primary) onConfirm() else onCancel()
+            if (button == ContentDialogButton.Primary) onConfirm(addDefaultTabs) else onCancel()
         },
     )
 }
 
 @Composable
-private fun PluginInstallReviewContent(review: PluginInstallReviewV1) {
+private fun PluginInstallReviewContent(
+    review: PluginInstallReviewV1,
+    addDefaultTabs: Boolean,
+    onAddDefaultTabsChange: (Boolean) -> Unit,
+) {
     Text(
         stringResource(
             if (review.sourceUrl ==
@@ -705,6 +716,18 @@ private fun PluginInstallReviewContent(review: PluginInstallReviewV1) {
     review.warnings
         .filterNot { it.type == PluginInstallWarningTypeV1.UnverifiedLocal }
         .forEach { Text("• ${it.localizedMessage()}") }
+    if (review.canAutoAddDefaultTabs) {
+        CheckBox(
+            checked = addDefaultTabs,
+            onCheckStateChange = onAddDefaultTabsChange,
+            label = stringResource(Res.string.plugin_install_auto_add_tabs),
+        )
+        Text(
+            review.defaultGuestTabTitles.joinToString(),
+            style = FluentTheme.typography.caption,
+            color = FluentTheme.colors.text.text.secondary,
+        )
+    }
 }
 
 @Composable
@@ -741,7 +764,7 @@ internal fun PluginPermission.localizedDescription(): String {
 internal fun GitHubInstallDialog(
     state: PluginManagementStateV1,
     onInstall: (String) -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     onConfirmDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onUrlChanged: () -> Unit,
@@ -753,6 +776,7 @@ internal fun GitHubInstallDialog(
     }
     val install = state.gitHubInstall ?: return
     val review = state.pendingInstall
+    var addDefaultTabs by remember(review?.pluginId) { mutableStateOf(true) }
     val largeRepository = state.needsRepositoryDownloadConfirmation
     val dismiss = if (largeRepository) onCancelDownload else onDismiss
     FluentDialog(visible = true) {
@@ -793,7 +817,11 @@ internal fun GitHubInstallDialog(
                     )
                     Text(stringResource(Res.string.plugin_github_path_hint))
                 } else {
-                    PluginInstallReviewContent(review)
+                    PluginInstallReviewContent(
+                        review = review,
+                        addDefaultTabs = addDefaultTabs,
+                        onAddDefaultTabsChange = { addDefaultTabs = it },
+                    )
                 }
                 install.error?.let { Text(it.take(512), color = FluentTheme.colors.system.critical) }
             }
@@ -806,7 +834,7 @@ internal fun GitHubInstallDialog(
                         } else if (review == null) {
                             onInstall(url.text.toString())
                         } else {
-                            onConfirm()
+                            onConfirm(addDefaultTabs)
                         }
                     },
                     disabled = install.busy || (!largeRepository && review == null && url.text.isBlank()),
