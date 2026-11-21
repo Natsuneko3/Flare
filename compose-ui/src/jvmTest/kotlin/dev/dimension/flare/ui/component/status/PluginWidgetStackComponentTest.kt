@@ -11,21 +11,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.v2.runComposeUiTest
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.data.model.TimelineDisplayMode
@@ -54,6 +58,8 @@ import dev.dimension.flare.ui.model.createSampleUser
 import dev.dimension.flare.ui.render.toUiPlainText
 import dev.dimension.flare.ui.theme.PlatformTheme
 import io.github.composefluent.FluentTheme
+import io.github.composefluent.darkColors
+import io.github.composefluent.lightColors
 import kotlinx.collections.immutable.persistentListOf
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -530,6 +536,151 @@ class PluginWidgetStackComponentTest {
                 onNodeWithTag("plugin_widget_stack").assertDoesNotExist()
             } finally {
                 stopKoin()
+            }
+        }
+
+    @Test
+    fun headerTitleUsesFullWidthUnweightedRowSiblingsCoexistKeyValuePreservesLabelAndPrimaryButtonsContrast() =
+        runComposeUiTest {
+            val longHeaderTitle = "Long Card Header Title That Should Expand Well Beyond Half Of The Card Width"
+            val longDigestValue = "0x" + "a1b2c3d4".repeat(25) // 202 chars
+            var darkTheme by mutableStateOf(false)
+            val buttonBgByLabel = mutableMapOf<String, Color>()
+
+            val card =
+                UiPluginWidgetCard(
+                    pluginId = "org.example.layout",
+                    pluginName = "Layout Check",
+                    pluginIconPath = null,
+                    id = "layout-1",
+                    title = longHeaderTitle,
+                    refreshable = false,
+                    body =
+                        persistentListOf(
+                            UiWidgetNode.Row(
+                                align = UiWidgetAlign.SpaceBetween,
+                                gap = UiWidgetGap.Sm,
+                                children =
+                                    persistentListOf(
+                                        UiWidgetNode.Column(
+                                            gap = UiWidgetGap.Xs,
+                                            children =
+                                                persistentListOf(
+                                                    UiWidgetNode.Text("Left Col"),
+                                                ),
+                                        ),
+                                        UiWidgetNode.BadgeRow(
+                                            badges = persistentListOf(UiWidgetBadge("MID", UiWidgetTone.Accent)),
+                                        ),
+                                        UiWidgetNode.Text(
+                                            text = "CODE_TAG",
+                                            style = UiWidgetTextStyle.Code,
+                                        ),
+                                    ),
+                            ),
+                            UiWidgetNode.KeyValue(
+                                items =
+                                    persistentListOf(
+                                        UiWidgetNode.KeyValue.Item(
+                                            label = "Tx Hash",
+                                            value = longDigestValue,
+                                            action = UiWidgetAction.Copy(longDigestValue, "Tx Hash"),
+                                        ),
+                                    ),
+                            ),
+                        ),
+                    actions =
+                        persistentListOf(
+                            UiWidgetButton("Primary Neutral", UiWidgetTone.Neutral, UiWidgetButtonStyle.Primary, UiWidgetAction.Refresh),
+                            UiWidgetButton("Primary Accent", UiWidgetTone.Accent, UiWidgetButtonStyle.Primary, UiWidgetAction.Refresh),
+                            UiWidgetButton("Primary Positive", UiWidgetTone.Positive, UiWidgetButtonStyle.Primary, UiWidgetAction.Refresh),
+                            UiWidgetButton("Primary Negative", UiWidgetTone.Negative, UiWidgetButtonStyle.Primary, UiWidgetAction.Refresh),
+                            UiWidgetButton("Primary Warning", UiWidgetTone.Warning, UiWidgetButtonStyle.Primary, UiWidgetAction.Refresh),
+                        ),
+                )
+
+            setContent {
+                FluentTheme(colors = if (darkTheme) darkColors() else lightColors()) {
+                    buttonBgByLabel["Primary Neutral"] = PlatformTheme.colorScheme.primary
+                    buttonBgByLabel["Primary Accent"] = PlatformTheme.colorScheme.primary
+                    buttonBgByLabel["Primary Positive"] = widgetToneColor(UiWidgetTone.Positive)
+                    buttonBgByLabel["Primary Negative"] = PlatformTheme.colorScheme.error
+                    buttonBgByLabel["Primary Warning"] = widgetToneColor(UiWidgetTone.Warning)
+                    CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                        Box(Modifier.width(400.dp)) {
+                            PluginWidgetStackComponent(cards = persistentListOf(card))
+                        }
+                    }
+                }
+            }
+
+            val stackBounds = onNodeWithTag("plugin_widget_stack").fetchSemanticsNode().boundsInRoot
+
+            // (b) Long card header title uses >50% of card width when no refresh button or badge blocks it
+            val titleBounds = onNodeWithText(longHeaderTitle, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue(
+                titleBounds.width > stackBounds.width * 0.5f,
+                "Expected header title width (${titleBounds.width}) > 50% of card width (${stackBounds.width})",
+            )
+
+            // (c) Unweighted Column / BadgeRow / Code Text inside Row(align = SpaceBetween) all receive positive width side-by-side
+            val leftColBounds = onNodeWithText("Left Col", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val midBadgeBounds = onNodeWithText("MID", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val rightCodeBounds = onNodeWithText("CODE_TAG", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue(leftColBounds.width > 0f, "Expected Left Col positive width, got ${leftColBounds.width}")
+            assertTrue(midBadgeBounds.width > 0f, "Expected MID badge positive width, got ${midBadgeBounds.width}")
+            assertTrue(rightCodeBounds.width > 0f, "Expected CODE_TAG positive width, got ${rightCodeBounds.width}")
+            assertTrue(
+                leftColBounds.right <= midBadgeBounds.left,
+                "Expected Left Col (${leftColBounds.right}) left of MID (${midBadgeBounds.left})",
+            )
+            assertTrue(
+                midBadgeBounds.right <= rightCodeBounds.left,
+                "Expected MID (${midBadgeBounds.right}) left of CODE_TAG (${rightCodeBounds.left})",
+            )
+
+            // (d) KeyValue with 200+ char value preserves positive width on both item.label and trailing Copy icon
+            val labelBounds = onNodeWithText("Tx Hash", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val valueBounds = onNodeWithText(longDigestValue, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val copyIconBounds =
+                onNodeWithTag("plugin_widget_kv_copy_icon", useUnmergedTree = true)
+                    .fetchSemanticsNode()
+                    .boundsInRoot
+            assertTrue(labelBounds.width > 20f, "Expected Tx Hash label positive width, got ${labelBounds.width}")
+            assertTrue(valueBounds.left >= labelBounds.right, "Expected value (${valueBounds.left}) after label (${labelBounds.right})")
+            assertTrue(copyIconBounds.width >= 9f, "Expected Copy icon positive width, got ${copyIconBounds.width}")
+            assertTrue(
+                copyIconBounds.right <= stackBounds.right,
+                "Expected Copy icon (${copyIconBounds.right}) inside card right edge (${stackBounds.right})",
+            )
+
+            // (a) Primary action button foreground/background luminance contrast across all tones in light & dark themes + M3 palettes
+            for (isDark in listOf(false, true)) {
+                darkTheme = isDark
+                waitForIdle()
+                for ((buttonLabel, bgColor) in buttonBgByLabel) {
+                    val layouts = mutableListOf<TextLayoutResult>()
+                    onNodeWithText(buttonLabel, useUnmergedTree = true)
+                        .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                    val layoutResult = layouts.single()
+                    val textColor = layoutResult.layoutInput.style.color
+                    val ratio = wcagContrastRatio(bgColor, textColor)
+                    assertTrue(
+                        ratio >= 4.5f,
+                        "Expected WCAG AA contrast >= 4.5 for $buttonLabel (dark=$isDark), got $ratio (bg=$bgColor, fg=$textColor)",
+                    )
+                }
+            }
+            // Verify Material 3 light & dark primary/error pairs also maintain >= 4.5 contrast
+            val m3Pairs =
+                listOf(
+                    Color(0xFF6750A4) to Color.White, // M3 light primary / onPrimary
+                    Color(0xFFD0BCFF) to Color(0xFF381E72), // M3 dark primary / onPrimary
+                    Color(0xFFF2B8B5) to Color(0xFF601410), // M3 dark error / onError
+                )
+            for ((bg, onBg) in m3Pairs) {
+                val fg = contrastingForegroundFor(bg, onBg)
+                assertTrue(wcagContrastRatio(bg, fg) >= 4.5f)
             }
         }
 }

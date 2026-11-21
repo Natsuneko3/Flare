@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -425,37 +426,42 @@ private fun PluginWidgetCardHeader(card: UiPluginWidgetCard) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val iconPath = card.pluginIconPath?.takeIf { it.isNotBlank() }
-        if (iconPath != null) {
-            val iconModel =
-                remember(iconPath) {
-                    if ("://" in iconPath) iconPath else iconPath.toPath()
-                }
-            AsyncImage(
-                model = iconModel,
-                contentDescription = card.pluginName,
-                contentScale = ContentScale.Fit,
-                modifier =
-                    Modifier
-                        .size(16.dp)
-                        .clip(WidgetIconShape),
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val iconPath = card.pluginIconPath?.takeIf { it.isNotBlank() }
+            if (iconPath != null) {
+                val iconModel =
+                    remember(iconPath) {
+                        if ("://" in iconPath) iconPath else iconPath.toPath()
+                    }
+                AsyncImage(
+                    model = iconModel,
+                    contentDescription = card.pluginName,
+                    contentScale = ContentScale.Fit,
+                    modifier =
+                        Modifier
+                            .size(16.dp)
+                            .clip(WidgetIconShape),
+                )
+            }
+            PlatformText(
+                text = card.title.ifBlank { card.pluginName },
+                style = PlatformTheme.typography.postBody,
+                fontWeight = FontWeight.SemiBold,
+                color = StatusComponentDefaults.contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
+            card.badge?.let { badge ->
+                WidgetBadgePill(badge = badge)
+            }
         }
-        PlatformText(
-            text = card.title.ifBlank { card.pluginName },
-            style = PlatformTheme.typography.postBody,
-            fontWeight = FontWeight.SemiBold,
-            color = StatusComponentDefaults.contentColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        card.badge?.let { badge ->
-            WidgetBadgePill(badge = badge)
-        }
-        Spacer(modifier = Modifier.weight(1f))
         if (card.refreshable || card.isRefreshing) {
             if (card.isRefreshing) {
                 Box(
@@ -504,12 +510,14 @@ private fun PluginWidgetNodeContent(
     node: UiWidgetNode,
     onAction: (UiWidgetAction) -> Unit,
     modifier: Modifier = Modifier,
+    fillWidth: Boolean = true,
 ) {
     when (node) {
         is UiWidgetNode.Text -> {
             WidgetTextNode(
                 node = node,
                 onCopy = { text -> onAction(UiWidgetAction.Copy(text)) },
+                fillWidth = fillWidth,
                 modifier = modifier,
             )
         }
@@ -544,14 +552,15 @@ private fun PluginWidgetNodeContent(
                     }
                 }
             Row(
-                modifier = modifier.fillMaxWidth(),
+                modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it },
                 horizontalArrangement = arrangement,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 node.children.fastForEach { child ->
                     val weight = child.weight
+                    val hasValidWeight = weight != null && weight > 0f && weight.isFinite()
                     val childModifier =
-                        if (weight != null && weight > 0f && weight.isFinite()) {
+                        if (hasValidWeight) {
                             Modifier.weight(weight)
                         } else {
                             Modifier
@@ -560,6 +569,7 @@ private fun PluginWidgetNodeContent(
                         node = child,
                         onAction = onAction,
                         modifier = childModifier,
+                        fillWidth = hasValidWeight,
                     )
                 }
             }
@@ -573,7 +583,7 @@ private fun PluginWidgetNodeContent(
                     UiWidgetAlign.End -> Alignment.End
                 }
             Column(
-                modifier = modifier.fillMaxWidth(),
+                modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it },
                 verticalArrangement = Arrangement.spacedBy(node.gap.toDp()),
                 horizontalAlignment = alignment,
             ) {
@@ -581,6 +591,7 @@ private fun PluginWidgetNodeContent(
                     PluginWidgetNodeContent(
                         node = child,
                         onAction = onAction,
+                        fillWidth = fillWidth,
                     )
                 }
             }
@@ -591,28 +602,41 @@ private fun PluginWidgetNodeContent(
         }
 
         is UiWidgetNode.Matchup -> {
-            WidgetMatchupNode(node = node, modifier = modifier)
+            WidgetMatchupNode(
+                node = node,
+                fillWidth = fillWidth,
+                modifier = modifier,
+            )
         }
 
         is UiWidgetNode.Sparkline -> {
-            WidgetSparklineNode(node = node, modifier = modifier)
+            WidgetSparklineNode(
+                node = node,
+                fillWidth = fillWidth,
+                modifier = modifier,
+            )
         }
 
         is UiWidgetNode.SegmentedBar -> {
-            WidgetSegmentedBarNode(node = node, modifier = modifier)
+            WidgetSegmentedBarNode(
+                node = node,
+                fillWidth = fillWidth,
+                modifier = modifier,
+            )
         }
 
         is UiWidgetNode.KeyValue -> {
             WidgetKeyValueNode(
                 node = node,
                 onAction = onAction,
+                fillWidth = fillWidth,
                 modifier = modifier,
             )
         }
 
         is UiWidgetNode.BadgeRow -> {
             FlowRow(
-                modifier = modifier.fillMaxWidth(),
+                modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it },
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -623,19 +647,34 @@ private fun PluginWidgetNodeContent(
         }
 
         is UiWidgetNode.Image -> {
-            WidgetImageNode(node = node, modifier = modifier)
+            WidgetImageNode(
+                node = node,
+                fillWidth = fillWidth,
+                modifier = modifier,
+            )
         }
 
         is UiWidgetNode.Collapsible -> {
             WidgetCollapsibleNode(
                 node = node,
                 onAction = onAction,
+                fillWidth = fillWidth,
                 modifier = modifier,
             )
         }
 
         UiWidgetNode.Divider -> {
-            HorizontalDivider(modifier = modifier.fillMaxWidth())
+            if (fillWidth) {
+                HorizontalDivider(modifier = modifier.fillMaxWidth())
+            } else {
+                Box(
+                    modifier =
+                        modifier
+                            .width(1.dp)
+                            .height(16.dp)
+                            .background(FlareDividerDefaults.color),
+                )
+            }
         }
     }
 }
@@ -644,6 +683,7 @@ private fun PluginWidgetNodeContent(
 private fun WidgetTextNode(
     node: UiWidgetNode.Text,
     onCopy: (String) -> Unit,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val maxLines = node.maxLines?.coerceAtLeast(1) ?: Int.MAX_VALUE
@@ -666,7 +706,7 @@ private fun WidgetTextNode(
         Row(
             modifier =
                 modifier
-                    .fillMaxWidth()
+                    .let { if (fillWidth) it.fillMaxWidth() else it }
                     .clip(WidgetCodeShape)
                     .background(StatusComponentDefaults.contentColor.copy(alpha = 0.06f), WidgetCodeShape)
                     .border(1.dp, FlareDividerDefaults.color, WidgetCodeShape)
@@ -682,7 +722,7 @@ private fun WidgetTextNode(
                 color = color,
                 maxLines = maxLines,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                modifier = if (fillWidth) Modifier.weight(1f) else Modifier.weight(1f, fill = false),
             )
             if (node.copyable) {
                 FAIcon(
@@ -815,17 +855,18 @@ private fun WidgetStatNode(
 @Composable
 private fun WidgetMatchupNode(
     node: UiWidgetNode.Matchup,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         MatchupSideContent(
             side = node.left,
             alignEnd = false,
-            modifier = Modifier.weight(1f),
+            modifier = if (fillWidth) Modifier.weight(1f) else Modifier,
         )
         val centerText = node.status?.takeIf { it.isNotBlank() } ?: "vs"
         val centerColor =
@@ -845,7 +886,7 @@ private fun WidgetMatchupNode(
         MatchupSideContent(
             side = node.right,
             alignEnd = true,
-            modifier = Modifier.weight(1f),
+            modifier = if (fillWidth) Modifier.weight(1f) else Modifier,
         )
     }
 }
@@ -942,6 +983,7 @@ private fun MatchupSideContent(
 @Composable
 private fun WidgetSparklineNode(
     node: UiWidgetNode.Sparkline,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val normalized = node.normalizedPoints
@@ -958,7 +1000,7 @@ private fun WidgetSparklineNode(
         }
 
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it.width(88.dp) },
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Canvas(
@@ -1056,6 +1098,7 @@ private fun WidgetSparklineNode(
 @Composable
 private fun WidgetSegmentedBarNode(
     node: UiWidgetNode.SegmentedBar,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val fractions = node.normalizedFractions
@@ -1069,7 +1112,7 @@ private fun WidgetSegmentedBarNode(
         }
 
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it.width(140.dp) },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Canvas(
@@ -1141,10 +1184,11 @@ private fun WidgetSegmentedBarNode(
 private fun WidgetKeyValueNode(
     node: UiWidgetNode.KeyValue,
     onAction: (UiWidgetAction) -> Unit,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it },
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         node.items.fastForEach { item ->
@@ -1170,9 +1214,9 @@ private fun WidgetKeyValueNode(
             Row(
                 modifier =
                     Modifier
-                        .fillMaxWidth()
+                        .let { if (fillWidth) it.fillMaxWidth() else it }
                         .then(rowClickModifier),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = if (fillWidth) Arrangement.SpaceBetween else Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PlatformText(
@@ -1181,11 +1225,15 @@ private fun WidgetKeyValueNode(
                     color = StatusComponentDefaults.secondaryColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp),
+                    modifier =
+                        Modifier
+                            .widthIn(max = if (fillWidth) 140.dp else 110.dp)
+                            .padding(end = if (fillWidth) 8.dp else 0.dp),
                 )
                 Row(
+                    modifier = if (fillWidth) Modifier.weight(1f) else Modifier.widthIn(max = 180.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
                 ) {
                     PlatformText(
                         text = item.value,
@@ -1200,12 +1248,16 @@ private fun WidgetKeyValueNode(
                             },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (item.action is UiWidgetAction.Copy) {
                         FAIcon(
                             imageVector = FontAwesomeIcons.Solid.Copy,
                             contentDescription = null,
-                            modifier = Modifier.size(10.dp),
+                            modifier =
+                                Modifier
+                                    .size(10.dp)
+                                    .testTag("plugin_widget_kv_copy_icon"),
                             tint = StatusComponentDefaults.secondaryColor,
                         )
                     }
@@ -1218,6 +1270,7 @@ private fun WidgetKeyValueNode(
 @Composable
 private fun WidgetImageNode(
     node: UiWidgetNode.Image,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val shape =
@@ -1227,16 +1280,23 @@ private fun WidgetImageNode(
         }
     val defaultRatio = if (node.cornerStyle == UiWidgetCornerStyle.Circle) 1f else 16f / 9f
     val safeRatio = node.aspectRatio?.takeIf { it.isFinite() && it > 0f } ?: defaultRatio
-    NetworkImage(
-        model = remember(node.url) { node.url.toUiImage(proxy = ProxyRef.Global) },
-        contentDescription = node.alt,
-        contentScale = ContentScale.Crop,
-        modifier =
+    val sizeModifier =
+        if (fillWidth) {
             modifier
                 .fillMaxWidth()
                 .heightIn(max = 200.dp)
                 .aspectRatio(safeRatio)
-                .clip(shape),
+        } else {
+            val compactHeight = if (node.cornerStyle == UiWidgetCornerStyle.Circle) 40.dp else 56.dp
+            modifier
+                .height(compactHeight)
+                .aspectRatio(safeRatio)
+        }
+    NetworkImage(
+        model = remember(node.url) { node.url.toUiImage(proxy = ProxyRef.Global) },
+        contentDescription = node.alt,
+        contentScale = ContentScale.Crop,
+        modifier = sizeModifier.clip(shape),
     )
 }
 
@@ -1244,16 +1304,17 @@ private fun WidgetImageNode(
 private fun WidgetCollapsibleNode(
     node: UiWidgetNode.Collapsible,
     onAction: (UiWidgetAction) -> Unit,
+    fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(
             modifier =
                 Modifier
-                    .fillMaxWidth()
+                    .let { if (fillWidth) it.fillMaxWidth() else it }
                     .clip(RoundedCornerShape(6.dp))
                     .pointerHoverIcon(PointerIcon.Hand)
                     .clickable(role = Role.Button) {
@@ -1278,14 +1339,14 @@ private fun WidgetCollapsibleNode(
                 color = StatusComponentDefaults.contentColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                modifier = if (fillWidth) Modifier.weight(1f) else Modifier,
             )
         }
         if (node.expanded) {
             Column(
                 modifier =
                     Modifier
-                        .fillMaxWidth()
+                        .let { if (fillWidth) it.fillMaxWidth() else it }
                         .padding(start = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -1293,6 +1354,7 @@ private fun WidgetCollapsibleNode(
                     PluginWidgetNodeContent(
                         node = child,
                         onAction = onAction,
+                        fillWidth = fillWidth,
                     )
                 }
             }
@@ -1351,11 +1413,13 @@ private fun WidgetActionButton(
         }
     val contentColor =
         if (isPrimary) {
-            if (button.tone == UiWidgetTone.Neutral || button.tone == UiWidgetTone.Accent) {
-                PlatformTheme.colorScheme.onPrimaryContainer.takeIf { it != Color.Unspecified } ?: Color.White
-            } else {
-                Color.White
-            }
+            val preferredOnColor =
+                when (button.tone) {
+                    UiWidgetTone.Neutral, UiWidgetTone.Accent -> PlatformTheme.colorScheme.onPrimary
+                    UiWidgetTone.Negative -> PlatformTheme.colorScheme.onError
+                    UiWidgetTone.Positive, UiWidgetTone.Warning -> null
+                }
+            contrastingForegroundFor(backgroundColor, preferredOnColor)
         } else {
             toneColor
         }
@@ -1395,7 +1459,7 @@ private fun WidgetActionButton(
 }
 
 @Composable
-private fun widgetToneColor(tone: UiWidgetTone): Color =
+internal fun widgetToneColor(tone: UiWidgetTone): Color =
     when (tone) {
         UiWidgetTone.Neutral -> StatusComponentDefaults.contentColor
         UiWidgetTone.Accent -> PlatformTheme.colorScheme.primary
@@ -1403,6 +1467,33 @@ private fun widgetToneColor(tone: UiWidgetTone): Color =
         UiWidgetTone.Negative -> PlatformTheme.colorScheme.error
         UiWidgetTone.Warning -> if (isLightTheme()) Color(0xFF9A6700) else Color(0xFFD29922)
     }
+
+internal fun wcagContrastRatio(
+    first: Color,
+    second: Color,
+): Float {
+    val l1 = first.luminance()
+    val l2 = second.luminance()
+    val lighter = maxOf(l1, l2)
+    val darker = minOf(l1, l2)
+    return (lighter + 0.05f) / (darker + 0.05f)
+}
+
+internal fun contrastingForegroundFor(
+    backgroundColor: Color,
+    preferred: Color? = null,
+): Color {
+    if (preferred != null && preferred != Color.Unspecified && wcagContrastRatio(backgroundColor, preferred) >= 4.5f) {
+        return preferred
+    }
+    val darkCandidate = Color(0xFF111111)
+    val lightCandidate = Color.White
+    return if (wcagContrastRatio(backgroundColor, darkCandidate) >= wcagContrastRatio(backgroundColor, lightCandidate)) {
+        darkCandidate
+    } else {
+        lightCandidate
+    }
+}
 
 private fun UiWidgetGap.toDp(): Dp =
     when (this) {
