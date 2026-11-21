@@ -4,10 +4,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import dev.dimension.flare.common.collectAsState
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
+import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.accountKeyOrNull
 import dev.dimension.flare.data.datasource.microblog.accountProfileFlow
 import dev.dimension.flare.data.datasource.microblog.capabilities
@@ -29,7 +31,6 @@ import dev.dimension.flare.ui.model.UiRelation
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
-import dev.dimension.flare.ui.model.collectAsUiState
 import dev.dimension.flare.ui.model.flatMap
 import dev.dimension.flare.ui.model.flatMapLatestUiState
 import dev.dimension.flare.ui.model.flattenUiState
@@ -48,13 +49,12 @@ import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
@@ -97,37 +97,6 @@ public class ProfilePresenter(
                         UiState.Error(UnsupportedOperationException("Current service does not support relations")),
                     )
             relation.relationHandler.relation(actualUserKey).toUi()
-        }
-    }
-
-    private val isMeFlow by lazy {
-        serviceFlow.map { service ->
-            service.accountKeyOrNull?.let { it == userKey || userKey == null } ?: false
-        }
-    }
-
-    private val canSendMessageFlow by lazy {
-        serviceFlow.flatMapLatest { service ->
-            val directMessage = service.capabilities.directMessage
-            if (directMessage != null && userKey != null) {
-                flow<Boolean> {
-                    runCatching {
-                        directMessage.canSendDirectMessage(userKey)
-                    }.getOrElse {
-                        false
-                    }.let {
-                        emit(it)
-                    }
-                }
-            } else {
-                flow<Boolean> { emit(false) }
-            }
-        }
-    }
-
-    private val myAccountKeyFlow by lazy {
-        serviceFlow.map { service ->
-            service.accountKeyOrNull?.let { UiState.Success(it) } ?: UiState.Error<MicroBlogKey>(NoActiveAccountException)
         }
     }
 
@@ -208,61 +177,9 @@ public class ProfilePresenter(
         }
     }
 
-    private val isListDataSourceFlow by lazy {
-        serviceFlow.map { service ->
-            service.capabilities.list != null
-        }
-    }
-
-    private val supportedRelationTypesFlow by lazy {
-        serviceFlow.map { service ->
-            service.capabilities.relation
-                ?.supportedRelationTypes
-                .orEmpty()
-        }
-    }
-
-    private val profileMenusFlow by lazy {
-        val menuStateFlow =
-            combine(
-                isMeFlow,
-                canSendMessageFlow,
-                relationStateFlow.map { it.takeSuccessOr(UiRelation()) },
-                supportedRelationTypesFlow,
-            ) { isMe, canSendMessage, relationState, supportedRelationTypes ->
-                Pair(
-                    Pair(isMe, canSendMessage),
-                    Pair(relationState, supportedRelationTypes),
-                )
-            }
-        val userContextFlow =
-            combine(
-                isListDataSourceFlow,
-                userStateFlow.map { it.takeSuccess() },
-                myAccountKeyFlow.map { it.takeSuccess() },
-            ) { isListDataSource, user, myAccountKey ->
-                Pair(
-                    isListDataSource,
-                    Pair(user, myAccountKey),
-                )
-            }
-        combine(menuStateFlow, userContextFlow) { menuState, userContext ->
-            buildProfileMenus(
-                isMe = menuState.first.first,
-                canSendMessage = menuState.first.second,
-                relationState = menuState.second.first,
-                supportedRelationTypes = menuState.second.second,
-                isListDataSource = userContext.first,
-                user = userContext.second.first,
-                myAccountKey = userContext.second.second,
-                userKey = userKey,
-            )
-        }
-    }
-
     @Composable
     override fun body(): ProfileState {
-        val service by serviceFlow.collectAsUiState()
+        val service = accountServiceProvider(accountType = accountType, repository = accountRepository)
         val userState by userStateFlow.flattenUiState()
         service.onSuccess {
             val userKey = userKey ?: it.accountKeyOrNull
@@ -271,9 +188,80 @@ public class ProfilePresenter(
             }
         }
         val relationState by relationStateFlow.flattenUiState()
-        val isMe by isMeFlow.collectAsUiState()
-        val myAccountKey by myAccountKeyFlow.flattenUiState()
-        val profileMenus by profileMenusFlow.collectAsState(emptyList<ActionMenu>().toImmutableList())
+        val currentService = service.takeSuccess()
+        val isMeBool = currentService?.accountKeyOrNull?.let { it == userKey || userKey == null } ?: false
+        val isMe =
+            remember(service, userKey) {
+                service.map { it.accountKeyOrNull?.let { key -> key == userKey || userKey == null } ?: false }
+            }
+        val myAccountKey =
+            remember(service) {
+                service.flatMap {
+                    it.accountKeyOrNull?.let { key -> UiState.Success(key) }
+                        ?: UiState.Error(NoActiveAccountException)
+                }
+            }
+        val directMessage = if (!isMeBool && userKey != null) currentService?.capabilities?.directMessage else null
+        val initialCanSend =
+            remember(directMessage, userKey) {
+                if (directMessage != null && userKey != null) {
+                    directMessage.cachedCanSendDirectMessage(userKey) ?: false
+                } else {
+                    false
+                }
+            }
+        val canSendMessage by produceState(initialValue = initialCanSend, key1 = directMessage, key2 = userKey) {
+            if (directMessage == null || userKey == null) {
+                value = false
+            } else {
+                directMessage.cachedCanSendDirectMessage(userKey)?.let { value = it }
+                try {
+                    value = directMessage.canSendDirectMessage(userKey)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    value = directMessage.cachedCanSendDirectMessage(userKey) ?: false
+                }
+            }
+        }
+        val shouldShowMenus =
+            !isMeBool &&
+                userKey != null &&
+                currentService != null &&
+                currentService !== UnavailableMicroblogDataSource &&
+                userState !is UiState.Error
+        val relation = relationState.takeSuccessOr(UiRelation())
+        val isListDataSource = currentService?.capabilities?.list != null
+        val supportedRelationTypes =
+            currentService
+                ?.capabilities
+                ?.relation
+                ?.supportedRelationTypes
+                .orEmpty()
+        val resolvedAccountKey = myAccountKey.takeSuccess()
+        val profileMenus =
+            remember(
+                shouldShowMenus,
+                canSendMessage,
+                relation,
+                supportedRelationTypes,
+                isListDataSource,
+                resolvedAccountKey,
+                userKey,
+            ) {
+                if (!shouldShowMenus) {
+                    persistentListOf()
+                } else {
+                    buildProfileMenus(
+                        canSendMessage = canSendMessage,
+                        relationState = relation,
+                        supportedRelationTypes = supportedRelationTypes,
+                        isListDataSource = isListDataSource,
+                        myAccountKey = resolvedAccountKey,
+                        userKey = userKey,
+                    )
+                }
+            }
         val tabs by tabsFlow.collectAsState(UiState.Loading())
         val followButtonState =
             zipState(userState, relationState) { user, relation ->
@@ -331,151 +319,141 @@ private data class ProfileTabReuseKey(
 )
 
 private fun buildProfileMenus(
-    isMe: Boolean,
     canSendMessage: Boolean,
     relationState: UiRelation,
     supportedRelationTypes: Set<RelationActionType>,
     isListDataSource: Boolean,
-    user: UiProfile?,
     myAccountKey: MicroBlogKey?,
-    userKey: MicroBlogKey?,
+    userKey: MicroBlogKey,
 ): ImmutableList<ActionMenu> =
-    if (isMe || user == null) {
-        emptyList<ActionMenu>()
-    } else {
-        listOfNotNull(
-            if (myAccountKey != null && userKey != null && isListDataSource) {
-                ActionMenu.Item(
-                    icon = UiIcon.List,
-                    text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.EditUserList),
-                    clickEvent =
-                        ClickEvent.Deeplink(
-                            DeeplinkRoute.EditUserList(
-                                accountKey = myAccountKey,
-                                userKey = userKey,
-                            ),
+    listOfNotNull(
+        if (myAccountKey != null && isListDataSource) {
+            ActionMenu.Item(
+                icon = UiIcon.List,
+                text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.EditUserList),
+                clickEvent =
+                    ClickEvent.Deeplink(
+                        DeeplinkRoute.EditUserList(
+                            accountKey = myAccountKey,
+                            userKey = userKey,
                         ),
-                )
-            } else {
-                null
-            },
-            if (canSendMessage && myAccountKey != null && userKey != null) {
-                ActionMenu.Item(
-                    icon = UiIcon.ChatMessage,
-                    text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.SendMessage),
-                    clickEvent =
-                        ClickEvent.Deeplink(
-                            DeeplinkRoute.DirectMessage(
-                                accountKey = myAccountKey,
-                                userKey = userKey,
-                            ),
+                    ),
+            )
+        } else {
+            null
+        },
+        if (canSendMessage && myAccountKey != null) {
+            ActionMenu.Item(
+                icon = UiIcon.ChatMessage,
+                text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.SendMessage),
+                clickEvent =
+                    ClickEvent.Deeplink(
+                        DeeplinkRoute.DirectMessage(
+                            accountKey = myAccountKey,
+                            userKey = userKey,
                         ),
-                )
-            } else {
-                null
-            },
-        ).let { items ->
-            items +
-                listOfNotNull(
-                    if (items.isEmpty()) {
-                        null
-                    } else {
-                        ActionMenu.Divider
-                    },
-                ) +
-                listOfNotNull(
-                    if (userKey != null && RelationActionType.Block in supportedRelationTypes) {
-                        ActionMenu.Item(
-                            icon = if (relationState.blocking) UiIcon.UnBlock else UiIcon.Block,
-                            text =
-                                ActionMenu.Item.Text.Localized(
-                                    if (relationState.blocking) {
-                                        ActionMenu.Item.Text.Localized.Type.UnBlock
-                                    } else {
-                                        ActionMenu.Item.Text.Localized.Type.Block
-                                    },
-                                ),
-                            clickEvent =
-                                ClickEvent.Deeplink(
-                                    if (relationState.blocking) {
-                                        DeeplinkRoute.UnblockUser(
-                                            accountKey = myAccountKey,
-                                            userKey = userKey,
-                                        )
-                                    } else {
-                                        DeeplinkRoute.BlockUser(
-                                            accountKey = myAccountKey,
-                                            userKey = userKey,
-                                        )
-                                    },
-                                ),
-                        )
-                    } else {
-                        null
-                    },
-                    if (userKey != null && RelationActionType.Mute in supportedRelationTypes) {
-                        ActionMenu.Item(
-                            icon = if (relationState.muted) UiIcon.UnMute else UiIcon.Mute,
-                            text =
-                                ActionMenu.Item.Text.Localized(
-                                    if (relationState.muted) {
-                                        ActionMenu.Item.Text.Localized.Type.UnMute
-                                    } else {
-                                        ActionMenu.Item.Text.Localized.Type.Mute
-                                    },
-                                ),
-                            clickEvent =
-                                ClickEvent.Deeplink(
-                                    if (relationState.muted) {
-                                        DeeplinkRoute.UnmuteUser(
-                                            accountKey = myAccountKey,
-                                            userKey = userKey,
-                                        )
-                                    } else {
-                                        DeeplinkRoute.MuteUser(
-                                            accountKey = myAccountKey,
-                                            userKey = userKey,
-                                        )
-                                    },
-                                ),
-                        )
-                    } else {
-                        null
-                    },
+                    ),
+            )
+        } else {
+            null
+        },
+    ).let { items ->
+        items +
+            listOfNotNull(
+                if (items.isEmpty()) {
+                    null
+                } else {
+                    ActionMenu.Divider
+                },
+            ) +
+            listOfNotNull(
+                if (RelationActionType.Block in supportedRelationTypes) {
                     ActionMenu.Item(
+                        icon = if (relationState.blocking) UiIcon.UnBlock else UiIcon.Block,
                         text =
                             ActionMenu.Item.Text.Localized(
-                                ActionMenu.Item.Text.Localized.Type.Report,
+                                if (relationState.blocking) {
+                                    ActionMenu.Item.Text.Localized.Type.UnBlock
+                                } else {
+                                    ActionMenu.Item.Text.Localized.Type.Block
+                                },
                             ),
-                        icon = UiIcon.Report,
                         clickEvent =
-                            if (userKey != null) {
-                                ClickEvent.Deeplink(
-                                    DeeplinkRoute.ReportUser(
+                            ClickEvent.Deeplink(
+                                if (relationState.blocking) {
+                                    DeeplinkRoute.UnblockUser(
                                         accountKey = myAccountKey,
                                         userKey = userKey,
-                                    ),
-                                )
-                            } else {
-                                ClickEvent.Noop
-                            },
-                        color = ActionMenu.Item.Color.Red,
-                    ),
-                )
-        }.let { actions ->
-            if (actions.isEmpty()) {
-                actions
-            } else {
-                listOf(
-                    ActionMenu.Group(
-                        displayItem =
-                            ActionMenu.Item(
-                                icon = UiIcon.MoreVerticel,
+                                    )
+                                } else {
+                                    DeeplinkRoute.BlockUser(
+                                        accountKey = myAccountKey,
+                                        userKey = userKey,
+                                    )
+                                },
                             ),
-                        actions = actions.toImmutableList(),
-                    ),
-                )
-            }
+                    )
+                } else {
+                    null
+                },
+                if (RelationActionType.Mute in supportedRelationTypes) {
+                    ActionMenu.Item(
+                        icon = if (relationState.muted) UiIcon.UnMute else UiIcon.Mute,
+                        text =
+                            ActionMenu.Item.Text.Localized(
+                                if (relationState.muted) {
+                                    ActionMenu.Item.Text.Localized.Type.UnMute
+                                } else {
+                                    ActionMenu.Item.Text.Localized.Type.Mute
+                                },
+                            ),
+                        clickEvent =
+                            ClickEvent.Deeplink(
+                                if (relationState.muted) {
+                                    DeeplinkRoute.UnmuteUser(
+                                        accountKey = myAccountKey,
+                                        userKey = userKey,
+                                    )
+                                } else {
+                                    DeeplinkRoute.MuteUser(
+                                        accountKey = myAccountKey,
+                                        userKey = userKey,
+                                    )
+                                },
+                            ),
+                    )
+                } else {
+                    null
+                },
+                ActionMenu.Item(
+                    text =
+                        ActionMenu.Item.Text.Localized(
+                            ActionMenu.Item.Text.Localized.Type.Report,
+                        ),
+                    icon = UiIcon.Report,
+                    clickEvent =
+                        ClickEvent.Deeplink(
+                            DeeplinkRoute.ReportUser(
+                                accountKey = myAccountKey,
+                                userKey = userKey,
+                            ),
+                        ),
+                    color = ActionMenu.Item.Color.Red,
+                ),
+            )
+    }.let { actions ->
+        if (actions.isEmpty()) {
+            actions
+        } else {
+            listOf(
+                ActionMenu.Group(
+                    displayItem =
+                        ActionMenu.Item(
+                            icon = UiIcon.MoreVerticel,
+                        ),
+                    actions = actions.toImmutableList(),
+                ),
+            )
         }
     }.toImmutableList()
 
