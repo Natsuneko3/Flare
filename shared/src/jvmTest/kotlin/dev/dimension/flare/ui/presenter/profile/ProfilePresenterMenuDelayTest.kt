@@ -286,6 +286,13 @@ class ProfilePresenterMenuDelayTest {
                                             )
                                     },
                                 ),
+                            relation =
+                                object : RelationDataSource {
+                                    override val supportedRelationTypes: Set<RelationActionType> =
+                                        RelationActionType.entries.toSet()
+                                    override val relationHandler: RelationHandler
+                                        get() = error("Guest relation handler is unused when unauthenticated")
+                                },
                         )
                 }
             val guestType = AccountType.GuestHost("mastodon.example")

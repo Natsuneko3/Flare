@@ -2,8 +2,10 @@ package dev.dimension.flare.data.repository
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import dev.dimension.flare.common.Locale
@@ -714,9 +716,17 @@ internal fun accountServiceProvider(
     accountType: AccountType,
     repository: AccountRepository,
 ): UiState<MicroblogDataSource> {
-    val initialState =
+    val peeked =
         remember(accountType, repository) {
-            repository.peekDataSource(accountType)?.let { UiState.Success(it) } ?: UiState.Loading()
+            repository.peekDataSource(accountType)
+        }
+    if (accountType !is AccountType.Specific && peeked != null) {
+        return UiState.Success(peeked)
+    }
+    val initialState = peeked?.let { UiState.Success(it) } ?: UiState.Loading()
+    val state =
+        remember(accountType, repository) {
+            mutableStateOf(initialState)
         }
     val flow =
         remember(accountType, repository) {
@@ -725,14 +735,15 @@ internal fun accountServiceProvider(
                 repository = repository,
             )
         }
-    return produceState(initialState, flow) {
+    LaunchedEffect(state, flow) {
         flow
             .catch {
-                value = UiState.Error(it)
+                state.value = UiState.Error(it)
             }.collect {
-                value = UiState.Success(it)
+                state.value = UiState.Success(it)
             }
-    }.value
+    }
+    return state.value
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

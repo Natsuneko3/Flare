@@ -367,7 +367,7 @@ private fun buildProfileMenus(
                 },
             ) +
             listOfNotNull(
-                if (RelationActionType.Block in supportedRelationTypes) {
+                if (myAccountKey != null && RelationActionType.Block in supportedRelationTypes) {
                     ActionMenu.Item(
                         icon = if (relationState.blocking) UiIcon.UnBlock else UiIcon.Block,
                         text =
@@ -396,7 +396,7 @@ private fun buildProfileMenus(
                 } else {
                     null
                 },
-                if (RelationActionType.Mute in supportedRelationTypes) {
+                if (myAccountKey != null && RelationActionType.Mute in supportedRelationTypes) {
                     ActionMenu.Item(
                         icon = if (relationState.muted) UiIcon.UnMute else UiIcon.Mute,
                         text =

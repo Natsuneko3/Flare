@@ -1,5 +1,7 @@
 package dev.dimension.flare.data.repository
 
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.room3.Room
 import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
@@ -17,8 +19,10 @@ import dev.dimension.flare.memoryDatabaseBuilder
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformDataSourceContext
+import dev.dimension.flare.model.PlatformRegistry
+import dev.dimension.flare.model.PlatformRuntimeData
 import dev.dimension.flare.model.PlatformSpec
-import dev.dimension.flare.testPlatformRegistry
+import dev.dimension.flare.testPlatformRuntimeData
 import dev.dimension.flare.ui.model.UiAccount
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.takeSuccess
@@ -28,16 +32,22 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -86,6 +96,44 @@ class AccountServiceFastPathTest {
             assertNull(accountRepository.peekDataSource(accountType))
         }
 
+    @Test
+    fun accountServiceProviderResetsOnAccountSwitchAndReusesSingleGuestInstance() =
+        withFixture {
+            attachPlatform()
+            val aliceSource = accountRepository.getOrCreateDataSource(accountRepository.find(accountKey)!!)
+            val missingBobType = AccountType.Specific(MicroBlogKey("bob", accountKey.host))
+            val selectedAccountType = MutableStateFlow<AccountType>(accountType)
+            val observed = MutableStateFlow<UiState<MicroblogDataSource>?>(null)
+            val job =
+                scope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) {
+                        val currentType by selectedAccountType.collectAsState()
+                        accountServiceProvider(currentType, accountRepository)
+                    }.collect { observed.value = it }
+                }
+
+            val initial = observed.filterNotNull().first { it is UiState.Success }
+            assertSame(aliceSource, initial.takeSuccess())
+
+            selectedAccountType.value = missingBobType
+            val afterSwitch = observed.filterNotNull().first { it.takeSuccess() !== aliceSource }
+            assertNotSame(aliceSource, afterSwitch.takeSuccess())
+            assertTrue(afterSwitch is UiState.Loading)
+            job.cancelAndJoin()
+
+            guestCreations.set(0)
+            val guestStates = MutableStateFlow<UiState<MicroblogDataSource>?>(null)
+            val guestJob =
+                scope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) {
+                        accountServiceProvider(AccountType.GuestHost("guest.example"), accountRepository)
+                    }.collect { guestStates.value = it }
+                }
+            guestStates.filterNotNull().first { it is UiState.Success }
+            assertEquals(1, guestCreations.get())
+            guestJob.cancelAndJoin()
+        }
+
     private fun withFixture(block: suspend Fixture.() -> Unit) =
         runBlocking {
             val main = Executors.newSingleThreadExecutor { Thread(it, "account-fast-path") }.asCoroutineDispatcher()
@@ -113,7 +161,29 @@ class AccountServiceFastPathTest {
         val app = Room.memoryDatabaseBuilder<AppDatabase>().setDriver(createDatabaseDriver()).build()
         val cache = Room.memoryDatabaseBuilder<CacheDatabase>().setDriver(createDatabaseDriver()).build()
         val appData = AppDataStore(storage)
-        val registry = testPlatformRegistry()
+        val guestCreations = AtomicInteger(0)
+        val registry =
+            PlatformRegistry(
+                PlatformRuntimeData(
+                    platformSpecs =
+                        testPlatformRuntimeData().platformSpecs.map { spec ->
+                            if (spec.isDefaultGuest) {
+                                object : PlatformSpec by spec {
+                                    override fun guestDataSource(
+                                        host: String,
+                                        locale: String,
+                                    ): MicroblogDataSource {
+                                        guestCreations.incrementAndGet()
+                                        return object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+                                    }
+                                }
+                            } else {
+                                spec
+                            }
+                        },
+                    extraTimelineSpecs = emptyList(),
+                ),
+            )
         val drafts = DraftRepository(app, DraftMediaStore(storage))
         var lastContext: PlatformDataSourceContext? = null
         val accountRepository =
