@@ -232,6 +232,7 @@ internal class PluginTimelineProcessorServiceV1(
 
     init {
         var previousFingerprints = emptyMap<String, ActivePluginFingerprint>()
+        var initialized = false
         combine(
             subsystem.running,
             subsystem.storage.changes,
@@ -249,7 +250,16 @@ internal class PluginTimelineProcessorServiceV1(
                             iconPath = plugin.iconPath,
                         )
                 }
-            val removedIds = previousFingerprints.keys - nextFingerprints.keys
+            val removedIds =
+                if (!initialized) {
+                    subsystem.running.value.plugins.values
+                        .filter { it.installed.manifest.timelineProcessor != null && it.installed.pluginId !in nextFingerprints }
+                        .map { it.installed.pluginId }
+                        .toSet()
+                } else {
+                    previousFingerprints.keys - nextFingerprints.keys
+                }
+            initialized = true
             removedIds.forEach(::clearPlugin)
             if (nextFingerprints != previousFingerprints) {
                 previousFingerprints = nextFingerprints
@@ -285,6 +295,23 @@ internal class PluginTimelineProcessorServiceV1(
 
     override fun submitPosts(posts: List<UiTimelineV2.Post>) {
         if (posts.isEmpty()) return
+        if (!grants.isHydrated) {
+            val hasTimelineProcessorCandidate =
+                subsystem.running.value.plugins.values
+                    .any { it.installed.manifest.timelineProcessor != null }
+            if (!hasTimelineProcessorCandidate) return
+            val dedupedInputs = LinkedHashMap<String, ExtractedPluginPostInput>(posts.size)
+            posts.forEach { post ->
+                val input = post.extractPluginPostInput()
+                dedupedInputs[input.postEntityKey] = input
+            }
+            val inputs = dedupedInputs.values.toList()
+            taskScope.launch {
+                processSubmittedInputs(inputs)
+            }
+            return
+        }
+
         val activePlugins = currentActivePlugins()
         if (activePlugins.isEmpty()) return
 
@@ -375,13 +402,49 @@ internal class PluginTimelineProcessorServiceV1(
         post: UiTimelineV2.Post,
         pluginId: String,
     ) {
+        if (!grants.isHydrated) {
+            val candidate =
+                subsystem.running.value.plugins[pluginId]
+                    ?.takeIf { it.installed.manifest.timelineProcessor != null }
+                    ?: return
+            val input = post.extractPluginPostInput()
+            taskScope.launch {
+                val hydratedGrants = grants.awaitCurrent()
+                val active = toActiveProcessorPluginOrNull(candidate, hydratedGrants, localeProvider()) ?: return@launch
+                if (active.compiledFilter?.matches(input) == false) return@launch
+                markPostPluginRefreshing(input.postEntityKey, pluginId)
+                enqueueBatchItems(
+                    pluginId = pluginId,
+                    expectedCacheKey = active.cacheKey,
+                    trigger = TimelineProcessTriggerV1.ManualRefresh,
+                    items = listOf(input),
+                )
+            }
+            return
+        }
+
         val active = currentActivePlugin(pluginId) ?: return
         val input = post.extractPluginPostInput()
         if (active.compiledFilter?.matches(input) == false) return
+        markPostPluginRefreshing(input.postEntityKey, pluginId)
 
+        taskScope.launch {
+            enqueueBatchItems(
+                pluginId = pluginId,
+                expectedCacheKey = active.cacheKey,
+                trigger = TimelineProcessTriggerV1.ManualRefresh,
+                items = listOf(input),
+            )
+        }
+    }
+
+    private fun markPostPluginRefreshing(
+        postEntityKey: String,
+        pluginId: String,
+    ) {
         var changed = false
         memoryState.update { current ->
-            current.updatePost(input.postEntityKey) { record ->
+            current.updatePost(postEntityKey) { record ->
                 val nextRefreshing = record.refreshingPlugins + pluginId
                 val nextCooldowns = record.cooldowns - pluginId
                 if (nextRefreshing != record.refreshingPlugins || nextCooldowns != record.cooldowns) {
@@ -395,15 +458,6 @@ internal class PluginTimelineProcessorServiceV1(
         }
         if (changed) {
             bumpRevision()
-        }
-
-        taskScope.launch {
-            enqueueBatchItems(
-                pluginId = pluginId,
-                expectedCacheKey = active.cacheKey,
-                trigger = TimelineProcessTriggerV1.ManualRefresh,
-                items = listOf(input),
-            )
         }
     }
 
@@ -472,7 +526,8 @@ internal class PluginTimelineProcessorServiceV1(
     }
 
     private suspend fun processSubmittedInputs(inputs: List<ExtractedPluginPostInput>) {
-        val activePlugins = currentActivePlugins()
+        val hydratedGrants = grants.awaitCurrent()
+        val activePlugins = currentActivePlugins(hydratedGrants)
         if (activePlugins.isEmpty()) return
 
         val nowBeforeDb = nowEpochMillis()

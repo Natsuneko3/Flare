@@ -478,7 +478,7 @@ public class PluginManagementPresenterV1(
             val existingManifest =
                 subsystem.stateStore.desired.value.plugins[prepared.pluginId]
                     ?.manifest
-            val previousGrant = subsystem.timelineGrants.current[prepared.pluginId]
+            val previousGrant = subsystem.timelineGrants.awaitCurrent()[prepared.pluginId]
             subsystem.installer.commit(
                 prepared,
                 confirmed = true,

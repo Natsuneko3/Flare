@@ -32,20 +32,22 @@ import dev.dimension.flare.model.PlatformSpecSource
 import dev.dimension.flare.ui.model.PluginMediaPermissions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.native.HiddenFromObjC
 
 /** Process-scoped plugin services and bounded, plugin-owned persistent storage. */
@@ -144,9 +146,10 @@ public class PluginSubsystemV1 internal constructor(
             timelineGrants.updateSuspend { it - pluginId }
             return
         }
+        val currentGrants = timelineGrants.awaitCurrent()
         val explicitlyDisabled =
             existingManifest?.timelineProcessor != null &&
-                pluginId !in timelineGrants.current
+                pluginId !in currentGrants
         if (!explicitlyDisabled) {
             timelineGrants.updateSuspend { it + (pluginId to nextManifest.permissions.httpOrigins) }
         }
@@ -171,8 +174,8 @@ public class PluginSubsystemV1 internal constructor(
         mutableSourceIssues.update { issues -> issues.filterNot { it.pluginId == pluginId } }
         if (plugin == null || plugin.installed.manifest.timelineProcessor == null) {
             clearTimelineProcessor(pluginId)
-            timelineGrants.setEnabledAsync(pluginId, null)
-        } else if (!timelineGrants.isEnabled(pluginId, plugin.installed.manifest)) {
+            timelineGrants.setEnabledAsync(pluginId, null, runCatching { scopeProvider() }.getOrNull())
+        } else if (timelineGrants.isHydrated && !timelineGrants.isEnabled(pluginId, plugin.installed.manifest)) {
             clearTimelineProcessor(pluginId)
         }
     }
@@ -256,21 +259,47 @@ internal class PluginTimelineGrantStoreV1(
         runCatching { koinGet<CoroutineScope>() }.getOrNull()
     },
 ) {
-    private val mutableState = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
-    private val pendingWrites = MutableStateFlow(0)
+    private val state = MutableStateFlow(GrantSnapshot())
     private val writeMutex = Mutex()
     private val boundBacking = MutableStateFlow<TimelineProcessorSettingsBacking?>(null)
     private val boundScope = MutableStateFlow<CoroutineScope?>(null)
 
     val current: Map<String, Set<String>>
-        get() = mutableState.value
+        get() = state.value.effective
+
+    val isHydrated: Boolean
+        get() {
+            val activeBacking = boundBacking.value ?: backing()
+            return activeBacking == null || state.value.hydrated
+        }
 
     fun bind(
         settingsBacking: TimelineProcessorSettingsBacking,
         coroutineScope: CoroutineScope,
     ) {
-        boundBacking.value = settingsBacking
+        val previous = boundBacking.value
         boundScope.value = coroutineScope
+        if (previous !== settingsBacking) {
+            if (previous != null) {
+                state.update { it.copy(hydrated = false) }
+            }
+            boundBacking.value = settingsBacking
+        }
+    }
+
+    suspend fun awaitCurrent(): Map<String, Set<String>> {
+        val activeBacking = boundBacking.value ?: backing() ?: return state.value.effective
+        if (!state.value.hydrated) {
+            val persisted = activeBacking.enabledPlugins.first()
+            state.update { current ->
+                if (current.hydrated) {
+                    current
+                } else {
+                    current.copy(persisted = persisted, hydrated = true)
+                }
+            }
+        }
+        return state.value.effective
     }
 
     fun isEnabled(
@@ -286,19 +315,22 @@ internal class PluginTimelineGrantStoreV1(
             .flatMapLatest { explicit ->
                 val activeBacking = explicit ?: backing()
                 if (activeBacking == null) {
-                    mutableState
+                    state.map { it.effective }
                 } else {
                     combine(
-                        mutableState,
-                        pendingWrites,
+                        state,
                         activeBacking.enabledPlugins.onEach { persisted ->
-                            if (pendingWrites.value == 0) {
-                                mutableState.value = persisted
+                            state.update { current ->
+                                if (!current.hydrated || (current.activeWrites == 0 && current.pendingQueue.isEmpty())) {
+                                    current.copy(persisted = persisted, hydrated = true)
+                                } else {
+                                    current
+                                }
                             }
                         },
-                    ) { memory, pending, persisted ->
-                        if (pending > 0) memory else persisted
-                    }.distinctUntilChanged()
+                    ) { _, _ ->
+                        state.value.effective
+                    }
                 }
             }.distinctUntilChanged()
 
@@ -316,46 +348,97 @@ internal class PluginTimelineGrantStoreV1(
         val activeBacking = boundBacking.value ?: backing()
         val activeScope = boundScope.value ?: scope() ?: fallbackScope
         if (activeBacking == null || activeScope == null) {
-            mutableState.update(transform)
+            state.update { current ->
+                current.copy(
+                    persisted = transform(current.persisted),
+                    hydrated = true,
+                )
+            }
             return
         }
-        pendingWrites.update { it + 1 }
-        mutableState.update(transform)
+        enqueueTransform(transform)
         activeScope.launch {
-            var persistedResult: Map<String, Set<String>>? = null
-            try {
-                writeMutex.withLock {
-                    persistedResult = activeBacking.updateEnabledPlugins(transform)
-                }
-            } finally {
-                val remaining = pendingWrites.updateAndGet { (it - 1).coerceAtLeast(0) }
-                val snapshot = persistedResult
-                if (remaining == 0 && snapshot != null) {
-                    mutableState.value = snapshot
-                }
-            }
+            drainPendingWrites(activeBacking)
         }
     }
 
     suspend fun updateSuspend(transform: (Map<String, Set<String>>) -> Map<String, Set<String>>) {
         val activeBacking = boundBacking.value ?: backing()
         if (activeBacking == null) {
-            mutableState.update(transform)
+            state.update { current ->
+                current.copy(
+                    persisted = transform(current.persisted),
+                    hydrated = true,
+                )
+            }
             return
         }
-        pendingWrites.update { it + 1 }
-        mutableState.update(transform)
-        var persistedResult: Map<String, Set<String>>? = null
-        try {
-            writeMutex.withLock {
-                persistedResult = activeBacking.updateEnabledPlugins(transform)
-            }
-        } finally {
-            val remaining = pendingWrites.updateAndGet { (it - 1).coerceAtLeast(0) }
-            val snapshot = persistedResult
-            if (remaining == 0 && snapshot != null) {
-                mutableState.value = snapshot
+        val targetId = enqueueTransform(transform)
+        drainPendingWrites(activeBacking, untilTransformId = targetId)
+    }
+
+    private fun enqueueTransform(transform: (Map<String, Set<String>>) -> Map<String, Set<String>>): Long {
+        var assignedId = 0L
+        state.update { current ->
+            assignedId = current.nextTransformId
+            current.copy(
+                nextTransformId = assignedId + 1L,
+                pendingQueue = current.pendingQueue + PendingGrantTransform(assignedId, transform),
+            )
+        }
+        return assignedId
+    }
+
+    private suspend fun drainPendingWrites(
+        activeBacking: TimelineProcessorSettingsBacking,
+        untilTransformId: Long = Long.MAX_VALUE,
+    ) {
+        writeMutex.withLock {
+            while (true) {
+                val head =
+                    state.value.pendingQueue
+                        .firstOrNull()
+                        ?.takeIf { untilTransformId == Long.MAX_VALUE || it.id <= untilTransformId }
+                        ?: break
+                state.update { it.copy(activeWrites = it.activeWrites + 1) }
+                try {
+                    withContext(NonCancellable) {
+                        val persisted = activeBacking.updateEnabledPlugins(head.transform)
+                        state.update { current ->
+                            current.copy(
+                                persisted = persisted,
+                                hydrated = true,
+                                activeWrites = (current.activeWrites - 1).coerceAtLeast(0),
+                                pendingQueue = current.pendingQueue.filterNot { it.id == head.id },
+                            )
+                        }
+                    }
+                } catch (error: Throwable) {
+                    state.update { current ->
+                        current.copy(
+                            activeWrites = (current.activeWrites - 1).coerceAtLeast(0),
+                            pendingQueue = current.pendingQueue.filterNot { it.id == head.id },
+                        )
+                    }
+                    throw error
+                }
             }
         }
+    }
+
+    private data class PendingGrantTransform(
+        val id: Long,
+        val transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+    )
+
+    private data class GrantSnapshot(
+        val persisted: Map<String, Set<String>> = emptyMap(),
+        val hydrated: Boolean = false,
+        val nextTransformId: Long = 1L,
+        val activeWrites: Int = 0,
+        val pendingQueue: List<PendingGrantTransform> = emptyList(),
+    ) {
+        val effective: Map<String, Set<String>> =
+            pendingQueue.fold(persisted) { acc, item -> item.transform(acc) }
     }
 }

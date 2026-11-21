@@ -145,7 +145,7 @@ public class PluginDevelopmentSessionV1 internal constructor(
                     return@withLock
                 }
                 val startingDevelopment = active == null
-                val previousGrant = subsystem.timelineGrants.current[prepared.validated.manifest.id]
+                val previousGrant = subsystem.timelineGrants.awaitCurrent()[prepared.validated.manifest.id]
                 if (startingDevelopment) {
                     baseline = previous
                     baselineTimelineGrant = previousGrant

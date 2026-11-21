@@ -43,9 +43,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
@@ -644,6 +647,332 @@ class PluginTimelineProcessorIntegrationTest {
                 assertEquals(setOf("https://dev.example"), harness.currentSettings().enabledTimelineProcessorPlugins["org.example.devproc"])
                 harness.subsystem.development.stop()
                 assertFalse("org.example.devproc" in harness.currentSettings().enabledTimelineProcessorPlugins)
+            }
+        }
+
+    @Test
+    fun coldStartUnhydratedGrantStoreProcessesInitialBatchPreservesSqliteCacheAndAwaitsHydration() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val stockId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.coldstock",
+                        httpOrigins = listOf("https://api.stock.example"),
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "disk", ttlSeconds: 120 }, cards: [{ id: "cs", body: [{ type: "text", text: "live-" + i.postKey.id }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val cachedPost = createSamplePost(id = "cold-cached", text = "Cached stock")
+                val freshPost = createSamplePost(id = "cold-fresh", text = "Fresh stock")
+                harness.service.submitPosts(listOf(cachedPost))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(stockId))
+                assertEquals(
+                    1,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(cachedPost.pluginPostEntityKey()))
+                        .size,
+                )
+
+                val coldScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val hydrationGate = CompletableDeferred<Unit>()
+                val persistedGrants =
+                    MutableStateFlow(
+                        mapOf(
+                            stockId to setOf("https://api.stock.example"),
+                            "org.example.other" to setOf("https://other.example"),
+                        ),
+                    )
+                val delayedBacking =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                            flow {
+                                hydrationGate.await()
+                                emitAll(persistedGrants)
+                            }
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            hydrationGate.await()
+                            var nextMap: Map<String, Set<String>> = emptyMap()
+                            persistedGrants.update { current ->
+                                nextMap = transform(current)
+                                nextMap
+                            }
+                            return nextMap
+                        }
+                    }
+
+                val coldGrantStore = PluginTimelineGrantStoreV1(backing = { delayedBacking }, scope = { coldScope })
+                val coldAccounts = PluginTestAccounts()
+                lateinit var coldSubsystemRef: PluginSubsystemV1
+                val coldRegistry by lazy { testPluginRegistry(coldSubsystemRef, coldScope) }
+                val coldSubsystem =
+                    PluginSubsystemV1(
+                        appFiles = harness.subsystem.appFiles,
+                        pendingStore =
+                            object : PluginOAuthPendingStoreV1 {
+                                override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                                override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                                override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                            },
+                        registryProvider = { coldRegistry },
+                        accountsProvider = { coldAccounts },
+                        scopeProvider = { coldScope },
+                        timelineGrants = coldGrantStore,
+                    ).also { coldSubsystemRef = it }
+
+                val coldService =
+                    PluginTimelineProcessorServiceV1(
+                        subsystem = coldSubsystem,
+                        dao = harness.db.pluginPostWidgetDao(),
+                        grants = coldGrantStore,
+                        scope = coldScope,
+                        ioDispatcher = Dispatchers.Default,
+                        workDispatcher = Dispatchers.Default,
+                        nowEpochMillis = harness.nowMillis::get,
+                        coalesceDelayMillis = 10L,
+                    )
+                try {
+                    assertTrue(coldGrantStore.current.isEmpty())
+
+                    // replaceRunning before hydration must NOT wipe SQLite cache for persisted enabled plugins.
+                    val runningPlugin =
+                        coldSubsystem.running.value.plugins
+                            .getValue(stockId)
+                    coldSubsystem.replaceRunning(stockId, runningPlugin)
+                    coldService.awaitIdleForTesting()
+                    assertEquals(
+                        1,
+                        harness.db
+                            .pluginPostWidgetDao()
+                            .getByPostKeys(listOf(cachedPost.pluginPostEntityKey()))
+                            .size,
+                    )
+
+                    // Async toggle before hydration must fold onto persisted map rather than dropping other plugins.
+                    coldGrantStore.setEnabledAsync("org.example.early", setOf("https://early.example"), coldScope)
+
+                    // Initial viewport batch submitted BEFORE DataStore emits must NOT be dropped.
+                    coldService.submitPosts(listOf(cachedPost, freshPost))
+
+                    hydrationGate.complete(Unit)
+                    coldService.awaitIdleForTesting()
+
+                    assertEquals(1, coldService.widgetsForPost(cachedPost).size)
+                    assertEquals(1, coldService.widgetsForPost(freshPost).size)
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000L) {
+                            persistedGrants.first { "org.example.early" in it }
+                        }
+                    }
+                    assertEquals(setOf("https://other.example"), persistedGrants.value["org.example.other"])
+                    assertEquals(setOf("https://api.stock.example"), persistedGrants.value[stockId])
+                } finally {
+                    coldService.close()
+                    coldSubsystem.runtimePool.close()
+                    coldScope.cancel()
+                }
+
+                // Also verify confirmInstall() update on an unhydrated store preserves enabled state rather than treating as disabled.
+                val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val updateGrantsState = MutableStateFlow(mapOf(stockId to setOf("https://api.stock.example")))
+                val slowUpdateBacking =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                            flow {
+                                delay(60L)
+                                emitAll(updateGrantsState)
+                            }
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            var nextMap: Map<String, Set<String>> = emptyMap()
+                            updateGrantsState.update { current ->
+                                nextMap = transform(current)
+                                nextMap
+                            }
+                            return nextMap
+                        }
+                    }
+                val updateGrantStore = PluginTimelineGrantStoreV1(backing = { slowUpdateBacking }, scope = { updateScope })
+                val updateAccounts = PluginTestAccounts()
+                lateinit var updateSubsystemRef: PluginSubsystemV1
+                val updateRegistry by lazy { testPluginRegistry(updateSubsystemRef, updateScope) }
+                val updateSubsystem =
+                    PluginSubsystemV1(
+                        appFiles = harness.subsystem.appFiles,
+                        pendingStore =
+                            object : PluginOAuthPendingStoreV1 {
+                                override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                                override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                                override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                            },
+                        registryProvider = { updateRegistry },
+                        accountsProvider = { updateAccounts },
+                        scopeProvider = { updateScope },
+                        timelineGrants = updateGrantStore,
+                    ).also { updateSubsystemRef = it }
+                val updatePresenter =
+                    PluginManagementPresenterV1(
+                        subsystem = updateSubsystem,
+                        scope = updateScope,
+                        registry = { updateRegistry },
+                        accounts = { updateAccounts },
+                    )
+                try {
+                    val upgradedFpp =
+                        harness.writeTimelineProcessorFpp(
+                            id = stockId,
+                            version = "1.1.0",
+                            httpOrigins = listOf("https://api.stock.example", "https://api.v2.stock.example"),
+                            script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
+                        )
+                    updatePresenter.inspect(upgradedFpp.toString())
+                    updatePresenter.confirmInstall()
+                    assertEquals(
+                        setOf("https://api.stock.example", "https://api.v2.stock.example"),
+                        updateGrantsState.value[stockId],
+                    )
+                } finally {
+                    updatePresenter.close()
+                    updateSubsystem.runtimePool.close()
+                    updateScope.cancel()
+                }
+
+                // Also verify development.reload(confirmed = true) + stop() on an unhydrated store preserves baseline grant.
+                val devScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val baselineOrigins = setOf("https://api.stock.example", "https://api.v2.stock.example")
+                val devGrantsState = MutableStateFlow(mapOf(stockId to baselineOrigins))
+                val slowDevBacking =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                            flow {
+                                delay(60L)
+                                emitAll(devGrantsState)
+                            }
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            var nextMap: Map<String, Set<String>> = emptyMap()
+                            devGrantsState.update { current ->
+                                nextMap = transform(current)
+                                nextMap
+                            }
+                            return nextMap
+                        }
+                    }
+                val devGrantStore = PluginTimelineGrantStoreV1(backing = { slowDevBacking }, scope = { devScope })
+                val devAccounts = PluginTestAccounts()
+                lateinit var devSubsystemRef: PluginSubsystemV1
+                val devRegistry by lazy { testPluginRegistry(devSubsystemRef, devScope) }
+                val devSubsystem =
+                    PluginSubsystemV1(
+                        appFiles = harness.subsystem.appFiles,
+                        pendingStore =
+                            object : PluginOAuthPendingStoreV1 {
+                                override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                                override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                                override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                            },
+                        registryProvider = { devRegistry },
+                        accountsProvider = { devAccounts },
+                        scopeProvider = { devScope },
+                        timelineGrants = devGrantStore,
+                    ).also { devSubsystemRef = it }
+                try {
+                    val devDir = harness.writeDevelopmentDirectory(id = stockId, httpOrigins = listOf("https://dev.temp.example"))
+                    devSubsystem.development.open(devDir.toString())
+                    devSubsystem.development.reload(confirmed = false)
+                    devSubsystem.development.reload(confirmed = true)
+                    assertEquals(setOf("https://dev.temp.example"), devGrantsState.value[stockId])
+                    devSubsystem.development.stop()
+                    assertEquals(baselineOrigins, devGrantsState.value[stockId])
+                } finally {
+                    devSubsystem.runtimePool.close()
+                    devScope.cancel()
+                }
+            }
+        }
+
+    @Test
+    fun rapidSetEnabledAsyncOnThenOffSerializesInFifoOrderWithoutReEnabling() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val pluginId = "org.example.rapid"
+                val origins = setOf("https://api.rapid.example")
+                val persistedState = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+                val writeHistory = ArrayList<Map<String, Set<String>>>()
+                val historyMutex = Mutex()
+                val writeCallCount = AtomicInteger(0)
+
+                val backing =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> = persistedState
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            val callNum = writeCallCount.incrementAndGet()
+                            if (callNum % 2 == 1) {
+                                // Slow down ON writes to maximize scheduling contention with immediate OFF writes.
+                                delay(25L)
+                            }
+                            var next: Map<String, Set<String>> = emptyMap()
+                            persistedState.update { current ->
+                                next = transform(current)
+                                next
+                            }
+                            historyMutex.withLock {
+                                writeHistory.add(next)
+                            }
+                            return next
+                        }
+                    }
+
+                val store = PluginTimelineGrantStoreV1(backing = { backing }, scope = { scope })
+                withContext(Dispatchers.Default) {
+                    repeat(15) {
+                        store.setEnabledAsync(pluginId, origins, scope)
+                        store.setEnabledAsync(pluginId, null, scope)
+                        assertFalse(pluginId in store.current)
+                    }
+                    withTimeout(5_000L) {
+                        while (historyMutex.withLock { writeHistory.size } < 30) {
+                            delay(10L)
+                        }
+                    }
+                }
+
+                assertFalse(pluginId in store.current)
+                assertFalse(pluginId in persistedState.value)
+                val snapshotHistory = historyMutex.withLock { writeHistory.toList() }
+                assertEquals(30, snapshotHistory.size)
+                snapshotHistory.forEachIndexed { index, map ->
+                    if (index % 2 == 0) {
+                        assertEquals(origins, map[pluginId])
+                    } else {
+                        assertFalse(pluginId in map)
+                    }
+                }
+            } finally {
+                scope.cancel()
             }
         }
 }
