@@ -249,6 +249,12 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 path,
                 "Timeline pages require plugin API v2",
             )
+            check(
+                capabilityId != PluginAbiV1.Capabilities.MANGA || apiVersion >= 2,
+                "capability.version",
+                path,
+                "Manga capability requires plugin API v2",
+            )
             check(CAPABILITY_ID.matches(capabilityId), "capability.id", path, "Invalid capability ID")
             val knownOperations = PluginAbiV1.knownCapabilityOperations[capabilityId] ?: return@forEach
             check(declaration.operations.size <= 32, "capability.operations", path, "Too many operations")
@@ -278,14 +284,18 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 )
             }
             check(declaration.operations.isNotEmpty(), "capability.empty", path, "Capability has no operations")
+            val operations = declaration.operations.keys
+            val allowsPostMutateOnly =
+                apiVersion >= 2 &&
+                    capabilityId == PluginAbiV1.Capabilities.POST &&
+                    operations == setOf("mutate")
             check(
-                declaration.operations.keys.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
+                allowsPostMutateOnly || operations.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
                 "capability.incomplete",
                 path,
                 "Capability is missing operations required by the Host interface",
             )
             if (capabilityId == PluginAbiV1.Capabilities.POST) {
-                val operations = declaration.operations.keys
                 check(
                     apiVersion >= 2 || operations.none { it in PluginAbiV1.postContextTabOperations },
                     "capability.version",
@@ -298,6 +308,16 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                     path,
                     "Post context tabs require both contextTabs and contextPage",
                 )
+            }
+            if (capabilityId == PluginAbiV1.Capabilities.MANGA) {
+                listOf("detail", "pages", "pageImage").forEach { operation ->
+                    check(
+                        declaration.operations[operation]?.directions.isNullOrEmpty(),
+                        "capability.directions",
+                        "$path.$operation.directions",
+                        "Non-paging manga operations cannot declare directions",
+                    )
+                }
             }
             declaration.operations.forEach { (operation, config) ->
                 if (operation in knownOperations) {

@@ -58,6 +58,7 @@ internal object PostDetailTypeV1Serializer : KSerializer<PostDetailTypeV1> {
             "post" -> PostDetailTypeV1.Post
             "article" -> PostDetailTypeV1.Article
             "gallery" -> PostDetailTypeV1.Gallery
+            "manga" -> PostDetailTypeV1.Manga
             "link" -> PostDetailTypeV1.Link
             else -> PostDetailTypeV1.Unknown
         }
@@ -71,6 +72,7 @@ internal object PostDetailTypeV1Serializer : KSerializer<PostDetailTypeV1> {
                 PostDetailTypeV1.Post -> "post"
                 PostDetailTypeV1.Article -> "article"
                 PostDetailTypeV1.Gallery -> "gallery"
+                PostDetailTypeV1.Manga -> "manga"
                 PostDetailTypeV1.Link -> "link"
                 PostDetailTypeV1.Unknown -> "unknown"
             },
@@ -160,5 +162,5 @@ internal fun JsonElement.wireObject(): JsonObject = this as? JsonObject ?: throw
 
 private fun JsonElement.wireArray(): JsonArray = this as? JsonArray ?: throw SerializationException("Expected JSON array")
 
-private fun JsonElement.wireString(): String =
+internal fun JsonElement.wireString(): String =
     (this as? JsonPrimitive)?.takeIf { it.isString }?.content ?: throw SerializationException("Expected JSON string")

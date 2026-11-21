@@ -1237,12 +1237,11 @@
                   "$ref": "#/definitions/operation"
                 }
               },
-              "required": [
-                "detail"
-              ],
               "dependencies": {
-                "contextTabs": ["contextPage"],
-                "contextPage": ["contextTabs"]
+                "context": ["detail"],
+                "delete": ["detail"],
+                "contextTabs": ["detail", "contextPage"],
+                "contextPage": ["detail", "contextTabs"]
               }
             },
             "notificationFilters": {
@@ -1641,6 +1640,99 @@
         }
       ]
     },
+    "capability-manga": {
+      "type": "object",
+      "description": "API v2 manga capability. Implement every declared operation in plugin.js.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/capability"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "detail": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/operation"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "directions": {
+                          "type": "array",
+                          "maxItems": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "pages": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/operation"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "directions": {
+                          "type": "array",
+                          "maxItems": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "pageImage": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/operation"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "directions": {
+                          "type": "array",
+                          "maxItems": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "comments": {
+                  "$ref": "#/definitions/operation"
+                },
+                "recommendations": {
+                  "$ref": "#/definitions/operation"
+                }
+              },
+              "required": [
+                "detail",
+                "pages"
+              ]
+            },
+            "notificationFilters": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "relationActions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
+        }
+      ]
+    },
     "capability-tab-catalog": {
       "type": "object",
       "description": "tab-catalog capability. Implement every declared operation in plugin.js.",
@@ -1745,6 +1837,9 @@
         },
         "flare.datasource.gallery/v1": {
           "$ref": "#/definitions/capability-gallery"
+        },
+        "flare.datasource.manga/v1": {
+          "$ref": "#/definitions/capability-manga"
         },
         "flare.datasource.tab-catalog/v1": {
           "$ref": "#/definitions/capability-tab-catalog"
@@ -2838,12 +2933,17 @@
                 "properties": {
                   "flare.datasource.timeline-page/v1": false,
                   "flare.datasource.account-http/v1": false,
+                  "flare.datasource.manga/v1": false,
                   "flare.datasource.post/v1": {
                     "type": "object",
                     "properties": {
                       "operations": {
                         "type": "object",
+                        "required": [
+                          "detail"
+                        ],
                         "properties": {
+                          "detail": true,
                           "contextTabs": false,
                           "contextPage": false
                         }

@@ -299,7 +299,7 @@ class PluginWireMapperV1Test {
     @Test
     fun unknownDetailsKeepThePreviewButDisableEveryPostClickForAccountsAndGuests() {
         val payload = PluginJsonV1.encodeToJsonElement(post).jsonObject
-        listOf("manga", "novel").forEach { type ->
+        listOf("audiobook", "novel").forEach { type ->
             val value = PluginJsonV1.decodeFromJsonElement<PostV1>(JsonObject(payload + ("detailType" to JsonPrimitive(type))))
             listOf(MicroBlogKey("me", "local.example"), null).forEach { account ->
                 val mapped = createMapper(account).post(value).post

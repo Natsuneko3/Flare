@@ -205,6 +205,8 @@ interface SocialPluginDefinitionV1 {
     directMessage?: Partial<DirectMessageServiceV1>;
     article?: Partial<ArticleServiceV1>;
     gallery?: Partial<GalleryServiceV1>;
+    /** API v2: manga detail and chapter page loading. */
+    manga?: Partial<MangaServiceV1>;
     tabCatalog?: { page(request: PageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineSectionV1>> };
   };
 }
@@ -293,6 +295,14 @@ interface GalleryServiceV1 {
   detail(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<GalleryV1>;
   comments(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
   recommendations(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
+}
+/** API v2. Required: detail and pages. Optional: pageImage (image or gif only), comments, recommendations. */
+interface MangaServiceV1 {
+  detail(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaV1>;
+  pages(request: MangaPagesRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaPagesV1>;
+  pageImage?(request: MangaPageImageRequestV1, context: PluginInvocationContextV1): MaybePromise<MediaV1>;
+  comments?(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
+  recommendations?(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
 }
 
 interface DetectorRequestV1 { origin: string }
@@ -452,7 +462,7 @@ interface ActionDescriptorV1 {
   actionToken?: string;
 }
 /** Known authoring values; compatible older Hosts make unfamiliar string values inert. */
-type PostDetailTypeV1 = "post" | "article" | "gallery" | "link";
+type PostDetailTypeV1 = "post" | "article" | "gallery" | "manga" | "link";
 interface PostV1 {
   key: EntityKeyV1;
   /** Defaults to null. When present, the complete ProfileV1 contract still applies. */
@@ -514,7 +524,8 @@ interface PostPresentationV1 {
 }
 type NavigationTargetV1 =
   | { type: "timelinePage"; pageId: string; title: WireTextV1; parameters?: Record<string, string> }
-  | { type: "post" | "profile" | "article" | "gallery"; key: EntityKeyV1 }
+  | { type: "post" | "profile" | "article" | "gallery" | "manga"; key: EntityKeyV1 }
+  | { type: "mangaChapter"; key: EntityKeyV1; chapterId: string }
   | { type: "link"; url: string };
 interface FeedV1 {
   url: string;
@@ -736,6 +747,77 @@ interface GalleryV1 {
   orientation?: "horizontal" | "vertical";
   entityToken?: string;
   actions?: ActionDescriptorV1[];
+}
+type MangaStatusV1 = "ongoing" | "completed" | "hiatus" | "cancelled";
+type MangaReadingDirectionV1 = "rtl" | "ltr" | "webtoon";
+interface MangaTagV1 { name: string; target?: NavigationTargetV1 }
+interface MangaTagGroupV1 { id: string; title: WireTextV1; tags: MangaTagV1[] }
+interface MangaChapterV1 {
+  /** Unique across the entire MangaV1 (1..512 characters). */
+  id: string;
+  title: string;
+  subtitle?: string;
+  uploadedAt?: string;
+  locked?: boolean;
+  url?: string;
+  entityToken?: string;
+}
+interface MangaChapterGroupV1 {
+  id: string;
+  title: WireTextV1;
+  /** Ascending reading order: index 0 is the first chapter, index i + 1 is the next chapter. */
+  chapters: MangaChapterV1[];
+}
+interface MangaV1 {
+  key: EntityKeyV1;
+  title: string;
+  altTitles?: string[];
+  /** Image media only; requires permissions.mediaNetwork. */
+  cover?: MediaV1;
+  author?: ProfileV1;
+  authors?: string[];
+  artists?: string[];
+  status?: MangaStatusV1;
+  content?: RichTextV1;
+  /** Canonical HTTPS URL; required when any locked chapter omits chapter.url. */
+  url?: string;
+  updatedAt?: string;
+  readingDirection?: MangaReadingDirectionV1;
+  /** Mutually exclusive: supply either flat tags or grouped tagGroups. */
+  tags?: MangaTagV1[];
+  tagGroups?: MangaTagGroupV1[];
+  /** Mutually exclusive: supply either ascending chapters or grouped chapterGroups. */
+  chapters?: MangaChapterV1[];
+  chapterGroups?: MangaChapterGroupV1[];
+  entityToken?: string;
+  actions?: ActionDescriptorV1[];
+  sourceLanguages?: string[];
+}
+interface MangaPagesRequestV1 {
+  key: EntityKeyV1;
+  chapterId: string;
+  entityToken?: string;
+  chapterToken?: string;
+}
+interface MangaPageV1 {
+  id: string;
+  /** Image or GIF media only; mutually exclusive with pageToken. */
+  media?: MediaV1 & { type: "image" | "gif" };
+  /** Allowed only when manga.pageImage is declared and negotiated. */
+  pageToken?: string;
+  previewUrl?: string;
+  width?: number;
+  height?: number;
+  customHeaders?: Record<string, string>;
+}
+interface MangaPagesV1 { pages: MangaPageV1[] }
+interface MangaPageImageRequestV1 {
+  key: EntityKeyV1;
+  chapterId: string;
+  pageId: string;
+  pageToken: string;
+  entityToken?: string;
+  chapterToken?: string;
 }
 type HostIconV1 =
   | "Home" | "Notification" | "Search" | "Profile" | "Local" | "World" | "Featured"

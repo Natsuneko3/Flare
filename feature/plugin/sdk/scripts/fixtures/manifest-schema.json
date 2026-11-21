@@ -2547,6 +2547,173 @@
       },
       "schemaValid": false,
       "hostValid": false
+    },
+    {
+      "name": "API v2 manga capability with optional operations",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {},
+                "pageImage": {},
+                "comments": { "directions": ["refresh", "older"] },
+                "recommendations": { "directions": ["refresh"] }
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects manga capability",
+      "patch": {
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "manga capability requires detail and pages",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "manga non-paging operations reject directions",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": { "directions": ["refresh"] },
+                "pages": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 allows post.mutate without post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {}
+              }
+            },
+            "flare.datasource.post/v1": {
+              "operations": {
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects post.mutate without post.detail",
+      "patch": {
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 post.context still requires post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "context": {},
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 post.delete still requires post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "delete": {},
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 post.contextTabs still requires post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "contextTabs": {},
+                "contextPage": {},
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
     }
   ]
 }

@@ -120,7 +120,10 @@ profile, and stable keys between login and lookup.
 | delete | EntityRequestV1 | deleted or noChange |
 | mutate | MutationRequestV1 | updatedPost, deleted, invalidate, or noChange |
 
-Only detail is required. Map context into the site's meaningful thread order.
+Only detail is required in API v1. In API v2, a plugin that provides `manga`, `gallery`,
+or `article` without native post detail may declare `post` with `mutate` alone so
+authenticated accounts can toggle `Bookmark` or `Favourite` while comment rows stay non-clickable.
+Map context into the site's meaningful thread order.
 Attach supported semantic actions to returned posts:
 
 ```js
@@ -375,6 +378,34 @@ and an account; gallery capability alone does not implement mutations. Preserve
 the same entity key across preview, gallery, and mutation responses. Test grid
 navigation, empty/no-comment results, image permissions, and bookmark refresh.
 
+## Manga
+
+Declare `apiVersion: 2` and `flare.datasource.manga/v1` with required `detail` and
+`pages` (plus `permissions.mediaNetwork: true`). Preview posts use `detailType: "manga"`,
+or `{ type: "mangaChapter", key, chapterId }` on `PostV1.target` to jump straight into a chapter.
+
+| Method | Input | Return |
+| --- | --- | --- |
+| detail | EntityRequestV1 | MangaV1 |
+| pages | MangaPagesRequestV1 (`{ key, chapterId, entityToken?, chapterToken? }`) | MangaPagesV1 |
+| pageImage (optional) | MangaPageImageRequestV1 (`{ key, chapterId, pageId, pageToken, entityToken?, chapterToken? }`) | MediaV1 (`image` or `gif` only) |
+| comments / recommendations (optional) | EntityPageRequestV1 | PageV1<TimelineItemV1> |
+
+Return `chapters` (or up to 32 `chapterGroups`, up to 5,000 chapters total) in
+**ascending reading order** (`index 0` is chapter 1, `index i + 1` is the next chapter);
+Flare defaults to descending display with a sort toggle. Every `chapter.id` must be
+unique across the entire `MangaV1`. `tags` and `tagGroups` (up to 64 groups, 200 tags
+per group) are mutually exclusive, as are `chapters` and `chapterGroups`. Locked chapters
+(`locked: true`) require either `chapter.url` or `MangaV1.url` so the reader can link to
+the origin site.
+
+Each chapter returns 1..2,000 `MangaPageV1` entries. Every page must provide strictly one
+of `media` (`type: "image" | "gif"` — video, audio, and ugoira are rejected) or `pageToken`
+(only when `manga.pageImage` is declared and negotiated, for sites that resolve temporary
+per-page image URLs on demand). Only `comments` and `recommendations` may declare paging
+`directions`. Pair with API v2 `post.mutate` (without `post.detail`) when authenticated
+accounts support bookmarking manga without post detail pages.
+
 ## Tab catalog
 
 `tabCatalog.page(PageRequestV1)` returns `PageV1<TimelineSectionV1>`. Each section
@@ -402,12 +433,13 @@ exposes only tabCatalog.page. Test selecting a descriptor and its resulting page
 ## Guest access
 
 Declare `platform.guest: { "enabled": true }` only if the declared read paths
-work without credentials. Branch on context.scope/credentialAvailable when an
+work without credentials. In API v2, setting `platform.guest: { "enabled": true, "origin": "https://api.example.org" }`
+enables standalone no-login plugin usage (`loginMethods: []` is allowed): Flare can offer
+default guest Home tabs during initial installation and expose guest timelines, search,
+discover, and detail routes without adding an account. Branch on context.scope/credentialAvailable when an
 operation supports both account and guest calls. Guest requests stay at the
-selected origin and have no account credential API. The declaration makes the
-guest datasource available; it does not make the plugin a global default guest
-platform or create a new login method. Test supported guest navigation in Flare,
-including capability requirements for internal article/gallery/post details.
+selected origin and have no account credential API. Test supported guest navigation in Flare,
+including capability requirements for internal article/gallery/manga/post details.
 
 ## Localization
 

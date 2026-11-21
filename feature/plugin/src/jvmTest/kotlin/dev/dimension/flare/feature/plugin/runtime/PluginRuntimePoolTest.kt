@@ -69,9 +69,12 @@ class PluginRuntimePoolTest {
                         """async function() {
                 return { futurePage: true, olderCursor: "next", items: [
                   { type: "novel", chapter: { id: 1 } },
+                  { type: "post", post: { key: { id: "manga-preview", host: "one.example" },
+                    createdAt: "2026-11-02T00:00:00Z", content: { value: "Manga preview" },
+                    detailType: "manga" } },
                   { type: "post", post: { key: { id: "preview", host: "one.example" },
                     createdAt: "2026-11-02T00:00:00Z", content: { value: "Preview", future: true },
-                    detailType: "manga", media: [{ type: "spatial" }], actions: [{ action: "ReadNovel" }] } }
+                    detailType: "audiobook", media: [{ type: "spatial" }], actions: [{ action: "ReadNovel" }] } }
                 ] };
             }""",
                     ),
@@ -89,7 +92,8 @@ class PluginRuntimePoolTest {
                     }
                     assertEquals("next", page?.olderCursor)
                     assertEquals(TimelineItemV1.Unknown, page?.items?.first())
-                    assertEquals(PostDetailTypeV1.Unknown, (page?.items?.last() as TimelineItemV1.Post).post.detailType)
+                    assertEquals(PostDetailTypeV1.Manga, (page?.items?.get(1) as TimelineItemV1.Post).post.detailType)
+                    assertEquals(PostDetailTypeV1.Unknown, (page.items.last() as TimelineItemV1.Post).post.detailType)
                 }
                 assertTrue(pool.issues.value.isEmpty())
             } finally {

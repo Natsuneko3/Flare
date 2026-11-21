@@ -384,6 +384,12 @@ internal class PluginWireMapperV1(
                         .Detail(value.key.toMicroBlogKey(), accountType)
                         .takeIf { capabilities.canExpose(PluginAbiV1.Capabilities.GALLERY) }
                 }
+
+                is NavigationTargetV1.Manga,
+                is NavigationTargetV1.MangaChapter,
+                -> {
+                    null
+                }
             }
         return route?.let { ClickEvent.Deeplink(it) } ?: ClickEvent.Noop
     }
@@ -609,6 +615,10 @@ internal class PluginWireMapperV1(
                     DeeplinkRoute.Gallery.Detail(key, accountType).takeIf {
                         capabilities.canExpose(PluginAbiV1.Capabilities.GALLERY)
                     }
+                }
+
+                PostDetailTypeV1.Manga -> {
+                    null
                 }
 
                 PostDetailTypeV1.Link -> {

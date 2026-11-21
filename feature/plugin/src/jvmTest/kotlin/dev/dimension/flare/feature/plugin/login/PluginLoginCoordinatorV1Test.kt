@@ -1138,6 +1138,111 @@ class PluginLoginCoordinatorV1Test {
             }
         }
 
+    @Test
+    fun apiV2LoginAcceptsMangaAndPostMutateWithoutPostDetail() =
+        runBlocking<Unit> {
+            val mangaManifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "$PLUGIN_ID",
+                  "version": "1.0.0",
+                  "defaultLocale": "en",
+                  "name": "Manga login test",
+                  "permissions": { "mediaNetwork": true },
+                  "platform": {
+                    "id": "TestPlugin",
+                    "name": "Test platform",
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": { "detail": {}, "pages": {} }
+                      },
+                      "flare.datasource.post/v1": {
+                        "operations": { "mutate": {} }
+                      }
+                    },
+                    "loginMethods": [
+                      {
+                        "id": "form",
+                        "interaction": "Form",
+                        "title": "Form",
+                        "fields": [
+                          { "id": "token", "type": "Secret", "label": "Token" },
+                          { "id": "mode", "type": "Text", "label": "Mode", "required": false }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            val mangaScript =
+                """
+                defineFlareSocialPlugin({
+                  login: {
+                    form: {
+                      async begin(request) {
+                        const capabilities =
+                          request.values.mode === "mutateOnly"
+                            ? { "flare.datasource.post/v1": ["mutate"] }
+                            : { "flare.datasource.manga/v1": ["detail", "pages"], "flare.datasource.post/v1": ["mutate"] };
+                        return {
+                          type: "success",
+                          value: {
+                            accountId: "account-1",
+                            origin: request.origin,
+                            credential: { token: request.values.token },
+                            profile: {
+                              key: { id: "account-1", host: "plugin.example" },
+                              handle: "test@plugin.example",
+                              displayName: "Test"
+                            },
+                            capabilities
+                          }
+                        };
+                      }
+                    }
+                  },
+                  capabilities: {
+                    manga: {
+                      async detail(req) { return { key: req.key, title: "Manga" }; },
+                      async pages() { return { pages: [] }; }
+                    },
+                    post: {
+                      async mutate() { return { type: "noChange" }; }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val mangaPlugin = install(mangaScript, mangaManifest)
+            val coordinator = PluginFormLoginCoordinatorV1(pool, FixedEntropy)
+            val negotiated =
+                coordinator.login(
+                    plugin = mangaPlugin,
+                    methodId = "form",
+                    origin = ORIGIN,
+                    locale = "en",
+                    values = mapOf("token" to "secret", "mode" to "full"),
+                )
+            assertEquals(
+                mapOf(
+                    "flare.datasource.manga/v1" to setOf("detail", "pages"),
+                    "flare.datasource.post/v1" to setOf("mutate"),
+                ),
+                negotiated.capabilities,
+            )
+            // Negotiating post.mutate alone without any displayable capability must still fail
+            assertFailsWith<Exception> {
+                coordinator.login(
+                    plugin = mangaPlugin,
+                    methodId = "form",
+                    origin = ORIGIN,
+                    locale = "en",
+                    values = mapOf("token" to "secret", "mode" to "mutateOnly"),
+                )
+            }
+        }
+
     private suspend fun installQr(
         poll: String,
         content: String = "'https://plugin.example/scan'",

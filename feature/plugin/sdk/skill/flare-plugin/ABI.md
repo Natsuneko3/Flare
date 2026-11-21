@@ -127,7 +127,7 @@ The following services live under `capabilities` in the social definition.
 | `flare.datasource.timeline/v1` | `timeline.page` |
 | `flare.datasource.search/v1` | `search.posts`, `profiles`, `discoverPosts`, `discoverProfiles`, `discoverHashtags` |
 | `flare.datasource.profile/v1` | `profile.byId`, `byHandle`, `timeline`, `following`, `followers` |
-| `flare.datasource.post/v1` | `post.detail`, `context`, `delete`, `mutate`, `contextTabs` and `contextPage` (API v2 pair) |
+| `flare.datasource.post/v1` | `post.detail` (omissible for `mutate`-only in API v2), `context`, `delete`, `mutate`, `contextTabs` and `contextPage` (API v2 pair) |
 | `flare.datasource.relation/v1` | `relation.state`, `mutate` |
 | `flare.datasource.compose/v1` | `compose.publish` |
 | `flare.datasource.compose/v2` | `compose.publish` |
@@ -137,6 +137,7 @@ The following services live under `capabilities` in the social definition.
 | `flare.datasource.direct-message/v1` | `directMessage.rooms`, `room`, `messages`, `send`, `delete`, `leave`, `create`, `badge`, `canSend` |
 | `flare.datasource.article/v1` | `article.detail`, `comments` |
 | `flare.datasource.gallery/v1` | `gallery.detail`, `comments`, `recommendations`, `ugoiraMetadata` (optional) |
+| `flare.datasource.manga/v1` | `manga.detail`, `pages`, `pageImage` (optional), `comments` (optional), `recommendations` (optional) — API v2 |
 | `flare.datasource.tab-catalog/v1` | `tabCatalog.page` |
 
 The [capability matrix](references/capabilities.md) distinguishes required and
@@ -210,23 +211,23 @@ URLs resolve against the selected instance. Local files, `content:`, `data:`,
 
 ## Post detail navigation
 
-Each `PostV1` may set `detailType` to `"post"`, `"article"`, `"gallery"`, or `"link"`.
+Each `PostV1` may set `detailType` to `"post"`, `"article"`, `"gallery"`, `"manga"`, or `"link"`.
 Omitting it defaults to `"post"`.
 For example, a timeline may return an article preview with `detailType: "article"`
-alongside regular posts and gallery previews. The selected detail receives that
+alongside regular posts, gallery previews, and manga updates. The selected detail receives that
 post's `key` and uses the same account or guest origin. Reposted content keeps
 its own `detailType`.
 
 For internal details, the target capability must be available for that account
 (or declared for guest access), including its required operations: `post.detail`; `article.detail` and
-`comments`; or `gallery.detail`, `comments`, and `recommendations`. Otherwise the
+`comments`; `gallery.detail`, `comments`, and `recommendations`; or API v2 `manga.detail` and `pages`. Otherwise the
 post click does nothing; it does not fall back to another detail type. In media
-grids, article and gallery previews use the same detail click target.
+grids, article, gallery, and manga previews use the same detail click target.
 
 For `"link"`, the existing `url` field is required and must contain an absolute
 HTTPS URL without URL credentials. The Host opens it through the existing browser
 flow, following the user's browser settings and bypassing internal detail-link
-matching. No post/article/gallery detail capability is required. Post and grid
+matching. No post/article/gallery/manga detail capability is required. Post and grid
 cover clicks use this target; author and action buttons keep their own behavior.
 For example (other required post fields omitted):
 
@@ -234,8 +235,8 @@ For example (other required post fields omitted):
 { detailType: "link", url: "https://example.com/article/123" }
 ```
 
-The URL remains optional for the three internal detail types. An unknown string
-`detailType`, such as `"manga"` or `"novel"`, keeps the post preview but disables
+The URL remains optional for the four internal detail types. An unknown string
+`detailType`, such as `"audiobook"` or `"novel"`, keeps the post preview but disables
 post, cover, and grid navigation. Independent author and known action clicks keep
 their existing behavior. Omission still defaults to `"post"`; unknown values do
 not use that default or fall back to the URL. Null and non-string values remain

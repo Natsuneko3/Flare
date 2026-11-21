@@ -13,7 +13,7 @@ JavaScript methods live under
 | `timeline` | `timeline` | `page` | None | Static timelines, including at least one default |
 | `search` | `search` | At least one search operation | `posts`, `profiles`, `discoverPosts`, `discoverProfiles`, `discoverHashtags` | Each supported operation enables its own section |
 | `profile` | `profile` | `byId`, `byHandle` | `timeline`, `following`, `followers` | Profile lookup; tabs additionally require `timeline` and profileTabs |
-| `post` | `post` | `detail` | `context`, `delete`, `mutate`, `contextTabs` and `contextPage` (API v2 pair) | Internal post detail, thread context, tabbed detail, and supported actions |
+| `post` | `post` | `detail` (or `mutate` alone in API v2) | `context`, `delete`, `mutate`, `contextTabs` and `contextPage` (API v2 pair) | Internal post detail (`detail` required), thread context, tabbed detail, and supported semantic actions (`mutate` alone is not a displayable login capability) |
 | `relation` | `relation` | `state`, `mutate` | None | Follow/block/mute controls; nonempty static relationActions |
 | `compose/v1` | `compose` | `publish` | None | Legacy new posts and replies via `replyTo`. Requires `composeDefaults` and an account. |
 | `compose/v2` | `compose` | `publish` | None | Typed reply and quote references. Requires `composeDefaults.supportedTypes` and an account. |
@@ -23,6 +23,7 @@ JavaScript methods live under
 | `direct-message` | `directMessage` | `rooms`, `room`, `messages`, `send`, `delete`, `leave`, `create`, `badge`, `canSend` | None | DM rooms, conversation, and related account controls |
 | `article` | `article` | `detail`, `comments` | None | Article detail when a post selects article navigation |
 | `gallery` | `gallery` | `detail`, `comments`, `recommendations` | `ugoiraMetadata` | Gallery detail when a post selects gallery navigation |
+| `manga` | `manga` | `detail`, `pages` | `pageImage`, `comments`, `recommendations` | API v2 manga detail and reader when a post or target selects manga or chapter navigation |
 | `tab-catalog` | `tabCatalog` | `page` | None | Dynamic timeline catalog; also needs timeline.page and a static/default timeline |
 
 These sets come from the Host's `PluginAbiV1` contract, not from TypeScript
@@ -79,6 +80,7 @@ install arbitrary UI or arbitrary action kinds.
 | Omitted or `post` | Internal post detail | post.detail |
 | `article` | Internal article detail | article.detail + comments |
 | `gallery` | Internal gallery detail | gallery.detail + comments + recommendations |
+| `manga` | Internal manga detail | manga.detail + pages (API v2) |
 | `link` | Browser according to user settings | Absolute HTTPS `url`, no internal-detail capability needed |
 
 Unknown string detail types keep the preview and disable post, cover, and grid
@@ -87,7 +89,7 @@ also disable the click, without applying an absent-target fallback.
 
 Missing internal target capability makes that click unavailable; it does not
 fall back to another detail type. `link` bypasses internal Deep Link matching.
-Grid covers use the same article/gallery/link navigation; author/actions and
+Grid covers use the same article/gallery/manga/link navigation; author/actions and
 reposted targets retain their own behavior.
 
 The login profile remains the current account's saved identity if profile lookup

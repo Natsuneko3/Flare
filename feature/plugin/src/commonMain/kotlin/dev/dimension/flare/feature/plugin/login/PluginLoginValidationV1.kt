@@ -36,12 +36,13 @@ internal fun RunningPluginV1.requireLoginSuccess(
             .equals(Url(origin).accountHost(), ignoreCase = true),
     ) { "Login profile host does not match the selected instance" }
     require(expectedAccountId == null || value.accountId == expectedAccountId) { "Relogin account does not match" }
+    val apiVersion = installed.manifest.apiVersion
     val declared = installed.manifest.socialPlatform.capabilities
     val capabilities = PluginAbiV1.knownCapabilities(value.capabilities)
     require(
         capabilities.all { (capability, operations) ->
             declared[capability]?.operations?.keys?.containsAll(operations) == true &&
-                PluginAbiV1.hasRequiredOperations(capability, operations)
+                PluginAbiV1.hasValidCapabilityOperations(capability, operations, apiVersion)
         },
     ) { "Login returned undeclared or incomplete capabilities" }
     require(capabilities.any { (capability, operations) -> PluginAbiV1.isDisplayableCapability(capability, operations) }) {

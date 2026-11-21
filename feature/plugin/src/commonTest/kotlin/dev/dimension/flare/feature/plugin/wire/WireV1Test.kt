@@ -96,7 +96,7 @@ class WireV1Test {
 
     @Test
     fun internalPostDetailsKeepUrlOptional() {
-        listOf(PostDetailTypeV1.Post, PostDetailTypeV1.Article, PostDetailTypeV1.Gallery).forEach { type ->
+        listOf(PostDetailTypeV1.Post, PostDetailTypeV1.Article, PostDetailTypeV1.Gallery, PostDetailTypeV1.Manga).forEach { type ->
             validPost().copy(detailType = type, url = null).requireValid()
         }
     }
@@ -107,6 +107,7 @@ class WireV1Test {
             PostDetailTypeV1.Post to "post",
             PostDetailTypeV1.Article to "article",
             PostDetailTypeV1.Gallery to "gallery",
+            PostDetailTypeV1.Manga to "manga",
             PostDetailTypeV1.Link to "link",
         ).forEach { (type, name) ->
             val post = validPost().copy(detailType = type)
@@ -120,7 +121,7 @@ class WireV1Test {
     @Test
     fun unknownPostDetailTypesDoNotUseTheDefault() {
         val post = PluginJsonV1.encodeToJsonElement(validPost()).jsonObject
-        listOf("manga", "novel", "Article").forEach { type ->
+        listOf("audiobook", "novel", "Article").forEach { type ->
             val value = PluginJsonV1.decodeFromJsonElement<PostV1>(JsonObject(post + ("detailType" to JsonPrimitive(type))))
             value.requireValid()
             assertEquals(PostDetailTypeV1.Unknown, value.detailType)

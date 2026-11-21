@@ -181,7 +181,20 @@ class PluginManifestSchemaTest {
                     .getValue("operations")
                     .jsonObject
             assertEquals(operations, declared.getValue("properties").jsonObject.keys, id)
-            assertEquals(PluginAbiV1.requiredCapabilityOperations.getValue(id), declared.strings("required"), id)
+            val expectedRequired =
+                if (id == PluginAbiV1.Capabilities.POST) {
+                    emptySet()
+                } else {
+                    PluginAbiV1.requiredCapabilityOperations.getValue(id)
+                }
+            assertEquals(expectedRequired, declared.strings("required"), id)
+            if (id == PluginAbiV1.Capabilities.POST) {
+                val dependencies = declared.getValue("dependencies").jsonObject
+                assertEquals(setOf("detail"), dependencies.strings("context"))
+                assertEquals(setOf("detail"), dependencies.strings("delete"))
+                assertEquals(setOf("detail", "contextPage"), dependencies.strings("contextTabs"))
+                assertEquals(setOf("detail", "contextTabs"), dependencies.strings("contextPage"))
+            }
         }
     }
 

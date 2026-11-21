@@ -144,7 +144,19 @@ defineFlareSocialPlugin({ capabilities: { post: {
     const filter: string | undefined = request.filterId;
     return request.tabId === "replies" && filter === undefined ? page : { endReached: true };
   },
+}, manga: {
+  detail(request): MangaV1 {
+    return { key: request.key, title: "Manga", readingDirection: "rtl", status: "ongoing", chapters: [{ id: "1", title: "Ch 1" }] };
+  },
+  pages(request): MangaPagesV1 {
+    const chapterTarget: NavigationTargetV1 = { type: "mangaChapter", key: request.key, chapterId: request.chapterId };
+    void chapterTarget;
+    return { pages: [{ id: "p1", media: { id: "m1", type: "image", url: "https://cdn.example.org/1.jpg" } }] };
+  },
 } } });
+// @ts-expect-error MangaPageV1 media accepts only image or gif.
+const invalidMangaPage: MangaPageV1 = { id: "p-video", media: { id: "m2", type: "video", url: "https://cdn.example.org/1.mp4" } };
+void invalidMangaPage;
 const md5: Promise<string> = flare.crypto.md5("abc");
 // @ts-expect-error Unsupported Host method.
 flare.fetch("https://example.org");

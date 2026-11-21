@@ -451,7 +451,13 @@ class PluginManifestV1Test {
         assertFalse(validateManifest(apiVersion = 2, guest = """{"enabled":true,"origin":"https://manga.example/path"}""").isValid)
         assertFalse(validateManifest(apiVersion = 2, guest = """{"enabled":false,"origin":"https://manga.example"}""").isValid)
         assertTrue(validateManifest(apiVersion = 2, guest = """{"enabled":false,"origin":null}""").isValid)
-        assertTrue(validateManifest(apiVersion = 2, loginMethods = "[]", guest = """{"enabled":true,"origin":"https://manga.example"}""").isValid)
+        assertTrue(
+            validateManifest(
+                apiVersion = 2,
+                loginMethods = "[]",
+                guest = """{"enabled":true,"origin":"https://manga.example"}""",
+            ).isValid,
+        )
         assertEquals("https://manga.example", GuestManifestV1(enabled = true, origin = "https://manga.example").origin)
     }
 

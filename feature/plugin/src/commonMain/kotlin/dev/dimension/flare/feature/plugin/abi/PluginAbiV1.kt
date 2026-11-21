@@ -31,6 +31,7 @@ public object PluginAbiV1 {
         public const val DIRECT_MESSAGE: String = "flare.datasource.direct-message/v1"
         public const val ARTICLE: String = "flare.datasource.article/v1"
         public const val GALLERY: String = "flare.datasource.gallery/v1"
+        public const val MANGA: String = "flare.datasource.manga/v1"
         public const val TAB_CATALOG: String = "flare.datasource.tab-catalog/v1"
     }
 
@@ -83,6 +84,7 @@ public object PluginAbiV1 {
                 ),
             Capabilities.ARTICLE to setOf("detail", "comments"),
             Capabilities.GALLERY to setOf("detail", "comments", "recommendations", "ugoiraMetadata"),
+            Capabilities.MANGA to setOf("detail", "pages", "pageImage", "comments", "recommendations"),
             Capabilities.TAB_CATALOG to setOf("page"),
         )
 
@@ -94,6 +96,7 @@ public object PluginAbiV1 {
                 Capabilities.POST -> setOf("detail")
                 Capabilities.NOTIFICATION, Capabilities.SEARCH -> emptySet()
                 Capabilities.GALLERY -> setOf("detail", "comments", "recommendations")
+                Capabilities.MANGA -> setOf("detail", "pages")
                 else -> operations
             }
         }
@@ -105,6 +108,14 @@ public object PluginAbiV1 {
         operations.isNotEmpty() &&
             requiredCapabilityOperations[capabilityId]?.let(operations::containsAll) == true &&
             (capabilityId != Capabilities.POST || hasPairedPostContextTabOperations(operations))
+
+    internal fun hasValidCapabilityOperations(
+        capabilityId: String,
+        operations: Set<String>,
+        apiVersion: Int,
+    ): Boolean =
+        hasRequiredOperations(capabilityId, operations) ||
+            (apiVersion >= 2 && capabilityId == Capabilities.POST && operations == setOf("mutate"))
 
     internal fun hasPairedPostContextTabOperations(operations: Set<String>): Boolean =
         operations.none { it in postContextTabOperations } || operations.containsAll(postContextTabOperations)
@@ -148,6 +159,7 @@ public object PluginAbiV1 {
                 Capabilities.DIRECT_MESSAGE -> "directMessage"
                 Capabilities.ARTICLE -> "article"
                 Capabilities.GALLERY -> "gallery"
+                Capabilities.MANGA -> "manga"
                 Capabilities.TAB_CATALOG -> "tabCatalog"
                 else -> return null
             }
@@ -165,6 +177,7 @@ public object PluginAbiV1 {
             Capabilities.DIRECT_MESSAGE,
             Capabilities.ARTICLE,
             Capabilities.GALLERY,
+            Capabilities.MANGA,
             Capabilities.TAB_CATALOG,
         )
 }
