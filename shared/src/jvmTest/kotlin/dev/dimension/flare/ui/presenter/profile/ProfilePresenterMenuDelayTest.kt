@@ -504,8 +504,7 @@ class ProfilePresenterMenuDelayTest {
                                 UserHandler(
                                     accountKey.host,
                                     object : UserLoader {
-                                        override suspend fun userByHandleAndHost(uiHandle: UiHandle): UiProfile =
-                                            onUserById(uiHandle.raw)
+                                        override suspend fun userByHandleAndHost(uiHandle: UiHandle): UiProfile = onUserById(uiHandle.raw)
 
                                         override suspend fun userById(id: String): UiProfile {
                                             userByIdCalls.incrementAndGet()
