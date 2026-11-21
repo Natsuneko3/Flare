@@ -61,6 +61,7 @@ kotlin {
             dependencies {
                 implementation(dependencies.platform(libs.compose.bom))
                 implementation(libs.compose.runtime)
+                implementation(libs.androidx.collection)
                 implementation(libs.bundles.kotlinx)
                 implementation(dependencies.platform(libs.koin.bom))
                 implementation(libs.koin.core)

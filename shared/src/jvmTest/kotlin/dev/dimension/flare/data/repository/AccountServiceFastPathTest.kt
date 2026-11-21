@@ -26,11 +26,14 @@ import dev.dimension.flare.testPlatformRuntimeData
 import dev.dimension.flare.ui.model.UiAccount
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.takeSuccess
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -42,10 +45,15 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.builtins.serializer
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
@@ -134,6 +142,148 @@ class AccountServiceFastPathTest {
             guestJob.cancelAndJoin()
         }
 
+    @Test
+    fun deletingAnAccountDiscardsItsInFlightSourceAndObserversRecoverOnLogin() = checkInFlightCreation(readdBeforeRelease = false)
+
+    @Test
+    fun creationRetriesWithTheNewSessionAfterDeletingAndReaddingAnAccount() = checkInFlightCreation(readdBeforeRelease = true)
+
+    private fun checkInFlightCreation(readdBeforeRelease: Boolean) =
+        withFixture {
+            val creating = CompletableDeferred<Unit>()
+            val release = CountDownLatch(1)
+            val closed = AtomicInteger()
+            val removedSource =
+                object : MicroblogDataSource by UnavailableMicroblogDataSource, AutoCloseable {
+                    override fun close() {
+                        closed.incrementAndGet()
+                    }
+                }
+            val replacement = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+            attachPlatform { context ->
+                if (context.credential(String.serializer()) == "credential") {
+                    creating.complete(Unit)
+                    check(release.await(7, TimeUnit.SECONDS))
+                    removedSource
+                } else {
+                    replacement
+                }
+            }
+
+            val account = requireNotNull(accountRepository.find(accountKey))
+            val source = scope.async(Dispatchers.IO) { accountRepository.getOrCreateDataSource(account) }
+            try {
+                creating.await()
+                accountRepository.delete(accountKey)
+                assertNull(accountRepository.find(accountKey))
+                if (readdBeforeRelease) accountRepository.addAccount(account, "replacement")
+            } finally {
+                release.countDown()
+            }
+            if (readdBeforeRelease) {
+                assertSame(replacement, source.await())
+            } else {
+                assertFailsWith<NoSuchElementException> { source.await() }
+                assertNull(accountRepository.peekDataSource(accountType))
+                assertTrue(accountRepository.allAccountServices.first().isEmpty())
+                val subscriber =
+                    scope.async(start = CoroutineStart.UNDISPATCHED) {
+                        accountServiceFlow(accountType, accountRepository).first()
+                    }
+                assertFalse(subscriber.isCompleted)
+                accountRepository.addAccount(account, "replacement")
+                assertSame(replacement, subscriber.await())
+            }
+            assertEquals(1, closed.get())
+            val service = accountRepository.allAccountServices.first().single()
+            assertSame(replacement, service.dataSource)
+            assertEquals(app.accountDao().getSessionId(accountKey), service.sessionId)
+        }
+
+    @Test
+    fun loginHidesTheRetiredSourceWhileItCloses() =
+        checkSessionRetirement { account -> accountRepository.addAccount(account, "replacement") }
+
+    @Test
+    fun restoreHidesTheRetiredSourceWhileItCloses() =
+        checkSessionRetirement {
+            accountRepository.restoreAccounts(listOf(accountKey)) { app.accountDao().setCredential(accountKey, "\"replacement\"") }
+        }
+
+    @Test
+    fun deletionRejectsNewSourcesDuringCleanupAndRebindsTheMountedProviderOnLogin() =
+        checkSessionRetirement(deleting = true) { accountRepository.delete(accountKey) }
+
+    private fun checkSessionRetirement(
+        deleting: Boolean = false,
+        retire: suspend Fixture.(UiAccount) -> Unit,
+    ) = withFixture {
+        val closing = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        val original =
+            object : MicroblogDataSource by UnavailableMicroblogDataSource, AutoCloseable {
+                override fun close() {
+                    closing.complete(Unit)
+                    check(release.await(7, TimeUnit.SECONDS))
+                }
+            }
+        val replacement = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+        val other = UiAccount(MicroBlogKey("bob", accountKey.host), PLATFORM)
+        val otherSource = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+        attachPlatform { context ->
+            when {
+                context.accountKey == other.accountKey -> otherSource
+                context.credential(String.serializer()) == "credential" -> original
+                else -> replacement
+            }
+        }
+        accountRepository.addAccount(other, "bob")
+        val account = requireNotNull(accountRepository.find(accountKey))
+        assertSame(original, accountRepository.getOrCreateDataSource(account))
+        val mounted = MutableStateFlow<UiState<MicroblogDataSource>?>(null)
+        val observer =
+            scope.launch {
+                moleculeFlow(RecompositionMode.Immediate) {
+                    accountServiceProvider(accountType, accountRepository)
+                }.collect { mounted.value = it }
+            }
+        assertSame(original, mounted.filterNotNull().first { it is UiState.Success }.takeSuccess())
+
+        val changing = scope.async(Dispatchers.IO) { retire(account) }
+        val subscriber =
+            try {
+                closing.await()
+                assertNull(accountRepository.peekDataSource(accountType))
+                assertTrue(mounted.filterNotNull().first { it.takeSuccess() !== original } is UiState.Loading)
+                val first =
+                    scope.async(start = CoroutineStart.UNDISPATCHED) {
+                        accountServiceFlow(accountType, accountRepository).first()
+                    }
+                assertFalse(first.isCompleted)
+                assertSame(otherSource, accountRepository.getOrCreateDataSource(other))
+                if (deleting) {
+                    assertNotNull(accountRepository.find(accountKey))
+                    assertFailsWith<NoSuchElementException> { accountRepository.getOrCreateDataSource(account) }
+                    assertSame(
+                        otherSource,
+                        accountRepository.allAccountServices
+                            .first()
+                            .single()
+                            .dataSource,
+                    )
+                }
+                first
+            } finally {
+                release.countDown()
+                changing.await()
+            }
+        if (deleting) accountRepository.addAccount(account, "replacement")
+        assertSame(replacement, subscriber.await())
+        assertSame(replacement, mounted.filterNotNull().first { it is UiState.Success }.takeSuccess())
+        assertSame(replacement, accountRepository.peekDataSource(accountType))
+        observer.cancelAndJoin()
+    }
+
     private fun withFixture(block: suspend Fixture.() -> Unit) =
         runBlocking {
             val main = Executors.newSingleThreadExecutor { Thread(it, "account-fast-path") }.asCoroutineDispatcher()
@@ -197,7 +347,11 @@ class AccountServiceFastPathTest {
                 drafts,
             )
 
-        fun attachPlatform() {
+        fun attachPlatform(
+            create: (
+                PlatformDataSourceContext,
+            ) -> MicroblogDataSource = { object : MicroblogDataSource by UnavailableMicroblogDataSource {} },
+        ) {
             registry.replaceExternal(
                 PLATFORM,
                 object : PlatformSpec by registry.defaultGuest {
@@ -206,7 +360,7 @@ class AccountServiceFastPathTest {
 
                     override fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource {
                         lastContext = context
-                        return object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+                        return create(context)
                     }
                 },
             )

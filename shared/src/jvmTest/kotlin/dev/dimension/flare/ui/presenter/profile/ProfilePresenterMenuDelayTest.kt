@@ -1,5 +1,7 @@
 package dev.dimension.flare.ui.presenter.profile
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.room3.Room
 import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
@@ -79,6 +81,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -94,6 +97,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.dimension.flare.data.datasource.microblog.ActionMenu.Item.Text.Localized.Type as MenuType
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProfilePresenterMenuDelayTest {
@@ -147,16 +151,8 @@ class ProfilePresenterMenuDelayTest {
                 }
 
             val firstFrame = firstFrameDeferred.await()
-            assertEquals(
-                listOf(
-                    ActionMenu.Item.Text.Localized.Type.EditUserList,
-                    ActionMenu.Item.Text.Localized.Type.Block,
-                    ActionMenu.Item.Text.Localized.Type.Mute,
-                    ActionMenu.Item.Text.Localized.Type.Report,
-                ),
-                firstFrame.actions.localizedTypes(),
-            )
-            assertFalse(ActionMenu.Item.Text.Localized.Type.SendMessage in firstFrame.actions.localizedTypes())
+            assertTrue(firstFrame.relationState is UiState.Loading)
+            assertEquals(listOf(MenuType.EditUserList, MenuType.Report), firstFrame.actions.localizedTypes())
 
             canSendStarted.await()
             userStarted.await()
@@ -167,23 +163,18 @@ class ProfilePresenterMenuDelayTest {
 
             canSendResult.complete(true)
             val withSendMessage =
-                states.await { ActionMenu.Item.Text.Localized.Type.SendMessage in it.actions.localizedTypes() }
+                states.await { MenuType.SendMessage in it.actions.localizedTypes() }
             assertEquals(
-                listOf(
-                    ActionMenu.Item.Text.Localized.Type.EditUserList,
-                    ActionMenu.Item.Text.Localized.Type.SendMessage,
-                    ActionMenu.Item.Text.Localized.Type.Block,
-                    ActionMenu.Item.Text.Localized.Type.Mute,
-                    ActionMenu.Item.Text.Localized.Type.Report,
-                ),
+                listOf(MenuType.EditUserList, MenuType.SendMessage, MenuType.Report),
                 withSendMessage.actions.localizedTypes(),
             )
 
             relationResult.complete(UiRelation(blocking = true, muted = true))
-            states.await {
-                ActionMenu.Item.Text.Localized.Type.UnBlock in it.actions.localizedTypes() &&
-                    ActionMenu.Item.Text.Localized.Type.UnMute in it.actions.localizedTypes()
-            }
+            val blocked = states.await { it.relationState is UiState.Success }
+            assertEquals(
+                listOf(MenuType.EditUserList, MenuType.SendMessage, MenuType.UnBlock, MenuType.UnMute, MenuType.Report),
+                blocked.actions.localizedTypes(),
+            )
             userResult.complete(createSampleUser().copy(key = targetKey))
             states.await { it.userState is UiState.Success }
             observerJob.cancelAndJoin()
@@ -195,11 +186,90 @@ class ProfilePresenterMenuDelayTest {
                 moleculeFlow(RecompositionMode.Immediate) {
                     revisitPresenter.body()
                 }.first()
-            assertTrue(ActionMenu.Item.Text.Localized.Type.SendMessage in revisitFirstFrame.actions.localizedTypes())
+            assertTrue(MenuType.SendMessage in revisitFirstFrame.actions.localizedTypes())
 
             val revisitStates = observe(ProfilePresenter(accountType, targetKey))
             revisitStates.await { source.canSendCalls.get() >= 2 && it.userState is UiState.Success }
-            assertTrue(ActionMenu.Item.Text.Localized.Type.SendMessage in revisitStates.value!!.actions.localizedTypes())
+            assertTrue(MenuType.SendMessage in revisitStates.value!!.actions.localizedTypes())
+        }
+
+    @Test
+    fun replacingLiveDataSourceClearsSendMessageWhileNewPermissionIsPending() =
+        withFixture {
+            fun source(
+                platformId: String,
+                canSend: suspend (MicroBlogKey) -> Boolean,
+            ) = TestProfileSource(
+                onCanSend = canSend,
+                onUserById = { createSampleUser().copy(key = targetKey, platformId = platformId) },
+                onRelation = { UiRelation() },
+            )
+
+            attach(source("First") { true })
+            warmDataSource()
+            val states = observe(ProfilePresenter(accountType, targetKey))
+            val first = states.await { MenuType.SendMessage in it.actions.localizedTypes() && it.relationState is UiState.Success }
+            assertEquals(
+                listOf(MenuType.EditUserList, MenuType.SendMessage, MenuType.Block, MenuType.Mute, MenuType.Report),
+                first.actions.localizedTypes(),
+            )
+
+            val pending = CompletableDeferred<Boolean>()
+            val started = CompletableDeferred<Unit>()
+            attach(
+                source("Replacement") {
+                    started.complete(Unit)
+                    pending.await()
+                },
+            )
+            started.await()
+            val replacement = states.await { (it.userState as? UiState.Success)?.data?.platformId == "Replacement" }
+            assertFalse(MenuType.SendMessage in replacement.actions.localizedTypes())
+            pending.complete(true)
+            states.await { MenuType.SendMessage in it.actions.localizedTypes() }
+        }
+
+    @Test
+    fun switchingProfilesAtTheSameCallSiteResetsActionsAndRecordsTheNewVisit() =
+        withFixture {
+            val nextKey = MicroBlogKey("carol", accountKey.host)
+            val pending = CompletableDeferred<Boolean>()
+            attach(
+                TestProfileSource(
+                    onCanSend = { if (it == nextKey) pending.await() else true },
+                    onUserById = { id ->
+                        createSampleUser().copy(key = MicroBlogKey(id, accountKey.host), handle = UiHandle(id, accountKey.host))
+                    },
+                    onRelation = {
+                        if (it == nextKey) pending.await()
+                        UiRelation(blocking = it == targetKey)
+                    },
+                ),
+            )
+            warmDataSource()
+            val presenter = mutableStateOf(ProfilePresenter(accountType, targetKey))
+            val states = observe { presenter.value.body() }
+            states.await {
+                val actions = it.actions.localizedTypes()
+                it.userState is UiState.Success && MenuType.SendMessage in actions && MenuType.UnBlock in actions
+            }
+            val visits =
+                cache.invalidationTracker.createFlow("DbUserHistory").map {
+                    cache
+                        .userDao()
+                        .getUserHistory(limit = 2)
+                        .map { it.data.accountType to it.data.userKey }
+                        .toSet()
+                }
+            assertEquals(setOf(accountType to targetKey), visits.first { it.isNotEmpty() })
+
+            presenter.value = ProfilePresenter(accountType, nextKey)
+            val next = states.await { (it.userState as? UiState.Success)?.data?.key == nextKey }
+            assertTrue(next.relationState is UiState.Loading)
+            assertEquals(listOf(MenuType.EditUserList, MenuType.Report), next.actions.localizedTypes())
+            pending.complete(true)
+            states.await { MenuType.SendMessage in it.actions.localizedTypes() && MenuType.Block in it.actions.localizedTypes() }
+            assertEquals(setOf(accountType to targetKey, accountType to nextKey), visits.first { it.size == 2 })
         }
 
     @Test
@@ -232,7 +302,7 @@ class ProfilePresenterMenuDelayTest {
                 TestProfileSource(
                     onCanSend = { false },
                     onUserById = { throw IllegalStateException("404 not found") },
-                    onRelation = { UiRelation() },
+                    onRelation = { throw IllegalStateException("relation unavailable") },
                 )
             attach(uncachedErrorSource)
             warmDataSource()
@@ -253,8 +323,8 @@ class ProfilePresenterMenuDelayTest {
             cache.upsertUser(createSampleUser().copy(key = cachedUserKey).toDbUser())
 
             val cachedObserved = observe(ProfilePresenter(accountType, cachedUserKey))
-            val cachedResolved = cachedObserved.await { it.userState is UiState.Success }
-            assertFalse(cachedResolved.actions.isEmpty())
+            val cachedResolved = cachedObserved.await { it.userState is UiState.Success && it.relationState is UiState.Error }
+            assertEquals(listOf(MenuType.EditUserList, MenuType.Report), cachedResolved.actions.localizedTypes())
 
             // Detaching platform clears menu
             detach()
@@ -263,7 +333,7 @@ class ProfilePresenterMenuDelayTest {
         }
 
     @Test
-    fun guestProfileRendersReportImmediately() =
+    fun guestProfileUsesOneDataSourceAndRendersReportImmediately() =
         withFixture {
             val pendingGuestUser = CompletableDeferred<UiProfile>()
             guestSource =
@@ -276,7 +346,7 @@ class ProfilePresenterMenuDelayTest {
                                     object : UserDataSource {
                                         override val userHandler =
                                             UserHandler(
-                                                "mastodon.example",
+                                                targetKey.host,
                                                 object : UserLoader {
                                                     override suspend fun userByHandleAndHost(uiHandle: UiHandle): UiProfile =
                                                         pendingGuestUser.await()
@@ -295,19 +365,26 @@ class ProfilePresenterMenuDelayTest {
                                 },
                         )
                 }
-            val guestType = AccountType.GuestHost("mastodon.example")
+            val guestType = AccountType.GuestHost(targetKey.host)
             val guestPresenter = ProfilePresenter(guestType, targetKey)
-            val guestFirst =
+            val firstFrame = CompletableDeferred<ProfileState>()
+            val resolved =
                 moleculeFlow(RecompositionMode.Immediate) {
                     guestPresenter.body()
-                }.first()
-            assertEquals(
-                listOf(ActionMenu.Item.Text.Localized.Type.Report),
-                guestFirst.actions.localizedTypes(),
-            )
+                }.first { state ->
+                    if (firstFrame.complete(state)) {
+                        pendingGuestUser.complete(createSampleUser().copy(key = targetKey))
+                    }
+                    state.userState is UiState.Success
+                }
+            val first = firstFrame.await()
+            assertTrue(first.userState is UiState.Loading)
+            assertEquals(listOf(MenuType.Report), first.actions.localizedTypes())
+            assertEquals(listOf(MenuType.Report), resolved.actions.localizedTypes())
+            assertEquals(1, guestCreations)
         }
 
-    private fun List<ActionMenu>.localizedTypes(): List<ActionMenu.Item.Text.Localized.Type> {
+    private fun List<ActionMenu>.localizedTypes(): List<MenuType> {
         val group = singleOrNull() as? ActionMenu.Group ?: return emptyList()
         return group.actions
             .filterIsInstance<ActionMenu.Item>()
@@ -342,6 +419,7 @@ class ProfilePresenterMenuDelayTest {
         val cache = Room.memoryDatabaseBuilder<CacheDatabase>().setDriver(createDatabaseDriver()).build()
         val appData = AppDataStore(storage)
         var guestSource: MicroblogDataSource = UnavailableMicroblogDataSource
+        var guestCreations = 0
         val registry =
             PlatformRegistry(
                 PlatformRuntimeData(
@@ -352,7 +430,10 @@ class ProfilePresenterMenuDelayTest {
                                     override fun guestDataSource(
                                         host: String,
                                         locale: String,
-                                    ): MicroblogDataSource = guestSource
+                                    ): MicroblogDataSource {
+                                        guestCreations++
+                                        return guestSource
+                                    }
                                 }
                             } else {
                                 spec
@@ -407,10 +488,12 @@ class ProfilePresenterMenuDelayTest {
             repository.getOrCreateDataSource(account)
         }
 
-        fun <T : Any> observe(presenter: PresenterBase<T>): MutableStateFlow<T?> {
+        fun <T : Any> observe(presenter: PresenterBase<T>): MutableStateFlow<T?> = observe { presenter.body() }
+
+        fun <T : Any> observe(body: @Composable () -> T): MutableStateFlow<T?> {
             val state = MutableStateFlow<T?>(null)
             scope.launch {
-                moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { state.value = it }
+                moleculeFlow(RecompositionMode.Immediate, body = body).collect { state.value = it }
             }
             return state
         }

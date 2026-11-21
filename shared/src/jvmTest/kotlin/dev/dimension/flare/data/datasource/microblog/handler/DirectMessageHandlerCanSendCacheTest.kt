@@ -11,7 +11,9 @@ import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiDMItem
 import dev.dimension.flare.ui.model.UiDMRoom
 import dev.dimension.flare.ui.model.UiState
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -25,55 +27,52 @@ class DirectMessageHandlerCanSendCacheTest {
     private val targetUser = MicroBlogKey("bob", "example.social")
     private val otherUser = MicroBlogKey("carol", "example.social")
 
+    private var nextResult: Result<Boolean> = Result.success(true)
+    private val loader =
+        object : DirectMessageLoader {
+            override val platformId: String = "test"
+
+            override suspend fun loadRooms(
+                pageSize: Int,
+                request: PagingRequest,
+            ): PagingResult<UiDMRoom> = error("unused")
+
+            override suspend fun loadMessages(
+                roomKey: MicroBlogKey,
+                pageSize: Int,
+                request: PagingRequest,
+            ): PagingResult<UiDMItem> = error("unused")
+
+            override suspend fun fetchRoomInfo(roomKey: MicroBlogKey): UiDMRoom? = error("unused")
+
+            override suspend fun sendMessage(
+                roomKey: MicroBlogKey,
+                message: String,
+            ): UiDMItem = error("unused")
+
+            override suspend fun deleteMessage(
+                roomKey: MicroBlogKey,
+                messageKey: MicroBlogKey,
+            ): Unit = error("unused")
+
+            override suspend fun fetchNewMessages(
+                roomKey: MicroBlogKey,
+                cursor: String?,
+            ): DirectMessageDelta = error("unused")
+
+            override suspend fun leaveRoom(roomKey: MicroBlogKey): Unit = error("unused")
+
+            override fun createRoom(userKey: MicroBlogKey): Flow<UiState<UiDMRoom>> = error("unused")
+
+            override suspend fun canSend(userKey: MicroBlogKey): Boolean = nextResult.getOrThrow()
+
+            override suspend fun loadBadgeCount(): Int = error("unused")
+        }
+
     @Test
     fun cachesResolvedCanSendAndUpdatesOnRefreshWithoutCachingFailures() =
         runTest {
-            var nextResult: Result<Boolean> = Result.success(true)
-            val handler =
-                DirectMessageHandler(
-                    accountKey = accountKey,
-                    loader =
-                        object : DirectMessageLoader {
-                            override val platformId: String = "test"
-
-                            override suspend fun loadRooms(
-                                pageSize: Int,
-                                request: PagingRequest,
-                            ): PagingResult<UiDMRoom> = error("unused")
-
-                            override suspend fun loadMessages(
-                                roomKey: MicroBlogKey,
-                                pageSize: Int,
-                                request: PagingRequest,
-                            ): PagingResult<UiDMItem> = error("unused")
-
-                            override suspend fun fetchRoomInfo(roomKey: MicroBlogKey): UiDMRoom? = error("unused")
-
-                            override suspend fun sendMessage(
-                                roomKey: MicroBlogKey,
-                                message: String,
-                            ): UiDMItem = error("unused")
-
-                            override suspend fun deleteMessage(
-                                roomKey: MicroBlogKey,
-                                messageKey: MicroBlogKey,
-                            ): Unit = error("unused")
-
-                            override suspend fun fetchNewMessages(
-                                roomKey: MicroBlogKey,
-                                cursor: String?,
-                            ): DirectMessageDelta = error("unused")
-
-                            override suspend fun leaveRoom(roomKey: MicroBlogKey): Unit = error("unused")
-
-                            override fun createRoom(userKey: MicroBlogKey): Flow<UiState<UiDMRoom>> = error("unused")
-
-                            override suspend fun canSend(userKey: MicroBlogKey): Boolean = nextResult.getOrThrow()
-
-                            override suspend fun loadBadgeCount(): Int = error("unused")
-                        },
-                    coroutineScope = backgroundScope,
-                )
+            val handler = DirectMessageHandler(accountKey, loader, backgroundScope)
             val dataSource =
                 object : DirectMessageDataSource, MicroblogDataSource by UnavailableMicroblogDataSource {
                     override val accountKey: MicroBlogKey = this@DirectMessageHandlerCanSendCacheTest.accountKey
@@ -83,7 +82,6 @@ class DirectMessageHandlerCanSendCacheTest {
             assertNull(handler.cachedCanSend(targetUser))
             assertNull(dataSource.cachedCanSendDirectMessage(targetUser))
 
-            nextResult = Result.success(true)
             assertTrue(dataSource.canSendDirectMessage(targetUser))
             assertEquals(true, handler.cachedCanSend(targetUser))
             assertEquals(true, dataSource.cachedCanSendDirectMessage(targetUser))
@@ -99,5 +97,33 @@ class DirectMessageHandlerCanSendCacheTest {
             assertFalse(dataSource.canSendDirectMessage(targetUser))
             assertEquals(false, handler.cachedCanSend(targetUser))
             assertEquals(false, dataSource.cachedCanSendDirectMessage(targetUser))
+        }
+
+    @Test
+    fun aCancelledRefreshCannotReplaceTheCachedPermission() =
+        runTest {
+            val handler = DirectMessageHandler(accountKey, loader, backgroundScope)
+            assertTrue(handler.canSend(targetUser))
+            nextResult = Result.success(false)
+            launch {
+                cancel()
+                handler.canSend(targetUser)
+            }.join()
+            assertEquals(true, handler.cachedCanSend(targetUser))
+        }
+
+    @Test
+    fun evictsTheLeastRecentlyUsedPermissionAfter128Profiles() =
+        runTest {
+            val handler = DirectMessageHandler(accountKey, loader, backgroundScope)
+            val users = (0..128).map { MicroBlogKey(it.toString(), accountKey.host) }
+            users.take(128).forEach { handler.canSend(it) }
+
+            assertEquals(true, handler.cachedCanSend(users.first()))
+            handler.canSend(users.last())
+
+            assertNull(handler.cachedCanSend(users[1]))
+            assertEquals(true, handler.cachedCanSend(users.first()))
+            assertEquals(128, users.count { handler.cachedCanSend(it) != null })
         }
 }

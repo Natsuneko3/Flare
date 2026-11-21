@@ -23,7 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentWithReceiverOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,9 +114,12 @@ public fun ProfileHeader(
     isBigScreen: Boolean = false,
     useCard: Boolean = !isBigScreen(),
 ) {
+    // Keep an open menu attached when the loaded header replaces its placeholder.
+    val currentMenu by rememberUpdatedState(menu)
+    val headerMenu = remember { movableContentWithReceiverOf<RowScope> { currentMenu() } }
     when (val userState = state.userState) {
         is UiState.Loading -> {
-            ProfileHeaderLoading(modifier = modifier, withStatusBarHeight = true)
+            ProfileHeaderLoading(modifier = modifier, withStatusBarHeight = true, menu = headerMenu)
         }
 
         is UiState.Error -> {
@@ -131,7 +136,7 @@ public fun ProfileHeader(
                 onFollowClick = state::follow,
                 onUnfollowClick = state::unfollow,
                 isMe = state.isMe,
-                menu = menu,
+                menu = headerMenu,
                 expandMatrices = isBigScreen,
                 useCard = useCard,
                 onAvatarClick = onAvatarClick,
@@ -426,6 +431,7 @@ private fun ProfileHeaderError() {
 public fun ProfileHeaderLoading(
     withStatusBarHeight: Boolean,
     modifier: Modifier = Modifier,
+    menu: @Composable RowScope.() -> Unit = {},
 ) {
     val statusBarHeight =
         with(LocalDensity.current) {
@@ -462,7 +468,7 @@ public fun ProfileHeaderLoading(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = screenHorizontalPadding),
+                        .padding(start = screenHorizontalPadding),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(
@@ -497,6 +503,7 @@ public fun ProfileHeaderLoading(
                         modifier = Modifier.placeholder(true),
                     )
                 }
+                Row(modifier = Modifier.padding(top = actualBannerHeight), content = menu)
             }
             PlatformText(
                 text = "Lorem Ipsum is simply dummy text",
