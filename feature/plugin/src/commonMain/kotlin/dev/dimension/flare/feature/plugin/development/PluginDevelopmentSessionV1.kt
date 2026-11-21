@@ -77,6 +77,7 @@ public class PluginDevelopmentSessionV1 internal constructor(
     private var candidate: Candidate? = null
     private var lastCheckedHash: String? = null
     private var baseline: RunningPluginV1? = null
+    private var baselineTimelineGrant: Set<String>? = null
     private val active: RunningPluginV1?
         get() =
             subsystem.running.value.plugins[state.value.pluginId]
@@ -143,14 +144,36 @@ public class PluginDevelopmentSessionV1 internal constructor(
                     }
                     return@withLock
                 }
-                if (active == null) baseline = previous
+                val startingDevelopment = active == null
+                val previousGrant = subsystem.timelineGrants.current[prepared.validated.manifest.id]
+                if (startingDevelopment) {
+                    baseline = previous
+                    baselineTimelineGrant = previousGrant
+                }
                 val replacement =
                     prepared.running(
                         nextGeneration(previous),
                         previous?.installed?.ownedPlatformId ?: baseline?.installed?.ownedPlatformId ?: prepared.validated.manifest.platform
                             ?.id,
                     )
-                switcher.switch(previous, replacement, temporary = true)
+                subsystem.applyConfirmedTimelineProcessorGrant(
+                    existingManifest = previous?.installed?.manifest,
+                    nextManifest = replacement.installed.manifest,
+                )
+                try {
+                    switcher.switch(previous, replacement, temporary = true)
+                } catch (error: Throwable) {
+                    subsystem.timelineGrants.updateSuspend { current ->
+                        if (previousGrant ==
+                            null
+                        ) {
+                            current - replacement.installed.pluginId
+                        } else {
+                            current + (replacement.installed.pluginId to previousGrant)
+                        }
+                    }
+                    throw error
+                }
                 pruneIcons(replacement)
                 mutableState.update {
                     it.copy(
@@ -171,11 +194,17 @@ public class PluginDevelopmentSessionV1 internal constructor(
             subsystem.mutationMutex.withLock {
                 val previous = active
                 if (previous != null) {
+                    val pluginId = previous.installed.pluginId
+                    val restoredGrant = baselineTimelineGrant
+                    subsystem.timelineGrants.updateSuspend { current ->
+                        if (restoredGrant == null) current - pluginId else current + (pluginId to restoredGrant)
+                    }
                     val restored = baseline?.copy(generation = nextGeneration(previous))
                     switcher.switch(previous, restored, temporary = true)
                 }
             }
             baseline = null
+            baselineTimelineGrant = null
             candidate = null
             watcher?.cancel()
             watcher = null

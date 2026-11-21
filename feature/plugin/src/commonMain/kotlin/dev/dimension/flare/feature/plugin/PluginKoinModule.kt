@@ -2,11 +2,15 @@ package dev.dimension.flare.feature.plugin
 
 import dev.dimension.flare.common.InAppNotification
 import dev.dimension.flare.common.Message
+import dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
 import dev.dimension.flare.data.datastore.PlatformOAuthPendingRepository
 import dev.dimension.flare.data.io.AppFileStore
+import dev.dimension.flare.data.plugin.TimelineProcessorService
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.data.repository.PluginAuthoring
+import dev.dimension.flare.data.repository.SettingsRepository
 import dev.dimension.flare.data.translation.PluginTranslationService
+import dev.dimension.flare.feature.plugin.adapter.PluginTimelineProcessorServiceV1
 import dev.dimension.flare.feature.plugin.adapter.PluginTranslationServiceV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
 import dev.dimension.flare.model.PlatformSpecSource
@@ -22,6 +26,20 @@ import kotlin.native.HiddenFromObjC
 internal class PluginKoinModule {
     @Single
     fun translation(subsystem: PluginSubsystemV1): PluginTranslationService = PluginTranslationServiceV1(subsystem)
+
+    @Single(binds = [TimelineProcessorService::class])
+    fun timelineProcessor(
+        subsystem: PluginSubsystemV1,
+        dao: PluginPostWidgetDao,
+        settingsRepository: SettingsRepository,
+        scope: CoroutineScope,
+    ): TimelineProcessorService =
+        PluginTimelineProcessorServiceV1(
+            subsystem = subsystem,
+            dao = dao,
+            grants = subsystem.timelineGrants.also { it.bind(SettingsRepositoryTimelineBacking(settingsRepository), scope) },
+            scope = scope,
+        )
 
     @Single
     fun authoring(subsystem: PluginSubsystemV1): PluginAuthoring = subsystem.authoring

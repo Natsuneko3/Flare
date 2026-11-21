@@ -444,6 +444,13 @@ public class PreparedPluginInstallV1 internal constructor(
                     mapOf("flare.platform-extension/v1" to it.actions.mapTo(mutableSetOf()) { action -> action.id })
                 }
                     ?: emptyMap()
+            ) +
+            (
+                if (validated.manifest.timelineProcessor != null) {
+                    mapOf("flare.timeline-processor/v1" to setOf("processBatch"))
+                } else {
+                    emptyMap()
+                }
             )
     public val permissions: Set<PluginPermission> = validated.manifest.sensitivePermissions()
 }
@@ -542,6 +549,9 @@ internal fun PluginManifestV1.sensitivePermissions(): Set<PluginPermission> =
         }
         if (permissions.mediaNetwork) {
             add(PluginPermission(PluginPermissionType.MediaNetwork, "*"))
+        }
+        if (timelineProcessor != null) {
+            add(PluginPermission(PluginPermissionType.TimelinePostAccess, "*"))
         }
         platform?.loginMethods.orEmpty().forEach { method ->
             method.cookie?.probes?.forEach { probe ->
