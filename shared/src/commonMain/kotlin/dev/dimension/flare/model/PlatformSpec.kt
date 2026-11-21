@@ -42,6 +42,9 @@ public interface PlatformSpec {
 
     public fun deepLinks(accountKey: MicroBlogKey): ImmutableList<PlatformDeepLink<*>>
 
+    public val shortLink: PlatformShortLink?
+        get() = null
+
     public fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource
 
     /** Runs in the account writer transaction before creating a datasource; must not perform external work. */
@@ -102,6 +105,13 @@ public data class PlatformDeepLink<T>(
     public val serializer: KSerializer<T>,
     public val matcher: (T) -> Boolean = { true },
     public val callback: (T) -> DeeplinkRoute,
+)
+
+/** Resolves a short URL to one handled by the same platform's deep link rules. */
+@HiddenFromObjC
+public data class PlatformShortLink(
+    public val host: String,
+    public val resolve: suspend (String) -> String?,
 )
 
 @HiddenFromObjC

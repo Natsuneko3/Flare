@@ -64,10 +64,20 @@ public data object XqtPlatformSpec :
                 "https://www.$xqtHost/{handle}/status/{id}/photo/{index}",
                 "https://www.$xqtOldHost/{handle}/status/{id}/photo/{index}",
             )
+        val fxEmbedPosts =
+            listOf("fixupx.com", "fxtwitter.com").map { host ->
+                postDeepLink(accountKey, "https://$host/{handle}/status/{id}")
+                    .copy(
+                        matcher = { post ->
+                            post.handle.isNotEmpty() && post.id.isNotEmpty() && post.id.all { digit -> digit in '0'..'9' }
+                        },
+                    )
+            }
         return (
             profile.map { profileDeepLink(accountKey, it) } +
                 post.map { postDeepLink(accountKey, it) } +
-                media.map { postMediaDeepLink(accountKey, it) }
+                media.map { postMediaDeepLink(accountKey, it) } +
+                fxEmbedPosts
         ).toImmutableList()
     }
 
