@@ -282,5 +282,28 @@ flare.fetch("https://example.org");
   const v2Package = join(directory, "v2.fpp");
   execFileSync(process.execPath, [join(sdk, metadata.bin["flare-plugin-pack"]), runtime, v2Package]);
   assert(readFileSync(v2Package).length > 0);
+
+  const processorDir = join(directory, "timeline-processor");
+  mkdirSync(join(processorDir, "assets"), { recursive: true });
+  cpSync(join(generated, "assets/icon.png"), join(processorDir, "assets/icon.png"));
+  writeFileSync(join(processorDir, "manifest.json"), JSON.stringify({
+    schemaVersion: 1,
+    apiVersion: 2,
+    id: "org.example.processor",
+    name: "Processor",
+    version: "0.1.0",
+    minFlareVersion: "0.1.0",
+    permissions: {},
+    timelineProcessor: { apiVersion: 1 },
+  }));
+  const processorPackage = join(directory, "processor.fpp");
+  assert.throws(
+    () => execFileSync(process.execPath, [join(sdk, metadata.bin["flare-plugin-pack"]), processorDir, processorPackage], { stdio: "pipe" }),
+    /Background capabilities require plugin\.js/,
+  );
+  writeFileSync(join(processorDir, "plugin.js"), "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });\n");
+  execFileSync(process.execPath, [join(sdk, metadata.bin["flare-plugin-pack"]), processorDir, processorPackage]);
+  assert(readFileSync(processorPackage).length > 0);
+
   t.diagnostic(`Verified ${archive.files.length} files, offline SDK install, typed project build, stale-output guard, SDK types, module bundling, watch recovery, and packaging`);
 });

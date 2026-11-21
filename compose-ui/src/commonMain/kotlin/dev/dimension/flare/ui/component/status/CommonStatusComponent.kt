@@ -172,6 +172,7 @@ import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.model.pluginPostEntityKey
 import dev.dimension.flare.ui.render.RenderContent
 import dev.dimension.flare.ui.render.RenderRun
 import dev.dimension.flare.ui.render.UiRichText
@@ -583,7 +584,12 @@ public fun CommonStatusComponent(
                     Spacer(
                         modifier = Modifier.height(if (hasPrecedingAttachment) 8.dp else firstAttachmentSpacing),
                     )
-                    PluginWidgetStackComponent(cards = item.pluginWidgets)
+                    key(item.accountType, item.statusKey) {
+                        PluginWidgetStackComponent(
+                            cards = item.pluginWidgets,
+                            postIdentity = item.pluginPostEntityKey(),
+                        )
+                    }
                 }
 
                 if (showsReactions) {

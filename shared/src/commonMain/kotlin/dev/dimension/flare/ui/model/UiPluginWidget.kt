@@ -15,6 +15,7 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import okio.ByteString.Companion.encodeUtf8
+import kotlin.native.HiddenFromObjC
 
 @Serializable
 @Immutable
@@ -321,7 +322,7 @@ public fun UiTimelineV2.Post.pluginPostEntityKey(): String = "${accountType}_$st
 public fun UiTimelineV2.Post.extractPluginPostInput(): ExtractedPluginPostInput {
     val contentPlain = content.original.extractParagraphPlainText()
     val contentWarningPlain = contentWarning?.original?.extractParagraphPlainText()?.takeIf { it.isNotEmpty() }
-    val safeCardUrl = card?.url?.trim()?.takeIf { it.isHttpsUrlWithoutUserInfo() }
+    val safeCardUrl = card?.url?.normalizeSafePluginHttpsUrlOrNull()
     val safeCardTitle = if (safeCardUrl != null) card.title.takeIf { it.isNotEmpty() } else null
     val safeCardDescription = if (safeCardUrl != null) card.description?.takeIf { it.isNotEmpty() } else null
 
@@ -361,9 +362,7 @@ public fun UiTimelineV2.Post.extractPluginPostInput(): ExtractedPluginPostInput 
     )
 }
 
-public fun UiTimelineV2.withPluginWidgets(
-    lookup: (UiTimelineV2.Post) -> ImmutableList<UiPluginWidgetCard>,
-): UiTimelineV2 =
+public fun UiTimelineV2.withPluginWidgets(lookup: (UiTimelineV2.Post) -> ImmutableList<UiPluginWidgetCard>): UiTimelineV2 =
     when (this) {
         is UiTimelineV2.Post -> {
             val nextWidgets = lookup(this)
@@ -555,8 +554,8 @@ private fun UiRichText.collectSafeHttpsLinksInto(target: MutableSet<String>) {
         if (content is RenderContent.Text) {
             content.runs.forEach { run ->
                 if (run is RenderRun.Text) {
-                    val candidate = run.style.link?.trim()
-                    if (candidate != null && candidate.isHttpsUrlWithoutUserInfo()) {
+                    val candidate = run.style.link?.normalizeSafePluginHttpsUrlOrNull()
+                    if (candidate != null) {
                         target.add(candidate)
                     }
                 }
@@ -565,21 +564,38 @@ private fun UiRichText.collectSafeHttpsLinksInto(target: MutableSet<String>) {
     }
 }
 
-private fun String.isHttpsUrlWithoutUserInfo(): Boolean {
-    if (!startsWith("https://", ignoreCase = true)) {
-        return false
+@HiddenFromObjC
+public fun String.normalizeSafePluginHttpsUrlOrNull(): String? {
+    val trimmed = trim()
+    if (!trimmed.startsWith("https://", ignoreCase = true)) {
+        return null
     }
-    val authority = substring(8).substringBefore('/').substringBefore('?').substringBefore('#')
+    val normalized =
+        if (trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://${trimmed.substring(8)}"
+        }
+    val authority =
+        normalized
+            .substring(8)
+            .substringBefore('/')
+            .substringBefore('?')
+            .substringBefore('#')
     if (authority.isEmpty() || '@' in authority) {
-        return false
+        return null
     }
-    return runCatching {
-        val parsed = Url(this)
-        parsed.protocol == URLProtocol.HTTPS &&
-            parsed.host.isNotBlank() &&
-            parsed.encodedUser == null &&
-            parsed.encodedPassword == null
-    }.getOrDefault(false)
+    val isValid =
+        runCatching {
+            val parsed = Url(normalized)
+            parsed.protocol == URLProtocol.HTTPS &&
+                parsed.host.isNotBlank() &&
+                parsed.encodedUser == null &&
+                parsed.encodedPassword == null &&
+                parsed.user == null &&
+                parsed.password == null
+        }.getOrDefault(false)
+    return if (isValid) normalized else null
 }
 
 private fun computePluginPostSourceHash(

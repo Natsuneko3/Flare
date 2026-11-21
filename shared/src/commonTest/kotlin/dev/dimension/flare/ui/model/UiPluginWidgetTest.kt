@@ -123,7 +123,12 @@ class UiPluginWidgetTest {
                 if (target.statusKey == original.statusKey) persistentListOf(card) else persistentListOf()
             } as UiTimelineV2.TimelinePostItem
         assertEquals(1, updated.displayPost.pluginWidgets.size)
-        assertTrue(updated.presentation.quotes.single().pluginWidgets.isEmpty())
+        assertTrue(
+            updated.presentation.quotes
+                .single()
+                .pluginWidgets
+                .isEmpty(),
+        )
     }
 
     @Test
@@ -139,6 +144,8 @@ class UiPluginWidgetTest {
                                 RenderRun.Text("cred", RenderTextStyle(link = "https://user:secret@evil.example/path")),
                                 RenderRun.Text(" ", RenderTextStyle()),
                                 RenderRun.Text("emptyUser", RenderTextStyle(link = "https://@evil.example/path")),
+                                RenderRun.Text(" ", RenderTextStyle()),
+                                RenderRun.Text("upper", RenderTextStyle(link = "HTTPS://app.polymarket.com:443/event/fed")),
                                 RenderRun.Text(" ", RenderTextStyle()),
                                 RenderRun.Text("ok", RenderTextStyle(link = "https://app.polymarket.com:443/event/fed")),
                             ),
@@ -162,6 +169,14 @@ class UiPluginWidgetTest {
 
         val edited = post.copy(contentWarning = UiTranslatableText(original = "Updated Spoiler".toUiPlainText()))
         assertNotEquals(extracted.sourceHash, edited.extractPluginPostInput().sourceHash)
+
+        val upperCardPost =
+            post.copy(
+                card = UiCard(url = "HTTPS://app.polymarket.com:443/event/fed", title = "Fed Card", description = null, media = null),
+            )
+        val upperCardExtracted = upperCardPost.extractPluginPostInput()
+        assertEquals("https://app.polymarket.com:443/event/fed", upperCardExtracted.cardUrl)
+        assertEquals(listOf("https://app.polymarket.com:443/event/fed"), upperCardExtracted.links)
     }
 
     @Test
@@ -260,7 +275,12 @@ class UiPluginWidgetTest {
                 if (target.statusKey == parentPost.statusKey) persistentListOf(card) else persistentListOf()
             } as UiTimelineV2.TimelinePostItem
         assertTrue(updated.displayPost.pluginWidgets.isEmpty())
-        assertEquals(1, updated.presentation.inlineParents.single().displayPost.pluginWidgets.size)
+        assertEquals(
+            1,
+            updated.presentation.inlineParents
+                .single()
+                .displayPost.pluginWidgets.size,
+        )
 
         val enrichedPost = mainPost.copy(pluginWidgets = persistentListOf(card))
         val restored = assertIs<UiTimelineV2.Post>(enrichedPost.encodeProtobuf<UiTimelineV2>().decodeProtobuf<UiTimelineV2>())

@@ -1098,6 +1098,8 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             }()
             updatePluginWidgetHostView(view, data: data, width: bounds.width)
             items.append(view)
+        } else {
+            pluginWidgetHostViewStorage?.update(AnyView(EmptyView()), key: AnyHashable("empty"))
         }
 
         // source channel + reactions

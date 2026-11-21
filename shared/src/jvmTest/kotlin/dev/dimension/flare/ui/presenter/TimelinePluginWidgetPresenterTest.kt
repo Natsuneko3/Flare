@@ -410,6 +410,13 @@ class TimelinePluginWidgetPresenterTest {
             assertEquals(1, fakeService.submittedKeys.count { it == focalKey })
             assertTrue(fakeService.submittedKeys.contains(replyKey))
 
+            // Simulate enabling a plugin / updating flare.storage while Post Detail is open:
+            // bumping overlayRevision re-triggers submitPosts for current and header!
+            fakeService.submittedKeys.clear()
+            fakeService.bumpRevision()
+            nonContextState.await { fakeService.submittedKeys.contains(focalKey) }
+            assertEquals(1, fakeService.submittedKeys.count { it == focalKey })
+
             fakeService.emitCards(focalPost, (1..9).map { sampleCard("focal-$it", "Focal $it") })
             fakeService.emitCards(replyPost, listOf(sampleCard("reply-card", "Reply Card")))
 
@@ -423,15 +430,13 @@ class TimelinePluginWidgetPresenterTest {
                         state.header
                             .single()
                             .contentPostOrNull()
-                            ?.pluginWidgets
-                            ?.size == 8 &&
+                            .let { it?.pluginWidgets?.size == 8 } &&
                         (state.listState as? PagingState.Success)
                             ?.peek(0)
                             ?.contentPostOrNull()
                             ?.pluginWidgets
                             ?.size == 1
                 }
-            assertEquals(1, fakeService.submittedKeys.count { it == focalKey })
             assertEquals(
                 8,
                 enrichedNonContext.current
@@ -491,7 +496,12 @@ class TimelinePluginWidgetPresenterTest {
                         state.header[1]
                             .contentPostOrNull()
                             ?.pluginWidgets
-                            ?.map { it.id } == listOf("ctx-focal-card")
+                            ?.map { it.id } == listOf("ctx-focal-card") &&
+                        (state.listState as? PagingState.Success)
+                            ?.peek(0)
+                            ?.contentPostOrNull()
+                            ?.pluginWidgets
+                            ?.map { it.id } == listOf("reply-card")
                 }
             assertEquals(2, enrichedContext.header.size)
 
@@ -526,6 +536,137 @@ class TimelinePluginWidgetPresenterTest {
                     .contentPostOrNull()!!
                     .pluginWidgets
                     .map { it.id },
+            )
+        }
+
+    @Test
+    fun pullToRefreshInTimelineAndStatusDetailClearsTransientFailureCooldownAndRetriesImmediately() =
+        withPresenterHarness {
+            val timelinePost =
+                createSamplePost(id = "cooldown-tl-1", host = accountKey.host, text = "Cooldown timeline post")
+                    .copy(accountType = accountType)
+            fakeService.markCoolingDown(timelinePost)
+            fakeService.onSubmitActivePost = { post ->
+                if (post.statusKey == timelinePost.statusKey) {
+                    fakeService.emitCards(timelinePost, listOf(sampleCard("tl-recovered", "Recovered Timeline Card")))
+                }
+            }
+
+            val loader =
+                object : RemoteLoader<UiTimelineV2> {
+                    override suspend fun load(
+                        pageSize: Int,
+                        request: PagingRequest,
+                    ): PagingResult<UiTimelineV2> =
+                        PagingResult(
+                            data = listOf(timelinePost),
+                            endOfPaginationReached = true,
+                        )
+                }
+            val timelineStateFlow = observe(TimelinePresenter(loader = flowOf(loader)))
+            val initialTimeline =
+                timelineStateFlow.await { state ->
+                    (state.listState as? PagingState.Success)?.itemCount == 1
+                }
+            assertTrue(
+                (initialTimeline.listState as PagingState.Success)
+                    .peek(0)!!
+                    .contentPostOrNull()!!
+                    .pluginWidgets
+                    .isEmpty(),
+            )
+            assertEquals(0, fakeService.clearFailureCooldownCalls.get())
+
+            initialTimeline.refresh()
+            val recoveredTimeline =
+                timelineStateFlow.await { state ->
+                    (state.listState as? PagingState.Success)
+                        ?.peek(0)
+                        ?.contentPostOrNull()
+                        ?.pluginWidgets
+                        ?.map { it.id } == listOf("tl-recovered")
+                }
+            assertEquals(1, fakeService.clearFailureCooldownCalls.get())
+            assertEquals(
+                "Recovered Timeline Card",
+                (recoveredTimeline.listState as PagingState.Success)
+                    .peek(0)!!
+                    .contentPostOrNull()!!
+                    .pluginWidgets
+                    .single()
+                    .title,
+            )
+
+            // Also verify StatusContextPresenter refresh clears transient cooldown and re-submits focal post.
+            val detailKey = MicroBlogKey("cooldown-detail-1", accountKey.host)
+            val detailPost =
+                createSamplePost(id = detailKey.id, host = detailKey.host, text = "Cooldown detail post")
+                    .copy(accountType = accountType)
+            fakeService.markCoolingDown(detailPost)
+            fakeService.onSubmitActivePost = { post ->
+                if (post.statusKey == detailKey) {
+                    fakeService.emitCards(detailPost, listOf(sampleCard("detail-recovered", "Recovered Detail Card")))
+                }
+            }
+            attachDataSource(
+                object : MicroblogDataSource by UnavailableMicroblogDataSource {
+                    override suspend fun postDetailTabs(statusKey: MicroBlogKey): PostDetailTabs =
+                        PostDetailTabs(
+                            tabs =
+                                listOf(
+                                    PostDetailTab(
+                                        id = "replies",
+                                        title = UiText.Raw("Replies"),
+                                        includesPostContext = false,
+                                        loader = {
+                                            object : RemoteLoader<UiTimelineV2> {
+                                                override suspend fun load(
+                                                    pageSize: Int,
+                                                    request: PagingRequest,
+                                                ): PagingResult<UiTimelineV2> =
+                                                    PagingResult(data = emptyList(), endOfPaginationReached = true)
+                                            }
+                                        },
+                                    ),
+                                ),
+                            replyTabId = "replies",
+                        )
+
+                    override fun postDetailPost(statusKey: MicroBlogKey): Flow<UiState<UiTimelineV2>>? =
+                        if (statusKey == detailKey) flowOf(UiState.Success(detailPost)) else null
+                },
+            )
+            val detailStateFlow = observe(StatusContextPresenter(accountType, detailKey))
+            val initialDetail =
+                detailStateFlow.await { state ->
+                    state.current.takeSuccess() != null
+                }
+            assertTrue(
+                initialDetail.current
+                    .takeSuccess()!!
+                    .contentPostOrNull()!!
+                    .pluginWidgets
+                    .isEmpty(),
+            )
+
+            initialDetail.refresh()
+            val recoveredDetail =
+                detailStateFlow.await { state ->
+                    state.current
+                        .takeSuccess()
+                        ?.contentPostOrNull()
+                        ?.pluginWidgets
+                        ?.map { it.id } == listOf("detail-recovered")
+                }
+            assertTrue(fakeService.clearFailureCooldownCalls.get() >= 2)
+            assertEquals(
+                "Recovered Detail Card",
+                recoveredDetail.current
+                    .takeSuccess()!!
+                    .contentPostOrNull()!!
+                    .pluginWidgets
+                    .single()
+                    .title,
             )
         }
 
@@ -708,14 +849,33 @@ private class FakeDelayedTimelineProcessorService : TimelineProcessorService {
     override val overlayRevision: StateFlow<Long> = revision.asStateFlow()
 
     private val cardsByEntityKey = MutableStateFlow<Map<String, ImmutableList<UiPluginWidgetCard>>>(emptyMap())
+    private val coolingDownEntityKeys = MutableStateFlow<Set<String>>(emptySet())
     val submittedKeys = CopyOnWriteArrayList<MicroBlogKey>()
+    val clearFailureCooldownCalls = AtomicInteger(0)
+    var onSubmitActivePost: ((UiTimelineV2.Post) -> Unit)? = null
 
     override fun submitPosts(posts: List<UiTimelineV2.Post>) {
-        posts.forEach { submittedKeys.add(it.statusKey) }
+        val coolingDown = coolingDownEntityKeys.value
+        val existingCards = cardsByEntityKey.value
+        posts.forEach { post ->
+            submittedKeys.add(post.statusKey)
+            val key = post.pluginPostEntityKey()
+            if (key !in coolingDown && key !in existingCards) {
+                onSubmitActivePost?.invoke(post)
+            }
+        }
     }
 
     override fun widgetsForPost(post: UiTimelineV2.Post): ImmutableList<UiPluginWidgetCard> =
         cardsByEntityKey.value[post.pluginPostEntityKey()] ?: persistentListOf()
+
+    fun markCoolingDown(post: UiTimelineV2.Post) {
+        coolingDownEntityKeys.update { it + post.pluginPostEntityKey() }
+    }
+
+    fun bumpRevision() {
+        revision.update { it + 1L }
+    }
 
     fun emitCards(
         post: UiTimelineV2.Post,
@@ -740,4 +900,16 @@ private class FakeDelayedTimelineProcessorService : TimelineProcessorService {
     ) = Unit
 
     override fun clearPlugin(pluginId: String) = Unit
+
+    override fun clearFailureCooldowns() {
+        clearFailureCooldownCalls.incrementAndGet()
+        var clearedAny = false
+        coolingDownEntityKeys.update { current ->
+            clearedAny = current.isNotEmpty()
+            emptySet()
+        }
+        if (clearedAny) {
+            revision.update { it + 1L }
+        }
+    }
 }

@@ -695,6 +695,68 @@ final class TimelinePluginWidgetTests: XCTestCase {
         XCTAssertEqual(toggledEvents.first?.1, true)
     }
 
+    func testExecuteActionBlocksUserInfoUrlsAndMultiCardImageStackMeasuresCleanly() throws {
+        var opened: [URL] = []
+        executePluginWidgetAction(
+            UiWidgetActionOpenUrl(url: "https://user:secret@evil.example/path"),
+            openURL: { opened.append($0) },
+            onRefresh: nil
+        )
+        executePluginWidgetAction(
+            UiWidgetActionOpenUrl(url: "https://@evil.example/path"),
+            openURL: { opened.append($0) },
+            onRefresh: nil
+        )
+        executePluginWidgetAction(
+            UiWidgetActionOpenUrl(url: "https://app.polymarket.com/event/fed"),
+            openURL: { opened.append($0) },
+            onRefresh: nil
+        )
+        XCTAssertEqual(opened.map(\.absoluteString), ["https://app.polymarket.com/event/fed"])
+
+        let imageCard = UiPluginWidgetCard(
+            pluginId: "dev.example.media",
+            pluginName: "Media",
+            pluginIconPath: "/nonexistent/missing-icon.png",
+            id: "img-1",
+            title: "Chart",
+            badge: nil,
+            accentTone: .neutral,
+            refreshable: false,
+            isRefreshing: false,
+            cardAction: nil,
+            body: [
+                UiWidgetNode.Stat(
+                    label: "Notional",
+                    value: "$123,456,789,012,345.67 USD PER UNIT",
+                    delta: "+9.8%",
+                    deltaTone: .positive,
+                    subtext: nil,
+                    weight: nil
+                ),
+                UiWidgetNode.Image(
+                    url: "https://example.com/chart.png",
+                    alt: "Chart",
+                    aspectRatio: KotlinFloat(value: 2.0),
+                    cornerStyle: .rounded,
+                    weight: nil
+                ),
+            ],
+            actions: [],
+            onRefresh: nil
+        )
+        let shortCard = makeSamplePluginWidgetCard(
+            id: "img-2",
+            title: "Short",
+            body: [UiWidgetNode.Text(text: "Note", style: .caption, tone: .neutral, maxLines: 1, copyable: false)]
+        )
+        let singleHost = UIHostingController(rootView: PluginWidgetStackView(cards: [imageCard]))
+        let multiHost = UIHostingController(rootView: PluginWidgetStackView(cards: [shortCard, imageCard], postIdentity: "post-img"))
+        let singleHeight = singleHost.sizeThatFits(in: CGSize(width: 340, height: CGFloat.greatestFiniteMagnitude)).height
+        let multiHeight = multiHost.sizeThatFits(in: CGSize(width: 340, height: CGFloat.greatestFiniteMagnitude)).height
+        XCTAssertEqual(multiHeight, singleHeight + 14, accuracy: 2.0)
+    }
+
     // MARK: - Helpers
 
     private func settle(controller: UITimelineCollectionViewController, collection: TimelineCollectionView) async {

@@ -80,7 +80,7 @@ internal fun rememberPluginWidgetBoundState(
         remember(current, header) {
             collectStateCandidatePosts(current = current.takeSuccess(), header = header)
         }
-    LaunchedEffect(service, candidates) {
+    LaunchedEffect(service, candidates, revision) {
         if (candidates.isNotEmpty()) {
             service.submitPosts(candidates)
         }

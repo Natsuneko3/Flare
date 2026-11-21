@@ -975,6 +975,62 @@ class PluginTimelineProcessorIntegrationTest {
                 scope.cancel()
             }
         }
+
+    @Test
+    fun clearFailureCooldownsBumpsOverlayRevisionAndAllowsImmediateBatchRetry() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                var shouldFail = true
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.pullrefresh",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return {
+                                  results: req.items.map(i => ({
+                                    itemId: i.itemId,
+                                    cards: [{ id: "pr-1", body: [{ type: "text", text: "Recovered" }] }]
+                                  }))
+                                };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                harness.failPluginCallsWhen(pluginId) { shouldFail }
+
+                val post = createSamplePost(text = "Transient failure post")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+
+                // Within 60s transient failure cooldown, ordinary re-submission is suppressed.
+                shouldFail = false
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+
+                // Pull-to-refresh clears cooldowns, bumps overlayRevision once, and allows immediate retry.
+                val revisionBeforeClear = harness.service.overlayRevision.value
+                harness.service.clearFailureCooldowns()
+                val revisionAfterClear = harness.service.overlayRevision.value
+                assertEquals(revisionBeforeClear + 1L, revisionAfterClear)
+
+                // Clearing again with no remaining cooldowns is a no-op on overlayRevision.
+                harness.service.clearFailureCooldowns()
+                assertEquals(revisionAfterClear, harness.service.overlayRevision.value)
+
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(2, harness.invocationCount(pluginId))
+                val cards = harness.service.widgetsForPost(post)
+                assertEquals(1, cards.size)
+                assertEquals("Recovered", (cards.single().body.single() as UiWidgetNode.Text).text)
+            }
+        }
 }
 
 private val nextPostId = AtomicInteger(1)

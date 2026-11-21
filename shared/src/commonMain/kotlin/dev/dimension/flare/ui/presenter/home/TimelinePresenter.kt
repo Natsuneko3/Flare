@@ -530,6 +530,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
             }
 
             override suspend fun refresh() {
+                timelineProcessorService?.clearFailureCooldowns()
                 listState
                     .onSuccess {
                         refreshSuspend()

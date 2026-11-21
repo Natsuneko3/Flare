@@ -25,6 +25,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -95,6 +96,7 @@ import dev.dimension.flare.ui.model.UiWidgetNode
 import dev.dimension.flare.ui.model.UiWidgetSparklineHeight
 import dev.dimension.flare.ui.model.UiWidgetTextStyle
 import dev.dimension.flare.ui.model.UiWidgetTone
+import dev.dimension.flare.ui.model.normalizeSafePluginHttpsUrlOrNull
 import dev.dimension.flare.ui.model.renderSummaryHash
 import dev.dimension.flare.ui.model.toUiImage
 import dev.dimension.flare.ui.theme.PlatformTheme
@@ -113,6 +115,7 @@ private val WidgetIconShape = RoundedCornerShape(4.dp)
 internal fun PluginWidgetStackComponent(
     cards: ImmutableList<UiPluginWidgetCard>,
     modifier: Modifier = Modifier,
+    postIdentity: Any? = null,
 ) {
     if (cards.isEmpty()) return
 
@@ -128,7 +131,9 @@ internal fun PluginWidgetStackComponent(
                 modifier = Modifier.fillMaxWidth(),
             )
         } else {
-            PluginWidgetMultiCardPager(cards = cards)
+            key(postIdentity) {
+                PluginWidgetMultiCardPager(cards = cards)
+            }
         }
     }
 }
@@ -137,6 +142,9 @@ internal fun PluginWidgetStackComponent(
 private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>) {
     val pagerState = rememberPagerState(pageCount = { cards.size })
     val heightCache = remember { StackHeightCache() }
+    val postBodyFontSizeBits =
+        PlatformTheme.typography.postBody.fontSize.value
+            .toBits()
     val cardsSummaryHash =
         remember(cards) {
             var hash = 17
@@ -153,6 +161,9 @@ private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>)
                 isLookingAhead = isLookingAhead,
                 summaryHash = cardsSummaryHash,
                 widthPx = targetWidth,
+                densityBits = density.toBits(),
+                fontScaleBits = fontScale.toBits(),
+                postBodyFontSizeBits = postBodyFontSizeBits,
             ) {
                 val measureConstraints =
                     if (constraints.hasBoundedWidth) {
@@ -273,6 +284,9 @@ private class StackHeightCache {
     class Entry {
         var summaryHash: Int = 0
         var widthPx: Int = -1
+        var densityBits: Int = 0
+        var fontScaleBits: Int = 0
+        var postBodyFontSizeBits: Int = 0
         var maxHeightPx: Int = 0
     }
 
@@ -283,15 +297,28 @@ private class StackHeightCache {
         isLookingAhead: Boolean,
         summaryHash: Int,
         widthPx: Int,
+        densityBits: Int,
+        fontScaleBits: Int,
+        postBodyFontSizeBits: Int,
         compute: () -> Int,
     ): Int {
         val entry = if (isLookingAhead) lookahead else current
-        if (entry.summaryHash == summaryHash && entry.widthPx == widthPx && entry.maxHeightPx > 0) {
+        if (
+            entry.summaryHash == summaryHash &&
+            entry.widthPx == widthPx &&
+            entry.densityBits == densityBits &&
+            entry.fontScaleBits == fontScaleBits &&
+            entry.postBodyFontSizeBits == postBodyFontSizeBits &&
+            entry.maxHeightPx > 0
+        ) {
             return entry.maxHeightPx
         }
         val measured = compute()
         entry.summaryHash = summaryHash
         entry.widthPx = widthPx
+        entry.densityBits = densityBits
+        entry.fontScaleBits = fontScaleBits
+        entry.postBodyFontSizeBits = postBodyFontSizeBits
         entry.maxHeightPx = measured
         return measured
     }
@@ -344,9 +371,7 @@ internal fun PluginWidgetCardSurface(
     val executeAction: (UiWidgetAction) -> Unit = { action ->
         when (action) {
             is UiWidgetAction.OpenUrl -> {
-                if (action.url.startsWith("https://", ignoreCase = true)) {
-                    uriHandler.openUri(action.url)
-                }
+                action.url.normalizeSafePluginHttpsUrlOrNull()?.let(uriHandler::openUri)
             }
 
             is UiWidgetAction.Copy -> {
@@ -829,6 +854,7 @@ private fun WidgetStatNode(
                 color = StatusComponentDefaults.contentColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
             node.delta?.takeIf { it.isNotBlank() }?.let { delta ->
                 PlatformText(

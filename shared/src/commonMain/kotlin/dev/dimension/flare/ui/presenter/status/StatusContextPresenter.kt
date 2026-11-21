@@ -158,8 +158,15 @@ public class StatusContextPresenter(
                 DetailState(
                     current = boundCurrent,
                     header = boundHeader,
-                    listState = PagingState.Error(result.throwable) { attempt++ },
-                    onRefresh = { attempt++ },
+                    listState =
+                        PagingState.Error(result.throwable) {
+                            timelineProcessorService?.clearFailureCooldowns()
+                            attempt++
+                        },
+                    onRefresh = {
+                        timelineProcessorService?.clearFailureCooldowns()
+                        attempt++
+                    },
                     refreshScope = { scope.launch { it() } },
                 )
             }
@@ -181,6 +188,7 @@ public class StatusContextPresenter(
                         header = boundHeader,
                         listState = timeline.listState,
                         onRefresh = {
+                            timelineProcessorService?.clearFailureCooldowns()
                             revision++
                             timeline.refresh()
                         },
@@ -290,6 +298,7 @@ public class StatusContextPresenter(
         val scope = rememberCoroutineScope()
         val refresh =
             suspend {
+                timelineProcessorService?.clearFailureCooldowns()
                 if (contextPage != null && contextPage !== activePage) contextPage.timeline.refreshAsync()
                 if (contextPage == null || (contextPost == null && contextError != null)) headerRevision++
                 activePage?.timeline?.refresh()

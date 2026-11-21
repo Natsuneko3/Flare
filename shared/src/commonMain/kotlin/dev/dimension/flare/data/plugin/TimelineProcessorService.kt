@@ -30,6 +30,8 @@ public interface TimelineProcessorService {
     )
 
     public fun clearPlugin(pluginId: String)
+
+    public fun clearFailureCooldowns() {}
 }
 
 @HiddenFromObjC
@@ -54,6 +56,8 @@ public object NoopTimelineProcessorService : TimelineProcessorService {
     ) {}
 
     override fun clearPlugin(pluginId: String) {}
+
+    override fun clearFailureCooldowns() {}
 }
 
 internal fun timelineProcessorServiceOrNull(): TimelineProcessorService? = runCatching { koinGet<TimelineProcessorService>() }.getOrNull()

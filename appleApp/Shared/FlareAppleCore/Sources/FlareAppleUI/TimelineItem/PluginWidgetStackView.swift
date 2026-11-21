@@ -33,6 +33,17 @@ public struct PluginWidgetStackView: View {
     }
 }
 
+private struct PluginWidgetHiddenSizingPassKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    fileprivate var isPluginWidgetHiddenSizingPass: Bool {
+        get { self[PluginWidgetHiddenSizingPassKey.self] }
+        set { self[PluginWidgetHiddenSizingPassKey.self] = newValue }
+    }
+}
+
 private struct PluginWidgetMultiCardPager: View {
     let cards: [UiPluginWidgetCard]
     @State private var selectedCardID: String?
@@ -67,6 +78,7 @@ private struct PluginWidgetMultiCardPager: View {
         ) {
             ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
                 PluginWidgetCardSurface(card: card)
+                    .environment(\.isPluginWidgetHiddenSizingPass, true)
                     .accessibilityHidden(true)
                     .allowsHitTesting(false)
                     .hidden()
@@ -246,8 +258,6 @@ private struct PluginWidgetCardHeader: View {
                 if let rawPath = card.pluginIconPath?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !rawPath.isEmpty {
                     PluginWidgetLocalIconView(path: rawPath, accessibilityLabel: card.pluginName)
-                        .frame(width: 16, height: 16)
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 }
                 Text(verbatim: headerTitle)
                     .font(.body.weight(.semibold))
@@ -305,6 +315,8 @@ private struct PluginWidgetLocalIconView: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
+                .frame(width: 16, height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .accessibilityLabel(Text(verbatim: accessibilityLabel))
         }
         #elseif os(macOS)
@@ -312,6 +324,8 @@ private struct PluginWidgetLocalIconView: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
+                .frame(width: 16, height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .accessibilityLabel(Text(verbatim: accessibilityLabel))
         }
         #endif
@@ -719,11 +733,13 @@ private struct PluginWidgetStatNodeView: View {
                             .font(.caption.weight(.semibold))
                             .flareSecondaryText()
                             .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     } else {
                         Text(verbatim: delta)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(pluginWidgetToneColor(node.deltaTone, colorScheme: colorScheme))
                             .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
             }
@@ -1129,6 +1145,7 @@ private struct PluginWidgetKeyValueNodeView: View {
 private struct PluginWidgetImageNodeView: View {
     let node: UiWidgetNode.Image
     let fillWidth: Bool
+    @Environment(\.isPluginWidgetHiddenSizingPass) private var isHiddenSizingPass
 
     private var safeAspectRatio: CGFloat {
         if let raw = node.aspectRatio?.floatValue, raw.isFinite, raw > 0 {
@@ -1138,18 +1155,33 @@ private struct PluginWidgetImageNodeView: View {
     }
 
     var body: some View {
-        let media = UiMediaImage(url: node.url, proxy: ProxyRef.Global.shared)
         let altText = node.alt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         Group {
             if fillWidth {
                 PluginWidgetAspectCappedLayout(aspectRatio: safeAspectRatio, maxHeight: 200) {
-                    NetworkImage(data: media, contentMode: .fill)
+                    if isHiddenSizingPass {
+                        Color.clear
+                    } else {
+                        NetworkImage(
+                            data: UiMediaImage(url: node.url, proxy: ProxyRef.Global.shared),
+                            contentMode: .fill
+                        )
+                    }
                 }
             } else {
                 let compactHeight: CGFloat = node.cornerStyle == .circle ? 40 : 56
-                NetworkImage(data: media, contentMode: .fill)
-                    .frame(width: compactHeight * safeAspectRatio, height: compactHeight)
+                Group {
+                    if isHiddenSizingPass {
+                        Color.clear
+                    } else {
+                        NetworkImage(
+                            data: UiMediaImage(url: node.url, proxy: ProxyRef.Global.shared),
+                            contentMode: .fill
+                        )
+                    }
+                }
+                .frame(width: compactHeight * safeAspectRatio, height: compactHeight)
             }
         }
         .clipShape(
@@ -1296,9 +1328,18 @@ func executePluginWidgetAction(
     switch onEnum(of: action) {
     case .openUrl(let open):
         let trimmed = open.url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.lowercased().hasPrefix("https://"),
+        guard trimmed.lowercased().hasPrefix("https://") else {
+            return
+        }
+        let authority = trimmed.dropFirst(8)
+            .prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+        guard !authority.isEmpty,
+              !authority.contains("@"),
               let url = URL(string: trimmed),
-              url.host?.isEmpty == false else {
+              url.scheme?.lowercased() == "https",
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil else {
             return
         }
         openURL(url)

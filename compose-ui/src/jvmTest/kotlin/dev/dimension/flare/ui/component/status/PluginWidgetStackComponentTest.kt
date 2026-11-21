@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import dev.dimension.flare.data.model.TimelineDisplayMode
 import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
+import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.LocalNetworkImageAllowHardware
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.platform.PlatformTextStyle
@@ -681,6 +682,162 @@ class PluginWidgetStackComponentTest {
             for ((bg, onBg) in m3Pairs) {
                 val fg = contrastingForegroundFor(bg, onBg)
                 assertTrue(wcagContrastRatio(bg, fg) >= 4.5f)
+            }
+        }
+
+    @Test
+    fun stackHeightCacheInvalidatesOnFontScaleChangePostIdentityResetsPagerStatPreservesDeltaAndOpenUrlBlocksUserInfo() =
+        runComposeUiTest {
+            startKoin {
+                modules(
+                    module {
+                        single<PlatformFormatter> {
+                            object : PlatformFormatter {
+                                override fun formatNumber(number: Long) = number.toString()
+
+                                override fun formatRelativeInstant(instant: Instant) = "5m"
+
+                                override fun formatFullInstant(instant: Instant) = "5m"
+
+                                override fun formatAbsoluteInstant(instant: Instant) = "5m"
+                            }
+                        }
+                    },
+                )
+            }
+            try {
+                val openedUrls = mutableListOf<String>()
+                val uriHandler =
+                    object : UriHandler {
+                        override fun openUri(uri: String) {
+                            openedUrls += uri
+                        }
+                    }
+
+                val longStatValue = "$123,456,789,012,345,678.90 USD PER CONTRACT"
+                val cardOne =
+                    UiPluginWidgetCard(
+                        pluginId = "p1",
+                        pluginName = "Market",
+                        pluginIconPath = null,
+                        id = "c1",
+                        title = "Page One",
+                        body =
+                            persistentListOf(
+                                UiWidgetNode.Stat(
+                                    label = "Notional",
+                                    value = longStatValue,
+                                    delta = "+12.4%",
+                                    deltaTone = UiWidgetTone.Positive,
+                                ),
+                            ),
+                        actions =
+                            persistentListOf(
+                                UiWidgetButton(
+                                    label = "Cred Link",
+                                    action = UiWidgetAction.OpenUrl("https://user:secret@evil.example/steal"),
+                                ),
+                                UiWidgetButton(
+                                    label = "Empty User Link",
+                                    action = UiWidgetAction.OpenUrl("https://@evil.example/steal"),
+                                ),
+                            ),
+                    )
+                val cardTwo =
+                    UiPluginWidgetCard(
+                        pluginId = "p1",
+                        pluginName = "Market",
+                        pluginIconPath = null,
+                        id = "c2",
+                        title = "Page Two",
+                        body =
+                            persistentListOf(
+                                UiWidgetNode.Text("Multi-line detail A"),
+                                UiWidgetNode.Text("Multi-line detail B"),
+                                UiWidgetNode.Text("Multi-line detail C"),
+                            ),
+                    )
+
+                val user = createSampleUser().copy(nameInternal = "Author".toUiPlainText(), avatar = null)
+                val postA =
+                    createSampleStatus(user).copy(
+                        statusKey = MicroBlogKey("post-a", "example.com"),
+                        content = UiTranslatableText("Post A".toUiPlainText()),
+                        pluginWidgets = persistentListOf(cardOne, cardTwo),
+                        actions = persistentListOf(),
+                    )
+                val postB =
+                    postA.copy(
+                        statusKey = MicroBlogKey("post-b", "example.com"),
+                        content = UiTranslatableText("Post B".toUiPlainText()),
+                    )
+
+                var activePost by mutableStateOf(postA)
+                var fontScale by mutableStateOf(1f)
+
+                setContent {
+                    FluentTheme {
+                        CompositionLocalProvider(
+                            LocalTimelineAppearance provides
+                                TimelineAppearance(
+                                    showPlatformLogo = false,
+                                    videoAutoplay = VideoAutoplay.NEVER,
+                                ),
+                            LocalEffectiveTimelineDisplayMode provides TimelineDisplayMode.Plain,
+                            PlatformTextStyle provides PlatformTheme.typography.body,
+                            LocalDensity provides Density(density = 1f, fontScale = fontScale),
+                            LocalUriHandler provides uriHandler,
+                        ) {
+                            Box(Modifier.width(340.dp)) {
+                                CommonStatusComponent(
+                                    item = activePost,
+                                    isQuote = false,
+                                    isClickable = false,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                onNodeWithText("Page One").assertIsDisplayed()
+                val stackBounds = onNodeWithTag("plugin_widget_stack").fetchSemanticsNode().boundsInRoot
+                val heightAtScale1 = stackBounds.height
+
+                // Long Stat value must not clip delta off-card
+                val statValueBounds = onNodeWithText(longStatValue).fetchSemanticsNode().boundsInRoot
+                val deltaBounds = onNodeWithText("+12.4%").fetchSemanticsNode().boundsInRoot
+                assertTrue(statValueBounds.width > 0f)
+                assertTrue(deltaBounds.width > 20f, "Expected Stat delta positive width, got ${deltaBounds.width}")
+                assertTrue(
+                    deltaBounds.right <= stackBounds.right,
+                    "Expected delta (${deltaBounds.right}) inside card (${stackBounds.right})",
+                )
+
+                // OpenUrl with userinfo is blocked
+                onNodeWithText("Cred Link").performClick()
+                onNodeWithText("Empty User Link").performClick()
+                waitForIdle()
+                assertTrue(openedUrls.isEmpty(), "Expected userinfo URLs to be blocked, got $openedUrls")
+
+                // Increasing fontScale invalidates StackHeightCache and grows stack height
+                fontScale = 1.6f
+                waitForIdle()
+                val heightAtScale16 = onNodeWithTag("plugin_widget_stack").fetchSemanticsNode().boundsInRoot.height
+                assertTrue(
+                    heightAtScale16 > heightAtScale1 + 15f,
+                    "Expected stack height at fontScale=1.6 ($heightAtScale16) > height at 1.0 ($heightAtScale1 + 15)",
+                )
+
+                // Swiping to page 2 on Post A and then swapping non-LazyColumn slot to Post B resets pager to page 1
+                onNodeWithTag("plugin_widget_pager").performTouchInput { swipeLeft() }
+                waitForIdle()
+                onNodeWithText("Page Two").assertIsDisplayed()
+
+                activePost = postB
+                waitForIdle()
+                onNodeWithText("Page One").assertIsDisplayed()
+            } finally {
+                stopKoin()
             }
         }
 }

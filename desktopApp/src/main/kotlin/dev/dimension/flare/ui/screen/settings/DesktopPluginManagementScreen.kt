@@ -1013,6 +1013,7 @@ internal fun PluginItem(
                         if (!busy) onToggleTimelineProcessor(plugin.pluginId, enabled)
                     },
                     text = null,
+                    enabled = !busy,
                 )
                 Text(
                     text = toggleLabel,

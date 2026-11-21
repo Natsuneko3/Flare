@@ -525,6 +525,18 @@ internal class PluginTimelineProcessorServiceV1(
         }
     }
 
+    override fun clearFailureCooldowns() {
+        var clearedAny = false
+        memoryState.update { current ->
+            val cleared = current.clearCooldowns()
+            clearedAny = cleared !== current
+            cleared
+        }
+        if (clearedAny) {
+            bumpRevision()
+        }
+    }
+
     private suspend fun processSubmittedInputs(inputs: List<ExtractedPluginPostInput>) {
         val hydratedGrants = grants.awaitCurrent()
         val activePlugins = currentActivePlugins(hydratedGrants)
@@ -1398,6 +1410,24 @@ internal class PluginTimelineProcessorServiceV1(
                         )
                     if (!stripped.isEmpty) {
                         copy[postKey] = stripped
+                    }
+                }
+            }
+            return if (changed) MemorySnapshot(copy) else this
+        }
+
+        fun clearCooldowns(): MemorySnapshot {
+            if (posts.isEmpty()) return this
+            var changed = false
+            val copy = LinkedHashMap<String, PostMemoryRecord>(posts.size)
+            for ((postKey, record) in posts) {
+                if (record.cooldowns.isEmpty()) {
+                    copy[postKey] = record
+                } else {
+                    changed = true
+                    val cleared = record.copy(cooldowns = emptyMap())
+                    if (!cleared.isEmpty) {
+                        copy[postKey] = cleared
                     }
                 }
             }
