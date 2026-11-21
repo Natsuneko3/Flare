@@ -3,6 +3,7 @@ package dev.dimension.flare.model
 import dev.dimension.flare.data.database.app.model.SubscriptionType
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
+import dev.dimension.flare.data.model.tab.TimelineCandidate
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.ui.model.UiInstance
 import dev.dimension.flare.ui.model.UiTimelineV2
@@ -31,12 +32,18 @@ public interface PlatformSpec {
         get() = 0
     public val isDefaultGuest: Boolean
         get() = false
+    public val standaloneGuestHost: String?
+        get() = null
     public val capabilities: Set<PlatformCapability>
         get() = emptySet()
 
     public fun resolveInitialText(context: ComposeInitialTextContext): InitialText? = null
 
     public val timelineSpecs: ImmutableList<TimelineSpec<out TimelineSpec.Data>>
+    public val guestDefaultTabs: ImmutableList<TimelineCandidate<*>>
+        get() = persistentListOf()
+    public val guestTimelineTabs: ImmutableList<TimelineCandidate<*>>
+        get() = persistentListOf()
     public val subscriptionTimelineSpecs: ImmutableList<SubscriptionTimelineSpec>
         get() = persistentListOf()
 

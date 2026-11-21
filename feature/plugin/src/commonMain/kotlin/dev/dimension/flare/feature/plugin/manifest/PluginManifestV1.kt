@@ -67,6 +67,7 @@ public data class DetectorManifestV1(
 @Serializable
 public data class GuestManifestV1(
     val enabled: Boolean = true,
+    val origin: String? = null,
 )
 
 @Serializable

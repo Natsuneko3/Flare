@@ -701,6 +701,32 @@
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "origin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional standalone guest HTTPS origin (API v2 only). Exact canonical HTTPS origin; no path, credentials, wildcard, or trailing slash. Flare checks DNS/port normalization.",
+          "pattern": "^(?:https://[a-z0-9.-]+(?::[0-9]{1,5})?)(?![\\s\\S])"
+        }
+      },
+      "if": {
+        "properties": {
+          "enabled": {
+            "const": false
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "then": {
+        "properties": {
+          "origin": {
+            "type": "null"
+          }
         }
       }
     },
@@ -2782,6 +2808,19 @@
         "properties": {
           "platform": {
             "properties": {
+              "guest": {
+                "if": {
+                  "type": "object"
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "origin": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
               "loginMethods": {
                 "type": "array",
                 "items": {

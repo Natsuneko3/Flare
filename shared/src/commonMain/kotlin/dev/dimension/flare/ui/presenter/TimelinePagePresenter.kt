@@ -52,12 +52,28 @@ public class TimelinePagePresenter(
                 accounts.getFlow(account.accountKey).map { it.takeSuccess() != null }.distinctUntilChanged()
             } ?: flowOf(true)
         val services =
-            (page.accountType as? AccountType.GuestHost)?.let { guest ->
-                accounts.platformRegistry.platforms
-                    .map { platforms -> platforms.firstOrNull { it.platformId == page.platformId } }
-                    .distinctUntilChanged()
-                    .map { platform -> platform?.guestDataSource(guest.host, Locale.language) ?: UnavailableMicroblogDataSource }
-            } ?: accountServiceFlow(page.accountType, accounts)
+            when (val account = page.accountType) {
+                is AccountType.GuestHost -> {
+                    accounts.platformRegistry.platforms
+                        .map { platforms -> platforms.firstOrNull { it.platformId == page.platformId } }
+                        .distinctUntilChanged()
+                        .map { platform -> platform?.guestDataSource(account.host, Locale.language) ?: UnavailableMicroblogDataSource }
+                }
+
+                is AccountType.GuestPlugin -> {
+                    if (account.platformId == page.platformId) {
+                        accountServiceFlow(account, accounts)
+                    } else {
+                        flowOf(UnavailableMicroblogDataSource)
+                    }
+                }
+
+                AccountType.Guest,
+                is AccountType.Specific,
+                -> {
+                    accountServiceFlow(account, accounts)
+                }
+            }
         services
             .combine(exists) { service, present ->
                 service.capabilities.timelinePage?.takeIf {

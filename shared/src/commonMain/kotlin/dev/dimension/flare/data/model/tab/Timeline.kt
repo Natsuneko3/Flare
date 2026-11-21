@@ -370,6 +370,7 @@ internal data class TimelineSourceRef(
     val icon: IconType,
     val data: String,
     val ownerAccountKey: MicroBlogKey? = null,
+    val ownerPlatformId: String? = null,
 )
 
 internal fun TimelineSourceRef.toSlot(
@@ -560,6 +561,7 @@ public data class TimelineSpec<T : TimelineSpec.Data>(
             icon = icon,
             data = ProtoBuf.encodeToHexString(serializer, data),
             ownerAccountKey = (data as? AccountData)?.accountKey,
+            ownerPlatformId = (data as? GuestPluginData)?.platformId,
         )
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -581,6 +583,18 @@ public data class TimelineSpec<T : TimelineSpec.Data>(
         public override val accountKey: MicroBlogKey,
         public val resourceId: String,
     ) : AccountData
+
+    public interface GuestPluginData : Data {
+        public val platformId: String
+        public val host: String
+    }
+
+    @Serializable
+    public data class GuestPluginResourceData(
+        public override val platformId: String,
+        public override val host: String,
+        public val resourceId: String,
+    ) : GuestPluginData
 }
 
 @HiddenFromObjC

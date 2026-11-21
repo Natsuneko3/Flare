@@ -137,7 +137,9 @@ internal class PluginDataSourceV1 private constructor(
 
     private val originHost: String = Url(origin).accountHost()
 
-    private val accountType: AccountType = accountKey?.let(AccountType::Specific) ?: AccountType.GuestHost(originHost)
+    private val accountType: AccountType =
+        accountKey?.let(AccountType::Specific)
+            ?: AccountType.GuestPlugin(plugin.installed.manifest.socialPlatform.id, originHost)
 
     internal val extraCapabilities: PluginExtraCapabilitiesV1 by lazy {
         PluginExtraCapabilitiesV1(

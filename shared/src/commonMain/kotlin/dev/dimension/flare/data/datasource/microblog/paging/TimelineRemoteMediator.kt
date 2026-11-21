@@ -443,6 +443,7 @@ internal open class TimelineRemoteMediator(
             when {
                 parts.size == 4 && parts[0] == "guest" -> AccountType.Guest
                 parts.size == 5 && parts[0] == "guest_host" -> AccountType.GuestHost(parts[1])
+                parts.size == 6 && parts[0] == "guest_plugin" -> AccountType.GuestPlugin(parts[1], parts[2])
                 parts.size == 6 && parts[0] == "specific" -> AccountType.Specific(MicroBlogKey(parts[1], parts[2]))
                 else -> return null
             }

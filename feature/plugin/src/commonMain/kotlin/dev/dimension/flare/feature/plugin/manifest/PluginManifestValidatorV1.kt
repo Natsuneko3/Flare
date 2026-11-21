@@ -225,6 +225,20 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
         platform.detector?.let {
             check(it.priority in -10_000..10_000, "detector.priority", "platform.detector.priority", "Invalid detector priority")
         }
+        platform.guest?.let { guest ->
+            if (!guest.enabled) {
+                check(
+                    guest.origin == null,
+                    "guest.origin.disabled",
+                    "platform.guest.origin",
+                    "Disabled guest config cannot declare an origin",
+                )
+            }
+            guest.origin?.let { origin ->
+                check(apiVersion >= 2, "guest.origin.version", "platform.guest.origin", "Standalone guest origin requires Host API v2")
+                check(origin.isExactHttpsOrigin(), "guest.origin", "platform.guest.origin", "Guest origin must be exact HTTPS origin")
+            }
+        }
 
         check(platform.capabilities.size <= 32, "capability.count", "platform.capabilities", "Too many capabilities")
         platform.capabilities.forEach { (capabilityId, declaration) ->

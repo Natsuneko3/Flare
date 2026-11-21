@@ -641,8 +641,8 @@ class PluginWireMapperV1Test {
 
     @Test
     fun guestDetailRoutesKeepTheGuestOriginAndEntityKey() {
-        val guestMapper = createMapper(null)
-        val accountType = AccountType.GuestHost("local.example")
+        val guestMapper = createMapper(null, platformId = "example")
+        val accountType = AccountType.GuestPlugin("example", "local.example")
         val key = MicroBlogKey(post.key.id, post.key.host)
         val targets =
             mapOf(
@@ -764,13 +764,14 @@ class PluginWireMapperV1Test {
         supportedComposeTypes: Set<ComposeType> = ComposeType.entries.toSet(),
         profileAvailable: Boolean = true,
         pluginId: String = "test.plugin",
+        platformId: String = "Test",
     ): PluginWireMapperV1 =
         PluginWireMapperV1(
             supportedComposeTypes = supportedComposeTypes,
             pluginId = pluginId,
             platformIcon = platformIcon,
             mediaNetwork = mediaNetwork,
-            platformId = "Test",
+            platformId = platformId,
             accountKey = accountKey,
             originHost = "local.example",
             capabilities =

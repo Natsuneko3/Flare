@@ -25,7 +25,17 @@
         "platform": {
           "capabilities": {
             "flare.datasource.post/v1": {
-              "operations": { "detail": {}, "context": {}, "contextTabs": {}, "contextPage": { "directions": ["refresh", "older"] } }
+              "operations": {
+                "detail": {},
+                "context": {},
+                "contextTabs": {},
+                "contextPage": {
+                  "directions": [
+                    "refresh",
+                    "older"
+                  ]
+                }
+              }
             }
           }
         }
@@ -39,7 +49,11 @@
         "platform": {
           "capabilities": {
             "flare.datasource.post/v1": {
-              "operations": { "detail": {}, "contextTabs": {}, "contextPage": {} }
+              "operations": {
+                "detail": {},
+                "contextTabs": {},
+                "contextPage": {}
+              }
             }
           }
         }
@@ -53,7 +67,12 @@
         "apiVersion": 2,
         "platform": {
           "capabilities": {
-            "flare.datasource.post/v1": { "operations": { "detail": {}, "contextTabs": {} } }
+            "flare.datasource.post/v1": {
+              "operations": {
+                "detail": {},
+                "contextTabs": {}
+              }
+            }
           }
         }
       },
@@ -66,7 +85,12 @@
         "apiVersion": 2,
         "platform": {
           "capabilities": {
-            "flare.datasource.post/v1": { "operations": { "detail": {}, "contextPage": {} } }
+            "flare.datasource.post/v1": {
+              "operations": {
+                "detail": {},
+                "contextPage": {}
+              }
+            }
           }
         }
       },
@@ -78,7 +102,13 @@
       "patch": {
         "apiVersion": 2,
         "platform": {
-          "loginMethods": [{ "id": "scan", "interaction": "QrCode", "title": "Scan" }]
+          "loginMethods": [
+            {
+              "id": "scan",
+              "interaction": "QrCode",
+              "title": "Scan"
+            }
+          ]
         }
       },
       "schemaValid": true,
@@ -88,7 +118,13 @@
       "name": "API v1 rejects QR login",
       "patch": {
         "platform": {
-          "loginMethods": [{ "id": "scan", "interaction": "QrCode", "title": "Scan" }]
+          "loginMethods": [
+            {
+              "id": "scan",
+              "interaction": "QrCode",
+              "title": "Scan"
+            }
+          ]
         }
       },
       "schemaValid": false,
@@ -99,7 +135,20 @@
       "patch": {
         "apiVersion": 2,
         "platform": {
-          "loginMethods": [{ "id": "scan", "interaction": "QrCode", "title": "Scan", "fields": [{ "id": "token", "type": "Secret", "label": "Token" }] }]
+          "loginMethods": [
+            {
+              "id": "scan",
+              "interaction": "QrCode",
+              "title": "Scan",
+              "fields": [
+                {
+                  "id": "token",
+                  "type": "Secret",
+                  "label": "Token"
+                }
+              ]
+            }
+          ]
         }
       },
       "schemaValid": false,
@@ -2424,6 +2473,75 @@
               "n15",
               "n16"
             ]
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "standalone guest origin on API v2",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": true,
+            "origin": "https://manga.example"
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects standalone guest origin",
+      "patch": {
+        "platform": {
+          "guest": {
+            "enabled": true,
+            "origin": "https://manga.example"
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "disabled guest config rejects standalone origin",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": false,
+            "origin": "https://manga.example"
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "disabled guest config accepts null origin",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": false,
+            "origin": null
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "standalone guest origin rejects a path",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": true,
+            "origin": "https://manga.example/path"
           }
         }
       },

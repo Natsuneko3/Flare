@@ -3,6 +3,7 @@ package dev.dimension.flare.feature.plugin.adapter
 import dev.dimension.flare.common.Locale
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.notSupported
+import dev.dimension.flare.data.model.tab.TimelineCandidate
 import dev.dimension.flare.data.model.tab.TimelineLoaderFactory
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.model.tab.toUiTimelineTabItem
@@ -96,6 +97,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -186,10 +188,27 @@ private class PluginPlatformSpecV1(
     override val metadata: PlatformMetadata = plugin.platformMetadata()
     override val order: Int = 1_000 + (platform.detector?.priority ?: 0)
     override val isDefaultGuest: Boolean = false
+    override val standaloneGuestHost: String? =
+        platform.guest
+            ?.takeIf { manifest.apiVersion >= 2 && it.enabled }
+            ?.origin
+            ?.let { Url(PluginUrlPolicy.requireOrigin(it)).accountHost() }
+
+    private val hasTimelinePage: Boolean =
+        "page" in platform.capabilities[dev.dimension.flare.feature.plugin.abi.PluginAbiV1.Capabilities.TIMELINE]?.operations.orEmpty()
 
     private val specs: Map<String, TimelineSpec<TimelineSpec.AccountResourceData>> =
         platform.timelines.associate { timeline ->
             timeline.id to timeline.toTimelineSpec()
+        }
+
+    private val guestSpecs: Map<String, TimelineSpec<TimelineSpec.GuestPluginResourceData>> =
+        if (standaloneGuestHost != null && hasTimelinePage) {
+            platform.timelines.associate { timeline ->
+                timeline.id to timeline.toGuestTimelineSpec()
+            }
+        } else {
+            emptyMap()
         }
 
     private val dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>? =
@@ -217,7 +236,28 @@ private class PluginPlatformSpecV1(
             }
 
     override val timelineSpecs: ImmutableList<TimelineSpec<out TimelineSpec.Data>> =
-        (specs.values + listOfNotNull(dynamicTimelineSpec)).toImmutableList()
+        (specs.values + guestSpecs.values + listOfNotNull(dynamicTimelineSpec)).toImmutableList()
+
+    override val guestDefaultTabs: ImmutableList<TimelineCandidate<*>> =
+        if (standaloneGuestHost != null && hasTimelinePage) {
+            platform.timelines
+                .filter(TimelineManifestV1::defaultForNewAccount)
+                .mapNotNull(::guestCandidate)
+                .mapIndexed { index, candidate ->
+                    if (index == 0) candidate.copy(title = metadata.displayNameText) else candidate
+                }.toImmutableList()
+        } else {
+            persistentListOf()
+        }
+
+    override val guestTimelineTabs: ImmutableList<TimelineCandidate<*>> =
+        if (standaloneGuestHost != null && hasTimelinePage) {
+            platform.timelines
+                .mapNotNull(::guestCandidate)
+                .toImmutableList()
+        } else {
+            persistentListOf()
+        }
 
     override fun resolveInitialText(context: ComposeInitialTextContext): InitialText? = context.resolveReplyParticipantInitialText()
 
@@ -405,6 +445,37 @@ private class PluginPlatformSpecV1(
                     }
                 },
         )
+
+    private fun TimelineManifestV1.toGuestTimelineSpec(): TimelineSpec<TimelineSpec.GuestPluginResourceData> =
+        TimelineSpec(
+            id = canonicalTimelineSpecId("guest-timeline:$id"),
+            title = title.toUiText(manifest.id),
+            icon = icon.toUiIcon().asType(),
+            serializer = TimelineSpec.GuestPluginResourceData.serializer(),
+            targetId = { "${it.platformId}:${it.host}:$id" },
+            loaderFactory =
+                TimelineLoaderFactory { data, context ->
+                    if (data.platformId != platformId) {
+                        flowOf(notSupported())
+                    } else {
+                        context.accountServiceFlow(AccountType.GuestPlugin(platformId, data.host)).map { service ->
+                            (service as? PluginNamedTimelineDataSourceV1)?.timeline(id, parameters) ?: notSupported()
+                        }
+                    }
+                },
+        )
+
+    private fun guestCandidate(timeline: TimelineManifestV1): TimelineCandidate<*>? {
+        val host = standaloneGuestHost ?: return null
+        val spec = guestSpecs[timeline.id] ?: return null
+        val data = TimelineSpec.GuestPluginResourceData(platformId, host, timeline.id)
+        val title = timeline.title.toUiText(manifest.id)
+        val icon = if (timeline.defaultForNewAccount) metadata.icon else timeline.icon.toUiIcon().asType()
+        return when (timeline.display) {
+            dev.dimension.flare.feature.plugin.wire.TimelineDisplayV1.List -> spec.candidate(data, title, icon)
+            dev.dimension.flare.feature.plugin.wire.TimelineDisplayV1.Grid -> spec.galleryCandidate(data, title, icon)
+        }
+    }
 
     private fun canonicalTimelineSpecId(kind: String): String =
         "plugin:${manifest.id}:$platformId:schema${platform.timelineSchemaVersion}:$kind"

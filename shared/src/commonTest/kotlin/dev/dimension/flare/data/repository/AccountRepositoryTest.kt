@@ -680,6 +680,49 @@ class AccountRepositoryTest : RobolectricTest() {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginObserversRebindAcrossPluginReloadRemovalAndReattachment() =
+        runTest {
+            val registry = testPlatformRegistry()
+            val first = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+            val second = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+
+            fun platform(
+                source: MicroblogDataSource,
+                id: String = "MangaPlugin",
+            ) = object : PlatformSpec by registry.defaultGuest {
+                override val platformId = id
+                override val isDefaultGuest = false
+
+                override fun guestDataSource(
+                    host: String,
+                    locale: String,
+                ): MicroblogDataSource {
+                    assertEquals("api.manga.example", host)
+                    return source
+                }
+            }
+            registry.replaceExternal("MangaPlugin", platform(first))
+            val repository = createRepository(backgroundScope, registry = registry)
+            val guest = AccountType.GuestPlugin("MangaPlugin", "api.manga.example")
+            assertNull(repository.peekDataSource(guest))
+            val emitted = Channel<MicroblogDataSource>(Channel.UNLIMITED)
+            backgroundScope.launch {
+                accountServiceFlow(guest, repository).collect(emitted::send)
+            }
+            assertSame(first, emitted.receive())
+            registry.replaceExternal("Unrelated", platform(first, "Unrelated"))
+            runCurrent()
+            assertTrue(emitted.tryReceive().isFailure)
+            registry.replaceExternal("MangaPlugin", platform(second))
+            assertSame(second, emitted.receive())
+            registry.replaceExternal("MangaPlugin", null)
+            assertSame(UnavailableMicroblogDataSource, emitted.receive())
+            registry.replaceExternal("MangaPlugin", platform(first))
+            assertSame(first, emitted.receive())
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun reloginRebindsExistingSingleAndAllAccountCollectorsWithoutRebindingTokenRefreshes() =
         runTest {
             val registry = testPlatformRegistry()

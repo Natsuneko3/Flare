@@ -445,6 +445,42 @@ class PluginManifestV1Test {
         assertIs<UiText.ExternalRef>(PluginTextV1.Localized("welcome", "Hello").toUiText(bundle.pluginId))
     }
 
+    @Test
+    fun guestOriginRequiresApiV2AndExactHttpsOrigin() {
+        assertFalse(validateManifest(apiVersion = 1, guest = """{"enabled":true,"origin":"https://manga.example"}""").isValid)
+        assertFalse(validateManifest(apiVersion = 2, guest = """{"enabled":true,"origin":"https://manga.example/path"}""").isValid)
+        assertFalse(validateManifest(apiVersion = 2, guest = """{"enabled":false,"origin":"https://manga.example"}""").isValid)
+        assertTrue(validateManifest(apiVersion = 2, guest = """{"enabled":false,"origin":null}""").isValid)
+        assertTrue(validateManifest(apiVersion = 2, loginMethods = "[]", guest = """{"enabled":true,"origin":"https://manga.example"}""").isValid)
+        assertEquals("https://manga.example", GuestManifestV1(enabled = true, origin = "https://manga.example").origin)
+    }
+
+    private fun validateManifest(
+        apiVersion: Int,
+        loginMethods: String = """[{"id":"oauth","interaction":"OAuth","title":"OAuth"}]""",
+        guest: String? = null,
+    ): ManifestValidationV1 {
+        val root = PluginJsonV1.parseToJsonElement(VALID_MANIFEST).jsonObject
+        val platform = root.getValue("platform").jsonObject
+        val updatedPlatform =
+            buildMap {
+                putAll(platform)
+                put("loginMethods", PluginJsonV1.parseToJsonElement(loginMethods))
+                if (guest != null) {
+                    put("guest", PluginJsonV1.parseToJsonElement(guest))
+                }
+            }
+        val updatedManifest =
+            JsonObject(
+                buildMap {
+                    putAll(root)
+                    put("apiVersion", JsonPrimitive(apiVersion))
+                    put("platform", JsonObject(updatedPlatform))
+                },
+            )
+        return PluginJsonV1.decodeFromJsonElement<PluginManifestV1>(updatedManifest).validate()
+    }
+
     private fun validMethodTable(): PluginMethodTableV1 =
         PluginMethodTableV1(
             apiVersion = 1,

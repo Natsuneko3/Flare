@@ -175,6 +175,11 @@ internal class AccountRepository internal constructor(
                 )
             }
 
+            // Guest plugin availability follows the registry, including updates and uninstall.
+            is AccountType.GuestPlugin -> {
+                null
+            }
+
             is AccountType.Specific -> {
                 dataSourceCache.value[accountType.accountKey]?.let { (spec, service) ->
                     service.dataSource.takeIf { platformRegistry.get(spec.platformId) === spec }
@@ -710,6 +715,7 @@ internal fun accountProvider(
         when (accountType) {
             AccountType.Guest,
             is AccountType.GuestHost,
+            is AccountType.GuestPlugin,
             -> {
                 flowOf(
                     UiState.Error(
@@ -788,6 +794,13 @@ private fun accountServiceStateFlow(
                     locale = Locale.language,
                 ),
             )
+        }
+
+        is AccountType.GuestPlugin -> {
+            repository.platformRegistry.platforms
+                .map { specs -> specs.firstOrNull { it.platformId == accountType.platformId } }
+                .distinctUntilChanged()
+                .map { spec -> spec?.guestDataSource(accountType.host, Locale.language) ?: UnavailableMicroblogDataSource }
         }
 
         is AccountType.Specific -> {

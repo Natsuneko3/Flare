@@ -90,7 +90,7 @@ internal class PluginWireMapperV1(
     private val supportedComposeTypes: Set<ComposeType> = emptySet(),
     private val packageHash: String = "",
 ) {
-    private val accountType: AccountType = accountKey?.let(AccountType::Specific) ?: AccountType.GuestHost(originHost)
+    private val accountType: AccountType = accountKey?.let(AccountType::Specific) ?: AccountType.GuestPlugin(platformId, originHost)
     private val mediaProxy = ProxyRef.forAccountType(accountType)
 
     fun cachedProfile(value: ProfileV1): UiProfile =
