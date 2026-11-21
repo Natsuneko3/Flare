@@ -236,6 +236,159 @@ final class TimelinePluginWidgetTests: XCTestCase {
         XCTAssertGreaterThan(statusMultiHeight, statusShortHeight + 80)
     }
 
+    func testMultiCardReuseShrinksHeightSynchronouslyAndScopesSelectedPageToPostAndCardIdentity() async throws {
+        let appearance = StatusUIKitAppearance(timeline: TimelineAppearance.companion.Default)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let hostController = UIViewController()
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = hostController
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let cellView = StatusUIKitView(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+        hostController.view.addSubview(cellView)
+
+        func makeStockCard(id: String, title: String, price: String, expanded: Bool? = nil) -> UiPluginWidgetCard {
+            var bodyNodes: [UiWidgetNode] = [
+                UiWidgetNode.Stat(label: title, value: price, delta: "+1.2%", deltaTone: .positive, subtext: nil, weight: nil),
+            ]
+            if let expanded {
+                bodyNodes.append(
+                    UiWidgetNode.Collapsible(
+                        id: "lots",
+                        summary: "Order book (4)",
+                        children: [
+                            UiWidgetNode.Text(text: "Bid 1: 100 @ \(price)", style: .body, tone: .neutral, maxLines: nil, copyable: false),
+                            UiWidgetNode.Text(text: "Bid 2: 250 @ \(price)", style: .body, tone: .neutral, maxLines: nil, copyable: false),
+                            UiWidgetNode.Text(text: "Ask 1: 150 @ \(price)", style: .body, tone: .neutral, maxLines: nil, copyable: false),
+                            UiWidgetNode.Text(text: "Ask 2: 300 @ \(price)", style: .body, tone: .neutral, maxLines: nil, copyable: false),
+                        ],
+                        expanded: expanded,
+                        onToggle: nil
+                    )
+                )
+            }
+            return UiPluginWidgetCard(
+                pluginId: "org.example.stock",
+                pluginName: "Stocks",
+                pluginIconPath: nil,
+                id: id,
+                title: title,
+                badge: nil,
+                accentTone: .neutral,
+                refreshable: true,
+                isRefreshing: false,
+                cardAction: nil,
+                body: bodyNodes,
+                actions: [],
+                onRefresh: nil
+            )
+        }
+
+        // 1. Configure Post A with a tall expanded 2-card stack and let SwiftUI lay out in-window.
+        let postAExpanded = makeSampleTimelinePost(
+            id: "post-a",
+            pluginWidgets: [
+                makeStockCard(id: "nvda", title: "NVDA", price: "$140.00"),
+                makeStockCard(id: "aapl", title: "AAPL", price: "$228.00", expanded: true),
+            ]
+        )
+        cellView.configure(data: postAExpanded, appearance: appearance)
+        cellView.prepareForFitting(width: 390)
+        let tallExpandedHeight = try XCTUnwrap(cellView.timelineHeight(for: 390))
+        cellView.frame = CGRect(x: 0, y: 0, width: 390, height: tallExpandedHeight)
+        for _ in 0..<15 {
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Swipe Post A's horizontal widget ScrollView to page 2 (AAPL).
+        let scrollViewA = try XCTUnwrap(descendants(cellView).compactMap { $0 as? UIScrollView }.first)
+        let pageStep = scrollViewA.bounds.width + 8
+        XCTAssertGreaterThan(pageStep, 250)
+        scrollViewA.setContentOffset(CGPoint(x: pageStep, y: 0), animated: false)
+        scrollViewA.delegate?.scrollViewDidScroll?(scrollViewA)
+        scrollViewA.delegate?.scrollViewDidEndDecelerating?(scrollViewA)
+        for _ in 0..<10 {
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(scrollViewA.contentOffset.x, pageStep, accuracy: 2.0)
+
+        // 2. Collapse Collapsible on Post A (in-place update on same post & same card ID "org.example.stock:aapl"):
+        //    - Height must shrink SYNCHRONOUSLY to match a fresh collapsed StatusUIKitView (no stale max height!).
+        //    - Page 2 selection must be preserved on Post A!
+        let postACollapsed = makeSampleTimelinePost(
+            id: "post-a",
+            pluginWidgets: [
+                makeStockCard(id: "nvda", title: "NVDA", price: "$140.50"),
+                makeStockCard(id: "aapl", title: "AAPL", price: "$228.50", expanded: false),
+            ]
+        )
+        let freshCollapsedRef = StatusUIKitView()
+        freshCollapsedRef.configure(data: postACollapsed, appearance: appearance)
+        freshCollapsedRef.prepareForFitting(width: 390)
+        let expectedCollapsedHeight = try XCTUnwrap(freshCollapsedRef.timelineHeight(for: 390))
+
+        cellView.configure(data: postACollapsed, appearance: appearance)
+        cellView.prepareForFitting(width: 390)
+        let shrunkCollapsedHeight = try XCTUnwrap(cellView.timelineHeight(for: 390))
+        XCTAssertLessThan(shrunkCollapsedHeight, tallExpandedHeight - 50, "Collapsing multi-card stack must shrink synchronously")
+        XCTAssertEqual(shrunkCollapsedHeight, expectedCollapsedHeight, accuracy: 1.0)
+
+        cellView.frame.size.height = shrunkCollapsedHeight
+        for _ in 0..<10 {
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let scrollViewAAfterUpdate = try XCTUnwrap(descendants(cellView).compactMap { $0 as? UIScrollView }.first)
+        XCTAssertEqual(
+            scrollViewAAfterUpdate.contentOffset.x,
+            pageStep,
+            accuracy: 2.0,
+            "In-place update on the same post must preserve selected widget page"
+        )
+
+        // 3. Reuse the SAME StatusUIKitView for Post B with shorter 2-card content (even sharing the exact same
+        //    "org.example.stock:nvda" and "org.example.stock:aapl" card IDs!):
+        //    - Height must shrink SYNCHRONOUSLY to Post B's shorter height.
+        //    - Selected page must reset to page 1 (offset 0) instead of bleeding from Post A!
+        let postBShort = makeSampleTimelinePost(
+            id: "post-b",
+            pluginWidgets: [
+                makeStockCard(id: "nvda", title: "NVDA", price: "$141.00"),
+                makeStockCard(id: "aapl", title: "AAPL", price: "$229.00"),
+            ]
+        )
+        let freshPostBRef = StatusUIKitView()
+        freshPostBRef.configure(data: postBShort, appearance: appearance)
+        freshPostBRef.prepareForFitting(width: 390)
+        let expectedPostBHeight = try XCTUnwrap(freshPostBRef.timelineHeight(for: 390))
+
+        cellView.configure(data: postBShort, appearance: appearance)
+        cellView.prepareForFitting(width: 390)
+        let reusedPostBHeight = try XCTUnwrap(cellView.timelineHeight(for: 390))
+        XCTAssertLessThan(reusedPostBHeight, shrunkCollapsedHeight - 15)
+        XCTAssertEqual(reusedPostBHeight, expectedPostBHeight, accuracy: 1.0)
+
+        cellView.frame.size.height = reusedPostBHeight
+        for _ in 0..<10 {
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let scrollViewB = try XCTUnwrap(descendants(cellView).compactMap { $0 as? UIScrollView }.first)
+        XCTAssertEqual(
+            scrollViewB.contentOffset.x,
+            0,
+            accuracy: 1.0,
+            "Reusing StatusUIKitView for a different post must reset widget pager to page 1"
+        )
+    }
+
     func testAllTwelveWidgetNodesLayoutConstraintsActionsAndPrimaryButtonContrast() async throws {
         let iconURL = FileManager.default.temporaryDirectory.appendingPathComponent("plugin-icon-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: iconURL) }

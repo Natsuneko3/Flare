@@ -152,6 +152,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
     private var pluginWidgetHostViewStorage: TimelineHostedAccessoryView?
 
     private struct PluginWidgetHostKey: Hashable {
+        let accountTypeKey: String
         let statusKey: MicroBlogKey
         let renderHash: Int32
         let preferredContentSizeCategory: UIContentSizeCategory
@@ -1469,7 +1470,9 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         data: UiTimelineV2.Post,
         width: CGFloat
     ) {
+        let accountTypeKey = String(describing: data.accountType)
         let key = PluginWidgetHostKey(
+            accountTypeKey: accountTypeKey,
             statusKey: data.statusKey,
             renderHash: data.renderHash,
             preferredContentSizeCategory: appearance.preferredContentSizeCategory,
@@ -1477,9 +1480,10 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         )
         let dynamicSize = DynamicTypeSize(appearance.preferredContentSizeCategory) ?? .large
         let cards = Array(data.pluginWidgets)
+        let postIdentity = "\(accountTypeKey):\(data.statusKey)"
         view.update(
             AnyView(
-                PluginWidgetStackView(cards: cards)
+                PluginWidgetStackView(cards: cards, postIdentity: postIdentity)
                     .dynamicTypeSize(dynamicSize)
                     .environment(\.openURL, OpenURLAction { [weak self] url in
                         self?.openURL?(url)

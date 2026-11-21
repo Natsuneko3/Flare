@@ -10,9 +10,11 @@ import AppKit
 
 public struct PluginWidgetStackView: View {
     private let cards: [UiPluginWidgetCard]
+    private let postIdentity: String?
 
-    public init(cards: [UiPluginWidgetCard]) {
+    public init(cards: [UiPluginWidgetCard], postIdentity: String? = nil) {
         self.cards = cards
+        self.postIdentity = postIdentity
     }
 
     public var body: some View {
@@ -24,34 +26,44 @@ public struct PluginWidgetStackView: View {
                 .environment(\.isPostContent, true)
         } else {
             PluginWidgetMultiCardPager(cards: cards)
+                .id(postIdentity ?? "__unscoped_widget_stack__")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .environment(\.isPostContent, true)
         }
     }
 }
 
-private nonisolated struct PluginWidgetMaxCardHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 private struct PluginWidgetMultiCardPager: View {
     let cards: [UiPluginWidgetCard]
-    @State private var selectedPage: Int? = 0
-    @State private var preferenceMaxHeight: CGFloat = 0
+    @State private var selectedCardID: String?
+
+    private var cardIDs: [String] {
+        Self.uniqueCardIdentities(for: cards)
+    }
 
     private var currentPage: Int {
-        min(max(selectedPage ?? 0, 0), max(cards.count - 1, 0))
+        guard let selectedCardID, let index = cardIDs.firstIndex(of: selectedCardID) else {
+            return 0
+        }
+        return index
+    }
+
+    static func uniqueCardIdentities(for cards: [UiPluginWidgetCard]) -> [String] {
+        var counts: [String: Int] = [:]
+        counts.reserveCapacity(cards.count)
+        return cards.map { card in
+            let base = "\(card.pluginId):\(card.id)"
+            let seen = counts[base, default: 0]
+            counts[base] = seen + 1
+            return seen == 0 ? base : "\(base)#\(seen)"
+        }
     }
 
     var body: some View {
+        let ids = cardIDs
         PluginWidgetEqualHeightPagerLayout(
             cardCount: cards.count,
-            spacing: 8,
-            fallbackMaxHeight: preferenceMaxHeight
+            spacing: 8
         ) {
             ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
                 PluginWidgetCardSurface(card: card)
@@ -62,30 +74,16 @@ private struct PluginWidgetMultiCardPager: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 8) {
-                    ForEach(Array(cards.enumerated()), id: \.offset) { index, card in
+                    ForEach(Array(zip(ids, cards)), id: \.0) { cardID, card in
                         PluginWidgetCardSurface(card: card)
-                            .background(
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: PluginWidgetMaxCardHeightPreferenceKey.self,
-                                        value: proxy.size.height
-                                    )
-                                }
-                            )
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .containerRelativeFrame(.horizontal, alignment: .topLeading)
-                            .id(index)
                     }
                 }
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $selectedPage)
-            .onPreferenceChange(PluginWidgetMaxCardHeightPreferenceKey.self) { height in
-                if height.isFinite, height > 0, abs(height - preferenceMaxHeight) > 0.5 {
-                    preferenceMaxHeight = height
-                }
-            }
+            .scrollPosition(id: $selectedCardID)
 
             HStack(spacing: 6) {
                 ForEach(0..<cards.count, id: \.self) { index in
@@ -97,9 +95,15 @@ private struct PluginWidgetMultiCardPager: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(verbatim: "Page \(currentPage + 1) of \(cards.count)"))
         }
-        .onChange(of: cards.count) { _, newCount in
-            if let page = selectedPage, page >= newCount {
-                selectedPage = max(newCount - 1, 0)
+        .onAppear {
+            if selectedCardID == nil || !ids.contains(selectedCardID ?? "") {
+                selectedCardID = ids.first
+            }
+        }
+        .onChange(of: ids) { _, newIDs in
+            guard let current = selectedCardID, newIDs.contains(current) else {
+                selectedCardID = newIDs.first
+                return
             }
         }
     }
@@ -108,16 +112,14 @@ private struct PluginWidgetMultiCardPager: View {
 private struct PluginWidgetEqualHeightPagerLayout: Layout {
     let cardCount: Int
     let spacing: CGFloat
-    let fallbackMaxHeight: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard subviews.count >= cardCount + 2, cardCount > 0 else { return .zero }
         let targetWidth = proposal.width ?? subviews[0].sizeThatFits(.unspecified).width
-        let measuredTallest = (0..<cardCount).reduce(CGFloat(0)) { current, index in
+        let cardHeight = (0..<cardCount).reduce(CGFloat(0)) { current, index in
             let size = subviews[index].sizeThatFits(ProposedViewSize(width: targetWidth, height: nil))
             return max(current, size.height.isFinite ? size.height : 0)
         }
-        let cardHeight = max(measuredTallest, fallbackMaxHeight)
         let dotsSize = subviews[cardCount + 1].sizeThatFits(ProposedViewSize(width: targetWidth, height: nil))
         return CGSize(
             width: targetWidth,
@@ -128,11 +130,12 @@ private struct PluginWidgetEqualHeightPagerLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard subviews.count >= cardCount + 2, cardCount > 0 else { return }
         let width = bounds.width
-        let measuredTallest = (0..<cardCount).reduce(CGFloat(0)) { current, index in
-            let size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil))
-            return max(current, size.height.isFinite ? size.height : 0)
-        }
-        let cardHeight = ceil(max(measuredTallest, fallbackMaxHeight))
+        let cardHeight = ceil(
+            (0..<cardCount).reduce(CGFloat(0)) { current, index in
+                let size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil))
+                return max(current, size.height.isFinite ? size.height : 0)
+            }
+        )
         let cardProposal = ProposedViewSize(width: width, height: cardHeight)
 
         for index in 0..<cardCount {

@@ -486,8 +486,11 @@ public struct StatusView: View {
                         }
 
                         if !pluginWidgets.isEmpty {
-                            PluginWidgetStackView(cards: pluginWidgets)
-                                .padding(.top, firstAttachmentSpacing)
+                            PluginWidgetStackView(
+                                cards: pluginWidgets,
+                                postIdentity: "\(accountType):\(statusKey)"
+                            )
+                            .padding(.top, firstAttachmentSpacing)
                         }
 
                         if showMedia, !isQuote {
