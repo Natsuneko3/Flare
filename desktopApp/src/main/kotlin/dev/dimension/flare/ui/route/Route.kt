@@ -164,6 +164,25 @@ internal sealed interface Route : NavKey {
         ) : ScreenRoute
     }
 
+    data object Manga {
+        data class Detail(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : ScreenRoute
+
+        data class Reader(
+            val mangaKey: MicroBlogKey,
+            val chapterId: String,
+            val initialPage: Int? = null,
+            val accountType: AccountType,
+        ) : ScreenRoute
+
+        data class Comments(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : ScreenRoute
+    }
+
     data class StatusMedia(
         val accountType: AccountType,
         val statusKey: MicroBlogKey,
@@ -485,8 +504,20 @@ internal sealed interface Route : NavKey {
                     )
                 }
 
-                is DeeplinkRoute.Manga -> {
-                    null
+                is DeeplinkRoute.Manga.Detail -> {
+                    Manga.Detail(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        accountType = deeplinkRoute.accountType,
+                    )
+                }
+
+                is DeeplinkRoute.Manga.Reader -> {
+                    Manga.Reader(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        chapterId = deeplinkRoute.chapterId,
+                        initialPage = deeplinkRoute.initialPage,
+                        accountType = deeplinkRoute.accountType,
+                    )
                 }
 
                 is DeeplinkRoute.Status.AltText -> {

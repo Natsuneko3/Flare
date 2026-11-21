@@ -629,4 +629,12 @@
     <string name="plugin_widget_trend_flat">Flat trend</string>
     <string name="plugin_widget_trend_fluctuating">Fluctuating trend</string>
     <string name="plugin_widget_trend_range">Low %1$s, high %2$s</string>
+    <string name="manga_boundary_previous_chapter">Previous chapter: %1$s</string>
+    <string name="manga_boundary_next_chapter">Next chapter: %1$s</string>
+    <string name="manga_boundary_read_previous">Read previous chapter</string>
+    <string name="manga_boundary_read_next">Read next chapter</string>
+    <string name="manga_locked_chapter_title">Locked chapter</string>
+    <string name="manga_locked_chapter_message">%1$s is locked. Open in browser to view on the original site?</string>
+    <string name="manga_open_in_browser">Open in browser</string>
+    <string name="manga_page_retry">Retry page</string>
 </resources>

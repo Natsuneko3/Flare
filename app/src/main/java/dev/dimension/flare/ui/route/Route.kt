@@ -344,6 +344,29 @@ internal sealed interface Route : NavKey {
     }
 
     @Serializable
+    sealed interface Manga : Route {
+        @Serializable
+        data class Detail(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : Manga
+
+        @Serializable
+        data class Reader(
+            val mangaKey: MicroBlogKey,
+            val chapterId: String,
+            val initialPage: Int? = null,
+            val accountType: AccountType,
+        ) : Manga
+
+        @Serializable
+        data class Comments(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : Manga
+    }
+
+    @Serializable
     sealed interface Lists : Route {
         @Serializable
         data class List(
@@ -715,8 +738,20 @@ internal sealed interface Route : NavKey {
                     )
                 }
 
-                is DeeplinkRoute.Manga -> {
-                    null
+                is DeeplinkRoute.Manga.Detail -> {
+                    Manga.Detail(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        accountType = deeplinkRoute.accountType,
+                    )
+                }
+
+                is DeeplinkRoute.Manga.Reader -> {
+                    Manga.Reader(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        chapterId = deeplinkRoute.chapterId,
+                        initialPage = deeplinkRoute.initialPage,
+                        accountType = deeplinkRoute.accountType,
+                    )
                 }
 
                 is DeeplinkRoute.Status.AltText -> {

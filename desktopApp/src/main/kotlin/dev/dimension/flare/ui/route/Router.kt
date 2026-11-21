@@ -86,6 +86,9 @@ import dev.dimension.flare.ui.screen.home.TimelineScreen
 import dev.dimension.flare.ui.screen.home.UnblockUserDialog
 import dev.dimension.flare.ui.screen.home.UnmuteUserDialog
 import dev.dimension.flare.ui.screen.list.AllListScreen
+import dev.dimension.flare.ui.screen.manga.MangaCommentsScreen
+import dev.dimension.flare.ui.screen.manga.MangaDetailScreen
+import dev.dimension.flare.ui.screen.manga.MangaReaderScreen
 import dev.dimension.flare.ui.screen.media.RawMediaScreen
 import dev.dimension.flare.ui.screen.media.StatusMediaScreen
 import dev.dimension.flare.ui.screen.misskey.AntennasListScreen
@@ -844,6 +847,32 @@ internal fun Router(
                 entry<Route.Gallery.Comments> { args ->
                     GalleryCommentsScreen(
                         statusKey = args.statusKey,
+                        accountType = args.accountType,
+                    )
+                }
+
+                entry<Route.Manga.Detail> { args ->
+                    MangaDetailScreen(
+                        mangaKey = args.mangaKey,
+                        accountType = args.accountType,
+                        navigate = navigate,
+                    )
+                }
+
+                entry<Route.Manga.Reader> { args ->
+                    MangaReaderScreen(
+                        mangaKey = args.mangaKey,
+                        chapterId = args.chapterId,
+                        initialPage = args.initialPage,
+                        accountType = args.accountType,
+                        navigate = navigate,
+                        onBack = onBack,
+                    )
+                }
+
+                entry<Route.Manga.Comments> { args ->
+                    MangaCommentsScreen(
+                        mangaKey = args.mangaKey,
                         accountType = args.accountType,
                     )
                 }

@@ -44,6 +44,7 @@ import dev.dimension.flare.ui.screen.dm.dmEntryBuilder
 import dev.dimension.flare.ui.screen.gallery.galleryEntryBuilder
 import dev.dimension.flare.ui.screen.home.homeEntryBuilder
 import dev.dimension.flare.ui.screen.list.listEntryBuilder
+import dev.dimension.flare.ui.screen.manga.mangaEntryBuilder
 import dev.dimension.flare.ui.screen.media.mediaEntryBuilder
 import dev.dimension.flare.ui.screen.misskey.misskeyEntryBuilder
 import dev.dimension.flare.ui.screen.profile.profileEntryBuilder
@@ -97,6 +98,7 @@ internal fun Router(
                 composeEntryBuilder(stableNavigate, stableOnBack)
                 dmEntryBuilder(stableNavigate, stableOnBack)
                 galleryEntryBuilder(stableNavigate, stableOnBack)
+                mangaEntryBuilder(stableNavigate, stableOnBack)
                 listEntryBuilder(stableNavigate, stableOnBack)
                 mediaEntryBuilder(stableNavigate, stableOnBack, uriHandler = stableUriHandler)
                 profileEntryBuilder(stableNavigate, stableOnBack)
