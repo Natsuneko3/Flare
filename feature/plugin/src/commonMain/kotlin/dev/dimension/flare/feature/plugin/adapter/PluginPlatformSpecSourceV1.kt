@@ -292,15 +292,22 @@ private class PluginPlatformSpecV1(
     override fun guestDataSource(
         host: String,
         locale: String,
-    ): MicroblogDataSource =
-        PluginDataSourceV1.guest(
+    ): MicroblogDataSource {
+        val origin =
+            try {
+                host.toHttpsOrigin()
+            } catch (error: IllegalStateException) {
+                throw IllegalArgumentException(error.message ?: "Invalid HTTPS origin", error)
+            }
+        return PluginDataSourceV1.guest(
             plugin = plugin,
             runtimePool = runtimePool,
-            origin = host.toHttpsOrigin(),
+            origin = origin,
             locale = normalizePluginInvocationLocale(locale),
             timelineSpecs = specs,
             dynamicTimelineSpec = dynamicTimelineSpec,
         )
+    }
 
     override val detector: PlatformDetector =
         object : PlatformDetector {
@@ -455,7 +462,7 @@ private class PluginPlatformSpecV1(
             targetId = { "${it.platformId}:${it.host}:$id" },
             loaderFactory =
                 TimelineLoaderFactory { data, context ->
-                    if (data.platformId != platformId) {
+                    if (data.platformId != platformId || data.host != standaloneGuestHost || data.resourceId != id) {
                         flowOf(notSupported())
                     } else {
                         context.accountServiceFlow(AccountType.GuestPlugin(platformId, data.host)).map { service ->

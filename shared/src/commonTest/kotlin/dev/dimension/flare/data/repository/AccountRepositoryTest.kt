@@ -723,6 +723,82 @@ class AccountRepositoryTest : RobolectricTest() {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginAccountServiceDegradesToUnavailableWhenGuestDisabledUnsupportedOrHostInvalid() =
+        runTest {
+            val registry = testPlatformRegistry()
+            val first = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+            val second = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+
+            fun standalonePlatform(source: MicroblogDataSource) =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource {
+                        require(host == "api.manga.example") { "Guest origin mismatch: $host" }
+                        return source
+                    }
+                }
+
+            val disabledGuestPlatform =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource = throw IllegalArgumentException("Plugin guest access is unavailable")
+                }
+
+            val unsupportedGuestPlatform =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource = throw UnsupportedOperationException("Guest data source is not supported")
+                }
+
+            registry.replaceExternal("MangaPlugin", standalonePlatform(first))
+            val repository = createRepository(backgroundScope, registry = registry)
+
+            assertSame(
+                UnavailableMicroblogDataSource,
+                accountServiceFlow(AccountType.GuestPlugin("MangaPlugin", "evil.example"), repository).first(),
+            )
+
+            val emitted = Channel<MicroblogDataSource>(Channel.UNLIMITED)
+            backgroundScope.launch {
+                accountServiceFlow(
+                    AccountType.GuestPlugin("MangaPlugin", "api.manga.example"),
+                    repository,
+                ).collect(emitted::send)
+            }
+            assertSame(first, emitted.receive())
+
+            registry.replaceExternal("MangaPlugin", disabledGuestPlatform)
+            assertSame(UnavailableMicroblogDataSource, emitted.receive())
+
+            registry.replaceExternal("MangaPlugin", unsupportedGuestPlatform)
+            runCurrent()
+            assertTrue(emitted.tryReceive().isFailure)
+            assertSame(
+                UnavailableMicroblogDataSource,
+                accountServiceFlow(AccountType.GuestPlugin("MangaPlugin", "api.manga.example"), repository).first(),
+            )
+
+            registry.replaceExternal("MangaPlugin", standalonePlatform(second))
+            assertSame(second, emitted.receive())
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun reloginRebindsExistingSingleAndAllAccountCollectorsWithoutRebindingTokenRefreshes() =
         runTest {
             val registry = testPlatformRegistry()

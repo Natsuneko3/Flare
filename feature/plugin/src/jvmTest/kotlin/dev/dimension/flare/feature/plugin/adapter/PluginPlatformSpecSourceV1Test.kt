@@ -245,6 +245,30 @@ class PluginPlatformSpecSourceV1Test {
                 val item = assertIs<UiTimelineV2.TimelinePostItem>(page.data.single())
                 assertEquals("latest-1", item.statusKey.id)
                 assertEquals(AccountType.GuestPlugin("MangaExample", "manga.example"), item.accountType)
+
+                assertFailsWith<IllegalArgumentException> {
+                    spec.guestDataSource("evil.example", "en")
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    spec.guestDataSource("bad host", "en")
+                }
+
+                requestedAccounts.clear()
+                @Suppress("UNCHECKED_CAST")
+                val latestSpec = defaultTab.target.spec as TimelineSpec<TimelineSpec.GuestPluginResourceData>
+                listOf(
+                    TimelineSpec.GuestPluginResourceData("MangaExample", "stale.manga.example", "latest"),
+                    TimelineSpec.GuestPluginResourceData("MangaExample", "manga.example", "popular"),
+                    TimelineSpec.GuestPluginResourceData("OtherPlatform", "manga.example", "latest"),
+                ).forEach { invalidData ->
+                    val invalidLoader =
+                        latestSpec
+                            .candidate(invalidData)
+                            .createLoader(TimelineLoaderContext(service))
+                            .first()
+                    assertEquals(emptyList(), invalidLoader.load(20, PagingRequest.Refresh).data)
+                }
+                assertTrue(requestedAccounts.isEmpty())
             }
         }
 

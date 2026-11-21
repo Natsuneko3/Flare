@@ -997,11 +997,15 @@ internal class PluginDataSourceV1 private constructor(
             timelineSpecs: Map<String, TimelineSpec<TimelineSpec.AccountResourceData>>,
             dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>?,
         ): PluginDataSourceV1 {
-            require(
-                plugin.installed.manifest.socialPlatform.guest
-                    ?.enabled == true,
-            ) { "Plugin guest access is unavailable" }
+            val guest = plugin.installed.manifest.socialPlatform.guest
+            require(guest?.enabled == true) { "Plugin guest access is unavailable" }
             val canonicalOrigin = PluginUrlPolicy.requireOrigin(origin)
+            guest.origin?.let { guestOrigin ->
+                require(
+                    plugin.installed.manifest.apiVersion >= 2 &&
+                        canonicalOrigin == PluginUrlPolicy.requireOrigin(guestOrigin),
+                ) { "Guest origin does not match plugin standalone guest origin" }
+            }
             val runtimeKey =
                 PluginRuntimeKeyV1.guest(
                     plugin.installed.pluginId,

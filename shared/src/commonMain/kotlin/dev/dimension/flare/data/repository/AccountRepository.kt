@@ -800,7 +800,21 @@ private fun accountServiceStateFlow(
             repository.platformRegistry.platforms
                 .map { specs -> specs.firstOrNull { it.platformId == accountType.platformId } }
                 .distinctUntilChanged()
-                .map { spec -> spec?.guestDataSource(accountType.host, Locale.language) ?: UnavailableMicroblogDataSource }
+                .map { spec ->
+                    if (spec == null) {
+                        UnavailableMicroblogDataSource
+                    } else {
+                        try {
+                            spec.guestDataSource(accountType.host, Locale.language)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: IllegalArgumentException) {
+                            UnavailableMicroblogDataSource
+                        } catch (_: UnsupportedOperationException) {
+                            UnavailableMicroblogDataSource
+                        }
+                    }
+                }.distinctUntilChanged()
         }
 
         is AccountType.Specific -> {
