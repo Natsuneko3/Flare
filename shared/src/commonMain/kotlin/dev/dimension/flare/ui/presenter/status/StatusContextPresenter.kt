@@ -29,6 +29,8 @@ import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.notSupported
+import dev.dimension.flare.data.plugin.TimelineProcessorService
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.accountServiceFlow
 import dev.dimension.flare.di.koinInject
@@ -45,6 +47,7 @@ import dev.dimension.flare.ui.model.toUi
 import dev.dimension.flare.ui.presenter.PresenterBase
 import dev.dimension.flare.ui.presenter.home.TimelinePresenter
 import dev.dimension.flare.ui.presenter.home.TimelineState
+import dev.dimension.flare.ui.presenter.rememberPluginWidgetBoundState
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -93,6 +96,9 @@ public class StatusContextPresenter(
 
     private val database: CacheDatabase by koinInject()
     private val accountRepository: AccountRepository by koinInject()
+    private val timelineProcessorService: TimelineProcessorService? by lazy {
+        timelineProcessorServiceOrNull()
+    }
     private val sourceFlow by lazy { accountServiceFlow(accountType, accountRepository) }
 
     @Composable
@@ -129,17 +135,29 @@ public class StatusContextPresenter(
         val scope = rememberCoroutineScope()
         return when (val result = catalog) {
             is UiState.Loading -> {
+                val (boundCurrent, boundHeader) =
+                    rememberPluginWidgetBoundState(
+                        current = cachedPost?.let { UiState.Success(it) } ?: UiState.Loading(),
+                        header = cachedPost?.let { detailHeader(emptyList(), it) } ?: persistentListOf(),
+                        service = timelineProcessorService,
+                    )
                 DetailState(
-                    current = cachedPost?.let { UiState.Success(it) } ?: UiState.Loading(),
-                    header = cachedPost?.let { detailHeader(emptyList(), it) } ?: persistentListOf(),
+                    current = boundCurrent,
+                    header = boundHeader,
                 )
             }
 
             is UiState.Error -> {
                 val post = cachedPost ?: currentPost(source).takeSuccess()
+                val (boundCurrent, boundHeader) =
+                    rememberPluginWidgetBoundState(
+                        current = post?.let { UiState.Success(it) } ?: UiState.Loading(),
+                        header = post?.let { detailHeader(emptyList(), it) } ?: persistentListOf(),
+                        service = timelineProcessorService,
+                    )
                 DetailState(
-                    current = post?.let { UiState.Success(it) } ?: UiState.Loading(),
-                    header = post?.let { detailHeader(emptyList(), it) } ?: persistentListOf(),
+                    current = boundCurrent,
+                    header = boundHeader,
                     listState = PagingState.Error(result.throwable) { attempt++ },
                     onRefresh = { attempt++ },
                     refreshScope = { scope.launch { it() } },
@@ -151,9 +169,16 @@ public class StatusContextPresenter(
                 if (tabs == null) {
                     var revision by remember { mutableIntStateOf(0) }
                     val current = currentPost(source, revision)
+                    val (boundCurrent, boundHeader) =
+                        rememberPluginWidgetBoundState(
+                            current = current,
+                            header = persistentListOf(),
+                            service = timelineProcessorService,
+                        )
                     val timeline = remember { timeline(source.capabilities.post?.context(statusKey) ?: notSupported(), seed = true) }.body()
                     DetailState(
-                        current = current,
+                        current = boundCurrent,
+                        header = boundHeader,
                         listState = timeline.listState,
                         onRefresh = {
                             revision++
@@ -256,6 +281,12 @@ public class StatusContextPresenter(
                 }
             }
         val header = current.takeSuccess()?.let { detailHeader(currentContext?.parents.orEmpty(), it) } ?: persistentListOf()
+        val (boundCurrent, boundHeader) =
+            rememberPluginWidgetBoundState(
+                current = current,
+                header = header,
+                service = timelineProcessorService,
+            )
         val scope = rememberCoroutineScope()
         val refresh =
             suspend {
@@ -266,14 +297,25 @@ public class StatusContextPresenter(
             }
         val children = activePage?.sections?.children ?: activePage?.timeline?.listState
         return DetailState(
-            current = current,
-            header = header,
+            current = boundCurrent,
+            header = boundHeader,
             listState =
                 when {
-                    current is UiState.Error && header.isEmpty() -> PagingState.Error(current.throwable) { scope.launch { refresh() } }
-                    header.isEmpty() -> PagingState.Loading()
-                    children != null -> children
-                    else -> PagingState.Empty { scope.launch { refresh() } }
+                    boundCurrent is UiState.Error && boundHeader.isEmpty() -> {
+                        PagingState.Error(boundCurrent.throwable) { scope.launch { refresh() } }
+                    }
+
+                    boundHeader.isEmpty() -> {
+                        PagingState.Loading()
+                    }
+
+                    children != null -> {
+                        children
+                    }
+
+                    else -> {
+                        PagingState.Empty { scope.launch { refresh() } }
+                    }
                 },
             tabs = remember(tabs) { tabs.map { Choice(it.id, it.title) }.toImmutableList() },
             selectedTabId = active?.tab?.id,
