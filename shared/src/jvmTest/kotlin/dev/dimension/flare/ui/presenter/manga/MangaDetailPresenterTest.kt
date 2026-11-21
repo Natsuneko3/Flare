@@ -6,6 +6,7 @@ import androidx.room3.Room
 import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
 import dev.dimension.flare.common.Cacheable
+import dev.dimension.flare.common.OnDeviceAI
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.PlatformDispatchers
 import dev.dimension.flare.createTestFileSystem
@@ -15,15 +16,17 @@ import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datasource.microblog.DataSourceCapabilityProvider
 import dev.dimension.flare.data.datasource.microblog.DataSourceCapabilitySet
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.ProfileTab
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
-import dev.dimension.flare.data.datasource.microblog.ProfileTab
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
 import dev.dimension.flare.data.io.OkioFileStorage
 import dev.dimension.flare.data.model.ProxyRef
+import dev.dimension.flare.data.network.ai.AiCompletionService
+import dev.dimension.flare.data.network.ai.OpenAIService
 import dev.dimension.flare.data.repository.AccountMicroblogDataSource
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.data.repository.MangaProgressRepository
@@ -50,8 +53,14 @@ import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.takeSuccess
+import dev.dimension.flare.ui.render.RenderBlockStyle
+import dev.dimension.flare.ui.render.RenderContent
+import dev.dimension.flare.ui.render.RenderRun
+import dev.dimension.flare.ui.render.RenderTextStyle
+import dev.dimension.flare.ui.render.plainText
 import dev.dimension.flare.ui.render.toUi
 import dev.dimension.flare.ui.render.toUiPlainText
+import dev.dimension.flare.ui.render.uiRichTextOf
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -85,6 +94,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -504,6 +514,226 @@ class MangaDetailPresenterTest {
             state2.toggleTranslation()
             runCurrent()
             assertEquals(source, assertNotNull(latest).detail)
+        }
+
+    @Test
+    fun translateMangaDetailPipelineTranslatesRichContentPreservesMediaProxyAndHandlesNullContent() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val root = createTestRootPath()
+            val store = AppDataStore(OkioFileStorage(createTestFileSystem(), root))
+            store.appSettingsStore.updateData {
+                it.copy(
+                    aiConfig = it.aiConfig.copy(type = AppSettings.AiConfig.Type.OnDevice),
+                    translateConfig =
+                        AppSettings.TranslateConfig(
+                            preTranslate = true,
+                            provider = AppSettings.TranslateConfig.Provider.AI,
+                            showOriginalWithTranslation = true,
+                        ),
+                )
+            }
+            var aiResponse: (String) -> String? = { template ->
+                template
+                    .replace("Original", "译文")
+                    .replace("Hero", "勇者")
+            }
+            val ai =
+                AiCompletionService(
+                    OpenAIService(),
+                    object : OnDeviceAI {
+                        override suspend fun isAvailable(): Boolean = true
+
+                        override suspend fun translate(
+                            source: String,
+                            targetLanguage: String,
+                            prompt: String,
+                        ): String? = aiResponse(source)
+
+                        override suspend fun tldr(
+                            source: String,
+                            targetLanguage: String,
+                            prompt: String,
+                        ): String? = null
+                    },
+                )
+
+            val presenterJob = SupervisorJob()
+            val presenterScope = CoroutineScope(dispatcher + presenterJob)
+            startKoin {
+                modules(
+                    module {
+                        testSingle { store }
+                        testSingle { ai }
+                    },
+                )
+            }
+            try {
+                // 1. Rich content with RenderContent.Text (styled runs + inline RenderRun.Image) + RenderContent.BlockImage (both Unbound).
+                val richContent =
+                    uiRichTextOf(
+                        listOf(
+                            RenderContent.Text(
+                                runs =
+                                    persistentListOf(
+                                        RenderRun.Text("Original synopsis about ", RenderTextStyle(bold = true)),
+                                        RenderRun.Text("Hero", RenderTextStyle(link = "https://manga.example/hero")),
+                                        RenderRun.Image("https://manga.example/emoji.png", alt = "", proxy = ProxyRef.Unbound),
+                                    ),
+                                block = RenderBlockStyle(isBlockQuote = true),
+                            ),
+                            RenderContent.BlockImage(
+                                url = "https://manga.example/banner.png",
+                                href = "https://manga.example",
+                                proxy = ProxyRef.Unbound,
+                            ),
+                        ),
+                    )
+                val richSource =
+                    sampleDetail(chapterGroups = persistentListOf()).copy(
+                        title = "Original Hero",
+                        content = richContent,
+                        sourceLanguages = persistentListOf("en"),
+                    )
+
+                val directTranslated =
+                    translateMangaDetail(
+                        detail = richSource,
+                        targetLanguage = "zh-Hans",
+                        appDataStore = store,
+                        aiCompletionService = ai,
+                    )
+                assertEquals("译文 勇者", directTranslated.title)
+                val translatedContent = assertNotNull(directTranslated.content)
+                assertEquals(2, translatedContent.renderRuns.size)
+                val translatedTextBlock = assertIs<RenderContent.Text>(translatedContent.renderRuns[0])
+                assertEquals(RenderBlockStyle(isBlockQuote = true), translatedTextBlock.block)
+                assertEquals("译文 synopsis about 勇者", translatedTextBlock.plainText())
+                val inlineImage = assertIs<RenderRun.Image>(translatedTextBlock.runs.last())
+                assertEquals(ProxyRef.Account(accountKey), inlineImage.proxy)
+                val blockImage = assertIs<RenderContent.BlockImage>(translatedContent.renderRuns[1])
+                assertEquals("https://manga.example/banner.png", blockImage.url)
+                assertEquals(ProxyRef.Account(accountKey), blockImage.proxy)
+
+                // Exercise public MangaTranslatePresenter constructor end-to-end with showOriginalWithTranslation = true.
+                val publicPresenter = MangaTranslatePresenter(source = richSource, targetLanguage = "zh-Hans")
+                val states = MutableStateFlow<MangaTranslatePresenter.State?>(null)
+                presenterScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { publicPresenter.body() }.collect { states.value = it }
+                }
+                val bilingualState = awaitState(states) { !it.isTranslating && it.detail.title.contains("译文") }
+                assertEquals("Original Hero\n\n译文 勇者", bilingualState.detail.title)
+                assertEquals(4, bilingualState.detail.content?.renderRuns?.size)
+
+                // 2. Null content: translates title cleanly while keeping content == null.
+                val nullContentSource = richSource.copy(title = "Original Standalone", content = null)
+                aiResponse = { template -> template.replace("Original Standalone", "独立标题译文") }
+                val nullContentTranslated =
+                    translateMangaDetail(
+                        detail = nullContentSource,
+                        targetLanguage = "zh-Hans",
+                        appDataStore = store,
+                        aiCompletionService = ai,
+                    )
+                assertEquals("独立标题译文", nullContentTranslated.title)
+                assertNull(nullContentTranslated.content)
+                assertNull(nullContentTranslated.withOriginal(nullContentSource).content)
+                assertEquals("Original Standalone\n\n独立标题译文", nullContentTranslated.withOriginal(nullContentSource).title)
+            } finally {
+                presenterJob.cancelAndJoin()
+                stopKoin()
+                deleteTestRootPath(root)
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun optimisticProgressClearsAcrossTimestampDiffAndRevertsOnWriteFailure() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-detail-optimistic-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(dispatcher)
+                    .build()
+            var clockValue = 500_000L
+            val progressRepository = MangaProgressRepository(cacheDatabase) { clockValue++ }
+            val detail =
+                sampleDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-a",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = null),
+                                        UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = null),
+                                    ),
+                            ),
+                        ),
+                )
+            val mangaDataSource = FakeDetailMangaDataSource(detail = detail)
+            val accountService = FakeMangaAccountService(accountKey, mangaDataSource)
+            val presenterJob = SupervisorJob()
+            val presenterScope = CoroutineScope(dispatcher + presenterJob)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                    },
+                )
+            }
+            val presenter = MangaDetailPresenter(accountType = accountType, mangaKey = mangaKey)
+            try {
+                val states = MutableStateFlow<MangaDetailPresenter.State?>(null)
+                presenterScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+                val loaded = awaitState(states) { it.detail is UiState.Success }
+
+                // Because cacheDatabase uses `dispatcher` (UnconfinedTestDispatcher), setChapterRead inside writeScope
+                // causes Room to emit observedProgress (with lastReadAt = 500_000L != 1L) synchronously BEFORE `finally` runs!
+                loaded.setChapterRead("ch-1", isRead = true)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val afterOptimisticRead = awaitState(states) { it.chapters.first { c -> c.chapter.id == "ch-1" }.isRead }
+                assertEquals("ch-2", afterOptimisticRead.primaryReadTarget?.chapterId)
+
+                // Subsequent external repository write MUST NOT be shadowed by a stuck optimisticProgress!
+                progressRepository.setChapterRead(accountType, mangaKey, "ch-1", isRead = false)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val afterExternalUnread = awaitState(states) { !it.chapters.first { c -> c.chapter.id == "ch-1" }.isRead }
+                assertEquals("ch-1", afterExternalUnread.primaryReadTarget?.chapterId)
+
+                // Simulate a write failure by closing cacheDatabase while keeping the presenter alive:
+                // toggleChapterSort() optimistic state must revert back to observedProgress (true) when the DB write throws!
+                cacheDatabase.close()
+                afterExternalUnread.toggleChapterSort()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val revertedState = awaitState(states) { it.chapterSortDescending }
+                assertTrue(revertedState.chapterSortDescending)
+            } finally {
+                presenterJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
         }
 
     private fun sampleDetail(chapterGroups: ImmutableList<UiMangaChapterGroup>): UiMangaDetail =

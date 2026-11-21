@@ -47,6 +47,7 @@ import dev.dimension.flare.ui.route.DeeplinkRoute
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -171,7 +172,7 @@ public class MangaDetailPresenter(
         var optimisticProgress by remember(accountType, mangaKey) { mutableStateOf<MangaProgressSnapshot?>(null) }
         var pendingWriteCount by remember(accountType, mangaKey) { mutableIntStateOf(0) }
         LaunchedEffect(observedProgress) {
-            if (pendingWriteCount == 0) {
+            if (pendingWriteCount == 0 || observedProgress.matchesIgnoringTimestamp(optimisticProgress)) {
                 optimisticProgress = null
             }
         }
@@ -318,9 +319,13 @@ public class MangaDetailPresenter(
                         writeMutex.withLock {
                             progressRepository.setChapterSortDescending(accountType, mangaKey, nextDescending)
                         }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticProgress = null
                     } finally {
                         pendingWriteCount--
-                        if (pendingWriteCount == 0 && observedProgress == optimisticProgress) {
+                        if (pendingWriteCount == 0 && observedProgress.matchesIgnoringTimestamp(optimisticProgress)) {
                             optimisticProgress = null
                         }
                     }
@@ -339,9 +344,13 @@ public class MangaDetailPresenter(
                         writeMutex.withLock {
                             progressRepository.setChapterRead(accountType, mangaKey, chapterId, isRead)
                         }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticProgress = null
                     } finally {
                         pendingWriteCount--
-                        if (pendingWriteCount == 0 && observedProgress == optimisticProgress) {
+                        if (pendingWriteCount == 0 && observedProgress.matchesIgnoringTimestamp(optimisticProgress)) {
                             optimisticProgress = null
                         }
                     }
@@ -350,6 +359,9 @@ public class MangaDetailPresenter(
         }
     }
 }
+
+private fun MangaProgressSnapshot.matchesIgnoringTimestamp(other: MangaProgressSnapshot?): Boolean =
+    other != null && copy(lastReadAt = 0L) == other.copy(lastReadAt = 0L)
 
 internal fun UiMangaDetail.bindMangaProxy(proxy: ProxyRef): UiMangaDetail =
     copy(

@@ -51,7 +51,14 @@ public class MangaTranslatePresenter(
     private var translate: suspend (
         UiMangaDetail,
         String,
-    ) -> UiMangaDetail = ::translateMangaDetail
+    ) -> UiMangaDetail = { detail, language ->
+        translateMangaDetail(
+            detail = detail,
+            targetLanguage = language,
+            appDataStore = appDataStore,
+            aiCompletionService = aiCompletionService,
+        )
+    }
 
     internal constructor(
         source: UiMangaDetail,
@@ -129,49 +136,51 @@ public class MangaTranslatePresenter(
             }
         }
     }
+}
 
-    private suspend fun translateMangaDetail(
-        detail: UiMangaDetail,
-        targetLanguage: String,
-    ): UiMangaDetail {
-        val settings = appDataStore.appSettingsStore.data.first()
-        val fields =
-            buildList {
-                add(detail.title.toMangaRenderText())
-                detail.content?.renderRuns?.let(::addAll)
-            }
-        val combined = uiRichTextOf(fields)
-        val document = combined.toTranslationDocument(targetLanguage)
-        if (document.blocks.isEmpty()) return detail
-        val promptTemplate = AiPlaceholderTranslationSupport.buildPromptTemplate(document)
-        val response =
-            TranslationProvider.translateDocumentJson(
-                settings = settings,
-                aiCompletionService = aiCompletionService,
-                sourceTemplate = promptTemplate,
-                sourceJson = combined.toTranslationJson(targetLanguage),
-                targetLanguage = targetLanguage,
-                prompt = TranslationPromptFormatter.buildTranslatePrompt(settings, targetLanguage, promptTemplate),
-            )
-        val translatedRuns =
-            combined
-                .applyTranslationJson(
-                    TranslationResponseSanitizer.clean(requireNotNull(response) { "Translation returned empty response" }),
-                ).renderRuns
-        val translatedTitle = (translatedRuns.first() as RenderContent.Text).plainText()
-        val proxy = ProxyRef.forAccountType(detail.accountType)
-        val translatedContent =
-            detail.content?.let {
-                uiRichTextOf(
-                    renderRuns = translatedRuns.drop(1),
-                    sourceLanguages = listOf(targetLanguage),
-                ).withProxy(proxy)
-            }
-        return detail.copy(
-            title = translatedTitle,
-            content = translatedContent,
+internal suspend fun translateMangaDetail(
+    detail: UiMangaDetail,
+    targetLanguage: String,
+    appDataStore: AppDataStore,
+    aiCompletionService: AiCompletionService,
+): UiMangaDetail {
+    val settings = appDataStore.appSettingsStore.data.first()
+    val fields =
+        buildList {
+            add(detail.title.toMangaRenderText())
+            detail.content?.renderRuns?.let(::addAll)
+        }
+    val combined = uiRichTextOf(fields)
+    val document = combined.toTranslationDocument(targetLanguage)
+    if (document.blocks.isEmpty()) return detail
+    val promptTemplate = AiPlaceholderTranslationSupport.buildPromptTemplate(document)
+    val response =
+        TranslationProvider.translateDocumentJson(
+            settings = settings,
+            aiCompletionService = aiCompletionService,
+            sourceTemplate = promptTemplate,
+            sourceJson = combined.toTranslationJson(targetLanguage),
+            targetLanguage = targetLanguage,
+            prompt = TranslationPromptFormatter.buildTranslatePrompt(settings, targetLanguage, promptTemplate),
         )
-    }
+    val translatedRuns =
+        combined
+            .applyTranslationJson(
+                TranslationResponseSanitizer.clean(requireNotNull(response) { "Translation returned empty response" }),
+            ).renderRuns
+    val translatedTitle = (translatedRuns.first() as RenderContent.Text).plainText()
+    val proxy = ProxyRef.forAccountType(detail.accountType)
+    val translatedContent =
+        detail.content?.let {
+            uiRichTextOf(
+                renderRuns = translatedRuns.drop(1),
+                sourceLanguages = listOf(targetLanguage),
+            ).withProxy(proxy)
+        }
+    return detail.copy(
+        title = translatedTitle,
+        content = translatedContent,
+    )
 }
 
 internal fun UiMangaDetail.withOriginal(original: UiMangaDetail): UiMangaDetail {

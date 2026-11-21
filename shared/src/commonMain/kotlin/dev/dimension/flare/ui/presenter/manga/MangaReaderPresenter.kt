@@ -14,6 +14,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
+import androidx.paging.LoadState
+import dev.dimension.flare.common.CacheState
 import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datastore.AppDataStore
@@ -53,9 +55,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -145,15 +149,26 @@ public class MangaReaderPresenter(
         serviceFlow.map { service -> service.capabilities.manga }
     }
 
-    private fun buildDetailFlow() =
+    private fun buildDetailFlow(forceRefresh: Boolean) =
         serviceFlow.flatMapLatestUiState { service ->
             val mangaDataSource =
                 service.capabilities.manga
                     ?: error("Current service does not support manga data source")
-            mangaDataSource
-                .mangaDetail(mangaKey)
-                .toUi()
-                .map { state -> state.map { it.bindMangaProxy(proxyRef) } }
+            val cacheable = mangaDataSource.mangaDetail(mangaKey)
+            if (!forceRefresh) {
+                cacheable
+                    .toUi()
+                    .map { state -> state.map { it.bindMangaProxy(proxyRef) } }
+            } else {
+                combine(cacheable.data, cacheable.refreshState) { data, refresh ->
+                    when {
+                        refresh is LoadState.Loading -> UiState.Loading()
+                        refresh is LoadState.Error -> UiState.Error(refresh.error)
+                        data is CacheState.Success -> UiState.Success(data.data.bindMangaProxy(proxyRef))
+                        else -> UiState.Loading()
+                    }
+                }
+            }
         }
 
     @Immutable
@@ -224,21 +239,28 @@ public class MangaReaderPresenter(
         val writeMutex = remember { Mutex() }
 
         var detailAttempt by remember(accountType, mangaKey) { mutableIntStateOf(0) }
-        val detailFlow = remember(accountType, mangaKey, detailAttempt) { buildDetailFlow() }
+        val detailFlow =
+            remember(accountType, mangaKey, detailAttempt) {
+                buildDetailFlow(forceRefresh = detailAttempt > 0)
+            }
         val detailState by detailFlow.flattenUiState()
         val rawDetail = detailState.takeSuccess()
         val currentDataSource by mangaDataSourceFlow.collectAsState(null)
 
         val settings by appDataStore.appSettingsStore.data.collectAsState(AppSettings.default)
-        val observedProgress by remember(accountType, mangaKey) {
-            progressRepository.observe(accountType, mangaKey)
-        }.collectAsState(MangaProgressSnapshot())
-        val latestProgress by rememberUpdatedState(observedProgress)
+        val progressFlow =
+            remember(accountType, mangaKey) {
+                progressRepository.observe(accountType, mangaKey)
+            }
+        val loadedProgress by progressFlow.collectAsState(initial = null)
+        var seedProgress by remember(accountType, mangaKey) { mutableStateOf<MangaProgressSnapshot?>(null) }
+        val effectiveObservedProgress = loadedProgress ?: seedProgress
+        val latestLoadedProgress by rememberUpdatedState(effectiveObservedProgress)
 
         var optimisticDirectionOverride by remember(accountType, mangaKey) { mutableStateOf<MangaReadingDirection?>(null) }
         var pendingDirectionWrites by remember(accountType, mangaKey) { mutableIntStateOf(0) }
-        LaunchedEffect(observedProgress.readerModeOverride) {
-            if (pendingDirectionWrites == 0) {
+        LaunchedEffect(loadedProgress) {
+            if (loadedProgress != null && pendingDirectionWrites == 0) {
                 optimisticDirectionOverride = null
             }
         }
@@ -303,10 +325,12 @@ public class MangaReaderPresenter(
                 try {
                     val fetchedPages = source.chapterPages(mangaKey, currentSession.chapterId)
                     currentCoroutineContext().ensureActive()
+                    val resolvedProgress = latestLoadedProgress ?: progressFlow.first()
+                    currentCoroutineContext().ensureActive()
                     val landingIndex =
                         when (val landing = currentSession.landing) {
                             is ChapterLanding.Initial -> {
-                                val saved = latestProgress.chapters[currentSession.chapterId]
+                                val saved = resolvedProgress.chapters[currentSession.chapterId]
                                 val target =
                                     landing.initialPage
                                         ?: if (saved != null && !saved.isCompleted) saved.lastPageIndex else 0
@@ -322,6 +346,9 @@ public class MangaReaderPresenter(
                             }
                         }
                     Snapshot.withMutableSnapshot {
+                        if (seedProgress == null) {
+                            seedProgress = resolvedProgress
+                        }
                         currentSession.currentPageIndex = landingIndex
                         currentSession.pagesLoadState = UiState.Success(fetchedPages)
                     }
@@ -357,7 +384,7 @@ public class MangaReaderPresenter(
 
         val effectiveDirection =
             optimisticDirectionOverride
-                ?: observedProgress.readerModeOverride
+                ?: effectiveObservedProgress?.readerModeOverride
                 ?: rawDetail?.readingDirection
                 ?: settings.mangaReaderConfig.defaultDirection
         val effectiveSpreadSetting =
@@ -521,6 +548,7 @@ public class MangaReaderPresenter(
         val flushState = remember { ProgressFlushTracker() }
 
         fun computeLiveProgressRecord(targetSession: ChapterPagesSession? = activeSessionHolder.session): PendingProgressRecord? {
+            val progressSnapshot = loadedProgress ?: seedProgress ?: return null
             val currentSession = targetSession ?: return null
             if (currentSession.chapterId != chapterTarget.chapterId) return null
             val loaded = (currentSession.pagesLoadState as? UiState.Success)?.data ?: return null
@@ -528,7 +556,7 @@ public class MangaReaderPresenter(
             val pageIdx = currentSession.currentPageIndex.coerceIn(0, loaded.lastIndex)
             val liveDirection =
                 optimisticDirectionOverride
-                    ?: observedProgress.readerModeOverride
+                    ?: progressSnapshot.readerModeOverride
                     ?: rawDetail?.readingDirection
                     ?: settings.mangaReaderConfig.defaultDirection
             val liveSpreadSetting =
@@ -699,10 +727,19 @@ public class MangaReaderPresenter(
             }
 
             override fun retryChapter() {
-                if (detailState is UiState.Error) {
+                val currentSession = activeSessionHolder.session
+                if (detailState is UiState.Error || isChapterLocked) {
                     detailAttempt++
+                } else if (activeChapter == null && currentSession?.pagesLoadState is UiState.Error) {
+                    val nextLanding = chapterTarget.landing
+                    currentSession.cancel()
+                    detailAttempt++
+                    chapterTarget =
+                        chapterTarget.copy(
+                            attempt = chapterTarget.attempt + 1,
+                            landing = nextLanding,
+                        )
                 } else {
-                    val currentSession = activeSessionHolder.session
                     val nextLanding =
                         if (currentSession?.pagesLoadState is UiState.Success) {
                             ChapterLanding.PreservePage(currentSession.currentPageIndex)
@@ -738,9 +775,13 @@ public class MangaReaderPresenter(
                         writeMutex.withLock {
                             progressRepository.setReaderModeOverride(accountType, mangaKey, direction)
                         }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticDirectionOverride = null
                     } finally {
                         pendingDirectionWrites--
-                        if (pendingDirectionWrites == 0 && observedProgress.readerModeOverride == optimisticDirectionOverride) {
+                        if (pendingDirectionWrites == 0 && effectiveObservedProgress?.readerModeOverride == optimisticDirectionOverride) {
                             optimisticDirectionOverride = null
                         }
                     }
@@ -762,6 +803,10 @@ public class MangaReaderPresenter(
                                 )
                             }
                         }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticDoublePageSpread = null
                     } finally {
                         pendingSettingsWrites--
                         if (
@@ -789,6 +834,10 @@ public class MangaReaderPresenter(
                                 )
                             }
                         }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticSpreadCoverSinglePage = null
                     } finally {
                         pendingSettingsWrites--
                         if (
