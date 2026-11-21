@@ -212014,6 +212014,28 @@
         }
       }
     },
+    "storage_clear_database_cache_busy" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cache cleared. The database is busy. Try again later to reclaim the remaining space."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缓存已清除。数据库正忙，稍后再试即可回收剩余空间。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快取已清除。資料庫忙碌中，請稍後再試以回收剩餘空間。"
+          }
+        }
+      }
+    },
     "storage_clear_database_cache_confirm" : {
       "localizations" : {
         "af" : {
