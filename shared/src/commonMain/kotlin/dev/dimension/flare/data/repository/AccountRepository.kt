@@ -96,7 +96,7 @@ internal class AccountRepository internal constructor(
     private val appDatabase: AppDatabase,
     private val coroutineScope: CoroutineScope,
     internal val appDataStore: AppDataStore,
-    private val cacheDatabase: CacheDatabase,
+    internal val cacheDatabase: CacheDatabase,
     private val proxyRepository: ProxyRepository,
     @Provided internal val platformRegistry: PlatformRegistry,
     private val draftRepository: DraftRepository,
@@ -396,15 +396,21 @@ internal class AccountRepository internal constructor(
         beforeDelete: suspend () -> Unit,
     ): Unit =
         withAccountChanges {
-            val accounts =
+            val platformAccounts =
                 appDatabase
                     .accountDao()
                     .allAccounts()
                     .first()
-                    .filter { it.platformId == platformId && ownsCredential(it.credential_json) }
+                    .filter { it.platformId == platformId }
+            val accounts = platformAccounts.filter { ownsCredential(it.credential_json) }
             beforeDelete()
             accounts.forEach { proxyRepository.removeAccount(it.account_key) }
             accounts.forEach { deleteAccount(it.account_key) }
+            if (accounts.size == platformAccounts.size) {
+                cacheDatabase.connect {
+                    cacheDatabase.mangaProgressDao().deleteGuestByPlatformId(platformId)
+                }
+            }
         }
 
     private suspend fun deleteAccount(accountKey: MicroBlogKey) {
@@ -439,6 +445,7 @@ internal class AccountRepository internal constructor(
             cacheDatabase.statusReferenceDao().deleteByAccountType(accountType)
             cacheDatabase.pagingTimelineDao().deletePresentationReferencesByAccountType(accountType)
             cacheDatabase.pluginPostWidgetDao().deleteByAccountType(accountType)
+            cacheDatabase.mangaProgressDao().deleteByAccountType(accountType)
             invalidateCachedContent(accountKey)
         }
         timelineProcessorServiceOrNull()?.clearAccount(AccountType.Specific(accountKey))

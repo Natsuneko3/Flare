@@ -7,8 +7,8 @@ import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
 import androidx.room3.withWriteTransaction
 
-// Removed legacy VVOStatus and VVOComment DeeplinkRoute variants from cached status payloads.
-internal const val CACHE_DATABASE_VERSION = 56
+// Added DbMangaState and DbMangaChapterProgress tables for manga reading progress.
+internal const val CACHE_DATABASE_VERSION = 57
 
 @Database(
     entities = [
@@ -32,6 +32,8 @@ internal const val CACHE_DATABASE_VERSION = 56
         dev.dimension.flare.data.database.cache.model.DbProfileTabs::class,
         dev.dimension.flare.data.database.cache.model.DbTranslation::class,
         dev.dimension.flare.data.database.cache.model.DbPluginPostWidget::class,
+        dev.dimension.flare.data.database.cache.model.DbMangaState::class,
+        dev.dimension.flare.data.database.cache.model.DbMangaChapterProgress::class,
     ],
     version = CACHE_DATABASE_VERSION,
     exportSchema = false,
@@ -44,6 +46,7 @@ internal const val CACHE_DATABASE_VERSION = 56
     dev.dimension.flare.data.database.cache.model.DbStatusContentConverter::class,
     dev.dimension.flare.data.database.cache.model.ListContentConverters::class,
     dev.dimension.flare.data.database.cache.model.TranslationConverters::class,
+    dev.dimension.flare.data.database.cache.model.MangaProgressConverters::class,
 )
 @ConstructedBy(CacheDatabaseConstructor::class)
 internal abstract class CacheDatabase : RoomDatabase() {
@@ -66,6 +69,8 @@ internal abstract class CacheDatabase : RoomDatabase() {
     abstract fun translationDao(): dev.dimension.flare.data.database.cache.dao.TranslationDao
 
     abstract fun pluginPostWidgetDao(): dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
+
+    abstract fun mangaProgressDao(): dev.dimension.flare.data.database.cache.dao.MangaProgressDao
 }
 
 internal suspend fun CacheDatabase.clearHomeTimelinesForAccount(accountKey: dev.dimension.flare.model.MicroBlogKey) {

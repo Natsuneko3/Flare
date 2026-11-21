@@ -30,6 +30,7 @@ public class AccountTabSyncCoordinator internal constructor(
     private val settingsRepository: SettingsRepository,
     private val coroutineScope: CoroutineScope,
     private val timelineResolver: TimelineResolver,
+    private val mangaProgressRepository: MangaProgressRepository = MangaProgressRepository(accountRepository.cacheDatabase),
 ) {
     init {
         coroutineScope.launch {
@@ -47,15 +48,25 @@ public class AccountTabSyncCoordinator internal constructor(
                 }
             }
         }
+        val initialGuestPlatformIds =
+            accountRepository.platformRegistry.platforms.value
+                .mapNotNull { spec -> spec.platformId.takeIf { spec.standaloneGuestHost != null } }
+                .toSet()
         coroutineScope.launch {
+            var previousGuestPlatformIds = initialGuestPlatformIds
             accountRepository.platformRegistry.platforms
                 .map { platforms ->
                     platforms
                         .mapNotNull { spec -> spec.platformId.takeIf { spec.standaloneGuestHost != null } }
                         .toSet()
                 }.distinctUntilChanged()
-                .collect {
+                .collect { activeGuestPlatformIds ->
                     try {
+                        val removedGuestPlatformIds = previousGuestPlatformIds - activeGuestPlatformIds
+                        previousGuestPlatformIds = activeGuestPlatformIds
+                        removedGuestPlatformIds.forEach { platformId ->
+                            mangaProgressRepository.deleteGuestByPlatformId(platformId)
+                        }
                         removeTabsForInactiveGuestPlatforms()
                     } catch (error: CancellationException) {
                         throw error

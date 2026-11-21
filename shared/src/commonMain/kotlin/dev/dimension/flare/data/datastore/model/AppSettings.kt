@@ -1,6 +1,7 @@
 package dev.dimension.flare.data.datastore.model
 
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.model.MangaReadingDirection
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -19,11 +20,19 @@ public data class AppSettings(
     val videoPlaybackSpeed: Float = 1f,
     /** Each enabled processor's approved HTTPS origins and optional `mediaNetwork` permission. */
     val enabledTimelineProcessorPlugins: Map<String, Set<String>> = emptyMap(),
+    val mangaReaderConfig: MangaReaderConfig = MangaReaderConfig(),
 ) {
     public companion object {
         // for SwiftUI environment defaults
         public val default: AppSettings = AppSettings(version = "")
     }
+
+    @Serializable
+    public data class MangaReaderConfig(
+        val defaultDirection: MangaReadingDirection = MangaReadingDirection.Rtl,
+        val doublePageSpreadOnWideScreen: Boolean = false,
+        val spreadCoverSinglePage: Boolean = true,
+    )
 
     @Serializable
     public data class LinkOpenDefaults(
