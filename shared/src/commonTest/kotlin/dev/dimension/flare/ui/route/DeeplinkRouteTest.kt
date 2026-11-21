@@ -168,6 +168,36 @@ class DeeplinkRouteTest {
     }
 
     @Test
+    fun testMangaDetailAndReaderRoundTrip() {
+        val guestAccountType = AccountType.GuestPlugin(platformId = "manga.example", host = "api.manga.example")
+        listOf(activeAccountType, guestAccountType).forEach { accountType ->
+            val detail =
+                DeeplinkRoute.Manga.Detail(
+                    mangaKey = MicroBlogKey("manga-1", "api.manga.example"),
+                    accountType = accountType,
+                )
+            assertEquals(detail, DeeplinkRoute.parse(detail.toUri()))
+
+            val reader =
+                DeeplinkRoute.Manga.Reader(
+                    mangaKey = MicroBlogKey("manga-1", "api.manga.example"),
+                    chapterId = "ch-2",
+                    initialPage = 5,
+                    accountType = accountType,
+                )
+            assertEquals(reader, DeeplinkRoute.parse(reader.toUri()))
+
+            val readerDefaultPage =
+                DeeplinkRoute.Manga.Reader(
+                    mangaKey = MicroBlogKey("manga-1", "api.manga.example"),
+                    chapterId = "ch-2",
+                    accountType = accountType,
+                )
+            assertEquals(readerDefaultPage, DeeplinkRoute.parse(readerDefaultPage.toUri()))
+        }
+    }
+
+    @Test
     fun testStatusAddReaction() {
         val route =
             DeeplinkRoute.Status.AddReaction(

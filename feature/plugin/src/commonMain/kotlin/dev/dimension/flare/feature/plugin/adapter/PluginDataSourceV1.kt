@@ -188,7 +188,13 @@ internal class PluginDataSourceV1 private constructor(
             profile = if (capabilities.canExpose(PluginAbiV1.Capabilities.PROFILE)) ProfileCapability(this, userDataSource) else null,
             post =
                 if (capabilities.canExpose(PluginAbiV1.Capabilities.POST) ||
-                    (accountKey != null && capabilities.hasOperation(PluginAbiV1.Capabilities.RELATION, "mutate"))
+                    (
+                        accountKey != null &&
+                            (
+                                capabilities.hasOperation(PluginAbiV1.Capabilities.RELATION, "mutate") ||
+                                    capabilities.hasOperation(PluginAbiV1.Capabilities.POST, "mutate")
+                            )
+                    )
                 ) {
                     PostCapability(this, postDataSource)
                 } else {
@@ -201,6 +207,7 @@ internal class PluginDataSourceV1 private constructor(
             directMessage = extraCapabilities.directMessage,
             article = extraCapabilities.article,
             gallery = extraCapabilities.gallery,
+            manga = extraCapabilities.manga,
             tabCatalog =
                 if (
                     accountKey != null &&
@@ -346,8 +353,10 @@ internal class PluginDataSourceV1 private constructor(
 
                     is MutationResultV1.Invalidate -> {
                         result.keys.forEach {
-                            updater.deleteFromCache(it.toKey())
-                            extraCapabilities.refreshGallery(it.toKey())
+                            val key = it.toKey()
+                            updater.deleteFromCache(key)
+                            extraCapabilities.refreshGallery(key)
+                            extraCapabilities.refreshManga(key)
                         }
                         pageRevision.update { it + 1 }
                     }
@@ -387,7 +396,10 @@ internal class PluginDataSourceV1 private constructor(
 
                     MutationResultV1.NoChange -> {}
                 }
-                if (!profileAction && result !is MutationResultV1.Invalidate) extraCapabilities.refreshGallery(event.postKey)
+                if (!profileAction && result !is MutationResultV1.Invalidate) {
+                    extraCapabilities.refreshGallery(event.postKey)
+                    extraCapabilities.refreshManga(event.postKey)
+                }
             }
         }
     }

@@ -12,6 +12,7 @@ import dev.dimension.flare.data.datasource.microblog.datasource.ArticleDataSourc
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
 import dev.dimension.flare.data.datasource.microblog.datasource.ListDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.NotificationDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabSection
@@ -33,6 +34,7 @@ import dev.dimension.flare.data.datasource.microblog.loader.RelationLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
+import dev.dimension.flare.data.datasource.microblog.paging.notSupported
 import dev.dimension.flare.data.datasource.microblog.paging.toPagingSource
 import dev.dimension.flare.data.model.tab.TimelineCandidate
 import dev.dimension.flare.data.model.tab.TimelineSpec
@@ -57,6 +59,12 @@ import dev.dimension.flare.feature.plugin.wire.EntityRequestV1
 import dev.dimension.flare.feature.plugin.wire.GalleryV1
 import dev.dimension.flare.feature.plugin.wire.ListMemberRequestV1
 import dev.dimension.flare.feature.plugin.wire.ListMutationRequestV1
+import dev.dimension.flare.feature.plugin.wire.MangaChapterGroupV1
+import dev.dimension.flare.feature.plugin.wire.MangaPageImageRequestV1
+import dev.dimension.flare.feature.plugin.wire.MangaPagesRequestV1
+import dev.dimension.flare.feature.plugin.wire.MangaPagesV1
+import dev.dimension.flare.feature.plugin.wire.MangaV1
+import dev.dimension.flare.feature.plugin.wire.MediaV1
 import dev.dimension.flare.feature.plugin.wire.MutationRequestV1
 import dev.dimension.flare.feature.plugin.wire.MutationResultV1
 import dev.dimension.flare.feature.plugin.wire.NotificationPageRequestV1
@@ -74,6 +82,7 @@ import dev.dimension.flare.feature.plugin.wire.UgoiraMetadataV1
 import dev.dimension.flare.feature.plugin.wire.requireDeleteResult
 import dev.dimension.flare.feature.plugin.wire.requireRelationMutationResult
 import dev.dimension.flare.feature.plugin.wire.requireValid
+import dev.dimension.flare.feature.plugin.wire.requireValidMangaPageMedia
 import dev.dimension.flare.media.UgoiraFrame
 import dev.dimension.flare.media.UgoiraMetadata
 import dev.dimension.flare.model.AccountType
@@ -82,11 +91,15 @@ import dev.dimension.flare.ui.model.UiArticle
 import dev.dimension.flare.ui.model.UiDMItem
 import dev.dimension.flare.ui.model.UiDMRoom
 import dev.dimension.flare.ui.model.UiList
+import dev.dimension.flare.ui.model.UiMangaDetail
+import dev.dimension.flare.ui.model.UiMangaPage
+import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiProfile
 import dev.dimension.flare.ui.model.UiRelation
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asType
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
@@ -113,9 +126,14 @@ internal class PluginExtraCapabilitiesV1(
     private val dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>?,
 ) {
     private val galleryChanges = MutableSharedFlow<MicroBlogKey>()
+    private val mangaChanges = MutableSharedFlow<MicroBlogKey>()
 
     suspend fun refreshGallery(key: MicroBlogKey) {
         galleryChanges.emit(key)
+    }
+
+    suspend fun refreshManga(key: MicroBlogKey) {
+        mangaChanges.emit(key)
     }
 
     val relation: RelationDataSource? by lazy {
@@ -161,6 +179,11 @@ internal class PluginExtraCapabilitiesV1(
     val gallery: GalleryDataSource? by lazy {
         if (!capabilities.canExpose(PluginAbiV1.Capabilities.GALLERY)) return@lazy null
         GalleryAdapter()
+    }
+
+    val manga: MangaDataSource? by lazy {
+        if (plugin.installed.manifest.apiVersion < 2 || !capabilities.canExpose(PluginAbiV1.Capabilities.MANGA)) return@lazy null
+        MangaAdapter()
     }
 
     val pinnableTabs: PinnableTimelineTabDataSource? by lazy {
@@ -464,8 +487,9 @@ internal class PluginExtraCapabilitiesV1(
                 PluginAbiV1.Capabilities.LIST,
                 "timeline",
                 MicroBlogKey(listId, account.host),
-                cached.value[listId]?.entityToken,
-            )
+            ) {
+                cached.value[listId]?.entityToken
+            }
 
         override val listHandler: ListHandler<UiList.List> = ListHandler("plugin_lists_$account", account, listLoader)
         override val listMemberHandler: ListMemberHandler = ListMemberHandler("plugin_lists_$account", account, memberLoader)
@@ -742,6 +766,134 @@ internal class PluginExtraCapabilitiesV1(
             entityTimelineLoader(PluginAbiV1.Capabilities.GALLERY, "recommendations", statusKey)
     }
 
+    private inner class MangaAdapter : MangaDataSource {
+        private val mangaTokens = BoundedLruMap<MicroBlogKey, String>(MAX_MANGA_ENTITY_TOKENS)
+        private val chapterTokens = BoundedLruMap<MangaChapterKey, String>(MAX_MANGA_CHAPTER_TOKENS)
+
+        override val supportsComments: Boolean
+            get() = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "comments")
+
+        override val supportsRecommendations: Boolean
+            get() = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "recommendations")
+
+        override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> {
+            val mediaNetwork = plugin.installed.manifest.permissions.mediaNetwork
+            val cache = MutableStateFlow<UiMangaDetail?>(null)
+            lateinit var detail: Cacheable<UiMangaDetail>
+            detail =
+                Cacheable(
+                    fetchSource = {
+                        cache.value =
+                            invoker
+                                .invoke(
+                                    capabilityId = PluginAbiV1.Capabilities.MANGA,
+                                    operation = "detail",
+                                    request = EntityRequestV1(mangaKey.toWire(), mangaTokens.get(mangaKey)).also { it.key.requireValid() },
+                                    requestSerializer = EntityRequestV1.serializer(),
+                                    responseSerializer = MangaV1.serializer(),
+                                    validate = { it.requireValid(mediaNetwork = mediaNetwork) },
+                                ).also { rememberTokens(mangaKey, it) }
+                                .let(mapper::manga)
+                    },
+                    cacheSource = {
+                        channelFlow {
+                            launch(start = CoroutineStart.UNDISPATCHED) {
+                                mangaChanges.collect { key -> if (key == mangaKey) detail.refresh() }
+                            }
+                            cache.filterNotNull().collect { send(it) }
+                        }
+                    },
+                )
+            return detail
+        }
+
+        override suspend fun chapterPages(
+            mangaKey: MicroBlogKey,
+            chapterId: String,
+        ): ImmutableList<UiMangaPage> {
+            val mediaNetwork = plugin.installed.manifest.permissions.mediaNetwork
+            require(mediaNetwork) { "Plugin has no media network permission" }
+            val pageImageSupported = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
+            val request =
+                MangaPagesRequestV1(
+                    key = mangaKey.toWire(),
+                    chapterId = chapterId,
+                    entityToken = mangaTokens.get(mangaKey),
+                    chapterToken = chapterTokens.get(MangaChapterKey(mangaKey, chapterId)),
+                ).also(MangaPagesRequestV1::requireValid)
+            return invoker
+                .invoke(
+                    capabilityId = PluginAbiV1.Capabilities.MANGA,
+                    operation = "pages",
+                    request = request,
+                    requestSerializer = MangaPagesRequestV1.serializer(),
+                    responseSerializer = MangaPagesV1.serializer(),
+                    validate = { it.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported) },
+                ).let(mapper::mangaPages)
+        }
+
+        override suspend fun resolvePageMedia(
+            mangaKey: MicroBlogKey,
+            chapterId: String,
+            pageId: String,
+            pageToken: String,
+        ): UiMedia {
+            capabilities.requireOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
+            val mediaNetwork = plugin.installed.manifest.permissions.mediaNetwork
+            require(mediaNetwork) { "Plugin has no media network permission" }
+            val request =
+                MangaPageImageRequestV1(
+                    key = mangaKey.toWire(),
+                    chapterId = chapterId,
+                    pageId = pageId,
+                    pageToken = pageToken,
+                    entityToken = mangaTokens.get(mangaKey),
+                    chapterToken = chapterTokens.get(MangaChapterKey(mangaKey, chapterId)),
+                ).also(MangaPageImageRequestV1::requireValid)
+            return invoker
+                .invoke(
+                    capabilityId = PluginAbiV1.Capabilities.MANGA,
+                    operation = "pageImage",
+                    request = request,
+                    requestSerializer = MangaPageImageRequestV1.serializer(),
+                    responseSerializer = MediaV1.serializer(),
+                    validate = { it.requireValidMangaPageMedia(mediaNetwork) },
+                ).let(mapper::mangaPageMedia)
+        }
+
+        override fun mangaComments(mangaKey: MicroBlogKey): RemoteLoader<UiTimelineV2> {
+            if (!supportsComments) return notSupported()
+            return entityTimelineLoader(PluginAbiV1.Capabilities.MANGA, "comments", mangaKey) {
+                mangaTokens.get(mangaKey)
+            }
+        }
+
+        override fun mangaRecommendations(mangaKey: MicroBlogKey): RemoteLoader<UiTimelineV2> {
+            if (!supportsRecommendations) return notSupported()
+            return entityTimelineLoader(PluginAbiV1.Capabilities.MANGA, "recommendations", mangaKey) {
+                mangaTokens.get(mangaKey)
+            }
+        }
+
+        private fun rememberTokens(
+            requestedKey: MicroBlogKey,
+            value: MangaV1,
+        ) {
+            val keys = linkedSetOf(requestedKey, value.key.toKey())
+            mangaTokens.putAllAndEvict(keys.associateWith { value.entityToken })
+            val allChapters = value.chapters ?: value.chapterGroups?.flatMap(MangaChapterGroupV1::chapters).orEmpty()
+            if (allChapters.isNotEmpty()) {
+                val updates = LinkedHashMap<MangaChapterKey, String?>(allChapters.size * keys.size)
+                for (key in keys) {
+                    for (chapter in allChapters) {
+                        updates[MangaChapterKey(key, chapter.id)] = chapter.entityToken
+                    }
+                }
+                chapterTokens.putAllAndEvict(updates)
+            }
+        }
+    }
+
     private inner class DynamicTabCatalog(
         account: MicroBlogKey,
         spec: TimelineSpec<PluginTimelineDataV1>,
@@ -805,7 +957,7 @@ internal class PluginExtraCapabilitiesV1(
         capability: String,
         operation: String,
         key: MicroBlogKey,
-        entityToken: String? = null,
+        entityToken: () -> String? = { null },
     ): RemoteLoader<UiTimelineV2> =
         invoker.timelineLoader(
             capability = capability,
@@ -816,7 +968,7 @@ internal class PluginExtraCapabilitiesV1(
                 invoker.invoke(
                     capabilityId = capability,
                     operation = operation,
-                    request = EntityPageRequestV1(key.toWire(), request.toWire(pageSize), entityToken),
+                    request = EntityPageRequestV1(key.toWire(), request.toWire(pageSize), entityToken()),
                     requestSerializer = EntityPageRequestV1.serializer(),
                     responseSerializer = PageV1.serializer(TimelineItemV1.serializer()),
                     validate = { page -> page.requireValid { it.requireValid() } },
@@ -934,3 +1086,67 @@ private fun <Wire : Any, Ui : Any> PageV1<Wire>.toPagingResult(map: (Wire) -> Ui
         nextKey = olderCursor.takeUnless { endReached },
         previousKey = newerCursor,
     )
+
+private const val MAX_MANGA_ENTITY_TOKENS = 128
+private const val MAX_MANGA_CHAPTER_TOKENS = 8_192
+
+private data class MangaChapterKey(
+    val mangaKey: MicroBlogKey,
+    val chapterId: String,
+)
+
+internal class BoundedLruMap<K : Any, V : Any>(
+    private val maxEntries: Int,
+) {
+    private class Snapshot<K, V>(
+        val map: Map<K, V>,
+        val lastKey: K?,
+    )
+
+    private val state = MutableStateFlow(Snapshot<K, V>(emptyMap(), null))
+
+    fun get(key: K): V? {
+        val snapshot = state.value
+        val existing = snapshot.map[key] ?: return null
+        if (snapshot.lastKey == key) return existing
+        var resolved: V? = null
+        state.update { current ->
+            val value = current.map[key]
+            resolved = value
+            if (value == null || current.lastKey == key) {
+                current
+            } else {
+                val next =
+                    LinkedHashMap<K, V>(current.map.size).apply {
+                        for ((k, v) in current.map) {
+                            if (k != key) put(k, v)
+                        }
+                        put(key, value)
+                    }
+                Snapshot(next, key)
+            }
+        }
+        return resolved
+    }
+
+    fun putAllAndEvict(updates: Map<K, V?>) {
+        if (updates.isEmpty()) return
+        state.update { current ->
+            val next = LinkedHashMap<K, V>(minOf(current.map.size + updates.size, maxEntries + 1))
+            for ((k, v) in current.map) {
+                if (k !in updates) next[k] = v
+            }
+            for ((k, v) in updates) {
+                if (v != null) next[k] = v
+            }
+            while (next.size > maxEntries) {
+                val eldest = next.keys.first()
+                next.remove(eldest)
+            }
+            Snapshot(next, next.keys.lastOrNull())
+        }
+    }
+
+    val size: Int
+        get() = state.value.map.size
+}

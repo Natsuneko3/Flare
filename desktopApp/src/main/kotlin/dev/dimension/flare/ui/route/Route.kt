@@ -485,6 +485,10 @@ internal sealed interface Route : NavKey {
                     )
                 }
 
+                is DeeplinkRoute.Manga -> {
+                    null
+                }
+
                 is DeeplinkRoute.Status.AltText -> {
                     AltText(text = deeplinkRoute.text)
                 }

@@ -15,6 +15,7 @@ import dev.dimension.flare.data.datasource.microblog.list.ListMetaData
 import dev.dimension.flare.data.datasource.microblog.loader.RelationActionType
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
+import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.host.PluginHttpTransport
 import dev.dimension.flare.feature.plugin.host.PluginTransportBodyV1
@@ -40,6 +41,9 @@ import dev.dimension.flare.model.ReferenceType
 import dev.dimension.flare.ui.model.ClickContext
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiDMItem
+import dev.dimension.flare.ui.model.UiMangaDetail
+import dev.dimension.flare.ui.model.UiMangaPage
+import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UriLauncher
@@ -63,6 +67,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -1466,6 +1472,353 @@ class PluginDetailCapabilityTest {
                 secondObserver.coroutineContext.job.cancelAndJoin()
                 secondRefresh.cancelAndJoin()
                 refresh.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun mangaAdapterResolvesDirectAndDeferredPagesAndForwardsTokens() =
+        runTest {
+            val manifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.example.manga",
+                  "version": "1.0.0",
+                  "name": "Manga Test",
+                  "permissions": { "mediaNetwork": true },
+                  "platform": {
+                    "id": "MangaTest",
+                    "name": "Manga Test",
+                    "guest": { "enabled": true, "origin": "$ORIGIN" },
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": {
+                          "detail": {},
+                          "pages": {},
+                          "pageImage": {},
+                          "comments": { "directions": ["refresh"] },
+                          "recommendations": { "directions": ["refresh"] }
+                        }
+                      }
+                    }
+                  }
+                }
+                """.trimIndent()
+            val script =
+                """
+                const author = { key: { id: "author-1", host: "plugin.example" }, handle: "author@plugin.example", displayName: "Mangaka" };
+                defineFlareSocialPlugin({
+                  capabilities: {
+                    manga: {
+                      detail(request) {
+                        const idx = request.key.id;
+                        return {
+                          key: request.key,
+                          title: "Series " + idx,
+                          url: "https://plugin.example/manga/" + idx,
+                          entityToken: "m-tok-" + idx,
+                          chapters: [
+                            { id: "ch-1", title: "Chapter 1", entityToken: "c-tok-" + idx + "-1" },
+                            { id: "ch-2", title: "Chapter 2", entityToken: "c-tok-" + idx + "-2" }
+                          ]
+                        };
+                      },
+                      pages(request) {
+                        if (request.entityToken !== "m-tok-" + request.key.id) {
+                          throw new Error("expected manga token, got: " + request.entityToken);
+                        }
+                        if (request.chapterToken !== "c-tok-" + request.key.id + "-" + request.chapterId.slice(3)) {
+                          throw new Error("expected chapter token, got: " + request.chapterToken);
+                        }
+                        return {
+                          pages: [
+                            {
+                              id: "p-1",
+                              media: {
+                                id: "img-1",
+                                type: "image",
+                                url: "https://plugin.example/pages/1.jpg",
+                                width: 800,
+                                height: 1200,
+                                customHeaders: { "Referer": "https://plugin.example/" }
+                              }
+                            },
+                            {
+                              id: "p-2",
+                              pageToken: "ptok-2",
+                              previewUrl: "https://plugin.example/pages/2-thumb.jpg",
+                              width: 900,
+                              height: 1350,
+                              customHeaders: { "X-Page": "2" }
+                            }
+                          ]
+                        };
+                      },
+                      pageImage(request) {
+                        if (request.entityToken !== "m-tok-" + request.key.id) {
+                          throw new Error("pageImage missing entityToken: " + request.entityToken);
+                        }
+                        if (request.chapterToken !== "c-tok-" + request.key.id + "-" + request.chapterId.slice(3)) {
+                          throw new Error("pageImage missing chapterToken: " + request.chapterToken);
+                        }
+                        if (request.pageId !== "p-2" || request.pageToken !== "ptok-2") {
+                          throw new Error("pageImage unexpected page request: " + JSON.stringify(request));
+                        }
+                        return {
+                          id: "gif-2",
+                          type: "gif",
+                          url: "https://plugin.example/pages/2-resolved.gif",
+                          width: 900,
+                          height: 1350,
+                          customHeaders: { "Referer": "https://plugin.example/" }
+                        };
+                      },
+                      comments(request) {
+                        if (request.entityToken !== "m-tok-" + request.key.id) {
+                          throw new Error("comments missing entityToken: " + request.entityToken);
+                        }
+                        return {
+                          items: [{
+                            type: "post",
+                            post: {
+                              key: { id: "c-1", host: "plugin.example" },
+                              author,
+                              createdAt: "2026-01-01T00:00:00Z",
+                              content: { value: "Great chapter!" }
+                            }
+                          }],
+                          endReached: true
+                        };
+                      },
+                      recommendations(request) {
+                        if (request.entityToken !== "m-tok-" + request.key.id) {
+                          throw new Error("recommendations missing entityToken: " + request.entityToken);
+                        }
+                        return {
+                          items: [{
+                            type: "post",
+                            post: {
+                              key: { id: "rec-1", host: "plugin.example" },
+                              author,
+                              createdAt: "2026-01-01T00:00:00Z",
+                              content: { value: "Recommended" },
+                              detailType: "manga"
+                            }
+                          }],
+                          endReached: true
+                        };
+                      }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val plugin = install(manifest, script)
+            val accountKey = MicroBlogKey("account-1", "plugin.example")
+            val source = authenticated(plugin, accountKey = accountKey)
+            val manga = requireNotNull(source.capabilitySet.manga)
+            assertTrue(manga.supportsComments)
+            assertTrue(manga.supportsRecommendations)
+
+            val mangaKey = MicroBlogKey("m1", "plugin.example")
+            val detailCache = manga.mangaDetail(mangaKey)
+            val loaded =
+                withContext(Dispatchers.Default) {
+                    assertIs<LoadState.NotLoading>(detailCache.refreshState.first { it !is LoadState.Loading })
+                    assertIs<CacheState.Success<UiMangaDetail>>(detailCache.data.first { it is CacheState.Success }).data
+                }
+            assertEquals("Series m1", loaded.title)
+
+            val pages = manga.chapterPages(mangaKey, "ch-1")
+            assertEquals(2, pages.size)
+            val ready = assertIs<UiMangaPage.Ready>(pages[0])
+            assertEquals("p-1", ready.id)
+            assertEquals(ProxyRef.Account(accountKey), ready.media.proxy)
+            assertEquals<Map<String, String>?>(mapOf("Referer" to "https://plugin.example/"), ready.media.customHeaders)
+
+            val deferred = assertIs<UiMangaPage.Deferred>(pages[1])
+            assertEquals("p-2", deferred.id)
+            assertEquals("ptok-2", deferred.pageToken)
+            assertEquals("https://plugin.example/pages/2-thumb.jpg", deferred.previewUrl)
+            assertEquals(ProxyRef.Account(accountKey), deferred.proxy)
+
+            val resolvedMedia = manga.resolvePageMedia(mangaKey, "ch-1", deferred.id, deferred.pageToken)
+            val resolvedGif = assertIs<UiMedia.Gif>(resolvedMedia)
+            assertEquals("https://plugin.example/pages/2-resolved.gif", resolvedGif.url)
+            assertEquals(ProxyRef.Account(accountKey), resolvedGif.proxy)
+
+            val comments = manga.mangaComments(mangaKey).load(20, PagingRequest.Refresh).data
+            assertEquals("c-1", comments.single().statusKey.id)
+            val recs = manga.mangaRecommendations(mangaKey).load(20, PagingRequest.Refresh).data
+            val recPost = assertIs<UiTimelineV2.TimelinePostItem>(recs.single()).post
+            assertEquals(
+                ClickEvent.Deeplink(DeeplinkRoute.Manga.Detail(MicroBlogKey("rec-1", "plugin.example"), AccountType.Specific(accountKey))),
+                recPost.clickEvent,
+            )
+
+            // GuestPlugin session also exposes manga and binds ProxyRef.Global
+            val guestSource = PluginDataSourceV1.guest(plugin, runtimePool, ORIGIN, "en", emptyMap(), null)
+            val guestManga = requireNotNull(guestSource.capabilitySet.manga)
+            val guestDetail = guestManga.mangaDetail(mangaKey)
+            withContext(Dispatchers.Default) {
+                assertIs<LoadState.NotLoading>(guestDetail.refreshState.first { it !is LoadState.Loading })
+                assertIs<CacheState.Success<UiMangaDetail>>(guestDetail.data.first { it is CacheState.Success })
+            }
+            val guestPages = guestManga.chapterPages(mangaKey, "ch-2")
+            assertEquals(ProxyRef.Global, assertIs<UiMangaPage.Ready>(guestPages[0]).media.proxy)
+            assertEquals(
+                ProxyRef.Global,
+                guestManga.resolvePageMedia(mangaKey, "ch-2", "p-2", "ptok-2").proxy,
+            )
+        }
+
+    @Test
+    fun postMutateWithoutPostDetailRefreshesMangaDetailOnUpdatedPost() =
+        runTest {
+            val manifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.example.manga.mutate",
+                  "version": "1.0.0",
+                  "name": "Manga Mutate Test",
+                  "permissions": { "mediaNetwork": true },
+                  "platform": {
+                    "id": "MangaMutate",
+                    "name": "Manga Mutate Test",
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": {
+                          "detail": {},
+                          "pages": {},
+                          "comments": { "directions": ["refresh"] }
+                        }
+                      },
+                      "flare.datasource.post/v1": {
+                        "operations": {
+                          "mutate": {}
+                        }
+                      }
+                    }
+                  }
+                }
+                """.trimIndent()
+            val script =
+                """
+                let bookmarked = false;
+                const author = { key: { id: "author-1", host: "plugin.example" }, handle: "author@plugin.example", displayName: "Mangaka" };
+                function mangaPost(key) {
+                  return {
+                    key,
+                    author,
+                    createdAt: "2026-01-01T00:00:00Z",
+                    content: { value: "Manga summary" },
+                    detailType: "manga",
+                    actions: [{ action: bookmarked ? "Unbookmark" : "Bookmark", active: bookmarked, actionToken: bookmarked ? "unbm" : "bm" }]
+                  };
+                }
+                defineFlareSocialPlugin({
+                  capabilities: {
+                    manga: {
+                      detail(request) {
+                        return {
+                          key: request.key,
+                          title: "Solo Manga",
+                          url: "https://plugin.example/manga/" + request.key.id,
+                          chapters: [{ id: "ch-1", title: "Chapter 1" }],
+                          actions: [{ action: bookmarked ? "Unbookmark" : "Bookmark", active: bookmarked, actionToken: bookmarked ? "unbm" : "bm" }]
+                        };
+                      },
+                      pages() {
+                        return {
+                          pages: [{ id: "p-1", media: { id: "img-1", type: "image", url: "https://plugin.example/1.jpg" } }]
+                        };
+                      },
+                      comments() {
+                        return {
+                          items: [{
+                            type: "post",
+                            post: {
+                              key: { id: "comment-1", host: "plugin.example" },
+                              author,
+                              createdAt: "2026-01-01T00:00:00Z",
+                              content: { value: "Nice!" }
+                            }
+                          }],
+                          endReached: true
+                        };
+                      }
+                    },
+                    post: {
+                      mutate(request) {
+                        if (request.action === "Bookmark" && !bookmarked) {
+                          bookmarked = true;
+                          return { type: "updatedPost", post: mangaPost(request.key) };
+                        }
+                        if (request.action === "Unbookmark" && bookmarked) {
+                          bookmarked = false;
+                          return { type: "invalidate", keys: [request.key] };
+                        }
+                        throw new Error("Unexpected mutation: " + JSON.stringify(request));
+                      }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val plugin = install(manifest, script)
+            val source = authenticated(plugin)
+            val manga = requireNotNull(source.capabilitySet.manga)
+            assertTrue(manga.supportsComments)
+            assertFalse(manga.supportsRecommendations)
+            // PostCapability is exposed so DeepLinkPresenter can route post.mutate events,
+            // while PostV1 comments remain ClickEvent.Noop because post.detail is not declared.
+            assertTrue(source.capabilitySet.post != null)
+
+            val mangaKey = MicroBlogKey("solo-1", "plugin.example")
+            val comment =
+                assertIs<UiTimelineV2.TimelinePostItem>(
+                    manga
+                        .mangaComments(mangaKey)
+                        .load(20, PagingRequest.Refresh)
+                        .data
+                        .single(),
+                ).post
+            assertEquals(ClickEvent.Noop, comment.clickEvent)
+
+            val cache = manga.mangaDetail(mangaKey)
+            val observer = CoroutineScope(Dispatchers.Default + SupervisorJob())
+            val visible = cache.data.stateIn(observer, SharingStarted.Eagerly, CacheState.Empty())
+            val refreshJob = observer.launch { cache.refreshState.collect { if (it is LoadState.Error) throw it.error } }
+            try {
+                suspend fun awaitDetail(expectedBookmarked: Boolean): UiMangaDetail =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(10_000) {
+                            assertIs<CacheState.Success<UiMangaDetail>>(
+                                visible.first { it is CacheState.Success && it.data.isBookmarked == expectedBookmarked },
+                            ).data
+                        }
+                    }
+
+                val initial = awaitDetail(false)
+                // Empty DbStatus cache (current = null)
+                val emptyDbStatusUpdater = RecordingDatabaseUpdater(current = null)
+                val bookmarkEvent = assertIs<PostEvent.Semantic>(requireNotNull(initial.bookmarkAction.postEventOrNull()).postEvent)
+                assertEquals("bm", bookmarkEvent.actionToken)
+
+                source.postMutationHandler.handle(bookmarkEvent, emptyDbStatusUpdater)
+                assertEquals(1, emptyDbStatusUpdater.updates)
+                assertNull(emptyDbStatusUpdater.current)
+
+                val afterBookmark = awaitDetail(true)
+                val unbookmarkEvent = assertIs<PostEvent.Semantic>(requireNotNull(afterBookmark.bookmarkAction.postEventOrNull()).postEvent)
+                assertEquals("unbm", unbookmarkEvent.actionToken)
+
+                source.postMutationHandler.handle(unbookmarkEvent, emptyDbStatusUpdater)
+                assertEquals(false, awaitDetail(false).isBookmarked)
+            } finally {
+                refreshJob.cancelAndJoin()
+                observer.coroutineContext.job.cancelAndJoin()
             }
         }
 

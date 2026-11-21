@@ -436,6 +436,8 @@ extension Route {
             fromMedia(media)
         case .gallery(let gallery):
             fromGallery(gallery)
+        case .manga:
+            nil
         case .profile(let profile):
             fromProfile(profile)
         case .rss(let rss):

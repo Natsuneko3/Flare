@@ -464,6 +464,8 @@ enum Route: Hashable, Identifiable {
             return fromMedia(media)
         case .gallery(let gallery):
             return fromGallery(gallery)
+        case .manga:
+            return nil
         case .profile(let profile):
             return fromProfile(profile)
         case .rss(let rss):

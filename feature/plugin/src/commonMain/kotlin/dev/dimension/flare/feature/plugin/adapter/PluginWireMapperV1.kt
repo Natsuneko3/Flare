@@ -21,6 +21,12 @@ import dev.dimension.flare.feature.plugin.wire.DirectMessageV1
 import dev.dimension.flare.feature.plugin.wire.GalleryOrientationV1
 import dev.dimension.flare.feature.plugin.wire.GalleryV1
 import dev.dimension.flare.feature.plugin.wire.HashtagV1
+import dev.dimension.flare.feature.plugin.wire.MangaChapterV1
+import dev.dimension.flare.feature.plugin.wire.MangaPagesV1
+import dev.dimension.flare.feature.plugin.wire.MangaReadingDirectionV1
+import dev.dimension.flare.feature.plugin.wire.MangaStatusV1
+import dev.dimension.flare.feature.plugin.wire.MangaTagV1
+import dev.dimension.flare.feature.plugin.wire.MangaV1
 import dev.dimension.flare.feature.plugin.wire.MediaClickPolicyV1
 import dev.dimension.flare.feature.plugin.wire.MediaTypeV1
 import dev.dimension.flare.feature.plugin.wire.MediaV1
@@ -38,11 +44,13 @@ import dev.dimension.flare.feature.plugin.wire.SocialListV1
 import dev.dimension.flare.feature.plugin.wire.TimelineItemV1
 import dev.dimension.flare.feature.plugin.wire.TimelineUserV1
 import dev.dimension.flare.feature.plugin.wire.requireValid
+import dev.dimension.flare.feature.plugin.wire.requireValidMangaPageMedia
 import dev.dimension.flare.feature.plugin.wire.validatedHtml
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.ReferenceType
 import dev.dimension.flare.ui.model.ClickEvent
+import dev.dimension.flare.ui.model.MangaReadingDirection
 import dev.dimension.flare.ui.model.UiArticle
 import dev.dimension.flare.ui.model.UiArticleAuthor
 import dev.dimension.flare.ui.model.UiArticleBlock
@@ -54,6 +62,13 @@ import dev.dimension.flare.ui.model.UiHandle
 import dev.dimension.flare.ui.model.UiHashtag
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiList
+import dev.dimension.flare.ui.model.UiMangaChapter
+import dev.dimension.flare.ui.model.UiMangaChapterGroup
+import dev.dimension.flare.ui.model.UiMangaDetail
+import dev.dimension.flare.ui.model.UiMangaPage
+import dev.dimension.flare.ui.model.UiMangaStatus
+import dev.dimension.flare.ui.model.UiMangaTag
+import dev.dimension.flare.ui.model.UiMangaTagGroup
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiNumber
 import dev.dimension.flare.ui.model.UiPoll
@@ -73,6 +88,7 @@ import dev.dimension.flare.ui.render.uiRichTextOf
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toPersistentList
@@ -385,10 +401,16 @@ internal class PluginWireMapperV1(
                         .takeIf { capabilities.canExpose(PluginAbiV1.Capabilities.GALLERY) }
                 }
 
-                is NavigationTargetV1.Manga,
-                is NavigationTargetV1.MangaChapter,
-                -> {
-                    null
+                is NavigationTargetV1.Manga -> {
+                    DeeplinkRoute.Manga
+                        .Detail(value.key.toMicroBlogKey(), accountType)
+                        .takeIf { capabilities.canExpose(PluginAbiV1.Capabilities.MANGA) }
+                }
+
+                is NavigationTargetV1.MangaChapter -> {
+                    DeeplinkRoute.Manga
+                        .Reader(value.key.toMicroBlogKey(), value.chapterId, null, accountType)
+                        .takeIf { capabilities.canExpose(PluginAbiV1.Capabilities.MANGA) }
                 }
             }
         return route?.let { ClickEvent.Deeplink(it) } ?: ClickEvent.Noop
@@ -587,6 +609,179 @@ internal class PluginWireMapperV1(
         )
     }
 
+    fun manga(value: MangaV1): UiMangaDetail {
+        value.requireValid(mediaNetwork)
+        val key = value.key.toMicroBlogKey()
+        val bookmark =
+            value.actions.firstOrNull {
+                it.action == SemanticActionV1.Bookmark || it.action == SemanticActionV1.Unbookmark
+            }
+        val tagGroups =
+            when {
+                value.tagGroups != null -> {
+                    value.tagGroups
+                        .map { group ->
+                            UiMangaTagGroup(
+                                id = group.id,
+                                title = group.title.toUiText(pluginId),
+                                tags = group.tags.map(::mangaTag).toImmutableList(),
+                            )
+                        }.toImmutableList()
+                }
+
+                !value.tags.isNullOrEmpty() -> {
+                    persistentListOf(
+                        UiMangaTagGroup(
+                            id = "default",
+                            title = null,
+                            tags = value.tags.map(::mangaTag).toImmutableList(),
+                        ),
+                    )
+                }
+
+                else -> {
+                    persistentListOf()
+                }
+            }
+        val chapterGroups =
+            when {
+                value.chapterGroups != null -> {
+                    value.chapterGroups
+                        .map { group ->
+                            UiMangaChapterGroup(
+                                id = group.id,
+                                title = group.title.toUiText(pluginId),
+                                chapters = group.chapters.map(::mangaChapter).toImmutableList(),
+                            )
+                        }.toImmutableList()
+                }
+
+                !value.chapters.isNullOrEmpty() -> {
+                    persistentListOf(
+                        UiMangaChapterGroup(
+                            id = "default",
+                            title = null,
+                            chapters = value.chapters.map(::mangaChapter).toImmutableList(),
+                        ),
+                    )
+                }
+
+                else -> {
+                    persistentListOf()
+                }
+            }
+        return UiMangaDetail(
+            pluginId = pluginId,
+            platformId = platformId,
+            mangaKey = key,
+            accountType = accountType,
+            title = value.title,
+            altTitles = value.altTitles.toImmutableList(),
+            cover = value.cover?.let { it.toUi(false) as UiMedia.Image },
+            author = value.author?.let(::profile),
+            authors = value.authors.toImmutableList(),
+            artists = value.artists.toImmutableList(),
+            status =
+                when (value.status) {
+                    MangaStatusV1.Ongoing -> UiMangaStatus.Ongoing
+                    MangaStatusV1.Completed -> UiMangaStatus.Completed
+                    MangaStatusV1.Hiatus -> UiMangaStatus.Hiatus
+                    MangaStatusV1.Cancelled -> UiMangaStatus.Cancelled
+                    MangaStatusV1.Unknown, null -> null
+                },
+            content = value.content?.toUi(value.sourceLanguages),
+            url = value.url?.takeIf(String::isNotBlank),
+            updatedAt = value.updatedAt?.let(Instant::parse)?.toUi(),
+            readingDirection =
+                when (value.readingDirection) {
+                    MangaReadingDirectionV1.Rtl -> MangaReadingDirection.Rtl
+                    MangaReadingDirectionV1.Ltr -> MangaReadingDirection.Ltr
+                    MangaReadingDirectionV1.Webtoon -> MangaReadingDirection.Webtoon
+                    MangaReadingDirectionV1.Unknown, null -> null
+                },
+            tagGroups = tagGroups,
+            chapterGroups = chapterGroups,
+            isBookmarked = bookmark?.active == true || bookmark?.action == SemanticActionV1.Unbookmark,
+            bookmarkAction =
+                accountKey
+                    ?.takeIf { capabilities.hasOperation(PluginAbiV1.Capabilities.POST, "mutate") }
+                    ?.let { account ->
+                        bookmark?.takeIf { it.enabled }?.toSemanticPostAction()?.let { action ->
+                            semanticPostActionMenu(key, action, bookmark.actionToken, bookmark.count ?: 0, account).clickEvent
+                        }
+                    } ?: ClickEvent.Noop,
+            actions =
+                value.actions
+                    .mapNotNull { descriptor ->
+                        val semantic = descriptor.toSemanticPostAction() ?: return@mapNotNull null
+                        val enabled =
+                            descriptor.enabled &&
+                                accountKey != null &&
+                                capabilities.hasOperation(PluginAbiV1.Capabilities.POST, "mutate")
+                        val item = semanticPostActionMenu(key, semantic, descriptor.actionToken, descriptor.count ?: 0, accountKey)
+                        item.copy(
+                            color = if (descriptor.active == true) ActionMenu.Item.Color.PrimaryColor else item.color,
+                            enabled = enabled,
+                            clickEvent = if (enabled) item.clickEvent else ClickEvent.Noop,
+                        )
+                    }.toImmutableList(),
+            sourceLanguages = value.sourceLanguages.toImmutableList(),
+        )
+    }
+
+    private fun mangaTag(value: MangaTagV1): UiMangaTag =
+        UiMangaTag(
+            name = value.name,
+            clickEvent = value.target?.let(::target) ?: ClickEvent.Noop,
+        )
+
+    private fun mangaChapter(value: MangaChapterV1): UiMangaChapter =
+        UiMangaChapter(
+            id = value.id,
+            title = value.title,
+            subtitle = value.subtitle?.takeIf(String::isNotBlank),
+            uploadedAt = value.uploadedAt?.let(Instant::parse)?.toUi(),
+            locked = value.locked,
+            url = value.url?.takeIf(String::isNotBlank),
+        )
+
+    fun mangaPages(value: MangaPagesV1): ImmutableList<UiMangaPage> {
+        val pageImageSupported = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
+        value.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
+        return value.pages
+            .map { page ->
+                val media = page.media
+                if (media != null) {
+                    UiMangaPage.Ready(
+                        id = page.id,
+                        media = mangaPageMedia(media),
+                    )
+                } else {
+                    requireMediaUrl(page.previewUrl)
+                    UiMangaPage.Deferred(
+                        id = page.id,
+                        pageToken = requireNotNull(page.pageToken),
+                        previewUrl = page.previewUrl?.takeIf(String::isNotBlank),
+                        width = page.width?.toFloat() ?: 0f,
+                        height = page.height?.toFloat() ?: 0f,
+                        customHeaders = page.customHeaders.takeIf { it.isNotEmpty() }?.toPersistentMap(),
+                        proxy = mediaProxy,
+                    )
+                }
+            }.toImmutableList()
+    }
+
+    fun mangaPageMedia(value: MediaV1): UiMedia {
+        value.requireValidMangaPageMedia(mediaNetwork)
+        return when (value.type) {
+            MediaTypeV1.Image,
+            MediaTypeV1.Gif,
+            -> requireNotNull(value.toUi(false))
+
+            else -> throw IllegalArgumentException("Manga page media must be image or gif")
+        }
+    }
+
     private fun PostV1.toUiPost(): UiTimelineV2.Post {
         val key = key.toMicroBlogKey()
         val detailRoute =
@@ -618,7 +813,9 @@ internal class PluginWireMapperV1(
                 }
 
                 PostDetailTypeV1.Manga -> {
-                    null
+                    DeeplinkRoute.Manga.Detail(key, accountType).takeIf {
+                        capabilities.canExpose(PluginAbiV1.Capabilities.MANGA)
+                    }
                 }
 
                 PostDetailTypeV1.Link -> {

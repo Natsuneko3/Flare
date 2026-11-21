@@ -17,6 +17,15 @@ import dev.dimension.flare.feature.plugin.wire.EntityKeyV1
 import dev.dimension.flare.feature.plugin.wire.FeedSourceV1
 import dev.dimension.flare.feature.plugin.wire.FeedV1
 import dev.dimension.flare.feature.plugin.wire.GalleryV1
+import dev.dimension.flare.feature.plugin.wire.MangaChapterGroupV1
+import dev.dimension.flare.feature.plugin.wire.MangaChapterV1
+import dev.dimension.flare.feature.plugin.wire.MangaPageV1
+import dev.dimension.flare.feature.plugin.wire.MangaPagesV1
+import dev.dimension.flare.feature.plugin.wire.MangaReadingDirectionV1
+import dev.dimension.flare.feature.plugin.wire.MangaStatusV1
+import dev.dimension.flare.feature.plugin.wire.MangaTagGroupV1
+import dev.dimension.flare.feature.plugin.wire.MangaTagV1
+import dev.dimension.flare.feature.plugin.wire.MangaV1
 import dev.dimension.flare.feature.plugin.wire.MediaClickPolicyV1
 import dev.dimension.flare.feature.plugin.wire.MediaTypeV1
 import dev.dimension.flare.feature.plugin.wire.MediaV1
@@ -38,13 +47,17 @@ import dev.dimension.flare.feature.plugin.wire.requireValid
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.ClickEvent
+import dev.dimension.flare.ui.model.MangaReadingDirection
 import dev.dimension.flare.ui.model.UiArticleAuthor
 import dev.dimension.flare.ui.model.UiArticleBlock
 import dev.dimension.flare.ui.model.UiDMItem
 import dev.dimension.flare.ui.model.UiIcon
+import dev.dimension.flare.ui.model.UiMangaPage
+import dev.dimension.flare.ui.model.UiMangaStatus
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiNumber
 import dev.dimension.flare.ui.model.UiProfile
+import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asType
 import dev.dimension.flare.ui.model.withProxy
@@ -649,12 +662,239 @@ class PluginWireMapperV1Test {
                 PostDetailTypeV1.Post to DeeplinkRoute.Status.Detail(key, accountType),
                 PostDetailTypeV1.Article to DeeplinkRoute.Article(accountType, key),
                 PostDetailTypeV1.Gallery to DeeplinkRoute.Gallery.Detail(key, accountType),
+                PostDetailTypeV1.Manga to DeeplinkRoute.Manga.Detail(key, accountType),
             )
 
         targets.forEach { (type, route) ->
             val mapped = assertIs<UiTimelineV2.TimelinePostItem>(guestMapper.post(post.copy(detailType = type)))
             assertEquals(ClickEvent.Deeplink(route), mapped.post.clickEvent)
         }
+    }
+
+    @Test
+    fun mapsMangaDetailTypeAndTargetsAndNormalizesFlatOrGroupedTagsAndChapters() {
+        val accountKey = MicroBlogKey("me", "local.example")
+        val specificAccount = AccountType.Specific(accountKey)
+        val guestAccount = AccountType.GuestPlugin("Test", "local.example")
+        val mangaKey = MicroBlogKey(post.key.id, post.key.host)
+
+        // 1. detailType = "manga" -> DeeplinkRoute.Manga.Detail when manga capability exposed; Noop otherwise; openStatusMedia = false
+        val mappedMangaPost = mapper.post(post.copy(detailType = PostDetailTypeV1.Manga)).post
+        assertEquals(ClickEvent.Deeplink(DeeplinkRoute.Manga.Detail(mangaKey, specificAccount)), mappedMangaPost.clickEvent)
+        assertEquals(UiTimelineV2.Post.MediaClickPolicy.OpenPostClickEvent, mappedMangaPost.mediaClickPolicy)
+
+        val withoutManga = createMapper(accountKey, mangaAvailable = false)
+        assertEquals(ClickEvent.Noop, withoutManga.post(post.copy(detailType = PostDetailTypeV1.Manga)).post.clickEvent)
+
+        // 2. target = { type: "manga" } and { type: "mangaChapter", key, chapterId: "ch-2" }
+        val mangaEntityTarget = NavigationTargetV1.Manga(post.key)
+        assertEquals(
+            ClickEvent.Deeplink(DeeplinkRoute.Manga.Detail(mangaKey, specificAccount)),
+            mapper.post(post.copy(target = mangaEntityTarget)).post.clickEvent,
+        )
+        assertEquals(
+            ClickEvent.Noop,
+            withoutManga.post(post.copy(target = mangaEntityTarget)).post.clickEvent,
+        )
+
+        val chapterTarget = NavigationTargetV1.MangaChapter(post.key, "ch-2")
+        assertEquals(
+            ClickEvent.Deeplink(DeeplinkRoute.Manga.Reader(mangaKey, "ch-2", null, specificAccount)),
+            mapper.post(post.copy(target = chapterTarget)).post.clickEvent,
+        )
+        assertEquals(
+            ClickEvent.Deeplink(DeeplinkRoute.Manga.Reader(mangaKey, "ch-2", null, guestAccount)),
+            createMapper(null).post(post.copy(target = chapterTarget)).post.clickEvent,
+        )
+        assertEquals(
+            ClickEvent.Noop,
+            withoutManga.post(post.copy(target = chapterTarget)).post.clickEvent,
+        )
+
+        // 3. Flat tags/chapters map to single group with title = null; grouped map with localized UiText titles
+        val flatManga =
+            MangaV1(
+                key = post.key,
+                title = "Flat Manga",
+                altTitles = listOf("Alt 1"),
+                cover = MediaV1("cover", MediaTypeV1.Image, "https://remote.example/cover.jpg", width = 600, height = 900),
+                author = author,
+                authors = listOf("Author A"),
+                artists = listOf("Artist B"),
+                status = MangaStatusV1.Ongoing,
+                content = RichTextV1(value = "Synopsis"),
+                url = "https://remote.example/manga/1",
+                updatedAt = "2026-10-27T00:00:00Z",
+                readingDirection = MangaReadingDirectionV1.Rtl,
+                tags =
+                    listOf(
+                        MangaTagV1("Action", target = NavigationTargetV1.Link("https://remote.example/tags/action")),
+                        MangaTagV1("Comedy"),
+                    ),
+                chapters =
+                    listOf(
+                        MangaChapterV1(id = "ch-1", title = "Chapter 1", subtitle = "Start"),
+                        MangaChapterV1(id = "ch-2", title = "Chapter 2", locked = true),
+                    ),
+                actions =
+                    listOf(
+                        ActionDescriptorV1(SemanticActionV1.Bookmark, actionToken = "bm-1"),
+                        ActionDescriptorV1(SemanticActionV1.Favourite, count = 42, actionToken = "fav-1"),
+                    ),
+                sourceLanguages = listOf("ja"),
+            )
+        val mappedFlat = mapper.manga(flatManga)
+        assertEquals("test.plugin", mappedFlat.pluginId)
+        assertEquals("Test", mappedFlat.platformId)
+        assertEquals(mangaKey, mappedFlat.mangaKey)
+        assertEquals(specificAccount, mappedFlat.accountType)
+        assertEquals("Flat Manga", mappedFlat.title)
+        assertEquals(listOf("Alt 1"), mappedFlat.altTitles)
+        assertEquals(ProxyRef.Account(accountKey), mappedFlat.cover?.proxy)
+        assertEquals(UiMangaStatus.Ongoing, mappedFlat.status)
+        assertEquals(MangaReadingDirection.Rtl, mappedFlat.readingDirection)
+        assertEquals(false, mappedFlat.isBookmarked)
+        assertNotEquals(ClickEvent.Noop, mappedFlat.bookmarkAction)
+        assertEquals(2, mappedFlat.actions.size)
+        assertEquals(listOf("ja"), mappedFlat.sourceLanguages)
+
+        val singleTagGroup = mappedFlat.tagGroups.single()
+        assertNull(singleTagGroup.title)
+        assertEquals(listOf("Action", "Comedy"), singleTagGroup.tags.map { it.name })
+        assertEquals(
+            ClickEvent.Deeplink(DeeplinkRoute.OpenLinkDirectly("https://remote.example/tags/action")),
+            singleTagGroup.tags[0].clickEvent,
+        )
+        assertEquals(ClickEvent.Noop, singleTagGroup.tags[1].clickEvent)
+
+        val singleChapterGroup = mappedFlat.chapterGroups.single()
+        assertNull(singleChapterGroup.title)
+        assertEquals(listOf("ch-1", "ch-2"), singleChapterGroup.chapters.map { it.id })
+        assertEquals(true, singleChapterGroup.chapters[1].locked)
+
+        // Guest disables bookmarkAction and semantic actions
+        val guestMapped = createMapper(null).manga(flatManga)
+        assertEquals(ClickEvent.Noop, guestMapped.bookmarkAction)
+        assertEquals(true, guestMapped.actions.filterIsInstance<ActionMenu.Item>().all { !it.enabled && it.clickEvent == ClickEvent.Noop })
+
+        // Grouped tags & chapters with localized UiText titles + Unknown forward-compat enums
+        val groupedManga =
+            flatManga.copy(
+                status = MangaStatusV1.Unknown,
+                readingDirection = MangaReadingDirectionV1.Unknown,
+                tags = null,
+                tagGroups =
+                    listOf(
+                        MangaTagGroupV1(
+                            id = "genre",
+                            title = WireTextV1(key = "manga.genre", fallback = "Genre"),
+                            tags = listOf(MangaTagV1("Sci-Fi")),
+                        ),
+                        MangaTagGroupV1(
+                            id = "theme",
+                            title = WireTextV1(value = "Theme"),
+                            tags = listOf(MangaTagV1("Space")),
+                        ),
+                    ),
+                chapters = null,
+                chapterGroups =
+                    listOf(
+                        MangaChapterGroupV1(
+                            id = "serialized",
+                            title = WireTextV1(key = "manga.serialized", fallback = "Serialized"),
+                            chapters = listOf(MangaChapterV1(id = "s-1", title = "Ch. 1")),
+                        ),
+                        MangaChapterGroupV1(
+                            id = "extra",
+                            title = WireTextV1(value = "Extras"),
+                            chapters = listOf(MangaChapterV1(id = "e-1", title = "Bonus")),
+                        ),
+                    ),
+            )
+        val mappedGrouped = mapper.manga(groupedManga)
+        assertNull(mappedGrouped.status)
+        assertNull(mappedGrouped.readingDirection)
+        assertEquals(
+            listOf(
+                UiText.ExternalRef("test.plugin", "manga.genre", "Genre"),
+                UiText.Raw("Theme"),
+            ),
+            mappedGrouped.tagGroups.map { it.title },
+        )
+        assertEquals(
+            listOf(
+                UiText.ExternalRef("test.plugin", "manga.serialized", "Serialized"),
+                UiText.Raw("Extras"),
+            ),
+            mappedGrouped.chapterGroups.map { it.title },
+        )
+
+        // Direct and deferred mangaPages & mangaPageMedia validation
+        val pages =
+            mapper.mangaPages(
+                MangaPagesV1(
+                    pages =
+                        listOf(
+                            MangaPageV1(
+                                id = "p-1",
+                                media = MediaV1("img-1", MediaTypeV1.Image, "https://remote.example/p1.jpg", width = 800, height = 1200),
+                            ),
+                            MangaPageV1(
+                                id = "p-2",
+                                media = MediaV1("gif-2", MediaTypeV1.Gif, "https://remote.example/p2.gif"),
+                            ),
+                            MangaPageV1(
+                                id = "p-3",
+                                pageToken = "ptok-3",
+                                previewUrl = "https://remote.example/p3-thumb.jpg",
+                                width = 900,
+                                height = 1300,
+                                customHeaders = mapOf("Referer" to "https://remote.example/"),
+                            ),
+                        ),
+                ),
+            )
+        val readyImage = assertIs<UiMangaPage.Ready>(pages[0])
+        assertIs<UiMedia.Image>(readyImage.media)
+        assertEquals(ProxyRef.Account(accountKey), readyImage.media.proxy)
+        val readyGif = assertIs<UiMangaPage.Ready>(pages[1])
+        assertIs<UiMedia.Gif>(readyGif.media)
+        assertEquals(ProxyRef.Account(accountKey), readyGif.media.proxy)
+        val deferred = assertIs<UiMangaPage.Deferred>(pages[2])
+        assertEquals("ptok-3", deferred.pageToken)
+        assertEquals(900f, deferred.width)
+        assertEquals(1300f, deferred.height)
+        assertEquals<Map<String, String>?>(mapOf("Referer" to "https://remote.example/"), deferred.customHeaders)
+        assertEquals(ProxyRef.Account(accountKey), deferred.proxy)
+
+        assertFailsWith<IllegalArgumentException> {
+            mapper.mangaPageMedia(MediaV1("vid", MediaTypeV1.Video, "https://remote.example/v.mp4"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            createMapper(accountKey, pageImageAvailable = false).mangaPages(
+                MangaPagesV1(pages = listOf(MangaPageV1(id = "p-3", pageToken = "ptok-3"))),
+            )
+        }
+    }
+
+    @Test
+    fun boundedLruMapPromotesRecentReadsAndEvictsOldestEntries() {
+        val lru = BoundedLruMap<String, String>(maxEntries = 3)
+        lru.putAllAndEvict(mapOf("a" to "1", "b" to "2", "c" to "3"))
+        assertEquals(3, lru.size)
+        // Promote "a" to MRU
+        assertEquals("1", lru.get("a"))
+        // Adding "d" should evict "b" (oldest)
+        lru.putAllAndEvict(mapOf("d" to "4"))
+        assertEquals(3, lru.size)
+        assertNull(lru.get("b"))
+        assertEquals("1", lru.get("a"))
+        assertEquals("3", lru.get("c"))
+        assertEquals("4", lru.get("d"))
+        // Updating to null removes key
+        lru.putAllAndEvict(mapOf("c" to null))
+        assertNull(lru.get("c"))
+        assertEquals(2, lru.size)
     }
 
     @Test
@@ -686,12 +926,14 @@ class PluginWireMapperV1Test {
                 post,
                 post.copy(detailType = PostDetailTypeV1.Article),
                 post.copy(detailType = PostDetailTypeV1.Gallery),
+                post.copy(detailType = PostDetailTypeV1.Manga),
                 post.copy(detailType = PostDetailTypeV1.Link, url = "https://remote.example/post"),
             )
 
         assertEquals(
             listOf(
                 UiTimelineV2.Post.MediaClickPolicy.OpenStatusMedia,
+                UiTimelineV2.Post.MediaClickPolicy.OpenPostClickEvent,
                 UiTimelineV2.Post.MediaClickPolicy.OpenPostClickEvent,
                 UiTimelineV2.Post.MediaClickPolicy.OpenPostClickEvent,
                 UiTimelineV2.Post.MediaClickPolicy.OpenPostClickEvent,
@@ -763,6 +1005,8 @@ class PluginWireMapperV1Test {
         platformIcon: IconType = UiIcon.World.asType(),
         supportedComposeTypes: Set<ComposeType> = ComposeType.entries.toSet(),
         profileAvailable: Boolean = true,
+        mangaAvailable: Boolean = true,
+        pageImageAvailable: Boolean = true,
         pluginId: String = "test.plugin",
         platformId: String = "Test",
     ): PluginWireMapperV1 =
@@ -779,9 +1023,15 @@ class PluginWireMapperV1Test {
                     declarations = emptyMap(),
                     operations =
                         PluginAbiV1.knownCapabilityOperations
-                            .filterKeys { profileAvailable || it != PluginAbiV1.Capabilities.PROFILE }
-                            .mapValues { (id, operations) ->
-                                if (id == PluginAbiV1.Capabilities.POST && !postMutationAvailable) operations - "mutate" else operations
+                            .filterKeys {
+                                (profileAvailable || it != PluginAbiV1.Capabilities.PROFILE) &&
+                                    (mangaAvailable || it != PluginAbiV1.Capabilities.MANGA)
+                            }.mapValues { (id, operations) ->
+                                when (id) {
+                                    PluginAbiV1.Capabilities.POST -> if (!postMutationAvailable) operations - "mutate" else operations
+                                    PluginAbiV1.Capabilities.MANGA -> if (!pageImageAvailable) operations - "pageImage" else operations
+                                    else -> operations
+                                }
                             },
                     authenticated = accountKey != null,
                 ),
