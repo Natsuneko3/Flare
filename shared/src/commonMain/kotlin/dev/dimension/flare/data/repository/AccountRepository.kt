@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
@@ -58,6 +59,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -137,9 +139,37 @@ internal class AccountRepository internal constructor(
         MutableSharedFlow<Pair<MicroBlogKey, MicroBlogKey>>(extraBufferCapacity = 32, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     internal val publishedReplies = replyPublications.asSharedFlow()
     internal val dataSourceRevisions = MutableStateFlow<Map<MicroBlogKey, Long>>(emptyMap())
+    private val cachedDataSourcesSnapshot = MutableStateFlow<Map<MicroBlogKey, Pair<PlatformSpec, MicroblogDataSource>>>(emptyMap())
     private val dataSourceCache by lazy {
         mutableMapOf<MicroBlogKey, Pair<PlatformSpec, MicroblogDataSource>>()
     }
+
+    private fun syncDataSourceSnapshot() {
+        cachedDataSourcesSnapshot.value = dataSourceCache.toMap()
+    }
+
+    internal fun peekDataSource(accountType: AccountType): MicroblogDataSource? =
+        when (accountType) {
+            AccountType.Guest -> {
+                platformRegistry.defaultGuest.guestDataSource(
+                    host = "mastodon.social",
+                    locale = Locale.language,
+                )
+            }
+
+            is AccountType.GuestHost -> {
+                platformRegistry.defaultGuest.guestDataSource(
+                    host = accountType.host,
+                    locale = Locale.language,
+                )
+            }
+
+            is AccountType.Specific -> {
+                cachedDataSourcesSnapshot.value[accountType.accountKey]?.let { (spec, dataSource) ->
+                    dataSource.takeIf { platformRegistry.get(spec.platformId) === spec }
+                }
+            }
+        }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     internal val allAccountServices: Flow<ImmutableList<AccountMicroblogDataSource>> by lazy {
@@ -227,6 +257,7 @@ internal class AccountRepository internal constructor(
                         (dataSourceCache.remove(key)?.second as? AutoCloseable)?.close()
                         dataSourceRevisions.update { it + (key to (it[key] ?: 0) + 1) }
                     }
+                    syncDataSourceSnapshot()
                 }
             }
         }
@@ -291,6 +322,7 @@ internal class AccountRepository internal constructor(
                     val dataSource = dataSourceCache.remove(account.accountKey)?.second
                     if (dataSource is AutoCloseable) dataSource.close()
                     dataSourceRevisions.update { it + (account.accountKey to (it[account.accountKey] ?: 0) + 1) }
+                    syncDataSourceSnapshot()
                 }
             }
         }
@@ -380,6 +412,7 @@ internal class AccountRepository internal constructor(
         }
         dataSourceCacheMutex.withLock {
             val datasource = dataSourceCache.remove(accountKey)?.second
+            syncDataSourceSnapshot()
             if (datasource is AutoCloseable) {
                 datasource.close()
             }
@@ -480,7 +513,10 @@ internal class AccountRepository internal constructor(
                 .first()
                 .filter { it.platformId == platformId }
         accounts.forEach { account ->
-            val previous = dataSourceCacheMutex.withLock { dataSourceCache.remove(account.account_key)?.second }
+            val previous =
+                dataSourceCacheMutex.withLock {
+                    dataSourceCache.remove(account.account_key)?.second.also { syncDataSourceSnapshot() }
+                }
             if (previous is AutoCloseable) previous.close()
             invalidateCachedContent(account.account_key)
         }
@@ -531,6 +567,7 @@ internal class AccountRepository internal constructor(
                 } else {
                     (current?.second as? AutoCloseable)?.close()
                     dataSourceCache[account.accountKey] = spec to created
+                    syncDataSourceSnapshot()
                     created
                 }
             }
@@ -592,6 +629,7 @@ internal class AccountRepository internal constructor(
                         }
                         val cached = dataSourceCache.remove(accountKey)?.second
                         dataSourceRevisions.update { it + (accountKey to ((it[accountKey] ?: 0) + 1)) }
+                        syncDataSourceSnapshot()
                         cached
                     }
                 }
@@ -675,15 +713,27 @@ internal fun accountProvider(
 internal fun accountServiceProvider(
     accountType: AccountType,
     repository: AccountRepository,
-): UiState<MicroblogDataSource> =
-    remember(
-        accountType,
-    ) {
-        accountServiceFlow(
-            accountType = accountType,
-            repository = repository,
-        )
-    }.collectAsUiState().value
+): UiState<MicroblogDataSource> {
+    val initialState =
+        remember(accountType, repository) {
+            repository.peekDataSource(accountType)?.let { UiState.Success(it) } ?: UiState.Loading()
+        }
+    val flow =
+        remember(accountType, repository) {
+            accountServiceFlow(
+                accountType = accountType,
+                repository = repository,
+            )
+        }
+    return produceState(initialState, flow) {
+        flow
+            .catch {
+                value = UiState.Error(it)
+            }.collect {
+                value = UiState.Success(it)
+            }
+    }.value
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 internal fun accountServiceFlow(
@@ -719,6 +769,8 @@ internal fun accountServiceFlow(
                 .combine(repository.dataSourceRevisions.map { it[accountType.accountKey] }.distinctUntilChanged()) { account, _ -> account }
                 .mapLatest { (account, spec) ->
                     if (spec == null) UnavailableMicroblogDataSource else repository.getOrCreateDataSource(account)
+                }.onStart {
+                    repository.peekDataSource(accountType)?.let { emit(it) }
                 }.distinctUntilChanged()
         }
     }
