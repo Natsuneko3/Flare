@@ -149,6 +149,14 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
     private var normalCardViewStorage: StatusCardUIView?
     private var compatCardViewStorage: StatusCompatCardUIView?
     private var communityNoteViewStorage: CommunityNoteUIView?
+    private var pluginWidgetHostViewStorage: TimelineHostedAccessoryView?
+
+    private struct PluginWidgetHostKey: Hashable {
+        let statusKey: MicroBlogKey
+        let renderHash: Int32
+        let preferredContentSizeCategory: UIContentSizeCategory
+        let width: Int
+    }
 
     private var quotesContainerStorage: QuotesContainerView?
     private var quoteChildren: [StatusUIKitView] = []
@@ -494,6 +502,9 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
         quoteDividers.removeAll()
 
+        pluginWidgetHostViewStorage?.removeFromSuperview()
+        pluginWidgetHostViewStorage = nil
+
         invalidateIntrinsicContentSize()
         setNeedsLayout()
     }
@@ -522,6 +533,14 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
         if let compatCardViewStorage {
             compatCardViewStorage.bounds = CGRect(x: 0, y: 0, width: contentWidth, height: compatCardViewStorage.bounds.height)
+        }
+        if let pluginWidgetHostViewStorage,
+           pluginWidgetHostViewStorage.superview === self,
+           !isQuote,
+           let data,
+           !data.pluginWidgets.isEmpty {
+            updatePluginWidgetHostView(pluginWidgetHostViewStorage, data: data, width: width)
+            pluginWidgetHostViewStorage.bounds = CGRect(x: 0, y: 0, width: contentWidth, height: pluginWidgetHostViewStorage.bounds.height)
         }
 
         for container in parentContainers where container.superview != nil {
@@ -655,7 +674,16 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             let childWidth = isCarousel ? width + carouselEdgePadding * 2
                 : child === mediaViewStorage ? mediaViewStorage!.fittingWidth(for: contentWidth) : contentWidth
             let childX = isCarousel ? -carouselEdgePadding : contentX
-            let h = childHeight(of: child, for: childWidth)
+            let h: CGFloat
+            if let hosted = child as? TimelineHostedAccessoryView {
+                if assignFrames, !isQuote, let data, !data.pluginWidgets.isEmpty {
+                    updatePluginWidgetHostView(hosted, data: data, width: width)
+                }
+                let fitted = hosted.fittingHeight(for: childWidth)
+                h = fitted.isFinite && fitted > 0 ? ceil(fitted) : 0
+            } else {
+                h = childHeight(of: child, for: childWidth)
+            }
             if assignFrames { child.frame = CGRect(x: childX, y: innerY, width: childWidth, height: h) }
             innerY += h
             previousChild = child
@@ -669,7 +697,8 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         let followsHeader = previousChild === currentHeaderView
         let isText = child is RichTextUIView || child === translateViewStorage
         let isAttachment = child === mediaViewStorage || child === normalCardViewStorage ||
-            child === compatCardViewStorage || child === quotesContainerStorage || child === communityNoteViewStorage
+            child === compatCardViewStorage || child === quotesContainerStorage ||
+            child === communityNoteViewStorage || child === pluginWidgetHostViewStorage
         if followsHeader && !usesSideAvatar && !isQuote { return 8 }
         if followsHeader && isText { return isQuote ? 4 : 2 }
         if child === actionsContainerStorage { return 2 }
@@ -1048,6 +1077,28 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             items.append(view)
         }
 
+        if !isQuote, !data.pluginWidgets.isEmpty {
+            let view = pluginWidgetHostViewStorage ?? {
+                let hosted = TimelineHostedAccessoryView()
+                hosted.onHeightChanged = { [weak self, weak hosted] in
+                    guard let self, let hosted, hosted.superview === self, hosted.bounds.width > 1 else { return }
+                    let fitted = ceil(hosted.fittingHeight(for: hosted.bounds.width))
+                    guard fitted.isFinite, fitted > 0, abs(fitted - hosted.bounds.height) > 0.5 else { return }
+                    self.notifyLocalHeightInvalidated()
+                    if let cell = self.firstSuperview(of: UICollectionViewCell.self),
+                       let timeline = cell.firstSuperview(of: TimelineCollectionView.self) {
+                        timeline.layoutAfterLocalHeightChange(in: cell)
+                    } else {
+                        self.invalidateContainingCollectionLayout()
+                    }
+                }
+                pluginWidgetHostViewStorage = hosted
+                return hosted
+            }()
+            updatePluginWidgetHostView(view, data: data, width: bounds.width)
+            items.append(view)
+        }
+
         // source channel + reactions
         if showMediaInput, !isQuote {
             if let channel = data.sourceChannel {
@@ -1188,6 +1239,10 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         if !(data != nil && isDetail && showTranslate) {
             translateViewStorage?.prepareForPoolRemoval()
         }
+        if !(data != nil && !isQuote && !(data?.pluginWidgets.isEmpty ?? true)) {
+            pluginWidgetHostViewStorage?.removeFromSuperview()
+            pluginWidgetHostViewStorage = nil
+        }
         trimParentContainers(activeCount: activeParentCount)
         trimQuoteChildren(activeCount: activeQuoteCount)
         trimQuoteDividers(activeCount: max(0, activeQuoteCount - 1))
@@ -1224,6 +1279,10 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
         if !(data != nil && isDetail && showTranslate) {
             translateViewStorage?.prepareForPoolRemoval()
+        }
+        if !(data != nil && !isQuote && !(data?.pluginWidgets.isEmpty ?? true)) {
+            pluginWidgetHostViewStorage?.removeFromSuperview()
+            pluginWidgetHostViewStorage = nil
         }
         trimParentContainers(activeCount: activeParentCount)
         trimQuoteChildren(activeCount: activeQuoteCount)
@@ -1315,6 +1374,10 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             return false
         }
 
+        if touchedView.firstSuperview(of: TimelineHostedAccessoryView.self) != nil {
+            return false
+        }
+
         if let nestedStatus = touchedView.firstSuperview(of: StatusUIKitView.self),
            nestedStatus !== self {
             return false
@@ -1399,6 +1462,32 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         invalidateIntrinsicContentSize()
         setNeedsLayout()
         onLocalHeightInvalidated?()
+    }
+
+    private func updatePluginWidgetHostView(
+        _ view: TimelineHostedAccessoryView,
+        data: UiTimelineV2.Post,
+        width: CGFloat
+    ) {
+        let key = PluginWidgetHostKey(
+            statusKey: data.statusKey,
+            renderHash: data.renderHash,
+            preferredContentSizeCategory: appearance.preferredContentSizeCategory,
+            width: Int(width)
+        )
+        let dynamicSize = DynamicTypeSize(appearance.preferredContentSizeCategory) ?? .large
+        let cards = Array(data.pluginWidgets)
+        view.update(
+            AnyView(
+                PluginWidgetStackView(cards: cards)
+                    .dynamicTypeSize(dynamicSize)
+                    .environment(\.openURL, OpenURLAction { [weak self] url in
+                        self?.openURL?(url)
+                        return .handled
+                    })
+            ),
+            key: AnyHashable(key)
+        )
     }
 
     fileprivate func makeLauncher() -> AppleUriLauncher {

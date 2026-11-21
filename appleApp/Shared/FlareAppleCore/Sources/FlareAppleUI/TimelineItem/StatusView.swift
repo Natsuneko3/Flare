@@ -143,7 +143,8 @@ public struct StatusView: View {
         let showsQuotes = hasQuotes && !isQuote
         let showsCard = card != nil && showMedia && !hasImages && !hasQuotes && showLinkPreview
         let communityNote = showAttachments ? data.communityNote : nil
-        let showsAttachments = showsImages || showsCard || showsQuotes || communityNote != nil
+        let pluginWidgets = showAttachments && !isQuote ? Array(data.pluginWidgets) : []
+        let showsAttachments = showsImages || showsCard || showsQuotes || communityNote != nil || !pluginWidgets.isEmpty
         let sourceChannelName = data.sourceChannel?.name
         let emojiReactions = Array(data.emojiReactions)
         let hasEmojiReactions = showEmojiReactions && !emojiReactions.isEmpty
@@ -481,6 +482,11 @@ public struct StatusView: View {
 
                         if let note = communityNote {
                             communityNoteCard(note)
+                                .padding(.top, firstAttachmentSpacing)
+                        }
+
+                        if !pluginWidgets.isEmpty {
+                            PluginWidgetStackView(cards: pluginWidgets)
                                 .padding(.top, firstAttachmentSpacing)
                         }
 

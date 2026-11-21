@@ -29364,6 +29364,52 @@
       }
     }
   },
+  "plugin_permission_timeline_post_access": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Read displayed timeline posts to attach widgets, which may send post content to permitted network origins"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "读取时间线中显示的帖子以附加小组件，帖子内容可能会发送到允许访问的网络来源"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "讀取時間軸中顯示的貼文以附加小工具，貼文內容可能會傳送到允許存取的網路來源"
+        }
+      }
+    }
+  },
+  "plugin_timeline_processor_toggle": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Timeline post widgets"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "时间线帖子小组件"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "時間軸貼文小工具"
+        }
+      }
+    }
+  },
   "plugin_permission_media_network": {
     "extractionState": "manual",
     "localizations": {
