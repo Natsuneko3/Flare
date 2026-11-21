@@ -1,6 +1,7 @@
 package dev.dimension.flare.common.deeplink
 
 import dev.dimension.flare.data.repository.DebugRepository
+import io.ktor.http.URLProtocol
 import kotlinx.serialization.KSerializer
 
 internal class DeepLinkMatcher<T>(
@@ -13,11 +14,13 @@ internal class DeepLinkMatcher<T>(
      * Returns a [DeepLinkMatchResult] if this matches the pattern, returns null otherwise
      */
     fun match(): DeepLinkMatchResult<T>? {
+        val url = request.uri
+        val pattern = deepLinkPattern.uriPattern
+        // Existing HTTP links share HTTPS route patterns.
+        if (url.protocol != pattern.protocol && !(url.protocol == URLProtocol.HTTP && pattern.protocol == URLProtocol.HTTPS)) return null
+        val expectedPort = pattern.specifiedPort.takeIf { it > 0 } ?: url.protocol.defaultPort
+        if (url.port != expectedPort) return null
         if (request.pathSegments.size != deepLinkPattern.pathSegments.size) return null
-        // exact match (url does not contain any arguments)
-        if (request.uri == deepLinkPattern.uriPattern) {
-            return DeepLinkMatchResult(deepLinkPattern.serializer, mapOf())
-        }
 
         val args = mutableMapOf<String, Any>()
         // match the host
@@ -85,8 +88,7 @@ internal class DeepLinkMatcher<T>(
                         }
                     args[candidateSegment.stringValue] = parsedValue
                 } else if (requestedSegment != candidateSegment.stringValue) {
-                    // if it's not the expected segment, its not a match
-                    return false
+                    if (componentName != "host" || requestedSegment.lowercase() != candidateSegment.stringValue.lowercase()) return false
                 }
             }
         return true
