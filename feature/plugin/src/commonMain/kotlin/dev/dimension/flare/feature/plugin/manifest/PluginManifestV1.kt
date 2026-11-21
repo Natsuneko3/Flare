@@ -22,6 +22,7 @@ public data class PluginManifestV1(
     val translation: PluginTranslationManifestV1? = null,
     val settings: PluginSettingsManifestV1? = null,
     val platformExtension: PluginPlatformExtensionManifestV1? = null,
+    val timelineProcessor: PluginTimelineProcessorManifestV1? = null,
     /** Editor hint only; the Host never resolves this URL. */
     @SerialName("\$schema")
     val schema: String? = null,
@@ -259,6 +260,22 @@ public data class PluginExtensionActionV1(
     val dailyTimeZone: String? = null,
     /** Empty means all declared targets, preserving existing v2 packages. */
     val platformIds: Set<String> = emptySet(),
+)
+
+@Serializable
+public data class PluginTimelineProcessorManifestV1(
+    val apiVersion: Int = 1,
+    val maxBatchSize: Int = 20,
+    val filter: PluginTimelineFilterManifestV1? = null,
+    val cache: PluginTranslationCacheManifestV1 = PluginTranslationCacheManifestV1(),
+)
+
+@Serializable
+public data class PluginTimelineFilterManifestV1(
+    val containsAny: List<String> = emptyList(),
+    val regex: String? = null,
+    val linkHosts: List<String> = emptyList(),
+    val requireLinks: Boolean = false,
 )
 
 /** Social-only adapters call this after filtering plugins with no social platform. */

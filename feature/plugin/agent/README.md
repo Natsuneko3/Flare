@@ -9,8 +9,8 @@ fragment. Use line ranges to read the sections needed for the requested work.
 
 Use `schemaVersion: 1` for both Host API versions. The social starter uses
 `apiVersion: 1`. Choose `apiVersion: 2` for HTTP session features, storage,
-translation, offline settings, platform actions, account HTTP providers or
-temporary timeline pages. Select compose capability and interface versions
+translation, offline settings, platform actions, account HTTP providers,
+temporary timeline pages or timeline post processors. Select compose capability and interface versions
 separately. Read the [version requirements](references/manifest.md#host-api-versions)
 and follow the [V1 migration steps](ABI.md#migrate-an-api-v1-plugin) when adding
 a V2 feature to an existing plugin.
@@ -21,6 +21,9 @@ and use the Host account-authorization flow; implement the action with
 `defineFlarePlatformExtensionPlugin` and `flare.account.http.request`.
 For a social plugin to supply authentication to other plugins, follow that
 reference's `flare.datasource.account-http/v1` provider contract.
+For asynchronous post enrichment cards on timelines and post detail, declare
+`timelineProcessor` ([manifest rules](references/manifest.md#timeline-processor))
+and implement `defineFlareTimelineProcessorPlugin` ([contract](ABI.md#timeline-post-processing)).
 
 ## Workflow
 
@@ -79,7 +82,10 @@ updates leave the previous working version running. Fix errors with another full
 submission, using the latest revision. A revision conflict requires rereading and
 reassessing the change, never blindly replacing another update.
 
-Local AI plugins are enabled by default and approved automatically after validation.
+Local AI plugins are enabled by default and approved automatically after validation,
+except `local.ai.*` `timelineProcessor` plugins, which start disabled until the user
+enables their toggle in Plugin Management (and automatically re-disable if a later
+update expands `permissions.httpOrigins`).
 They do not need a GitHub tag, an FPP export or an app restart to apply an update.
 The [compatibility rules](references/compatibility.md#updates-and-compatibility)
 still govern stored credentials, timeline identities and account capabilities.
