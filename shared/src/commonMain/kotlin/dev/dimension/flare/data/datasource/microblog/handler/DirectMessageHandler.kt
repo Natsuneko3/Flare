@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.native.HiddenFromObjC
 
@@ -57,6 +58,7 @@ public class DirectMessageHandler(
     private val database: CacheDatabase by koinInject()
     private val accountType = AccountType.Specific(accountKey)
     private val inMemoryBadgeCount = MutableStateFlow<Int?>(null)
+    private val canSendCache = MutableStateFlow<Map<MicroBlogKey, Boolean>>(emptyMap())
 
     public fun list(scope: CoroutineScope): Flow<PagingData<UiDMRoom>> =
         Pager(
@@ -306,7 +308,12 @@ public class DirectMessageHandler(
             }
         }
 
-    public suspend fun canSend(userKey: MicroBlogKey): Boolean = loader.canSend(userKey)
+    public fun cachedCanSend(userKey: MicroBlogKey): Boolean? = canSendCache.value[userKey]
+
+    public suspend fun canSend(userKey: MicroBlogKey): Boolean =
+        loader.canSend(userKey).also { result ->
+            canSendCache.update { it + (userKey to result) }
+        }
 
     private suspend fun saveDelta(
         roomKey: MicroBlogKey,
