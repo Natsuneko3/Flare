@@ -18,6 +18,8 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -817,6 +819,119 @@ class DesktopPluginManagementScreenTest {
         compose.onNodeWithText("GitHub repository URL").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithText("GitHub repository URL").assertDoesNotExist()
+    }
+
+    @Test
+    fun installReviewDisclosesTimelinePostAccessPermission() {
+        compose.setContent {
+            if (visible) {
+                FlareTheme(isDarkTheme = false) {
+                    PluginInstallReviewDialog(
+                        review =
+                            dev.dimension.flare.feature.plugin.management.PluginInstallReviewV1(
+                                pluginId = "fixture.timeline",
+                                platformId = "",
+                                name = "Timeline Enricher",
+                                version = "1.0.0",
+                                capabilities = listOf("flare.timeline-processor/v1: processBatch"),
+                                warnings = emptyList(),
+                                sourceUrl = null,
+                                permissions =
+                                    listOf(
+                                        dev.dimension.flare.data.model.PluginPermission(
+                                            dev.dimension.flare.data.model.PluginPermissionType.TimelinePostAccess,
+                                            "*",
+                                        ),
+                                    ),
+                            ),
+                        busy = false,
+                        onConfirm = {},
+                        onCancel = {},
+                    )
+                }
+            }
+        }
+        compose
+            .onNodeWithText(
+                "• Read displayed timeline posts to attach widgets, which may send post content to permitted network origins",
+            ).assertIsDisplayed()
+    }
+
+    @Test
+    fun timelineProcessorToggleReflectsStateAndUpdatesPresenter() {
+        val pluginId =
+            runBlocking {
+                val authoring = koinGet<PluginAuthoring>()
+                val draft = authoring.create("timeline-processor-ui-fixture")
+                authoring.write(
+                    draft.id,
+                    draft.revision,
+                    mapOf(
+                        "manifest.json" to
+                            """
+                            {
+                              "apiVersion": 2,
+                              "id": "${draft.id}",
+                              "version": "1.0.0",
+                              "name": "Score Widgets",
+                              "permissions": {
+                                "httpOrigins": ["https://api.example.com"]
+                              },
+                              "timelineProcessor": {
+                                "apiVersion": 1
+                              }
+                            }
+                            """.trimIndent(),
+                        "plugin.js" to
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch() { return { results: [] }; }
+                            });
+                            """.trimIndent(),
+                    ),
+                )
+                withTimeout(10_000) {
+                    subsystem.running.first { running -> draft.id in running.plugins }
+                }
+                draft.id
+            }
+
+        compose.setContent {
+            if (visible) {
+                CompositionLocalProvider(
+                    LocalComposeWindow provides null,
+                    LocalTimelineAppearance provides TimelineAppearance.Default,
+                ) {
+                    FlareTheme(isDarkTheme = false) {
+                        Box(Modifier.width(520.dp).height(660.dp)) {
+                            DesktopPluginManagementScreen(onBack = {})
+                        }
+                    }
+                }
+            }
+        }
+
+        compose.onNodeWithText("Score Widgets").assertIsDisplayed()
+        // AI-authored timeline processors start disabled until explicitly toggled on.
+        val toggleNode = compose.onNodeWithText("Timeline post widgets")
+        toggleNode.assertIsDisplayed().assertIsOff()
+
+        toggleNode.performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                koinGet<SettingsRepository>().appSettings.first().enabledTimelineProcessorPlugins[pluginId] ==
+                    setOf("https://api.example.com")
+            }
+        }
+        toggleNode.assertIsOn()
+
+        toggleNode.performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            runBlocking {
+                pluginId !in koinGet<SettingsRepository>().appSettings.first().enabledTimelineProcessorPlugins
+            }
+        }
+        toggleNode.assertIsOff()
     }
 }
 

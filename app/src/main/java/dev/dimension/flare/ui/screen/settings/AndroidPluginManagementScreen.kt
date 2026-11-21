@@ -41,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -270,6 +271,7 @@ internal fun AndroidPluginManagementScreen(
             onUninstall = { pendingUninstallId = it },
             onUpdate = { id -> scope.launchPresenterAction { presenter.inspectGitHubUpdate(id) } },
             onRetryRuntime = { id -> scope.launchPresenterAction { presenter.retryRuntime(id) } },
+            onToggleTimelineProcessor = presenter::setTimelineProcessorEnabled,
         )
     }
 }
@@ -293,6 +295,7 @@ internal fun InstalledPluginsScreen(
     onUninstall: (String) -> Unit,
     onUpdate: (String) -> Unit,
     onRetryRuntime: (String) -> Unit,
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     FlareScaffold(
@@ -337,6 +340,7 @@ internal fun InstalledPluginsScreen(
                     onUninstall = onUninstall,
                     onUpdate = onUpdate,
                     onRetryRuntime = onRetryRuntime,
+                    onToggleTimelineProcessor = onToggleTimelineProcessor,
                     modifier =
                         Modifier
                             .fillMaxSize()
@@ -722,6 +726,9 @@ internal fun PluginPermission.localizedDescription(): String {
     if (type == dev.dimension.flare.data.model.PluginPermissionType.MediaNetwork) {
         return stringResource(R.string.plugin_permission_media_network)
     }
+    if (type == dev.dimension.flare.data.model.PluginPermissionType.TimelinePostAccess) {
+        return stringResource(R.string.plugin_permission_timeline_post_access)
+    }
     if (type == dev.dimension.flare.data.model.PluginPermissionType.AccountHttpOrigin) {
         val displayOrigin =
             if (origin ==
@@ -843,6 +850,7 @@ internal fun PluginManagementList(
     onRetryRuntime: (String) -> Unit,
     modifier: Modifier = Modifier,
     onExtensions: (String) -> Unit = {},
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     LazyColumn(
         modifier = modifier,
@@ -949,6 +957,7 @@ internal fun PluginManagementList(
                     onCancelUpdate = onCancelPluginUpdate,
                     onUninstall = onUninstall,
                     onUpdate = onUpdate,
+                    onToggleTimelineProcessor = onToggleTimelineProcessor,
                 )
             }
         }
@@ -966,6 +975,7 @@ internal fun PluginItem(
     onUninstall: (String) -> Unit,
     onUpdate: (String) -> Unit,
     onExtensions: (String) -> Unit = {},
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     val name = plugin.nameText.resolveText().ifBlank { stringResource(R.string.plugin_ai_untitled) }
     val authoring = plugin.authoring
@@ -1018,6 +1028,24 @@ internal fun PluginItem(
                     Text(pluginAuthoringLabel(authoring.phase))
                 }
                 authoring.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+            if (plugin.hasTimelineProcessor) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(R.string.plugin_timeline_processor_toggle),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                    Switch(
+                        checked = plugin.timelineProcessorEnabled,
+                        enabled = !busy,
+                        onCheckedChange = { enabled -> onToggleTimelineProcessor(plugin.pluginId, enabled) },
+                    )
+                }
             }
         },
     )

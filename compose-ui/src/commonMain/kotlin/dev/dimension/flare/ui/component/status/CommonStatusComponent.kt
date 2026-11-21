@@ -243,7 +243,8 @@ public fun CommonStatusComponent(
         val showsCard = item.card != null && appearanceSettings.showLinkPreview && item.images.isEmpty() && quotes.isEmpty()
         val showsQuotes = quotes.isNotEmpty() && !isQuote
         val communityNote = item.communityNote
-        val showsAttachments = showsImages || showsCard || showsQuotes || communityNote != null
+        val showsPluginWidgets = !isQuote && !isGalleryFallback && item.pluginWidgets.isNotEmpty()
+        val showsAttachments = showsImages || showsCard || showsQuotes || communityNote != null || showsPluginWidgets
         val hasVisibleEmojiReactions = appearanceSettings.showEmojiReactions && item.emojiReactions.isNotEmpty()
         val showsReactions = !isQuote && (hasVisibleEmojiReactions || item.sourceChannel != null)
         val showsActions = (appearanceSettings.postActionStyle != PostActionStyle.Hidden || isDetail) && !forceHideActions
@@ -575,6 +576,14 @@ public fun CommonStatusComponent(
                 communityNote?.let { note ->
                     Spacer(modifier = Modifier.height(firstAttachmentSpacing))
                     StatusCommunityNoteComponent(note)
+                }
+
+                if (showsPluginWidgets) {
+                    val hasPrecedingAttachment = showsImages || showsCard || showsQuotes || communityNote != null
+                    Spacer(
+                        modifier = Modifier.height(if (hasPrecedingAttachment) 8.dp else firstAttachmentSpacing),
+                    )
+                    PluginWidgetStackComponent(cards = item.pluginWidgets)
                 }
 
                 if (showsReactions) {

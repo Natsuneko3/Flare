@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -44,6 +45,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -124,12 +126,14 @@ import dev.dimension.flare.plugin_permission_auth_origin
 import dev.dimension.flare.plugin_permission_cookie
 import dev.dimension.flare.plugin_permission_http_origin
 import dev.dimension.flare.plugin_permission_media_network
+import dev.dimension.flare.plugin_permission_timeline_post_access
 import dev.dimension.flare.plugin_permissions
 import dev.dimension.flare.plugin_rebuild_index
 import dev.dimension.flare.plugin_report_issue
 import dev.dimension.flare.plugin_retry
 import dev.dimension.flare.plugin_runtime_fatal
 import dev.dimension.flare.plugin_runtime_paused
+import dev.dimension.flare.plugin_timeline_processor_toggle
 import dev.dimension.flare.plugin_uninstall
 import dev.dimension.flare.plugin_uninstall_confirm_message
 import dev.dimension.flare.plugin_uninstall_confirm_title
@@ -172,6 +176,7 @@ import io.github.composefluent.component.MenuFlyoutItem
 import io.github.composefluent.component.ProgressBar
 import io.github.composefluent.component.ProgressRing
 import io.github.composefluent.component.SubtleButton
+import io.github.composefluent.component.Switcher
 import io.github.composefluent.component.Text
 import io.github.composefluent.component.TextField
 import kotlinx.coroutines.CancellationException
@@ -468,6 +473,7 @@ internal fun DesktopPluginManagementContent(
                     onRetryRuntime = { pluginId ->
                         scope.launchPresenterAction { presenter.retryRuntime(pluginId) }
                     },
+                    onToggleTimelineProcessor = presenter::setTimelineProcessorEnabled,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -705,6 +711,9 @@ internal fun PluginPermission.localizedDescription(): String {
     if (type == dev.dimension.flare.data.model.PluginPermissionType.MediaNetwork) {
         return stringResource(Res.string.plugin_permission_media_network)
     }
+    if (type == dev.dimension.flare.data.model.PluginPermissionType.TimelinePostAccess) {
+        return stringResource(Res.string.plugin_permission_timeline_post_access)
+    }
     if (type == dev.dimension.flare.data.model.PluginPermissionType.HttpOrigin) {
         return stringResource(Res.string.plugin_permission_http_origin, origin)
     }
@@ -821,6 +830,7 @@ internal fun PluginManagementList(
     onRetryRuntime: (String) -> Unit,
     development: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     val listState = rememberLazyListState()
     val items = state.items
@@ -925,6 +935,7 @@ internal fun PluginManagementList(
                         onCancelUpdate = onCancelPluginUpdate,
                         onUninstall = onUninstall,
                         onUpdate = onUpdate,
+                        onToggleTimelineProcessor = onToggleTimelineProcessor,
                     )
                 }
             }
@@ -939,6 +950,7 @@ internal fun PluginItem(
     onCancelUpdate: (String) -> Unit,
     onUninstall: (String) -> Unit,
     onUpdate: (String) -> Unit,
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     val name = plugin.nameText.resolveText().ifBlank { stringResource(Res.string.plugin_ai_untitled) }
     val repositoryUrl = plugin.repositoryWebUrl
@@ -978,6 +990,35 @@ internal fun PluginItem(
                     Text(pluginAuthoringLabel(authoring.phase))
                 }
                 authoring.error?.let { Text(it) }
+            }
+        }
+        if (plugin.hasTimelineProcessor) {
+            val toggleLabel = stringResource(Res.string.plugin_timeline_processor_toggle)
+            Row(
+                modifier =
+                    Modifier
+                        .padding(top = 4.dp)
+                        .toggleable(
+                            value = plugin.timelineProcessorEnabled,
+                            enabled = !busy,
+                            role = Role.Switch,
+                            onValueChange = { enabled -> onToggleTimelineProcessor(plugin.pluginId, enabled) },
+                        ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Switcher(
+                    checked = plugin.timelineProcessorEnabled,
+                    onCheckStateChange = { enabled ->
+                        if (!busy) onToggleTimelineProcessor(plugin.pluginId, enabled)
+                    },
+                    text = null,
+                )
+                Text(
+                    text = toggleLabel,
+                    style = FluentTheme.typography.caption,
+                    color = FluentTheme.colors.text.text.secondary,
+                )
             }
         }
     }
