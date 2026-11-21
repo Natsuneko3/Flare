@@ -30,7 +30,7 @@ public class AccountTabSyncCoordinator internal constructor(
     private val settingsRepository: SettingsRepository,
     private val coroutineScope: CoroutineScope,
     private val timelineResolver: TimelineResolver,
-    private val mangaProgressRepository: MangaProgressRepository = MangaProgressRepository(accountRepository.cacheDatabase),
+    private val mangaProgressRepository: MangaProgressRepository,
 ) {
     init {
         coroutineScope.launch {

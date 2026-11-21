@@ -188,9 +188,16 @@ class MangaProgressRepositoryTest {
                     progressRepository.observe(guestAccount, mangaKey).first(),
                 )
 
-                // Toggle chapter read/unread on Specific account without losing readerModeOverride or sort order.
+                // Toggle chapter read/unread on Specific account without losing readerModeOverride or sort order,
+                // while keeping DbMangaState.lastPageIndex/lastReadAt synchronized when chapterId == lastChapterId.
                 now = 4_000L
                 progressRepository.setChapterRead(specificAccount, mangaKey, "ch-1", isRead = true)
+                val afterRead = progressRepository.observe(specificAccount, mangaKey).first()
+                assertEquals("ch-1", afterRead.lastChapterId)
+                assertEquals(17, afterRead.lastPageIndex)
+                assertEquals(4_000L, afterRead.lastReadAt)
+                assertEquals(MangaReadingDirection.Webtoon, afterRead.readerModeOverride)
+                assertEquals(false, afterRead.chapterSortDescending)
                 assertEquals(
                     MangaProgressSnapshot.ChapterProgress(
                         chapterId = "ch-1",
@@ -198,8 +205,18 @@ class MangaProgressRepositoryTest {
                         pageCount = 18,
                         isCompleted = true,
                     ),
-                    progressRepository.observe(specificAccount, mangaKey).first().chapters["ch-1"],
+                    afterRead.chapters["ch-1"],
                 )
+
+                // Marking a non-current chapter read does not overwrite lastChapterId or lastPageIndex.
+                now = 4_500L
+                progressRepository.setChapterRead(specificAccount, mangaKey, "ch-0", isRead = true)
+                val afterOtherChapterRead = progressRepository.observe(specificAccount, mangaKey).first()
+                assertEquals("ch-1", afterOtherChapterRead.lastChapterId)
+                assertEquals(17, afterOtherChapterRead.lastPageIndex)
+                assertEquals(4_000L, afterOtherChapterRead.lastReadAt)
+                assertEquals(true, afterOtherChapterRead.chapters["ch-0"]?.isCompleted)
+
                 progressRepository.setChapterRead(specificAccount, mangaKey, "ch-1", isRead = false)
                 val afterUnread = progressRepository.observe(specificAccount, mangaKey).first()
                 assertEquals(MangaReadingDirection.Webtoon, afterUnread.readerModeOverride)
@@ -237,7 +254,13 @@ class MangaProgressRepositoryTest {
                 )
 
                 // Removing or disabling a guest platform watched by AccountTabSyncCoordinator also cleans up its guest progress.
-                AccountTabSyncCoordinator(accountRepository, settingsRepository, coordinatorScope, resolver)
+                AccountTabSyncCoordinator(
+                    accountRepository = accountRepository,
+                    settingsRepository = settingsRepository,
+                    coroutineScope = coordinatorScope,
+                    timelineResolver = resolver,
+                    mangaProgressRepository = progressRepository,
+                )
                 registry.replaceExternal("OtherMangaPlugin", null)
                 withContext(Dispatchers.Default) {
                     withTimeout(5_000) {

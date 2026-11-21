@@ -607,7 +607,7 @@ class AccountRepositoryTest : RobolectricTest() {
                 )
             val tabId = "common.home:$otherAccountKey"
             try {
-                AccountTabSyncCoordinator(repository, settings, scope, resolver)
+                AccountTabSyncCoordinator(repository, settings, scope, resolver, MangaProgressRepository(cacheDatabase))
                 withContext(Dispatchers.Default) {
                     withTimeout(5_000) {
                         laterAccountCreated.await()
@@ -682,7 +682,8 @@ class AccountRepositoryTest : RobolectricTest() {
             val job = SupervisorJob()
             val scope = CoroutineScope(backgroundScope.coroutineContext + job)
             try {
-                val coordinator = AccountTabSyncCoordinator(repository, settings, scope, resolver)
+                val coordinator =
+                    AccountTabSyncCoordinator(repository, settings, scope, resolver, MangaProgressRepository(cacheDatabase))
                 repository.addAccount(UiAccount(accountKey, "AccountTest"), "valid")
                 val accountTabId = "common.home:$accountKey"
                 runCurrent()

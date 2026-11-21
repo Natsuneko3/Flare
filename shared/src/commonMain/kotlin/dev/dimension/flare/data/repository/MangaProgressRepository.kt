@@ -146,7 +146,7 @@ public class MangaProgressRepository internal constructor(
                     updatedAt = now,
                 ),
             )
-            if (isRead && existingState?.lastChapterId == null) {
+            if (isRead && (existingState?.lastChapterId == null || existingState.lastChapterId == chapterId)) {
                 dao.upsertState(
                     (existingState ?: DbMangaState(accountType = dbAccountType, mangaKey = mangaKey)).copy(
                         lastChapterId = chapterId,

@@ -96,7 +96,7 @@ internal class AccountRepository internal constructor(
     private val appDatabase: AppDatabase,
     private val coroutineScope: CoroutineScope,
     internal val appDataStore: AppDataStore,
-    internal val cacheDatabase: CacheDatabase,
+    private val cacheDatabase: CacheDatabase,
     private val proxyRepository: ProxyRepository,
     @Provided internal val platformRegistry: PlatformRegistry,
     private val draftRepository: DraftRepository,
