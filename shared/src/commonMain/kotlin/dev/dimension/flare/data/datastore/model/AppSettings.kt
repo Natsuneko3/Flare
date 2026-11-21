@@ -17,6 +17,7 @@ public data class AppSettings(
     val rememberHomeTimelinePosition: Boolean = false,
     val imageTranslationConfig: ImageTranslationConfig = ImageTranslationConfig(),
     val videoPlaybackSpeed: Float = 1f,
+    val enabledTimelineProcessorPlugins: Map<String, Set<String>> = emptyMap(),
 ) {
     public companion object {
         // for SwiftUI environment defaults
