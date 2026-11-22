@@ -105,7 +105,15 @@ private struct PluginWidgetMultiCardPager: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(verbatim: "Page \(currentPage + 1) of \(cards.count)"))
+            .accessibilityLabel(
+                Text(
+                    verbatim: String(
+                        localized: "plugin_widget_page_indicator",
+                        defaultValue: "Page \(currentPage + 1) of \(cards.count)",
+                        bundle: FlareAppleUILocalization.bundle
+                    )
+                )
+            )
         }
         .onAppear {
             if selectedCardID == nil || !ids.contains(selectedCardID ?? "") {
@@ -272,11 +280,16 @@ private struct PluginWidgetCardHeader: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if card.refreshable || card.isRefreshing {
+                let refreshLabel = String(
+                    localized: "plugin_widget_refresh",
+                    defaultValue: "Refresh",
+                    bundle: FlareAppleUILocalization.bundle
+                )
                 if card.isRefreshing {
                     ProgressView()
                         .controlSize(.mini)
                         .frame(width: 22, height: 22)
-                        .accessibilityLabel(Text("Refresh"))
+                        .accessibilityLabel(Text(verbatim: refreshLabel))
                 } else {
                     Button {
                         card.onRefresh?()
@@ -291,7 +304,7 @@ private struct PluginWidgetCardHeader: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(card.onRefresh == nil)
-                    .accessibilityLabel(Text("Refresh"))
+                    .accessibilityLabel(Text(verbatim: refreshLabel))
                 }
             }
         }
@@ -613,6 +626,11 @@ private struct PluginWidgetTextNodeView: View {
     let fillWidth: Bool
     let onCopy: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @State private var copyTrigger: Int = 0
+
+    private var isCopied: Bool {
+        copyTrigger > 0
+    }
 
     private var resolvedLineLimit: Int? {
         node.maxLines.map { max(Int($0.intValue), 1) }
@@ -644,17 +662,29 @@ private struct PluginWidgetTextNodeView: View {
     }
 
     var body: some View {
+        let copyLabel = String(
+            localized: "plugin_widget_copy",
+            defaultValue: "Copy",
+            bundle: FlareAppleUILocalization.bundle
+        )
         if node.style == .code {
             let codeShape = RoundedRectangle(cornerRadius: 8, style: .continuous)
             let codeBody = HStack(alignment: .top, spacing: 8) {
                 styledText(.caption.monospaced())
                     .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
                 if node.copyable {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11))
-                        .flareSecondaryText()
-                        .padding(.top, 2)
-                        .accessibilityHidden(true)
+                    Group {
+                        if isCopied {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(pluginWidgetToneColor(.positive, colorScheme: colorScheme))
+                        } else {
+                            Image(systemName: "doc.on.doc")
+                                .flareSecondaryText()
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 10)
@@ -668,11 +698,18 @@ private struct PluginWidgetTextNodeView: View {
             if node.copyable {
                 Button {
                     onCopy(node.text)
+                    copyTrigger += 1
                 } label: {
                     codeBody.contentShape(codeShape)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(Text(verbatim: "Copy \(node.text)"))
+                .accessibilityLabel(Text(verbatim: "\(copyLabel) \(node.text)"))
+                .task(id: copyTrigger) {
+                    guard copyTrigger > 0 else { return }
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    guard !Task.isCancelled else { return }
+                    copyTrigger = 0
+                }
             } else {
                 codeBody
             }
@@ -687,18 +724,33 @@ private struct PluginWidgetTextNodeView: View {
             if node.copyable {
                 Button {
                     onCopy(node.text)
+                    copyTrigger += 1
                 } label: {
                     HStack(alignment: .center, spacing: 4) {
                         styledText(font)
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11))
-                            .flareSecondaryText()
-                            .accessibilityHidden(true)
+                        Group {
+                            if isCopied {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(pluginWidgetToneColor(.positive, colorScheme: colorScheme))
+                            } else {
+                                Image(systemName: "doc.on.doc")
+                                    .flareSecondaryText()
+                            }
+                        }
+                        .font(.system(size: 11))
+                        .accessibilityHidden(true)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text(verbatim: "\(copyLabel) \(node.text)"))
                 .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
+                .task(id: copyTrigger) {
+                    guard copyTrigger > 0 else { return }
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    guard !Task.isCancelled else { return }
+                    copyTrigger = 0
+                }
             } else {
                 styledText(font)
                     .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
@@ -1065,80 +1117,118 @@ private struct PluginWidgetKeyValueNodeView: View {
     let node: UiWidgetNode.KeyValue
     let fillWidth: Bool
     let onAction: (any UiWidgetAction) -> Void
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(node.items.enumerated()), id: \.offset) { _, item in
-                let isOpenUrl: Bool = if let action = item.action, case .openUrl = onEnum(of: action) {
-                    true
-                } else {
-                    false
-                }
-                let isCopy: Bool = if let action = item.action, case .copy = onEnum(of: action) {
-                    true
-                } else {
-                    false
-                }
+                PluginWidgetKeyValueItemRow(
+                    item: item,
+                    fillWidth: fillWidth,
+                    onAction: onAction
+                )
+            }
+        }
+        .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
+    }
+}
 
-                let rowContent = HStack(alignment: .center, spacing: 8) {
-                    PluginWidgetMaxWidthCapLayout(maxWidth: fillWidth ? 140 : 110) {
-                        Text(verbatim: item.label)
-                            .font(.caption)
-                            .flareSecondaryText()
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+private struct PluginWidgetKeyValueItemRow: View {
+    let item: UiWidgetNode.KeyValueItem
+    let fillWidth: Bool
+    let onAction: (any UiWidgetAction) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var copyTrigger: Int = 0
+
+    private var isOpenUrl: Bool {
+        if let action = item.action, case .openUrl = onEnum(of: action) {
+            return true
+        }
+        return false
+    }
+
+    private var isCopy: Bool {
+        if let action = item.action, case .copy = onEnum(of: action) {
+            return true
+        }
+        return false
+    }
+
+    private var isCopied: Bool {
+        isCopy && copyTrigger > 0
+    }
+
+    var body: some View {
+        let rowContent = HStack(alignment: .center, spacing: 8) {
+            PluginWidgetMaxWidthCapLayout(maxWidth: fillWidth ? 140 : 110) {
+                Text(verbatim: item.label)
+                    .font(.caption)
+                    .flareSecondaryText()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .layoutPriority(1)
+
+            if fillWidth {
+                Spacer(minLength: 0)
+            }
+
+            HStack(alignment: .center, spacing: 4) {
+                Group {
+                    if item.tone != .neutral {
+                        Text(verbatim: item.value)
+                            .foregroundStyle(pluginWidgetToneColor(item.tone, colorScheme: colorScheme))
+                    } else if isOpenUrl {
+                        Text(verbatim: item.value)
+                            .foregroundStyle(Color.accentColor)
+                            .underline()
+                    } else {
+                        Text(verbatim: item.value)
+                            .flarePrimaryText()
                     }
-                    .layoutPriority(1)
+                }
+                .font(.body.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
 
-                    if fillWidth {
-                        Spacer(minLength: 0)
-                    }
-
-                    HStack(alignment: .center, spacing: 4) {
-                        Group {
-                            if item.tone != .neutral {
-                                Text(verbatim: item.value)
-                                    .foregroundStyle(pluginWidgetToneColor(item.tone, colorScheme: colorScheme))
-                            } else if isOpenUrl {
-                                Text(verbatim: item.value)
-                                    .foregroundStyle(Color.accentColor)
-                                    .underline()
-                            } else {
-                                Text(verbatim: item.value)
-                                    .flarePrimaryText()
-                            }
-                        }
-                        .font(.body.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                        if isCopy {
+                if isCopy {
+                    Group {
+                        if isCopied {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(pluginWidgetToneColor(.positive, colorScheme: colorScheme))
+                        } else {
                             Image(systemName: "doc.on.doc")
-                                .font(.system(size: 10))
                                 .flareSecondaryText()
-                                .fixedSize()
-                                .accessibilityHidden(true)
                         }
                     }
-                }
-                .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
-
-                if let action = item.action {
-                    Button {
-                        onAction(action)
-                    } label: {
-                        rowContent
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    rowContent
+                    .font(.system(size: 10))
+                    .fixedSize()
+                    .accessibilityHidden(true)
                 }
             }
         }
         .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
+
+        if let action = item.action {
+            Button {
+                onAction(action)
+                if isCopy {
+                    copyTrigger += 1
+                }
+            } label: {
+                rowContent
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .task(id: copyTrigger) {
+                guard copyTrigger > 0 else { return }
+                try? await Task.sleep(for: .milliseconds(1500))
+                guard !Task.isCancelled else { return }
+                copyTrigger = 0
+            }
+        } else {
+            rowContent
+        }
     }
 }
 
@@ -1282,6 +1372,18 @@ private struct PluginWidgetActionButton: View {
     let button: UiWidgetButton
     let onTap: () -> Void
     @Environment(\.self) private var environment
+    @State private var copyTrigger: Int = 0
+
+    private var isCopyAction: Bool {
+        if case .copy = onEnum(of: button.action) {
+            return true
+        }
+        return false
+    }
+
+    private var isCopied: Bool {
+        isCopyAction && copyTrigger > 0
+    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1299,24 +1401,43 @@ private struct PluginWidgetActionButton: View {
             pluginWidgetToneColor(button.tone, colorScheme: environment.colorScheme).opacity(0.32)
         }
 
-        Button(action: onTap) {
-            Text(verbatim: button.label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color(resolvedColors.foreground))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(shape.fill(Color(resolvedColors.background)))
-                .overlay {
-                    if let borderStroke {
-                        shape.strokeBorder(borderStroke, lineWidth: 1)
-                            .allowsHitTesting(false)
-                    }
+        Button {
+            onTap()
+            if isCopyAction {
+                copyTrigger += 1
+            }
+        } label: {
+            HStack(alignment: .center, spacing: 4) {
+                if isCopied {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(resolvedColors.foreground))
+                        .accessibilityHidden(true)
                 }
-                .contentShape(shape)
+                Text(verbatim: button.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(resolvedColors.foreground))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(shape.fill(Color(resolvedColors.background)))
+            .overlay {
+                if let borderStroke {
+                    shape.strokeBorder(borderStroke, lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .task(id: copyTrigger) {
+            guard copyTrigger > 0 else { return }
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled else { return }
+            copyTrigger = 0
+        }
     }
 }
 

@@ -15,7 +15,10 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -912,6 +915,13 @@ class DesktopPluginManagementScreenTest {
         }
 
         compose.onNodeWithText("Score Widgets").assertIsDisplayed()
+        assertEquals(
+            1,
+            compose
+                .onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
+                .fetchSemanticsNodes()
+                .size,
+        )
         // AI-authored timeline processors start disabled until explicitly toggled on.
         val toggleNode = compose.onNodeWithText("Timeline post widgets")
         toggleNode.assertIsDisplayed().assertIsOff()

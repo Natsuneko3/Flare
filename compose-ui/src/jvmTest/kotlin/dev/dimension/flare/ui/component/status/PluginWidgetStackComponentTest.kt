@@ -840,4 +840,132 @@ class PluginWidgetStackComponentTest {
                 stopKoin()
             }
         }
+
+    @Test
+    fun multiCardPagerPreservesSelectedIdentityAcrossEarlierCardInsertRemoveAndResetsWhenRemoved() =
+        runComposeUiTest {
+            fun makeCard(
+                pluginId: String,
+                id: String,
+                title: String,
+            ) = UiPluginWidgetCard(
+                pluginId = pluginId,
+                pluginName = pluginId,
+                pluginIconPath = null,
+                id = id,
+                title = title,
+                body = persistentListOf(UiWidgetNode.Text("Body $title")),
+            )
+
+            val cardA = makeCard("p1", "a", "Card A")
+            val cardB = makeCard("p2", "b", "Card B")
+            val cardC = makeCard("p3", "c", "Card C")
+            val cardCDup = makeCard("p3", "c", "Card C Dup")
+
+            assertEquals(
+                listOf("p2:b", "p3:c", "p3:c#1"),
+                uniquePluginWidgetCardIdentities(listOf(cardB, cardC, cardCDup)),
+            )
+
+            var currentCards by mutableStateOf(persistentListOf(cardB, cardC))
+            setContent {
+                Box(Modifier.width(360.dp)) {
+                    PluginWidgetStackComponent(
+                        cards = currentCards,
+                        postIdentity = "post-identity-1",
+                    )
+                }
+            }
+
+            onNodeWithText("Card B").assertIsDisplayed()
+            onNodeWithContentDescription("Page 1 of 2").assertIsDisplayed()
+
+            // Swipe to Card C (page 2 of 2)
+            onNodeWithTag("plugin_widget_pager").performTouchInput { swipeLeft() }
+            waitForIdle()
+            onNodeWithText("Card C").assertIsDisplayed()
+            onNodeWithContentDescription("Page 2 of 2").assertIsDisplayed()
+
+            // Prepending an earlier plugin's card preserves Card C as selected (now page 3 of 3)
+            currentCards = persistentListOf(cardA, cardB, cardC)
+            waitForIdle()
+            onNodeWithText("Card C").assertIsDisplayed()
+            onNodeWithContentDescription("Page 3 of 3").assertIsDisplayed()
+
+            // Removing the earlier plugin's card still preserves Card C (now page 2 of 2)
+            currentCards = persistentListOf(cardB, cardC)
+            waitForIdle()
+            onNodeWithText("Card C").assertIsDisplayed()
+            onNodeWithContentDescription("Page 2 of 2").assertIsDisplayed()
+
+            // Removing the selected Card C resets to page 0 (Card A, page 1 of 2)
+            currentCards = persistentListOf(cardA, cardB)
+            waitForIdle()
+            onNodeWithText("Card A").assertIsDisplayed()
+            onNodeWithContentDescription("Page 1 of 2").assertIsDisplayed()
+        }
+
+    @Test
+    fun copyFeedbackShowsCheckmarkAndAutoResetsAfterTimeout() =
+        runComposeUiTest {
+            val card =
+                UiPluginWidgetCard(
+                    pluginId = "org.example.copy",
+                    pluginName = "Copy Test",
+                    pluginIconPath = null,
+                    id = "copy-1",
+                    title = "Copyable Card",
+                    body =
+                        persistentListOf(
+                            UiWidgetNode.Text(
+                                text = "Copyable code",
+                                style = UiWidgetTextStyle.Code,
+                                copyable = true,
+                            ),
+                            UiWidgetNode.KeyValue(
+                                items =
+                                    persistentListOf(
+                                        UiWidgetNode.KeyValue.Item(
+                                            label = "Hash",
+                                            value = "0xdeadbeef",
+                                            action = UiWidgetAction.Copy("0xdeadbeef"),
+                                        ),
+                                    ),
+                            ),
+                        ),
+                    actions =
+                        persistentListOf(
+                            UiWidgetButton(
+                                label = "Copy Token",
+                                action = UiWidgetAction.Copy("tok-123"),
+                            ),
+                        ),
+                )
+
+            setContent {
+                Box(Modifier.width(360.dp)) {
+                    PluginWidgetStackComponent(cards = persistentListOf(card))
+                }
+            }
+
+            onNodeWithTag("plugin_widget_text_copy_icon", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("plugin_widget_kv_copy_glyph", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("plugin_widget_button_copied_icon", useUnmergedTree = true).assertDoesNotExist()
+
+            onNodeWithText("Copyable code").performClick()
+            onNodeWithText("0xdeadbeef").performClick()
+            onNodeWithText("Copy Token").performClick()
+            waitForIdle()
+
+            onNodeWithTag("plugin_widget_text_copied_icon", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("plugin_widget_kv_copied_check", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("plugin_widget_button_copied_icon", useUnmergedTree = true).assertIsDisplayed()
+
+            mainClock.advanceTimeBy(1_600L)
+            waitForIdle()
+
+            onNodeWithTag("plugin_widget_text_copy_icon", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("plugin_widget_kv_copy_glyph", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("plugin_widget_button_copied_icon", useUnmergedTree = true).assertDoesNotExist()
+        }
 }

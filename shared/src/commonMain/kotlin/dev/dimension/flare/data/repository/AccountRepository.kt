@@ -20,6 +20,7 @@ import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSou
 import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.model.IconType
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformCapability
@@ -399,8 +400,10 @@ internal class AccountRepository internal constructor(
             cacheDatabase.translationDao().deleteByAccountType(accountType)
             cacheDatabase.statusReferenceDao().deleteByAccountType(accountType)
             cacheDatabase.pagingTimelineDao().deletePresentationReferencesByAccountType(accountType)
+            cacheDatabase.pluginPostWidgetDao().deleteByAccountType(accountType)
             invalidateCachedContent(accountKey)
         }
+        timelineProcessorServiceOrNull()?.clearAccount(AccountType.Specific(accountKey))
         appDatabase.connect {
             draftRepository.deleteAccount(accountKey)
             appDatabase.accountDao().delete(accountKey)

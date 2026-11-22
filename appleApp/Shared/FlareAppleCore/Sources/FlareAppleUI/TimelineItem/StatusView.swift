@@ -143,7 +143,7 @@ public struct StatusView: View {
         let showsQuotes = hasQuotes && !isQuote
         let showsCard = card != nil && showMedia && !hasImages && !hasQuotes && showLinkPreview
         let communityNote = showAttachments ? data.communityNote : nil
-        let pluginWidgets = showAttachments && !isQuote ? Array(data.pluginWidgets) : []
+        let pluginWidgets = showAttachments && !isQuote && !isGalleryFallback ? Array(data.pluginWidgets) : []
         let showsAttachments = showsImages || showsCard || showsQuotes || communityNote != nil || !pluginWidgets.isEmpty
         let sourceChannelName = data.sourceChannel?.name
         let emojiReactions = Array(data.emojiReactions)
@@ -486,11 +486,12 @@ public struct StatusView: View {
                         }
 
                         if !pluginWidgets.isEmpty {
+                            let hasPrecedingAttachment = showsImages || showsCard || showsQuotes || communityNote != nil
                             PluginWidgetStackView(
                                 cards: pluginWidgets,
                                 postIdentity: "\(accountType):\(statusKey)"
                             )
-                            .padding(.top, firstAttachmentSpacing)
+                            .padding(.top, hasPrecedingAttachment ? 8 : firstAttachmentSpacing)
                         }
 
                         if showMedia, !isQuote {

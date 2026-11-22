@@ -25,9 +25,16 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,7 +63,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -74,8 +80,13 @@ import coil3.compose.AsyncImage
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.ArrowRotateRight
+import compose.icons.fontawesomeicons.solid.Check
 import compose.icons.fontawesomeicons.solid.ChevronDown
 import compose.icons.fontawesomeicons.solid.Copy
+import dev.dimension.flare.compose.ui.Res
+import dev.dimension.flare.compose.ui.plugin_widget_copy
+import dev.dimension.flare.compose.ui.plugin_widget_page_indicator
+import dev.dimension.flare.compose.ui.plugin_widget_refresh
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareDividerDefaults
@@ -102,8 +113,12 @@ import dev.dimension.flare.ui.model.toUiImage
 import dev.dimension.flare.ui.theme.PlatformTheme
 import dev.dimension.flare.ui.theme.isLightTheme
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
+import org.jetbrains.compose.resources.stringResource
+
+private const val COPY_FEEDBACK_DURATION_MILLIS = 1_500L
 
 private val WidgetCardShape = RoundedCornerShape(12.dp)
 private val WidgetCodeShape = RoundedCornerShape(8.dp)
@@ -138,9 +153,45 @@ internal fun PluginWidgetStackComponent(
     }
 }
 
+internal fun uniquePluginWidgetCardIdentities(cards: List<UiPluginWidgetCard>): List<String> {
+    val counts = HashMap<String, Int>(cards.size)
+    return cards.map { card ->
+        val base = "${card.pluginId}:${card.id}"
+        val seen = counts[base] ?: 0
+        counts[base] = seen + 1
+        if (seen == 0) base else "$base#$seen"
+    }
+}
+
 @Composable
 private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>) {
-    val pagerState = rememberPagerState(pageCount = { cards.size })
+    val cardIdentities = remember(cards) { uniquePluginWidgetCardIdentities(cards) }
+    val latestCards by rememberUpdatedState(cards)
+    val latestIdentities by rememberUpdatedState(cardIdentities)
+    val pagerState = rememberPagerState(pageCount = { latestCards.size })
+    var selectedCardId by remember { mutableStateOf(cardIdentities.firstOrNull()) }
+    var previousIdentities by remember { mutableStateOf(cardIdentities) }
+
+    LaunchedEffect(pagerState, cardIdentities) {
+        if (cardIdentities != previousIdentities) {
+            val targetPage =
+                selectedCardId
+                    ?.let { id -> cardIdentities.indexOf(id).takeIf { it >= 0 } }
+                    ?: 0
+            previousIdentities = cardIdentities
+            selectedCardId = cardIdentities.getOrNull(targetPage)
+            if (pagerState.currentPage != targetPage) {
+                pagerState.scrollToPage(targetPage)
+            }
+        }
+        snapshotFlow { pagerState.currentPage }
+            .collect { page ->
+                cardIdentities.getOrNull(page)?.let { id ->
+                    selectedCardId = id
+                }
+            }
+    }
+
     val heightCache = remember { StackHeightCache() }
     val postBodyFontSizeBits =
         PlatformTheme.typography.postBody.fontSize.value
@@ -213,11 +264,13 @@ private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>)
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    val activeCards = latestCards
+                    val activeIdentities = latestIdentities
                     HorizontalPager(
                         state = pagerState,
                         pageSpacing = 8.dp,
                         verticalAlignment = Alignment.Top,
-                        key = { index -> "${cards[index].pluginId}:${cards[index].id}:$index" },
+                        key = { index -> activeIdentities.getOrElse(index) { "page_$index" } },
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -225,22 +278,34 @@ private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>)
                                 .consumeHorizontalDragForPager(pagerState)
                                 .testTag("plugin_widget_pager"),
                     ) { page ->
+                        val pageCard = activeCards.getOrNull(page) ?: return@HorizontalPager
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.TopStart,
                         ) {
                             PluginWidgetCardSurface(
-                                card = cards[page],
+                                card = pageCard,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
+                    val pageCount = activeCards.size.coerceAtLeast(1)
+                    val pageIndicatorLabel =
+                        stringResource(
+                            Res.string.plugin_widget_page_indicator,
+                            (pagerState.currentPage + 1).coerceIn(1, pageCount),
+                            pageCount,
+                        )
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.testTag("plugin_widget_dots"),
+                        modifier =
+                            Modifier
+                                .semantics {
+                                    contentDescription = pageIndicatorLabel
+                                }.testTag("plugin_widget_dots"),
                     ) {
-                        repeat(cards.size) { index ->
+                        repeat(activeCards.size) { index ->
                             val selected = pagerState.currentPage == index
                             Box(
                                 modifier =
@@ -488,9 +553,15 @@ private fun PluginWidgetCardHeader(card: UiPluginWidgetCard) {
             }
         }
         if (card.refreshable || card.isRefreshing) {
+            val refreshLabel = stringResource(Res.string.plugin_widget_refresh)
             if (card.isRefreshing) {
                 Box(
-                    modifier = Modifier.size(22.dp),
+                    modifier =
+                        Modifier
+                            .size(22.dp)
+                            .semantics {
+                                contentDescription = refreshLabel
+                            },
                     contentAlignment = Alignment.Center,
                 ) {
                     PlatformCircularProgressIndicator(
@@ -513,7 +584,7 @@ private fun PluginWidgetCardHeader(card: UiPluginWidgetCard) {
                             ) {
                                 card.onRefresh?.invoke()
                             }.semantics {
-                                contentDescription = "Refresh"
+                                contentDescription = refreshLabel
                             }.testTag("plugin_widget_refresh_button"),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -711,6 +782,14 @@ private fun WidgetTextNode(
     fillWidth: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    var copyFeedbackSeq by remember { mutableIntStateOf(0) }
+    val isCopied = copyFeedbackSeq > 0
+    LaunchedEffect(copyFeedbackSeq) {
+        if (copyFeedbackSeq > 0) {
+            delay(COPY_FEEDBACK_DURATION_MILLIS)
+            copyFeedbackSeq = 0
+        }
+    }
     val maxLines = node.maxLines?.coerceAtLeast(1) ?: Int.MAX_VALUE
     val color =
         when {
@@ -720,11 +799,15 @@ private fun WidgetTextNode(
         }
 
     if (node.style == UiWidgetTextStyle.Code) {
+        val copyLabel = if (node.copyable) stringResource(Res.string.plugin_widget_copy) else null
         val codeModifier =
             if (node.copyable) {
                 Modifier
                     .pointerHoverIcon(PointerIcon.Hand)
-                    .clickable { onCopy(node.text) }
+                    .clickable {
+                        onCopy(node.text)
+                        copyFeedbackSeq++
+                    }
             } else {
                 Modifier
             }
@@ -751,10 +834,19 @@ private fun WidgetTextNode(
             )
             if (node.copyable) {
                 FAIcon(
-                    imageVector = FontAwesomeIcons.Solid.Copy,
-                    contentDescription = "Copy",
-                    modifier = Modifier.padding(top = 2.dp).size(12.dp),
-                    tint = StatusComponentDefaults.secondaryColor,
+                    imageVector = if (isCopied) FontAwesomeIcons.Solid.Check else FontAwesomeIcons.Solid.Copy,
+                    contentDescription = copyLabel,
+                    modifier =
+                        Modifier
+                            .padding(top = 2.dp)
+                            .size(12.dp)
+                            .testTag(if (isCopied) "plugin_widget_text_copied_icon" else "plugin_widget_text_copy_icon"),
+                    tint =
+                        if (isCopied) {
+                            widgetToneColor(UiWidgetTone.Positive)
+                        } else {
+                            StatusComponentDefaults.secondaryColor
+                        },
                 )
             }
         }
@@ -789,12 +881,16 @@ private fun WidgetTextNode(
         }
 
     if (node.copyable) {
+        val copyLabel = stringResource(Res.string.plugin_widget_copy)
         Row(
             modifier =
                 modifier
                     .clip(RoundedCornerShape(4.dp))
                     .pointerHoverIcon(PointerIcon.Hand)
-                    .clickable { onCopy(node.text) },
+                    .clickable {
+                        onCopy(node.text)
+                        copyFeedbackSeq++
+                    },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -807,10 +903,18 @@ private fun WidgetTextNode(
                 modifier = Modifier.weight(1f, fill = false),
             )
             FAIcon(
-                imageVector = FontAwesomeIcons.Solid.Copy,
-                contentDescription = "Copy",
-                modifier = Modifier.size(11.dp),
-                tint = StatusComponentDefaults.secondaryColor,
+                imageVector = if (isCopied) FontAwesomeIcons.Solid.Check else FontAwesomeIcons.Solid.Copy,
+                contentDescription = copyLabel,
+                modifier =
+                    Modifier
+                        .size(11.dp)
+                        .testTag(if (isCopied) "plugin_widget_text_copied_icon" else "plugin_widget_text_copy_icon"),
+                tint =
+                    if (isCopied) {
+                        widgetToneColor(UiWidgetTone.Positive)
+                    } else {
+                        StatusComponentDefaults.secondaryColor
+                    },
             )
         }
     } else {
@@ -1218,75 +1322,114 @@ private fun WidgetKeyValueNode(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         node.items.fastForEach { item ->
-            val valueColor =
-                if (item.tone == UiWidgetTone.Neutral) {
-                    if (item.action is UiWidgetAction.OpenUrl) {
-                        PlatformTheme.colorScheme.primary
-                    } else {
-                        StatusComponentDefaults.contentColor
-                    }
-                } else {
-                    widgetToneColor(item.tone)
-                }
-            val rowClickModifier =
-                item.action?.let { action ->
-                    Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .pointerHoverIcon(PointerIcon.Hand)
-                        .clickable { onAction(action) }
-                        .padding(vertical = 2.dp)
-                } ?: Modifier
+            WidgetKeyValueRow(
+                item = item,
+                onAction = onAction,
+                fillWidth = fillWidth,
+            )
+        }
+    }
+}
 
-            Row(
-                modifier =
-                    Modifier
-                        .let { if (fillWidth) it.fillMaxWidth() else it }
-                        .then(rowClickModifier),
-                horizontalArrangement = if (fillWidth) Arrangement.SpaceBetween else Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PlatformText(
-                    text = item.label,
-                    style = PlatformTheme.typography.caption,
-                    color = StatusComponentDefaults.secondaryColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+@Composable
+private fun WidgetKeyValueRow(
+    item: UiWidgetNode.KeyValue.Item,
+    onAction: (UiWidgetAction) -> Unit,
+    fillWidth: Boolean,
+) {
+    val isCopy = item.action is UiWidgetAction.Copy
+    var copyFeedbackSeq by remember { mutableIntStateOf(0) }
+    val isCopied = isCopy && copyFeedbackSeq > 0
+    LaunchedEffect(copyFeedbackSeq) {
+        if (copyFeedbackSeq > 0) {
+            delay(COPY_FEEDBACK_DURATION_MILLIS)
+            copyFeedbackSeq = 0
+        }
+    }
+    val valueColor =
+        if (item.tone == UiWidgetTone.Neutral) {
+            if (item.action is UiWidgetAction.OpenUrl) {
+                PlatformTheme.colorScheme.primary
+            } else {
+                StatusComponentDefaults.contentColor
+            }
+        } else {
+            widgetToneColor(item.tone)
+        }
+    val rowClickModifier =
+        item.action?.let { action ->
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable {
+                    onAction(action)
+                    if (isCopy) {
+                        copyFeedbackSeq++
+                    }
+                }.padding(vertical = 2.dp)
+        } ?: Modifier
+
+    Row(
+        modifier =
+            Modifier
+                .let { if (fillWidth) it.fillMaxWidth() else it }
+                .then(rowClickModifier),
+        horizontalArrangement = if (fillWidth) Arrangement.SpaceBetween else Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PlatformText(
+            text = item.label,
+            style = PlatformTheme.typography.caption,
+            color = StatusComponentDefaults.secondaryColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier =
+                Modifier
+                    .widthIn(max = if (fillWidth) 140.dp else 110.dp)
+                    .padding(end = if (fillWidth) 8.dp else 0.dp),
+        )
+        Row(
+            modifier = if (fillWidth) Modifier.weight(1f) else Modifier.widthIn(max = 180.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+        ) {
+            PlatformText(
+                text = item.value,
+                style = PlatformTheme.typography.postBody,
+                fontWeight = FontWeight.Medium,
+                color = valueColor,
+                textDecoration =
+                    if (item.action is UiWidgetAction.OpenUrl) {
+                        TextDecoration.Underline
+                    } else {
+                        null
+                    },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (isCopy) {
+                val copyLabel = stringResource(Res.string.plugin_widget_copy)
+                Box(
                     modifier =
                         Modifier
-                            .widthIn(max = if (fillWidth) 140.dp else 110.dp)
-                            .padding(end = if (fillWidth) 8.dp else 0.dp),
-                )
-                Row(
-                    modifier = if (fillWidth) Modifier.weight(1f) else Modifier.widthIn(max = 180.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                            .size(10.dp)
+                            .testTag("plugin_widget_kv_copy_icon"),
                 ) {
-                    PlatformText(
-                        text = item.value,
-                        style = PlatformTheme.typography.postBody,
-                        fontWeight = FontWeight.Medium,
-                        color = valueColor,
-                        textDecoration =
-                            if (item.action is UiWidgetAction.OpenUrl) {
-                                TextDecoration.Underline
+                    FAIcon(
+                        imageVector = if (isCopied) FontAwesomeIcons.Solid.Check else FontAwesomeIcons.Solid.Copy,
+                        contentDescription = copyLabel,
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .testTag(if (isCopied) "plugin_widget_kv_copied_check" else "plugin_widget_kv_copy_glyph"),
+                        tint =
+                            if (isCopied) {
+                                widgetToneColor(UiWidgetTone.Positive)
                             } else {
-                                null
+                                StatusComponentDefaults.secondaryColor
                             },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (item.action is UiWidgetAction.Copy) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Copy,
-                            contentDescription = null,
-                            modifier =
-                                Modifier
-                                    .size(10.dp)
-                                    .testTag("plugin_widget_kv_copy_icon"),
-                            tint = StatusComponentDefaults.secondaryColor,
-                        )
-                    }
                 }
             }
         }
@@ -1424,6 +1567,15 @@ private fun WidgetActionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val isCopyAction = button.action is UiWidgetAction.Copy
+    var copyFeedbackSeq by remember { mutableIntStateOf(0) }
+    val isCopied = isCopyAction && copyFeedbackSeq > 0
+    LaunchedEffect(copyFeedbackSeq) {
+        if (copyFeedbackSeq > 0) {
+            delay(COPY_FEEDBACK_DURATION_MILLIS)
+            copyFeedbackSeq = 0
+        }
+    }
     val isPrimary = button.style == UiWidgetButtonStyle.Primary
     val toneColor =
         if (button.tone == UiWidgetTone.Neutral) {
@@ -1469,18 +1621,41 @@ private fun WidgetActionButton(
                 .background(backgroundColor, WidgetButtonShape)
                 .then(borderModifier)
                 .pointerHoverIcon(PointerIcon.Hand)
-                .clickable(role = Role.Button, onClick = onClick)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .clickable(
+                    role = Role.Button,
+                    onClick = {
+                        onClick()
+                        if (isCopyAction) {
+                            copyFeedbackSeq++
+                        }
+                    },
+                ).padding(horizontal = 10.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
-        PlatformText(
-            text = button.label,
-            style = PlatformTheme.typography.caption,
-            fontWeight = FontWeight.SemiBold,
-            color = contentColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (isCopied) {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Check,
+                    contentDescription = null,
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .testTag("plugin_widget_button_copied_icon"),
+                    tint = contentColor,
+                )
+            }
+            PlatformText(
+                text = button.label,
+                style = PlatformTheme.typography.caption,
+                fontWeight = FontWeight.SemiBold,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

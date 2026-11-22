@@ -81,6 +81,44 @@ class PluginPostWidgetDaoTest {
         }
 
     @Test
+    fun deleteByAccountTypeDeletesSpecificAccountRowsWhilePreservingOtherAccountsAndGuest() =
+        runTest {
+            withInMemoryCacheDatabase { db ->
+                val dao = db.pluginPostWidgetDao()
+                val accountA = AccountType.Specific(MicroBlogKey("alice", "example.social"))
+                val accountB = AccountType.Specific(MicroBlogKey("alice", "example.social.other"))
+                val guest = AccountType.Guest
+                val guestHost = AccountType.GuestHost("example.social")
+
+                val aPost1 = "${accountA}_${MicroBlogKey("101", "example.social")}"
+                val aPost2 = "${accountA}_${MicroBlogKey("102", "example.social")}"
+                val bPost1 = "${accountB}_${MicroBlogKey("201", "example.social.other")}"
+                val guestPost = "${guest}_${MicroBlogKey("301", "example.social")}"
+                val guestHostPost = "${guestHost}_${MicroBlogKey("401", "example.social")}"
+
+                dao.upsertAll(
+                    listOf(
+                        DbPluginPostWidget(aPost1, "p.stock", "k1", "h1", "[{\"id\":\"a1\"}]", 100L, null),
+                        DbPluginPostWidget(aPost1, "p.score", "k2", "h1", "[{\"id\":\"a2\"}]", 100L, null),
+                        DbPluginPostWidget(aPost2, "p.stock", "k1", "h2", "[{\"id\":\"a3\"}]", 101L, null),
+                        DbPluginPostWidget(bPost1, "p.stock", "k1", "h3", "[{\"id\":\"b1\"}]", 102L, null),
+                        DbPluginPostWidget(guestPost, "p.stock", "k1", "h4", "[{\"id\":\"g1\"}]", 103L, null),
+                        DbPluginPostWidget(guestHostPost, "p.stock", "k1", "h5", "[{\"id\":\"gh1\"}]", 104L, null),
+                    ),
+                )
+
+                dao.deleteByAccountType(accountA)
+
+                val allKeys = listOf(aPost1, aPost2, bPost1, guestPost, guestHostPost)
+                val remaining = dao.getByPostKeys(allKeys)
+                assertEquals(
+                    setOf(bPost1, guestPost, guestHostPost),
+                    remaining.map { it.postEntityKey }.toSet(),
+                )
+            }
+        }
+
+    @Test
     fun getByPostKeysChunksOver500BindsAndTrimsOldestKeepingNewest() =
         runTest {
             withInMemoryCacheDatabase { db ->
@@ -302,6 +340,8 @@ class PluginPostWidgetDaoTest {
         NoopTimelineProcessorService.refreshPostPlugin(post, "p1")
         NoopTimelineProcessorService.toggleCollapsible(post.pluginPostEntityKey(), "p1", "c1", "col1")
         NoopTimelineProcessorService.clearPlugin("p1")
+        NoopTimelineProcessorService.clearAccount(AccountType.Guest)
+        NoopTimelineProcessorService.clearAll()
         assertNull(timelineProcessorServiceOrNull())
     }
 

@@ -583,8 +583,14 @@ final class TimelinePluginWidgetTests: XCTestCase {
         let plain = makeSampleTimelinePost(id: "sv-1", pluginWidgets: [])
         let enriched = makeSampleTimelinePost(id: "sv-1", pluginWidgets: [card])
 
-        func measureStatus(_ post: UiTimelineV2.Post, isQuote: Bool = false, showAttachments: Bool = true) -> CGFloat {
+        func measureStatus(
+            _ post: UiTimelineV2.Post,
+            isQuote: Bool = false,
+            showAttachments: Bool = true,
+            isGalleryFallback: Bool = false
+        ) -> CGFloat {
             let view = StatusView(data: post, isQuote: isQuote, showAttachments: showAttachments, forceHideActions: true)
+                .environment(\.timelineGalleryFallback, isGalleryFallback)
             return UIHostingController(rootView: view).sizeThatFits(in: CGSize(width: 360, height: CGFloat.greatestFiniteMagnitude)).height
         }
 
@@ -593,6 +599,11 @@ final class TimelinePluginWidgetTests: XCTestCase {
         XCTAssertGreaterThan(enrichedHeight, plainHeight + 40)
         XCTAssertEqual(measureStatus(enriched, showAttachments: false), plainHeight, accuracy: 1.0)
         XCTAssertEqual(measureStatus(enriched, isQuote: true), measureStatus(plain, isQuote: true), accuracy: 1.0)
+        XCTAssertEqual(
+            measureStatus(enriched, isGalleryFallback: true),
+            measureStatus(plain, isGalleryFallback: true),
+            accuracy: 1.0
+        )
     }
 
     func testPluginManagementPermissionDescriptionAndTimelineProcessorToggle() async throws {

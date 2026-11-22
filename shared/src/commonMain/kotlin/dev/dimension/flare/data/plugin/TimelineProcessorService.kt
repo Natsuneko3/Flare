@@ -1,6 +1,7 @@
 package dev.dimension.flare.data.plugin
 
 import dev.dimension.flare.di.koinGet
+import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.ui.model.UiPluginWidgetCard
 import dev.dimension.flare.ui.model.UiTimelineV2
 import kotlinx.collections.immutable.ImmutableList
@@ -31,6 +32,10 @@ public interface TimelineProcessorService {
 
     public fun clearPlugin(pluginId: String)
 
+    public fun clearAccount(accountType: AccountType) {}
+
+    public fun clearAll() {}
+
     public fun clearFailureCooldowns() {}
 }
 
@@ -56,6 +61,10 @@ public object NoopTimelineProcessorService : TimelineProcessorService {
     ) {}
 
     override fun clearPlugin(pluginId: String) {}
+
+    override fun clearAccount(accountType: AccountType) {}
+
+    override fun clearAll() {}
 
     override fun clearFailureCooldowns() {}
 }

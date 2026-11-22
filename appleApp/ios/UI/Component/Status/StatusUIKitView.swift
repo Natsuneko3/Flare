@@ -697,12 +697,16 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         if child === replyToContainerStorage || previousChild === replyToContainerStorage { return 0 }
         let followsHeader = previousChild === currentHeaderView
         let isText = child is RichTextUIView || child === translateViewStorage
+        let isPrecedingAttachment = previousChild === mediaViewStorage || previousChild === normalCardViewStorage ||
+            previousChild === compatCardViewStorage || previousChild === quotesContainerStorage ||
+            previousChild === communityNoteViewStorage
         let isAttachment = child === mediaViewStorage || child === normalCardViewStorage ||
             child === compatCardViewStorage || child === quotesContainerStorage ||
             child === communityNoteViewStorage || child === pluginWidgetHostViewStorage
         if followsHeader && !usesSideAvatar && !isQuote { return 8 }
         if followsHeader && isText { return isQuote ? 4 : 2 }
         if child === actionsContainerStorage { return 2 }
+        if child === pluginWidgetHostViewStorage && isPrecedingAttachment { return 8 }
         if isAttachment && !(child === quotesContainerStorage && previousChild === mediaViewStorage) { return 10 }
         return 8
     }

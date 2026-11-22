@@ -22,6 +22,7 @@ import dev.dimension.flare.feature.plugin.management.PluginTestAccounts
 import dev.dimension.flare.feature.plugin.management.testPluginRegistry
 import dev.dimension.flare.feature.plugin.manifest.PluginTimelineFilterManifestV1
 import dev.dimension.flare.feature.plugin.storage.PluginStorageChangesV1
+import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiCard
 import dev.dimension.flare.ui.model.UiTimelineV2
@@ -38,6 +39,7 @@ import dev.dimension.flare.ui.render.toUi
 import dev.dimension.flare.ui.render.uiRichTextOf
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -1031,6 +1033,259 @@ class PluginTimelineProcessorIntegrationTest {
                 assertEquals("Recovered", (cards.single().body.single() as UiWidgetNode.Text).text)
             }
         }
+
+    @Test
+    fun sequentialSinglePostSubmissionsCoalesceIntoOneDbLookupAndAtMostOneHydrationRevisionBump() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.paging",
+                        maxBatchSize = 30,
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return {
+                                  results: req.items.map(i => ({
+                                    itemId: i.itemId,
+                                    cache: { policy: "disk", ttlSeconds: 300 },
+                                    cards: [{ id: "card-" + i.postKey.id, body: [{ type: "text", text: "cached-" + i.postKey.id }] }]
+                                  }))
+                                };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val pagePosts = (1..25).map { idx -> createSamplePost(id = "page-post-$idx", text = "Post $idx") }
+                harness.service.submitPosts(pagePosts)
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+
+                val countingDao = harness.rawDao()
+                val coldService = harness.createColdService()
+                try {
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000L) {
+                            coldService.overlayRevision.first { it >= 1L }
+                        }
+                    }
+                    coldService.awaitIdleForTesting()
+                    countingDao.resetGetByPostKeysCount()
+                    val revisionBefore = coldService.overlayRevision.value
+
+                    // Simulate PagingData.map calling submitPosts(listOf(post)) 25 times sequentially.
+                    pagePosts.forEach { post ->
+                        coldService.submitPosts(listOf(post))
+                    }
+                    coldService.awaitIdleForTesting()
+
+                    assertEquals(
+                        1,
+                        countingDao.getByPostKeysCount(),
+                        "Expected 25 single-post submitPosts calls to coalesce into 1 DB read",
+                    )
+                    val revisionDelta = coldService.overlayRevision.value - revisionBefore
+                    assertTrue(revisionDelta <= 1L, "Expected overlayRevision to bump at most once on hydration, got +$revisionDelta")
+                    assertEquals(1L, revisionDelta)
+                    assertEquals(1, harness.invocationCount(pluginId), "Cold hydration from SQLite must not re-invoke runtime")
+                    pagePosts.forEach { post ->
+                        assertEquals(1, coldService.widgetsForPost(post).size)
+                    }
+                } finally {
+                    coldService.close()
+                }
+            }
+        }
+
+    @Test
+    fun corruptSqliteDaoNeverThrowsUncaughtCoroutineExceptionAndPreservesInMemoryDeliveryAndRefreshReset() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.corruptdb",
+                        script =
+                            """
+                            let n = 0;
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                n += 1;
+                                return {
+                                  results: req.items.map(i => ({
+                                    itemId: i.itemId,
+                                    cache: { policy: "disk", ttlSeconds: 60 },
+                                    cards: [{ id: "c1", refreshable: true, body: [{ type: "text", text: "v" + n }] }]
+                                  }))
+                                };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+
+                val uncaught = ConcurrentHashMap.newKeySet<Throwable>()
+                val customScope =
+                    CoroutineScope(
+                        SupervisorJob() +
+                            Dispatchers.Default +
+                            CoroutineExceptionHandler { _, throwable -> uncaught += throwable },
+                    )
+                val corruptDao =
+                    object : PluginPostWidgetDao {
+                        override suspend fun getByPostKeysChunk(postEntityKeys: List<String>): List<DbPluginPostWidget> =
+                            throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun upsertAll(items: List<DbPluginPostWidget>): Unit =
+                            throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteByPluginId(pluginId: String): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteByPostKeyRange(
+                            prefix: String,
+                            upperBound: String,
+                        ): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteExpiredBefore(cutoffMillis: Long): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun trimOldestKeepingQuery(maxRows: Int): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteAll(): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+                    }
+
+                val resilientService = harness.createColdService(daoOverride = corruptDao, scopeOverride = customScope)
+                try {
+                    val post = createSamplePost(id = "corrupt-post-1", text = "Resilient post")
+                    resilientService.submitPosts(listOf(post))
+                    resilientService.awaitIdleForTesting()
+
+                    val initialCard = resilientService.widgetsForPost(post).single()
+                    assertEquals("v1", (initialCard.body.single() as UiWidgetNode.Text).text)
+                    assertFalse(initialCard.isRefreshing)
+
+                    // Gate refresh so we can verify isRefreshing turns true and then clears back to false despite upsertAll throwing.
+                    harness.gateNextRuntimeCall(pluginId)
+                    resilientService.refreshPostPlugin(post, pluginId)
+                    assertTrue(resilientService.widgetsForPost(post).single().isRefreshing)
+
+                    harness.releaseGatedRuntimeCall(pluginId)
+                    resilientService.awaitIdleForTesting()
+
+                    val refreshedCard = resilientService.widgetsForPost(post).single()
+                    assertFalse(refreshedCard.isRefreshing)
+                    assertEquals("v2", (refreshedCard.body.single() as UiWidgetNode.Text).text)
+
+                    resilientService.clearPlugin(pluginId)
+                    resilientService.awaitIdleForTesting()
+                    assertTrue(uncaught.isEmpty(), "Expected zero uncaught coroutine exceptions, got: $uncaught")
+                } finally {
+                    resilientService.close()
+                    customScope.cancel()
+                }
+            }
+        }
+
+    @Test
+    fun clearAccountAndClearAllImmediatelyEvictDiskAndMemoryOnlyWidgetsAndBumpOverlayRevision() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.disk",
+                    containsAny = listOf("STOCK"),
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cache: { policy: "disk", ttlSeconds: 300 },
+                                cards: [{ id: "d", body: [{ type: "text", text: "disk-" + i.postKey.id }] }]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.mem",
+                    containsAny = listOf("SECRET"),
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cache: { policy: "memoryOnly" },
+                                cards: [{ id: "m", body: [{ type: "text", text: "mem-" + i.postKey.id }] }]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+
+                val accountA = AccountType.Specific(MicroBlogKey("alice", "one.social"))
+                val accountB = AccountType.Specific(MicroBlogKey("bob", "two.social"))
+
+                val aDisk = createSamplePost(id = "a-disk", text = "STOCK AAPL", accountType = accountA)
+                val aMem = createSamplePost(id = "a-mem", text = "SECRET PAYLOAD", accountType = accountA)
+                val bDisk = createSamplePost(id = "b-disk", text = "STOCK NVDA", accountType = accountB)
+                val bMem = createSamplePost(id = "b-mem", text = "SECRET OTHER", accountType = accountB)
+                val guestDisk = createSamplePost(id = "g-disk", text = "STOCK MSFT", accountType = AccountType.Guest)
+
+                harness.service.submitPosts(listOf(aDisk, aMem, bDisk, bMem, guestDisk))
+                harness.awaitIdle()
+
+                assertEquals(1, harness.service.widgetsForPost(aDisk).size)
+                assertEquals(1, harness.service.widgetsForPost(aMem).size)
+                assertEquals(1, harness.service.widgetsForPost(bDisk).size)
+                assertEquals(1, harness.service.widgetsForPost(bMem).size)
+                assertEquals(1, harness.service.widgetsForPost(guestDisk).size)
+
+                // clearAccount(accountA) immediately evicts both disk and memoryOnly cards for accountA, bumps overlayRevision,
+                // deletes accountA rows from SQLite, and preserves accountB + Guest.
+                val revBeforeAccountClear = harness.service.overlayRevision.value
+                harness.service.clearAccount(accountA)
+                assertTrue(harness.service.widgetsForPost(aDisk).isEmpty())
+                assertTrue(harness.service.widgetsForPost(aMem).isEmpty())
+                assertEquals(revBeforeAccountClear + 1L, harness.service.overlayRevision.value)
+                assertEquals(1, harness.service.widgetsForPost(bDisk).size)
+                assertEquals(1, harness.service.widgetsForPost(bMem).size)
+                assertEquals(1, harness.service.widgetsForPost(guestDisk).size)
+
+                harness.awaitIdle()
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(aDisk.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+                assertEquals(
+                    2,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(bDisk.pluginPostEntityKey(), guestDisk.pluginPostEntityKey()))
+                        .size,
+                )
+
+                // clearAll() immediately evicts all remaining disk and memoryOnly cards, bumps overlayRevision, and clears SQLite.
+                val revBeforeClearAll = harness.service.overlayRevision.value
+                harness.service.clearAll()
+                assertTrue(harness.service.widgetsForPost(bDisk).isEmpty())
+                assertTrue(harness.service.widgetsForPost(bMem).isEmpty())
+                assertTrue(harness.service.widgetsForPost(guestDisk).isEmpty())
+                assertEquals(revBeforeClearAll + 1L, harness.service.overlayRevision.value)
+
+                harness.awaitIdle()
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(bDisk.pluginPostEntityKey(), guestDisk.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+            }
+        }
 }
 
 private val nextPostId = AtomicInteger(1)
@@ -1042,11 +1297,13 @@ private fun createSamplePost(
     link: String? = null,
     card: UiCard? = null,
     contentWarning: String? = null,
+    accountType: AccountType = AccountType.Guest,
 ): UiTimelineV2.Post {
     val user = createSampleUser().copy(key = MicroBlogKey("sampleKey", host))
     val base =
         createSampleStatus(user).copy(
             statusKey = MicroBlogKey(id = id, host = host),
+            accountType = accountType,
             createdAt = Instant.fromEpochSeconds(1_700_000_000L).toUi(),
             card = card,
             contentWarning =
@@ -1084,11 +1341,23 @@ private class InMemoryPluginPostWidgetDao(
 ) : PluginPostWidgetDao {
     private val mutex = Mutex()
     private val rows = LinkedHashMap<Pair<String, String>, DbPluginPostWidget>()
+    private val getByPostKeysCounter = AtomicInteger(0)
 
     init {
         initialRows.forEach { row ->
             rows[row.postEntityKey to row.pluginId] = row
         }
+    }
+
+    fun getByPostKeysCount(): Int = getByPostKeysCounter.get()
+
+    fun resetGetByPostKeysCount() {
+        getByPostKeysCounter.set(0)
+    }
+
+    override suspend fun getByPostKeys(postEntityKeys: List<String>): List<DbPluginPostWidget> {
+        getByPostKeysCounter.incrementAndGet()
+        return super.getByPostKeys(postEntityKeys)
     }
 
     override suspend fun getByPostKeysChunk(postEntityKeys: List<String>): List<DbPluginPostWidget> =
@@ -1110,6 +1379,21 @@ private class InMemoryPluginPostWidgetDao(
             val iterator = rows.entries.iterator()
             while (iterator.hasNext()) {
                 if (iterator.next().value.pluginId == pluginId) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
+    override suspend fun deleteByPostKeyRange(
+        prefix: String,
+        upperBound: String,
+    ) {
+        mutex.withLock {
+            val iterator = rows.entries.iterator()
+            while (iterator.hasNext()) {
+                val key = iterator.next().value.postEntityKey
+                if (key >= prefix && key < upperBound) {
                     iterator.remove()
                 }
             }
@@ -1176,20 +1460,26 @@ private class TimelineProcessorTestHarness(
     val authoring: PluginAuthoringServiceV1,
     val service: PluginTimelineProcessorServiceV1,
     val db: TestCacheDatabaseFacade,
+    private val rawDaoInstance: InMemoryPluginPostWidgetDao,
     private val appSettingsState: MutableStateFlow<AppSettings>,
     private val gates: ConcurrentHashMap<String, GateEntry>,
     private val failurePredicates: ConcurrentHashMap<String, () -> Boolean>,
     private val invocationCounters: ConcurrentHashMap<String, AtomicInteger>,
-    private val coldServiceFactory: () -> PluginTimelineProcessorServiceV1,
+    private val coldServiceFactory: (PluginPostWidgetDao?, CoroutineScope?) -> PluginTimelineProcessorServiceV1,
     val nowMillis: AtomicLong,
 ) {
     private val packageCounter = AtomicInteger(1)
 
     fun currentSettings(): AppSettings = appSettingsState.value
 
+    fun rawDao(): InMemoryPluginPostWidgetDao = rawDaoInstance
+
     fun invocationCount(pluginId: String): Int = invocationCounters[pluginId]?.get() ?: 0
 
-    fun createColdService(): PluginTimelineProcessorServiceV1 = coldServiceFactory()
+    fun createColdService(
+        daoOverride: PluginPostWidgetDao? = null,
+        scopeOverride: CoroutineScope? = null,
+    ): PluginTimelineProcessorServiceV1 = coldServiceFactory(daoOverride, scopeOverride)
 
     fun writeDevelopmentDirectory(
         id: String,
@@ -1548,12 +1838,12 @@ private suspend fun withTimelineProcessorTestHarness(
             )
         }
     }
-    val createService = {
+    val createService: (PluginPostWidgetDao?, CoroutineScope?) -> PluginTimelineProcessorServiceV1 = { daoOverride, scopeOverride ->
         PluginTimelineProcessorServiceV1(
             subsystem = subsystem,
-            dao = dao,
+            dao = daoOverride ?: dao,
             grants = grantStore,
-            scope = serviceScope,
+            scope = scopeOverride ?: serviceScope,
             ioDispatcher = Dispatchers.Default,
             workDispatcher = Dispatchers.Default,
             nowEpochMillis = nowMillis::get,
@@ -1561,7 +1851,7 @@ private suspend fun withTimelineProcessorTestHarness(
             runtimeInvoker = invoker,
         )
     }
-    val service = createService()
+    val service = createService(null, null)
     val presenter =
         PluginManagementPresenterV1(
             subsystem = subsystem,
@@ -1578,6 +1868,7 @@ private suspend fun withTimelineProcessorTestHarness(
                 authoring = subsystem.authoring,
                 service = service,
                 db = TestCacheDatabaseFacade(dao),
+                rawDaoInstance = dao,
                 appSettingsState = appSettingsState,
                 gates = gates,
                 failurePredicates = failurePredicates,

@@ -46,6 +46,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -1007,14 +1008,16 @@ internal fun PluginItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Switcher(
-                    checked = plugin.timelineProcessorEnabled,
-                    onCheckStateChange = { enabled ->
-                        if (!busy) onToggleTimelineProcessor(plugin.pluginId, enabled)
-                    },
-                    text = null,
-                    enabled = !busy,
-                )
+                Box(modifier = Modifier.clearAndSetSemantics {}) {
+                    Switcher(
+                        checked = plugin.timelineProcessorEnabled,
+                        onCheckStateChange = { enabled ->
+                            if (!busy) onToggleTimelineProcessor(plugin.pluginId, enabled)
+                        },
+                        text = null,
+                        enabled = !busy,
+                    )
+                }
                 Text(
                     text = toggleLabel,
                     style = FluentTheme.typography.caption,

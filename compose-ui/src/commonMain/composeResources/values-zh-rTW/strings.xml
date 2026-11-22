@@ -510,4 +510,7 @@
     <string name="compose_x_reply_following">你跟隨的帳號</string>
     <string name="compose_x_reply_mentioned">僅提及的帳號</string>
     <string name="compose_x_reply_verified">已認證的帳號</string>
+    <string name="plugin_widget_refresh">重新整理</string>
+    <string name="plugin_widget_copy">複製</string>
+    <string name="plugin_widget_page_indicator">第 %1$d 頁，共 %2$d 頁</string>
 </resources>

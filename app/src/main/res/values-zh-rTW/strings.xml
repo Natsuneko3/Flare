@@ -1018,5 +1018,7 @@
     <string name="plugin_permission_account_origin">對您選擇的 HTTPS 實例的網路存取權限</string>
     <string name="plugin_permission_account_origin_label">您選擇的 HTTPS 實例</string>
     <string name="plugin_github_repository">GitHub 儲存庫網址</string>
+    <string name="plugin_permission_timeline_post_access">讀取時間軸中顯示的貼文以附加小工具，貼文內容可能會傳送到允許存取的網路來源</string>
+    <string name="plugin_timeline_processor_toggle">時間軸貼文小工具</string>
     <string name="plugin_up_to_date">GitHub 外掛程式已更新</string>
 </resources>

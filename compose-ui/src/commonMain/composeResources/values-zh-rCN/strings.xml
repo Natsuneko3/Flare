@@ -511,4 +511,7 @@
     <string name="compose_x_reply_following">你关注的账号</string>
     <string name="compose_x_reply_mentioned">仅提及的账号</string>
     <string name="compose_x_reply_verified">已认证的账号</string>
+    <string name="plugin_widget_refresh">刷新</string>
+    <string name="plugin_widget_copy">复制</string>
+    <string name="plugin_widget_page_indicator">第 %1$d 页，共 %2$d 页</string>
 </resources>

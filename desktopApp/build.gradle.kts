@@ -313,6 +313,14 @@ val compileFoundationModelsBridge = tasks.register<Exec>("compileFoundationModel
 }
 
 tasks.test {
+    val isolatedTmpDir = layout.buildDirectory.dir("tmp/test-tmpdir")
+    inputs.property("isolatedTmpDirName", "test-tmpdir")
+    doFirst {
+        val dir = isolatedTmpDir.get().asFile
+        dir.deleteRecursively()
+        dir.mkdirs()
+    }
+    systemProperty("java.io.tmpdir", isolatedTmpDir.get().asFile.absolutePath)
     testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
 }
 

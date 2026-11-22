@@ -484,4 +484,7 @@
     <string name="weibo_private_following_title">Private Following</string>
     <string name="visibility_friends">Friends circle</string>
     <string name="visibility_self">Only me</string>
+    <string name="plugin_widget_refresh">Refresh</string>
+    <string name="plugin_widget_copy">Copy</string>
+    <string name="plugin_widget_page_indicator">Page %1$d of %2$d</string>
 </resources>
