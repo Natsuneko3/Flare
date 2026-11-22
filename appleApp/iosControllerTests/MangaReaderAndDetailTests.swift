@@ -434,6 +434,8 @@ final class MangaReaderAndDetailTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(60))
         window.layoutIfNeeded()
+        let rtlScrollViewBeforeReflow = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
+        let rtlScrollViewID = ObjectIdentifier(rtlScrollViewBeforeReflow)
 
         // Grow totalPagerPages 4 -> 5 in RTL while on slot 1 (simulating runtime landscape page split)
         fakeState.updateSlots(fiveSplitSlots)
@@ -444,6 +446,11 @@ final class MangaReaderAndDetailTests: XCTestCase {
             return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Growing totalPagerPages in RTL must preserve currentSlotIndex == 1")
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))),
+            rtlScrollViewID,
+            "Growing totalPagerPages must not tear down UIScrollView"
+        )
 
         // Shrink totalPagerPages 5 -> 4 in RTL while on slot 1 (simulating re-pairing / spread toggle)
         fakeState.updateSlots(fourSpreadSlots)
@@ -454,8 +461,13 @@ final class MangaReaderAndDetailTests: XCTestCase {
             return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Shrinking totalPagerPages in RTL must preserve currentSlotIndex == 1")
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))),
+            rtlScrollViewID,
+            "Shrinking totalPagerPages must not tear down UIScrollView"
+        )
 
-        // Resize viewport width while idle in RTL (800 -> 520 -> 800) must preserve currentSlotIndex == 1
+        // Resize viewport width while idle in RTL (800 -> 520 -> 800) must preserve currentSlotIndex == 1 and UIScrollView identity
         window.frame = CGRect(x: 0, y: 0, width: 520, height: 600)
         window.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(80))
@@ -465,6 +477,11 @@ final class MangaReaderAndDetailTests: XCTestCase {
             return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 521.5
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Idle viewport narrowing in RTL must preserve currentSlotIndex == 1")
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))),
+            rtlScrollViewID,
+            "Narrowing viewport width must not tear down UIScrollView"
+        )
 
         window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
         window.layoutIfNeeded()
@@ -475,14 +492,200 @@ final class MangaReaderAndDetailTests: XCTestCase {
             return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Idle viewport widening in RTL must preserve currentSlotIndex == 1")
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))),
+            rtlScrollViewID,
+            "Widening viewport width must not tear down UIScrollView"
+        )
 
         // Manual user swipe after RTL reflows must still advance cleanly without yanking back
         let postReflowScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
+        XCTAssertEqual(ObjectIdentifier(postReflowScrollView), rtlScrollViewID)
         await simulateUserHorizontalScroll(postReflowScrollView, pageDelta: -1)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 2)
+    }
+
+    func testSubtreeIdentityZoomPreservationMidDragSplitAndBoundaryReflow() async throws {
+        let prevChapter = UiMangaChapter(id: "ch-0", title: "Chapter 0", subtitle: nil, uploadedAt: nil, locked: false, url: nil)
+        let nextChapter = UiMangaChapter(id: "ch-2", title: "Chapter 2", subtitle: nil, uploadedAt: nil, locked: false, url: nil)
+        let sixPages = makeSamplePages(count: 6)
+        let fourSpreadSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 3, primaryPageIndex: 3),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        let fiveSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotSingle(pageIndex: 3),
+            ReaderSlotSingle(pageIndex: 4),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+
+        let fakeState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: sixPages,
+            slots: fourSpreadSlots,
+            previousBoundary: ChapterBoundaryUnlocked(chapter: prevChapter, startFromEnd: true),
+            nextBoundary: ChapterBoundaryUnlocked(chapter: nextChapter, startFromEnd: false)
+        )
+        fakeState.goToSlot(slotIndex: 1) // pagerPage == 2 (startBoundaryOffset == 1)
+
+        let controller = MangaReaderInteractionController()
+        let hostBox = ReaderTestHostModel(state: fakeState, controller: controller)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        window.rootViewController = UIHostingController(rootView: ReaderTestHostView(model: hostBox))
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        try await eventually(window: window) {
+            controller.isBound && controller.activePagerPage == 2 && hostBox.pageFrames[1] != nil
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+
+        let initialScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
+        let initialScrollViewID = ObjectIdentifier(initialScrollView)
+        XCTAssertNil(controller.zoomResetHandler)
+
+        // 1. Zoom active slot (slot 1 / pagerPage 2) and verify 1pt live width resizes + non-active spread split do NOT tear down subtree or reset zoom
+        controller.handleDoubleTap(at: CGPoint(x: 400, y: 300))
+        try await eventually(window: window) { controller.zoomResetHandler != nil }
+
+        for width in [CGFloat(799), 798, 760, 800] {
+            window.frame = CGRect(x: 0, y: 0, width: width, height: 600)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(25))
+            XCTAssertEqual(
+                ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))),
+                initialScrollViewID,
+                "1pt / live width resize (\(width)) must keep the same UIScrollView mounted"
+            )
+            XCTAssertNotNil(controller.zoomResetHandler, "Width resize (\(width)) must not wipe active zoom")
+            XCTAssertEqual(fakeState.currentSlotIndex, 1)
+            XCTAssertEqual(controller.activePagerPage, 2)
+        }
+
+        // Non-active spread split (totalPagerPages 6 -> 7 in RTL) while zoomed on slot 1 (pagerPage 2)
+        fakeState.updateSlots(fiveSplitSlots)
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            // In 7-page RTL at width 800, pagerPage 2 sits at visual index (7 - 1 - 2) = 4 -> x == 3200
+            abs(initialScrollView.contentOffset.x - 3200) <= 2.0
+        }
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))),
+            initialScrollViewID,
+            "Runtime spread split while zoomed must not tear down UIScrollView"
+        )
+        XCTAssertNotNil(controller.zoomResetHandler, "Non-active spread split must not wipe active zoom")
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+        XCTAssertEqual(controller.activePagerPage, 2)
+
+        // Escape resets zoom cleanly without navigating back
+        XCTAssertTrue(controller.handleKey(.escape))
+        try await eventually(window: window) { controller.zoomResetHandler == nil }
+
+        // 2. Boundary card position preserved across width resizes AND slot-count splits (both nextBoundaryPage and prevBoundaryPage)
+        fakeState.updateSlots(fourSpreadSlots) // totalPagerPages == 6, nextBoundaryPage == 5
+        try await Task.sleep(for: .milliseconds(40))
+        window.layoutIfNeeded()
+
+        controller.scrollToBoundary(isNext: true)
+        try await eventually(window: window) {
+            controller.isOnNextBoundaryPage && controller.activePagerPage == 5
+        }
+        try await Task.sleep(for: .milliseconds(40))
+        window.layoutIfNeeded()
+
+        // Resize width while standing on nextBoundaryPage
+        for width in [CGFloat(799), 540, 800] {
+            window.frame = CGRect(x: 0, y: 0, width: width, height: 600)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(40))
+            window.layoutIfNeeded()
+            XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
+            XCTAssertTrue(controller.isOnNextBoundaryPage, "Width resize (\(width)) must not kick user off nextBoundaryPage")
+            XCTAssertEqual(controller.activePagerPage, 5)
+        }
+
+        // Split spread while standing on nextBoundaryPage (slots 4 -> 5, shifting currentSlotIndex on last page AND moving nextBoundaryPage 5 -> 6)
+        fakeState.goToSlot(slotIndex: 3) // page 5 -> slotIndex shifts 3 -> 4 when fiveSplitSlots applies, while on nextBoundaryPage!
+        controller.scrollToBoundary(isNext: true)
+        try await eventually(window: window) { controller.isOnNextBoundaryPage && controller.activePagerPage == 5 }
+        fakeState.updateSlots(fiveSplitSlots)
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            controller.isOnNextBoundaryPage && controller.activePagerPage == 6 && abs(initialScrollView.contentOffset.x - 0) <= 2.0
+        }
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
+
+        // Stand on prevBoundaryPage (0): preserved across width resize and slot-count shrink (5 -> 4)
+        controller.scrollToBoundary(isNext: false)
+        try await eventually(window: window) {
+            controller.isOnPreviousBoundaryPage && controller.activePagerPage == 0
+        }
+        window.frame = CGRect(x: 0, y: 0, width: 540, height: 600)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        window.layoutIfNeeded()
+        XCTAssertTrue(controller.isOnPreviousBoundaryPage, "Width resize must not kick user off prevBoundaryPage")
+        XCTAssertEqual(controller.activePagerPage, 0)
+
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        window.layoutIfNeeded()
+        fakeState.updateSlots(fourSpreadSlots) // totalPagerPages 7 -> 6, prevBoundaryPage == 0 at x == 4000
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            controller.isOnPreviousBoundaryPage && controller.activePagerPage == 0 && abs(initialScrollView.contentOffset.x - 4000) <= 2.0
+        }
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
+
+        // 3. Mid-swipe spread split does NOT destroy UIScrollView or yank an in-flight drag back to the starting slot
+        fakeState.setDirection(direction: .ltr)
+        fakeState.goToSlot(slotIndex: 1) // pagerPage == 2 in LTR (x == 1600)
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) { controller.activePagerPage == 2 }
+        let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
+        let ltrScrollViewID = ObjectIdentifier(ltrScrollView)
+
+        ltrScrollView.delegate?.scrollViewWillBeginDragging?(ltrScrollView)
+        ltrScrollView.bounds.origin = CGPoint(x: 2000, y: 0) // halfway between slot 1 (1600) and slot 2 (2400)
+        ltrScrollView.layoutIfNeeded()
+        // Trigger spread split mid-drag (as LazyHStack materializes slot 2 and decodes a landscape page)
+        fakeState.updateSlots(fiveSplitSlots)
+        window.layoutIfNeeded()
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), ltrScrollViewID)
+        XCTAssertEqual(ltrScrollView.contentOffset.x, 2000, accuracy: 2.0, "Mid-drag spread split must not yank active swipe back")
+
+        // Complete the swipe onto slot 2 (pagerPage == 3 at x == 2400)
+        ltrScrollView.bounds.origin = CGPoint(x: 2400, y: 0)
+        ltrScrollView.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(25))
+        var targetOffset = CGPoint(x: 2400, y: 0)
+        ltrScrollView.delegate?.scrollViewWillEndDragging?(ltrScrollView, withVelocity: .zero, targetContentOffset: &targetOffset)
+        ltrScrollView.delegate?.scrollViewDidEndDragging?(ltrScrollView, willDecelerate: false)
+
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 2 && controller.activePagerPage == 3
+        }
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), ltrScrollViewID)
     }
 
     func testReaderGifPageShowsShareButtonExportsGifAndSurfacesShareErrors() async throws {
