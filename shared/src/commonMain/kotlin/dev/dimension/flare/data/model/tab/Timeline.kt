@@ -20,6 +20,7 @@ import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformRuntimeData
+import dev.dimension.flare.model.PlatformSpec
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiText
@@ -723,12 +724,21 @@ internal class TimelineResolver(
             is TimelineSlotContent.Group -> null
         }
 
-    @OptIn(ExperimentalSerializationApi::class)
-    fun resolveGuestPlatformId(slot: TimelineSlot): String? =
-        when (val content = slot.content) {
-            is TimelineSlotContent.Source -> resolveGuestPlatformId(content.source)
-            is TimelineSlotContent.Group -> null
+    fun bindGuestSource(
+        source: TimelineSourceRef,
+        platforms: Map<String, PlatformSpec>,
+    ): TimelineSourceRef? {
+        val guest = runCatching { specs[source.specId]?.decode(source.data) }.getOrNull() as? TimelineSpec.GuestPluginData
+        val platformId = source.ownerPlatformId ?: guest?.platformId ?: return source
+        val platform = platforms[platformId] ?: return null
+        val host = platform.standaloneGuestHost ?: return null
+        if (guest is TimelineSpec.GuestPluginResourceData && guest.platformId == platformId && guest.host != host) {
+            val updated = guest.copy(host = host)
+            val candidate = platform.guestTimelineTabs.firstOrNull { it.target.spec.id == source.specId && it.target.data == updated }
+            if (candidate != null) return candidate.target.toSource(source.title, source.icon)
         }
+        return source.copy(ownerPlatformId = platformId)
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun resolveLoader(source: TimelineSourceRef): Flow<RemoteLoader<UiTimelineV2>> =
@@ -780,14 +790,6 @@ internal class TimelineResolver(
         val spec = specs[source.specId] ?: return null
         val data = runCatching { spec.decode(source.data) }.getOrNull() ?: return null
         return (data as? TimelineSpec.AccountData)?.accountKey
-    }
-
-    @OptIn(ExperimentalSerializationApi::class)
-    private fun resolveGuestPlatformId(source: TimelineSourceRef): String? {
-        source.ownerPlatformId?.let { return it }
-        val spec = specs[source.specId] ?: return null
-        val data = runCatching { spec.decode(source.data) }.getOrNull() ?: return null
-        return (data as? TimelineSpec.GuestPluginData)?.platformId
     }
 
     private fun <T : TimelineSpec.Data> TimelineSpec<T>.createLoader(encodedData: String): Flow<RemoteLoader<UiTimelineV2>> =

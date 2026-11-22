@@ -10,6 +10,7 @@ import dev.dimension.flare.data.datasource.microblog.NotificationFilter
 import dev.dimension.flare.data.datasource.microblog.PostActionFamily
 import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.SearchOperation
+import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
 import dev.dimension.flare.data.datasource.microblog.list.ListMetaData
 import dev.dimension.flare.data.datasource.microblog.loader.RelationActionType
@@ -23,6 +24,7 @@ import dev.dimension.flare.feature.plugin.host.PluginTransportRequestV1
 import dev.dimension.flare.feature.plugin.host.PluginTransportResponseV1
 import dev.dimension.flare.feature.plugin.installer.PluginInstaller
 import dev.dimension.flare.feature.plugin.installer.TestFppFactory
+import dev.dimension.flare.feature.plugin.lifecycle.PluginRunningSnapshotV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginStateStore
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.login.requireLoginSuccess
@@ -89,6 +91,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -1656,20 +1659,27 @@ class PluginDetailCapabilityTest {
                 recPost.clickEvent,
             )
 
-            // GuestPlugin session also exposes manga and binds ProxyRef.Global
-            val guestSource = PluginDataSourceV1.guest(plugin, runtimePool, ORIGIN, "en", emptyMap(), null)
-            val guestManga = requireNotNull(guestSource.capabilitySet.manga)
-            val guestDetail = guestManga.mangaDetail(mangaKey)
+            val snapshot = PluginRunningSnapshotV1(mapOf(plugin.installed.pluginId to plugin), emptyList())
+            val platform = snapshot.platformSpecForTest(runtimePool, scope)
+
+            fun guestManga() = requireNotNull(platform.guestDataSource(mangaKey.host, "en").capabilities.manga)
+
+            val guestDetail = guestManga().mangaDetail(mangaKey)
             withContext(Dispatchers.Default) {
                 assertIs<LoadState.NotLoading>(guestDetail.refreshState.first { it !is LoadState.Loading })
                 assertIs<CacheState.Success<UiMangaDetail>>(guestDetail.data.first { it is CacheState.Success })
             }
-            val guestPages = guestManga.chapterPages(mangaKey, "ch-2")
+            val guestPages = guestManga().chapterPages(mangaKey, "ch-2")
             assertEquals(ProxyRef.Global, assertIs<UiMangaPage.Ready>(guestPages[0]).media.proxy)
             assertEquals(
                 ProxyRef.Global,
-                guestManga.resolvePageMedia(mangaKey, "ch-2", "p-2", "ptok-2").proxy,
+                guestManga().resolvePageMedia(mangaKey, "ch-2", "p-2", "ptok-2").proxy,
             )
+            val guestComments = guestManga().mangaComments(mangaKey).load(20, PagingRequest.Refresh).data
+            val guestRecs = guestManga().mangaRecommendations(mangaKey).load(20, PagingRequest.Refresh).data
+            assertEquals("c-1", guestComments.single().statusKey.id)
+            assertEquals("rec-1", guestRecs.single().statusKey.id)
+            assertNotSame(platform.guestDataSource(mangaKey.host, "fr"), platform.guestDataSource(mangaKey.host, "en"))
         }
 
     @Test

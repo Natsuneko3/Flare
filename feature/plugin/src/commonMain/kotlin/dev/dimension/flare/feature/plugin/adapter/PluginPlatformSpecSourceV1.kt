@@ -99,6 +99,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -182,6 +183,7 @@ private class PluginPlatformSpecV1(
     private val manifest = plugin.installed.manifest
     private val platform = manifest.socialPlatform
     private val accountCapabilities = PluginAccountCapabilitiesV1(plugin, runtimePool, coroutineScope)
+    private val standaloneGuestSources = MutableStateFlow<Map<Pair<String, String>, PluginDataSourceV1>>(emptyMap())
 
     val pluginId: String = plugin.installed.pluginId
     override val platformId: String = platform.id
@@ -299,14 +301,22 @@ private class PluginPlatformSpecV1(
             } catch (error: IllegalStateException) {
                 throw IllegalArgumentException(error.message ?: "Invalid HTTPS origin", error)
             }
-        return PluginDataSourceV1.guest(
-            plugin = plugin,
-            runtimePool = runtimePool,
-            origin = origin,
-            locale = normalizePluginInvocationLocale(locale),
-            timelineSpecs = specs,
-            dynamicTimelineSpec = dynamicTimelineSpec,
-        )
+        val normalizedLocale = normalizePluginInvocationLocale(locale)
+
+        fun create() =
+            PluginDataSourceV1.guest(
+                plugin = plugin,
+                runtimePool = runtimePool,
+                origin = origin,
+                locale = normalizedLocale,
+                timelineSpecs = specs,
+                dynamicTimelineSpec = dynamicTimelineSpec,
+            )
+        if (standaloneGuestHost == null) return create()
+        val key = origin to normalizedLocale
+        return standaloneGuestSources
+            .updateAndGet { sources -> if (key in sources) sources else sources + (key to create()) }
+            .getValue(key)
     }
 
     override val detector: PlatformDetector =

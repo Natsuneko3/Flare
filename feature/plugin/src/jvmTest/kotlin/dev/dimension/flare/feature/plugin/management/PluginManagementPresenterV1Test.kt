@@ -42,6 +42,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -537,6 +538,7 @@ class PluginManagementPresenterV1Test {
                 presenter.confirmInstall(addDefaultTabs = false)
                 runCurrent()
                 assertTrue(homeSlots.isEmpty())
+                val firstSource = registry.require("MangaGuest").guestDataSource("api.manga.example", "en")
 
                 // 3. Uninstall, re-inspect, confirmInstall(addDefaultTabs = true) -> homeSlots contains GuestPlugin slot
                 presenter.uninstall(review.pluginId)
@@ -545,6 +547,7 @@ class PluginManagementPresenterV1Test {
                 assertEquals(listOf("Popular"), secondReview.defaultGuestTabTitles)
                 presenter.confirmInstall(addDefaultTabs = true)
                 runCurrent()
+                assertNotSame(firstSource, registry.require("MangaGuest").guestDataSource("api.manga.example", "en"))
                 assertEquals(1, homeSlots.size)
                 assertEquals("MangaGuest", homeSlots.single().first)
                 assertTrue(homeSlots.single().second.endsWith(":MangaGuest:api.manga.example:popular"))
@@ -583,12 +586,14 @@ class PluginManagementPresenterV1Test {
                 assertEquals(listOf("Popular"), initialReview.defaultGuestTabTitles)
                 presenter.confirmInstall(addDefaultTabs = false)
                 assertTrue(addedPlatforms.isEmpty())
+                val firstSource = registry.require("MangaGuest").guestDataSource("api.manga.example", "en")
 
                 val upgradeReview = presenter.inspect(v2Package.toString())
                 assertEquals(emptyList(), upgradeReview.defaultGuestTabTitles)
                 assertFalse(upgradeReview.canAutoAddDefaultTabs)
                 presenter.confirmInstall(addDefaultTabs = true)
                 assertTrue(addedPlatforms.isEmpty())
+                assertNotSame(firstSource, registry.require("MangaGuest").guestDataSource("api.manga.example", "en"))
             } finally {
                 presenter.close()
                 subsystem.runtimePool.close()

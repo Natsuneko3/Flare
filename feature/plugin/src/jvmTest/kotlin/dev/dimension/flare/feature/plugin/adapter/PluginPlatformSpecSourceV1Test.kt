@@ -16,6 +16,7 @@ import dev.dimension.flare.feature.plugin.host.PluginTransportRequestV1
 import dev.dimension.flare.feature.plugin.host.PluginTransportResponseV1
 import dev.dimension.flare.feature.plugin.installer.PluginInstaller
 import dev.dimension.flare.feature.plugin.installer.TestFppFactory
+import dev.dimension.flare.feature.plugin.lifecycle.PluginRunningSnapshotV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginStateStore
 import dev.dimension.flare.feature.plugin.login.PluginFormLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
@@ -295,24 +296,7 @@ class PluginPlatformSpecSourceV1Test {
             val installer = PluginInstaller(files, store)
             installer.commit(installer.inspect(archive), confirmed = true, activate = store::install)
             val snapshot = PluginStateStore.open(files, root / "state").running
-            val pending =
-                object : PluginOAuthPendingStoreV1 {
-                    override suspend fun save(pending: PluginOAuthPendingV1): Unit = error("Unused")
-
-                    override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
-
-                    override suspend fun consume(pending: PluginOAuthPendingV1): Boolean = false
-                }
-            val platform =
-                PluginPlatformSpecSourceV1(
-                    snapshot,
-                    pool,
-                    PluginOAuthLoginCoordinatorV1(pool, pending, runningPlugin = snapshot.plugins::get),
-                    PluginFormLoginCoordinatorV1(pool),
-                    PluginWebCookieLoginCoordinatorV1(pool),
-                    scope,
-                ).load(emptySet()).single()
-            block(platform)
+            block(snapshot.platformSpecForTest(pool, scope))
         } finally {
             scope.cancel()
             pool.close()
@@ -354,28 +338,33 @@ class PluginPlatformSpecSourceV1Test {
             val installer = PluginInstaller(files, store)
             installer.commit(installer.inspect(archive), confirmed = true, activate = store::install)
             val snapshot = PluginStateStore.open(files, root / "state").running
-            val pending =
-                object : PluginOAuthPendingStoreV1 {
-                    override suspend fun save(pending: PluginOAuthPendingV1): Unit = error("Unused")
-
-                    override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
-
-                    override suspend fun consume(pending: PluginOAuthPendingV1): Boolean = false
-                }
-            val platform =
-                PluginPlatformSpecSourceV1(
-                    snapshot,
-                    pool,
-                    PluginOAuthLoginCoordinatorV1(pool, pending, runningPlugin = snapshot.plugins::get),
-                    PluginFormLoginCoordinatorV1(pool),
-                    PluginWebCookieLoginCoordinatorV1(pool),
-                    scope,
-                ).load(emptySet()).single() as LoginPlatformProvider
-            block(platform)
+            block(snapshot.platformSpecForTest(pool, scope) as LoginPlatformProvider)
         } finally {
             scope.cancel()
             pool.close()
             files.deleteRecursively(root, mustExist = false)
         }
     }
+}
+
+internal fun PluginRunningSnapshotV1.platformSpecForTest(
+    pool: PluginRuntimePool,
+    scope: CoroutineScope,
+): PlatformSpec {
+    val pending =
+        object : PluginOAuthPendingStoreV1 {
+            override suspend fun save(pending: PluginOAuthPendingV1): Unit = error("Unused")
+
+            override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+            override suspend fun consume(pending: PluginOAuthPendingV1): Boolean = false
+        }
+    return PluginPlatformSpecSourceV1(
+        this,
+        pool,
+        PluginOAuthLoginCoordinatorV1(pool, pending, runningPlugin = plugins::get),
+        PluginFormLoginCoordinatorV1(pool),
+        PluginWebCookieLoginCoordinatorV1(pool),
+        scope,
+    ).load(emptySet()).single()
 }

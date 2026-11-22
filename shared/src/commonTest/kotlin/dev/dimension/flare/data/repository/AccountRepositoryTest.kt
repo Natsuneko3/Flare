@@ -51,6 +51,7 @@ import dev.dimension.flare.data.model.ProxySettings
 import dev.dimension.flare.data.model.tab.GroupSource
 import dev.dimension.flare.data.model.tab.SYSTEM_HOME_MIXED_TIMELINE_ID
 import dev.dimension.flare.data.model.tab.ShortcutSpec
+import dev.dimension.flare.data.model.tab.TimelinePresentation
 import dev.dimension.flare.data.model.tab.TimelineResolver
 import dev.dimension.flare.data.model.tab.TimelineSlot
 import dev.dimension.flare.data.model.tab.TimelineSlotContent
@@ -83,6 +84,7 @@ import dev.dimension.flare.ui.presenter.compose.SaveDraftUseCase
 import dev.dimension.flare.ui.presenter.home.RememberedAccountSelection
 import dev.dimension.flare.ui.render.toUiPlainText
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -635,34 +637,8 @@ class AccountRepositoryTest : RobolectricTest() {
         runTest {
             val runtimeData = testPlatformRuntimeData()
             val registry = PlatformRegistry(runtimeData)
-            val guestSpec =
-                TimelineSpec(
-                    id = "plugin:manga:MangaGuest:schema1:guest-timeline:popular",
-                    title = UiText.Raw("Popular"),
-                    icon = UiIcon.World.asType(),
-                    serializer = TimelineSpec.GuestPluginResourceData.serializer(),
-                    targetId = { "${it.platformId}:${it.host}:${it.resourceId}" },
-                    loaderFactory = { _, _ ->
-                        flowOf(notSupported())
-                    },
-                )
-            val guestCandidate =
-                guestSpec.candidate(
-                    TimelineSpec.GuestPluginResourceData("MangaGuest", "api.manga.example", "popular"),
-                    title = UiText.Raw("Manga Guest"),
-                )
-
-            fun guestPlatform(guestHost: String?) =
-                object : PlatformSpec by registry.defaultGuest {
-                    override val platformId = "MangaGuest"
-                    override val isDefaultGuest = false
-                    override val standaloneGuestHost = guestHost
-                    override val timelineSpecs = persistentListOf(guestSpec)
-                    override val guestDefaultTabs =
-                        if (guestHost != null) persistentListOf(guestCandidate) else persistentListOf()
-                    override val guestTimelineTabs =
-                        if (guestHost != null) persistentListOf(guestCandidate) else persistentListOf()
-                }
+            val guestPlatform = registry.mangaGuestPlatform("api.manga.example")
+            val guestCandidate = guestPlatform.guestDefaultTabs.single()
 
             val accountPlatform =
                 object : PlatformSpec by registry.defaultGuest {
@@ -692,7 +668,7 @@ class AccountRepositoryTest : RobolectricTest() {
                 runCurrent()
                 settings.tabSettingsV2.first { it.homeSlots.any { slot -> slot.id == accountTabId } }
 
-                registry.replaceExternal("MangaGuest", guestPlatform("api.manga.example"))
+                registry.replaceExternal("MangaGuest", guestPlatform)
                 coordinator.addGuestPluginDefaultTabs("MangaGuest")
                 runCurrent()
 
@@ -725,13 +701,69 @@ class AccountRepositoryTest : RobolectricTest() {
                 }
 
                 // Disabling standalone guest host removes guest slots and collapses SystemHome back to the single account tab.
-                registry.replaceExternal("MangaGuest", guestPlatform(null))
+                registry.replaceExternal("MangaGuest", registry.mangaGuestPlatform(null))
                 runCurrent()
                 val afterDisable =
                     settings.tabSettingsV2.first {
                         it.homeSlots.map { slot -> slot.id } == listOf(accountTabId)
                     }
                 assertEquals(listOf(accountTabId), afterDisable.homeSlots.map { it.id })
+            } finally {
+                job.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun savedGuestTabsFollowTheInstalledOriginAtStartupAndAfterAnUpdate() =
+        runTest {
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+            val old = registry.mangaGuestPlatform("old.manga.example")
+            val installed = registry.mangaGuestPlatform("api.manga.example")
+            registry.replaceExternal(installed.platformId, installed)
+            val repository = createRepository(backgroundScope, registry = registry)
+            val resolver = TimelineResolver(runtimeData, RepositoryAccountService(repository))
+            val settings = SettingsRepository(fileStorage, appDataStore, resolver, cacheDatabase)
+            val progress = MangaProgressRepository(cacheDatabase)
+            val unrelated = resolver.toSlot(CommonTimelineSpecs.guestHome.candidate(CommonTimelineSpecs.GuestHomeData("other.example")))
+            val presentation =
+                TimelinePresentation(titleOverride = "Weekend reading", iconOverride = UiIcon.Featured.asType(), enabled = false)
+
+            fun savedTabs(platform: PlatformSpec): List<TimelineSlot> {
+                val popular = resolver.toSlot(platform.guestDefaultTabs.single()).copy(presentation = presentation)
+                val latest = resolver.toSlot(platform.guestTimelineTabs.last()).copy(id = "custom-latest")
+                val group =
+                    TimelineSlot(
+                        id = "reading-group",
+                        content = TimelineSlotContent.Group(children = listOf(latest, unrelated, popular)),
+                        presentation = presentation,
+                    )
+                return listOf(unrelated, popular, group)
+            }
+
+            val (_, previousDefault, previousGroup) = savedTabs(old)
+            val currentDefault = resolver.toSlot(installed.guestDefaultTabs.single())
+            val source = assertIs<TimelineSlotContent.Source>(previousDefault.content).source
+            val legacyDefault = previousDefault.copy(content = TimelineSlotContent.Source(source.copy(ownerPlatformId = null)))
+            val group = assertIs<TimelineSlotContent.Group>(previousGroup.content)
+            val groupWithDuplicate = previousGroup.copy(content = group.copy(children = group.children + currentDefault))
+            settings.updateTabSettingsV2 {
+                copy(homeSlots = listOf(unrelated, legacyDefault, groupWithDuplicate, currentDefault))
+            }
+            val owner = AccountType.GuestPlugin(installed.platformId, requireNotNull(installed.standaloneGuestHost))
+            val manga = MicroBlogKey("series", owner.host)
+            progress.recordPage(owner, manga, "chapter", pageIndex = 1, pageCount = 5, isCompleted = false)
+            val job = SupervisorJob()
+            try {
+                AccountTabSyncCoordinator(repository, settings, CoroutineScope(backgroundScope.coroutineContext + job), resolver, progress)
+                val atStartup = settings.tabSettingsV2.first { tabSettings -> tabSettings.homeSlots.none { it.id == previousDefault.id } }
+                assertEquals(savedTabs(installed), atStartup.homeSlots)
+
+                val updated = registry.mangaGuestPlatform("new.manga.example:8443")
+                registry.replaceExternal(updated.platformId, updated)
+                val afterUpdate = settings.tabSettingsV2.first { tabSettings -> tabSettings.homeSlots.none { it.id == currentDefault.id } }
+                assertEquals(savedTabs(updated), afterUpdate.homeSlots)
+                assertEquals("chapter", progress.observe(owner, manga).first().lastChapterId)
             } finally {
                 job.cancelAndJoin()
             }
@@ -1925,6 +1957,32 @@ class AccountRepositoryTest : RobolectricTest() {
             beforeWrite()
             settings.value = updated
             return updated
+        }
+    }
+
+    private fun PlatformRegistry.mangaGuestPlatform(host: String?): PlatformSpec {
+        val timelines =
+            listOf("popular", "latest").associateWith { id ->
+                TimelineSpec(
+                    id = "plugin:manga:MangaGuest:schema1:guest-timeline:$id",
+                    title = UiText.Raw(id),
+                    icon = UiIcon.World.asType(),
+                    serializer = TimelineSpec.GuestPluginResourceData.serializer(),
+                    targetId = { "${it.platformId}:${it.host}:${it.resourceId}" },
+                    loaderFactory = { _, _ -> flowOf(notSupported()) },
+                )
+            }
+        return object : PlatformSpec by defaultGuest {
+            override val platformId = "MangaGuest"
+            override val isDefaultGuest = false
+            override val standaloneGuestHost = host
+            override val timelineSpecs = timelines.values.toImmutableList()
+            override val guestTimelineTabs =
+                timelines
+                    .mapNotNull { (id, spec) ->
+                        host?.let { spec.candidate(TimelineSpec.GuestPluginResourceData(platformId, it, id)) }
+                    }.toImmutableList()
+            override val guestDefaultTabs = guestTimelineTabs.take(1).map { it.copy(title = UiText.Raw("Manga Guest")) }.toImmutableList()
         }
     }
 
