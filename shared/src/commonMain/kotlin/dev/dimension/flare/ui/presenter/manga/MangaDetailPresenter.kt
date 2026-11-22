@@ -12,10 +12,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.paging.LoadState
 import androidx.paging.Pager
 import androidx.paging.cachedIn
 import androidx.paging.compose.collectAsLazyPagingItems
+import dev.dimension.flare.common.CacheState
 import dev.dimension.flare.common.PagingState
+import dev.dimension.flare.common.isRefreshing
+import dev.dimension.flare.common.refreshSuspend
 import dev.dimension.flare.common.toPagingState
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.mapper.saveToDatabase
@@ -54,6 +58,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -105,15 +111,40 @@ public class MangaDetailPresenter(
         serviceFlow.map { service -> service.capabilities.manga }
     }
 
+    private val refreshTrigger = MutableStateFlow(0)
+
     private val detailCacheFlow by lazy {
-        serviceFlow.flatMapLatestUiState { service ->
+        combine(serviceFlow, refreshTrigger) { service, refreshCount ->
+            service to refreshCount
+        }.flatMapLatestUiState { (service, refreshCount) ->
             val mangaDataSource =
                 service.capabilities.manga
                     ?: error("Current service does not support manga data source")
-            mangaDataSource
-                .mangaDetail(mangaKey)
-                .toUi()
-                .map { state -> state.map { it.bindMangaProxy(proxyRef) } }
+            val cacheable = mangaDataSource.mangaDetail(mangaKey)
+            if (refreshCount == 0) {
+                cacheable
+                    .toUi()
+                    .map { state -> state.map { it.bindMangaProxy(proxyRef) } }
+            } else {
+                flow {
+                    var hasObservedSuccessInAttempt = false
+                    combine(cacheable.data, cacheable.refreshState) { data, refresh ->
+                        if (!hasObservedSuccessInAttempt && data is CacheState.Success && refresh is LoadState.NotLoading) {
+                            hasObservedSuccessInAttempt = true
+                        }
+                        if (hasObservedSuccessInAttempt && data is CacheState.Success) {
+                            UiState.Success(data.data.bindMangaProxy(proxyRef))
+                        } else {
+                            when {
+                                refresh is LoadState.Loading -> UiState.Loading()
+                                refresh is LoadState.Error -> UiState.Error(refresh.error)
+                                data is CacheState.Success -> UiState.Success(data.data.bindMangaProxy(proxyRef))
+                                else -> UiState.Loading()
+                            }
+                        }
+                    }.collect { emit(it) }
+                }
+            }
         }
     }
 
@@ -129,6 +160,10 @@ public class MangaDetailPresenter(
         public val supportsRecommendations: Boolean
         public val comments: PagingState<UiTimelineV2>
         public val recommendations: PagingState<UiTimelineV2>
+        public val isRefreshing: Boolean
+            get() = false
+
+        public fun refresh() {}
 
         public fun selectGroup(groupId: String)
 
@@ -162,17 +197,19 @@ public class MangaDetailPresenter(
         val rawDetail = detailState.takeSuccess()
         val currentDataSource by mangaDataSourceFlow.collectAsState(null)
 
-        var resolvedMangaKey by remember(accountType, mangaKey) { mutableStateOf(mangaKey) }
-        if (rawDetail != null && rawDetail.mangaKey != resolvedMangaKey) {
-            resolvedMangaKey = rawDetail.mangaKey
-        }
-        val effectiveMangaKey = rawDetail?.mangaKey ?: resolvedMangaKey
-        val latestEffectiveMangaKey by rememberUpdatedState(effectiveMangaKey)
-
-        var hasLoadedDetail by remember(accountType, mangaKey) { mutableStateOf(false) }
+        var lastLoadedDetail by remember(accountType, mangaKey) { mutableStateOf<UiMangaDetail?>(null) }
         if (rawDetail != null) {
-            hasLoadedDetail = true
+            lastLoadedDetail = rawDetail
         }
+        val effectiveRawDetail = rawDetail ?: lastLoadedDetail
+        val hasLoadedDetail = lastLoadedDetail != null
+
+        var resolvedMangaKey by remember(accountType, mangaKey) { mutableStateOf(mangaKey) }
+        if (effectiveRawDetail != null && effectiveRawDetail.mangaKey != resolvedMangaKey) {
+            resolvedMangaKey = effectiveRawDetail.mangaKey
+        }
+        val effectiveMangaKey = effectiveRawDetail?.mangaKey ?: resolvedMangaKey
+        val latestEffectiveMangaKey by rememberUpdatedState(effectiveMangaKey)
 
         val progressFlow =
             remember(accountType, effectiveMangaKey) {
@@ -194,8 +231,8 @@ public class MangaDetailPresenter(
 
         var userSelectedGroupId by remember(accountType, mangaKey) { mutableStateOf<String?>(null) }
         val selectedGroupId =
-            remember(rawDetail, userSelectedGroupId, progress.lastChapterId) {
-                val groups = rawDetail?.chapterGroups.orEmpty()
+            remember(effectiveRawDetail, userSelectedGroupId, progress.lastChapterId) {
+                val groups = effectiveRawDetail?.chapterGroups.orEmpty()
                 if (groups.isEmpty()) {
                     null
                 } else {
@@ -209,10 +246,10 @@ public class MangaDetailPresenter(
 
         val chapterSortDescending = progress.chapterSortDescending
         val chapters =
-            remember(rawDetail, selectedGroupId, chapterSortDescending, progress) {
+            remember(effectiveRawDetail, selectedGroupId, chapterSortDescending, progress) {
                 val activeGroup =
                     selectedGroupId?.let { id ->
-                        rawDetail?.chapterGroups?.firstOrNull { it.id == id }
+                        effectiveRawDetail?.chapterGroups?.firstOrNull { it.id == id }
                     }
                 if (activeGroup == null) {
                     persistentListOf()
@@ -239,12 +276,12 @@ public class MangaDetailPresenter(
             }
 
         val primaryReadTarget =
-            remember(rawDetail, selectedGroupId, progress) {
-                rawDetail?.let { computePrimaryReadTarget(it, selectedGroupId, progress) }
+            remember(effectiveRawDetail, selectedGroupId, progress) {
+                effectiveRawDetail?.let { computePrimaryReadTarget(it, selectedGroupId, progress) }
             }
 
-        LaunchedEffect(accountType, effectiveMangaKey, rawDetail) {
-            rawDetail
+        LaunchedEffect(accountType, effectiveMangaKey, effectiveRawDetail) {
+            effectiveRawDetail
                 ?.toHistoryFeed(
                     accountType = accountType,
                     mangaKey = effectiveMangaKey,
@@ -264,13 +301,14 @@ public class MangaDetailPresenter(
         }
 
         val translation =
-            rawDetail?.let { detail ->
+            effectiveRawDetail?.let { detail ->
                 remember(detail) { MangaTranslatePresenter(detail) }.body()
             }
         val displayedDetailState =
-            remember(detailState, translation?.detail) {
-                if (detailState is UiState.Success && translation != null) {
-                    UiState.Success(translation.detail)
+            remember(detailState, lastLoadedDetail, translation?.detail) {
+                val loaded = lastLoadedDetail
+                if (loaded != null) {
+                    UiState.Success(translation?.detail ?: loaded)
                 } else {
                     detailState
                 }
@@ -307,6 +345,11 @@ public class MangaDetailPresenter(
                 remember { PagingState.Empty {} }
             }
 
+        val isRefreshing =
+            (lastLoadedDetail != null && detailState is UiState.Loading) ||
+                (supportsComments && comments.isRefreshing) ||
+                (supportsRecommendations && recommendations.isRefreshing)
+
         return object : State {
             override val detail: UiState<UiMangaDetail> = displayedDetailState
             override val translation: MangaTranslatePresenter.State? = translation
@@ -318,6 +361,29 @@ public class MangaDetailPresenter(
             override val supportsRecommendations: Boolean = supportsRecommendations
             override val comments: PagingState<UiTimelineV2> = comments
             override val recommendations: PagingState<UiTimelineV2> = recommendations
+            override val isRefreshing: Boolean = isRefreshing
+
+            override fun refresh() {
+                refreshTrigger.update { it + 1 }
+                if (supportsComments) {
+                    scope.launch {
+                        if (comments is PagingState.Error) {
+                            comments.onRetry()
+                        } else {
+                            comments.refreshSuspend()
+                        }
+                    }
+                }
+                if (supportsRecommendations) {
+                    scope.launch {
+                        if (recommendations is PagingState.Error) {
+                            recommendations.onRetry()
+                        } else {
+                            recommendations.refreshSuspend()
+                        }
+                    }
+                }
+            }
 
             override fun selectGroup(groupId: String) {
                 userSelectedGroupId = groupId

@@ -63,6 +63,7 @@ import dev.dimension.flare.ui.render.uiRichTextOf
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -87,6 +88,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.KSerializer
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -962,6 +964,364 @@ class MangaDetailPresenterTest {
             }
         }
 
+    @Test
+    fun inPlaceRefreshRetainsDetailSelectedGroupAndRecoversFromTransientError() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-detail-refresh-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            var now = 20_000L
+            val progressRepository = MangaProgressRepository(cacheDatabase) { now++ }
+            val groupA =
+                UiMangaChapterGroup(
+                    id = "group-a",
+                    title = UiText.Raw("Serial"),
+                    chapters =
+                        persistentListOf(
+                            UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = "https://manga.example/ch-1"),
+                            UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = "https://manga.example/ch-2"),
+                            UiMangaChapter("ch-3", "Chapter 3", null, null, locked = false, url = "https://manga.example/ch-3"),
+                        ),
+                )
+            val initialDetail =
+                sampleDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            groupA,
+                            UiMangaChapterGroup(
+                                id = "group-b",
+                                title = UiText.Raw("Tankobon"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter(
+                                            id = "vol-1",
+                                            title = "Volume 1",
+                                            subtitle = null,
+                                            uploadedAt = null,
+                                            locked = false,
+                                            url = "https://manga.example/vol-1",
+                                        ),
+                                    ),
+                            ),
+                        ),
+                )
+            val updatedDetail =
+                initialDetail.copy(
+                    title = "Updated Saga",
+                    chapterGroups =
+                        persistentListOf(
+                            groupA,
+                            UiMangaChapterGroup(
+                                id = "group-b",
+                                title = UiText.Raw("Tankobon"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter(
+                                            id = "vol-1",
+                                            title = "Volume 1",
+                                            subtitle = null,
+                                            uploadedAt = null,
+                                            locked = false,
+                                            url = "https://manga.example/vol-1",
+                                        ),
+                                        UiMangaChapter(
+                                            id = "ch-4",
+                                            title = "Chapter 4",
+                                            subtitle = null,
+                                            uploadedAt = null,
+                                            locked = false,
+                                            url = "https://manga.example/ch-4",
+                                        ),
+                                    ),
+                            ),
+                        ),
+                )
+
+            var nextFetch: suspend () -> UiMangaDetail = { initialDetail }
+            val mangaDataSource =
+                FakeDetailMangaDataSource(
+                    detail = initialDetail,
+                    fetchDetail = { nextFetch() },
+                )
+            val accountService = FakeMangaAccountService(accountKey, mangaDataSource)
+            val presenterJob = SupervisorJob()
+            val presenterScope = CoroutineScope(dispatcher + presenterJob)
+            val refreshDeferred = CompletableDeferred<UiMangaDetail>()
+            val errorGate = CompletableDeferred<Unit>()
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                    },
+                )
+            }
+            val presenter = MangaDetailPresenter(accountType = accountType, mangaKey = mangaKey)
+            try {
+                val states = MutableStateFlow<MangaDetailPresenter.State?>(null)
+                presenterScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+
+                // 1. Initial load succeeds with group-a & group-b; select group-b (`selectedGroupId == "group-b"`).
+                val initial = awaitState(states) { it.detail is UiState.Success }
+                assertFalse(initial.isRefreshing)
+                initial.selectGroup("group-b")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val groupBState = awaitState(states) { it.selectedGroupId == "group-b" }
+                assertEquals(listOf("vol-1"), groupBState.chapters.map { it.chapter.id })
+
+                // 2. Gate next mangaDetail fetch on a CompletableDeferred, call state.refresh().
+                val refreshEntered = CompletableDeferred<Unit>()
+                nextFetch = {
+                    refreshEntered.complete(Unit)
+                    refreshDeferred.await()
+                }
+                groupBState.refresh()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) { refreshEntered.await() }
+                }
+                val inFlight = awaitState(states) { it.isRefreshing }
+                assertTrue(inFlight.isRefreshing)
+                assertIs<UiState.Success<UiMangaDetail>>(inFlight.detail)
+                assertEquals("Sample Manga", inFlight.detail.takeSuccess()?.title)
+                assertEquals("group-b", inFlight.selectedGroupId)
+                assertEquals(listOf("vol-1"), inFlight.chapters.map { it.chapter.id })
+                assertEquals("vol-1", inFlight.primaryReadTarget?.chapterId)
+
+                // 3. Complete deferred with updated detail (new title "Updated Saga" + new chapter "ch-4" in group-b).
+                refreshDeferred.complete(updatedDetail)
+                val refreshed = awaitState(states) { !it.isRefreshing && it.detail.takeSuccess()?.title == "Updated Saga" }
+                assertEquals("group-b", refreshed.selectedGroupId)
+                assertEquals(listOf("ch-4", "vol-1"), refreshed.chapters.map { it.chapter.id })
+
+                // 4. Configure next mangaDetail fetch to fail with IOException("network blip"), call refreshed.refresh().
+                val errorEntered = CompletableDeferred<Unit>()
+                nextFetch = {
+                    errorEntered.complete(Unit)
+                    errorGate.await()
+                    throw IOException("network blip")
+                }
+                refreshed.refresh()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) { errorEntered.await() }
+                }
+                awaitState(states) { it.isRefreshing }
+                errorGate.complete(Unit)
+                val afterError = awaitState(states) { !it.isRefreshing }
+                assertEquals("Updated Saga", afterError.detail.takeSuccess()?.title)
+                assertEquals("group-b", afterError.selectedGroupId)
+                assertEquals(listOf("ch-4", "vol-1"), afterError.chapters.map { it.chapter.id })
+            } finally {
+                refreshDeferred.cancel()
+                errorGate.complete(Unit)
+                presenterJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun inPlaceRefreshPreservesActiveTranslationAndRefreshesSocialPagers() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-detail-refresh-social-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val appDataStore = AppDataStore(fileStorage)
+            appDataStore.appSettingsStore.updateData {
+                it.copy(
+                    aiConfig = it.aiConfig.copy(type = AppSettings.AiConfig.Type.OnDevice),
+                    translateConfig =
+                        AppSettings.TranslateConfig(
+                            preTranslate = false,
+                            provider = AppSettings.TranslateConfig.Provider.AI,
+                            showOriginalWithTranslation = false,
+                        ),
+                )
+            }
+            val ai =
+                AiCompletionService(
+                    OpenAIService(),
+                    object : OnDeviceAI {
+                        override suspend fun isAvailable(): Boolean = true
+
+                        override suspend fun translate(
+                            source: String,
+                            targetLanguage: String,
+                            prompt: String,
+                        ): String =
+                            source
+                                .replace("Original Saga", "Translated Saga")
+                                .replace("Updated Saga", "Translated Updated Saga")
+
+                        override suspend fun tldr(
+                            source: String,
+                            targetLanguage: String,
+                            prompt: String,
+                        ): String? = null
+                    },
+                )
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            val progressRepository = MangaProgressRepository(cacheDatabase) { 30_000L }
+            val initialDetail =
+                sampleDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-a",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = "https://manga.example/ch-1"),
+                                    ),
+                            ),
+                        ),
+                ).copy(title = "Original Saga")
+            val updatedDetail =
+                initialDetail.copy(
+                    title = "Updated Saga",
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-a",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = "https://manga.example/ch-1"),
+                                        UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = "https://manga.example/ch-2"),
+                                    ),
+                            ),
+                        ),
+                )
+
+            var nextFetch: suspend () -> UiMangaDetail = { initialDetail }
+            var currentComments = listOf(createPost(MicroBlogKey("c-1", mangaKey.host)))
+            var currentRecommendations = listOf(createPost(MicroBlogKey("r-1", mangaKey.host)))
+            val refreshDeferred = CompletableDeferred<UiMangaDetail>()
+            val mangaDataSource =
+                FakeDetailMangaDataSource(
+                    detail = initialDetail,
+                    fetchDetail = { nextFetch() },
+                    supportsComments = true,
+                    supportsRecommendations = true,
+                    fetchComments = { currentComments },
+                    fetchRecommendations = { currentRecommendations },
+                )
+            val accountService = FakeMangaAccountService(accountKey, mangaDataSource)
+            val presenterJob = SupervisorJob()
+            val presenterScope = CoroutineScope(dispatcher + presenterJob)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { ai }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                    },
+                )
+            }
+            val presenter = MangaDetailPresenter(accountType = accountType, mangaKey = mangaKey)
+            try {
+                val states = MutableStateFlow<MangaDetailPresenter.State?>(null)
+                presenterScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+
+                val initial =
+                    awaitState(states) {
+                        it.detail is UiState.Success &&
+                            it.comments is PagingState.Success &&
+                            it.recommendations is PagingState.Success
+                    }
+                assertEquals(1, (initial.comments as PagingState.Success).itemCount)
+                assertEquals(1, (initial.recommendations as PagingState.Success).itemCount)
+
+                // Toggle translation manually before refreshing.
+                initial.translation?.toggleTranslation()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val translatedInitial =
+                    awaitState(states) {
+                        it.translation?.showTranslation == true &&
+                            it.detail.takeSuccess()?.title == "Translated Saga"
+                    }
+
+                // Trigger in-place refresh with updated detail + new comment & recommendation.
+                val refreshEntered = CompletableDeferred<Unit>()
+                nextFetch = {
+                    refreshEntered.complete(Unit)
+                    refreshDeferred.await()
+                }
+                currentComments =
+                    listOf(
+                        createPost(MicroBlogKey("c-1", mangaKey.host)),
+                        createPost(MicroBlogKey("c-2", mangaKey.host)),
+                    )
+                currentRecommendations =
+                    listOf(
+                        createPost(MicroBlogKey("r-1", mangaKey.host)),
+                        createPost(MicroBlogKey("r-2", mangaKey.host)),
+                    )
+                translatedInitial.refresh()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) { refreshEntered.await() }
+                }
+                val inFlight = awaitState(states) { it.isRefreshing }
+                assertTrue(inFlight.translation?.showTranslation == true)
+                assertEquals("Translated Saga", inFlight.detail.takeSuccess()?.title)
+
+                refreshDeferred.complete(updatedDetail)
+                val refreshed =
+                    awaitState(states) {
+                        !it.isRefreshing &&
+                            it.detail.takeSuccess()?.title == "Translated Updated Saga" &&
+                            (it.comments as? PagingState.Success)?.itemCount == 2 &&
+                            (it.recommendations as? PagingState.Success)?.itemCount == 2
+                    }
+                assertTrue(refreshed.translation?.showTranslation == true)
+                assertEquals(listOf("ch-2", "ch-1"), refreshed.chapters.map { it.chapter.id })
+            } finally {
+                refreshDeferred.cancel()
+                presenterJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
     private fun sampleDetail(chapterGroups: ImmutableList<UiMangaChapterGroup>): UiMangaDetail =
         UiMangaDetail(
             pluginId = "dev.example.manga",
@@ -1022,10 +1382,13 @@ class MangaDetailPresenterTest {
 
 private class FakeDetailMangaDataSource(
     private val detail: UiMangaDetail,
+    private val fetchDetail: (suspend () -> UiMangaDetail)? = null,
     override val supportsComments: Boolean = false,
     override val supportsRecommendations: Boolean = false,
     private val commentsItems: List<UiTimelineV2> = emptyList(),
     private val recommendationsItems: List<UiTimelineV2> = emptyList(),
+    private val fetchComments: (() -> List<UiTimelineV2>)? = null,
+    private val fetchRecommendations: (() -> List<UiTimelineV2>)? = null,
     private val onComments: () -> Unit = {},
     private val onRecommendations: () -> Unit = {},
 ) : MangaDataSource {
@@ -1033,7 +1396,7 @@ private class FakeDetailMangaDataSource(
 
     override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> =
         Cacheable(
-            fetchSource = { cache.value = detail },
+            fetchSource = { cache.value = fetchDetail?.invoke() ?: detail },
             cacheSource = { cache.filterNotNull() },
         )
 
@@ -1051,12 +1414,12 @@ private class FakeDetailMangaDataSource(
 
     override fun mangaComments(mangaKey: MicroBlogKey): RemoteLoader<UiTimelineV2> {
         onComments()
-        return singlePageLoader(commentsItems)
+        return singlePageLoader(fetchComments?.invoke() ?: commentsItems)
     }
 
     override fun mangaRecommendations(mangaKey: MicroBlogKey): RemoteLoader<UiTimelineV2> {
         onRecommendations()
-        return singlePageLoader(recommendationsItems)
+        return singlePageLoader(fetchRecommendations?.invoke() ?: recommendationsItems)
     }
 
     private fun singlePageLoader(items: List<UiTimelineV2>): RemoteLoader<UiTimelineV2> =
