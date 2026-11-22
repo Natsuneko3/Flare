@@ -40,6 +40,10 @@ private struct MangaReaderScrollSettledKey: EnvironmentKey {
     static let defaultValue: Bool = true
 }
 
+private struct MangaReaderScrollAlignmentRevisionKey: EnvironmentKey {
+    static let defaultValue: Int = 0
+}
+
 private struct ZoomGeometryToken: Equatable {
     var scale: CGFloat = 1.0
     var offsetX: CGFloat = 0
@@ -50,6 +54,11 @@ private extension EnvironmentValues {
     var mangaReaderIsScrollSettled: Bool {
         get { self[MangaReaderScrollSettledKey.self] }
         set { self[MangaReaderScrollSettledKey.self] = newValue }
+    }
+
+    var mangaReaderScrollAlignmentRevision: Int {
+        get { self[MangaReaderScrollAlignmentRevisionKey.self] }
+        set { self[MangaReaderScrollAlignmentRevisionKey.self] = newValue }
     }
 }
 
@@ -486,6 +495,7 @@ private struct MangaPagedCanvas: View {
     @State private var mountScrollGeneration = 0
     @State private var isCurrentPageZoomed = false
     @State private var needsPostLayoutReanchor = false
+    @State private var scrollAlignmentRevision = 0
     @State private var lastObservedPageIndex: Int32
     @State private var pendingCommittedChapterId: String?
     @State private var pendingCommittedSlotIndex: Int?
@@ -670,6 +680,12 @@ private struct MangaPagedCanvas: View {
                             ForEach(0..<totalPagerPages, id: \.self) { pagerPage in
                                 pagerCell(for: pagerPage)
                                     .frame(width: max(viewportSize.width, 1), height: max(viewportSize.height, 1))
+                                    .background {
+                                        #if os(macOS)
+                                        PagerCellViewProbe(tracker: interactionTracker, pagerPage: pagerPage)
+                                            .accessibilityHidden(true)
+                                        #endif
+                                    }
                                     .id(pagerPage)
                             }
                         }
@@ -681,15 +697,30 @@ private struct MangaPagedCanvas: View {
                                     .accessibilityHidden(true)
                                     .onChange(of: stackProxy.size.width) { oldStackWidth, newStackWidth in
                                         #if os(macOS)
-                                        guard needsPostLayoutReanchor,
-                                              totalPagerPages > 0,
+                                        guard totalPagerPages > 0,
                                               oldStackWidth > 0,
                                               newStackWidth > 0,
                                               abs(newStackWidth - oldStackWidth) > 0.5,
                                               !interactionTracker.isUserInteracting,
                                               !interactionTracker.hasUnconsumedUserScroll else { return }
-                                        needsPostLayoutReanchor = false
-                                        reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
+                                        if needsPostLayoutReanchor {
+                                            needsPostLayoutReanchor = false
+                                            reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
+                                        } else {
+                                            DispatchQueue.main.async {
+                                                guard !interactionTracker.isUserInteracting,
+                                                      !interactionTracker.hasUnconsumedUserScroll else { return }
+                                                if interactionTracker.alignScrollOffsetIfNeeded(
+                                                    pagerPage: expectedPagerPage(),
+                                                    totalPages: totalPagerPages,
+                                                    expectedWidth: viewportSize.width,
+                                                    isRtl: isRtl,
+                                                    isZoomed: isCurrentPageZoomed
+                                                ) {
+                                                    scrollAlignmentRevision &+= 1
+                                                }
+                                            }
+                                        }
                                         #endif
                                     }
                             }
@@ -701,6 +732,7 @@ private struct MangaPagedCanvas: View {
                     .scrollPosition(id: $activePagerPage)
                     .scrollDisabled(isCurrentPageZoomed)
                     .environment(\.mangaReaderIsScrollSettled, programmaticScrollTarget == nil)
+                    .environment(\.mangaReaderScrollAlignmentRevision, scrollAlignmentRevision)
                     .environment(\.layoutDirection, isRtl ? .rightToLeft : .leftToRight)
                     .id(isRtl)
                     .onAppear {
@@ -996,12 +1028,25 @@ private struct MangaPagedCanvas: View {
             }
         }
         interactionTracker.onContentWidthChanged = {
-            guard needsPostLayoutReanchor,
-                  totalPagerPages > 0,
+            guard totalPagerPages > 0,
                   !interactionTracker.isUserInteracting,
                   !interactionTracker.hasUnconsumedUserScroll else { return }
-            needsPostLayoutReanchor = false
-            reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
+            if needsPostLayoutReanchor {
+                needsPostLayoutReanchor = false
+                reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
+            } else {
+                #if os(macOS)
+                if interactionTracker.alignScrollOffsetIfNeeded(
+                    pagerPage: expectedPagerPage(),
+                    totalPages: totalPagerPages,
+                    expectedWidth: viewportSize.width,
+                    isRtl: isRtl,
+                    isZoomed: isCurrentPageZoomed
+                ) {
+                    scrollAlignmentRevision &+= 1
+                }
+                #endif
+            }
         }
 
         controller.pagedStepForward = {
@@ -1229,6 +1274,17 @@ private struct MangaPagedCanvas: View {
             )
             DispatchQueue.main.async {
                 if programmaticScrollGeneration == generation {
+                    if !interactionTracker.isUserInteracting {
+                        if interactionTracker.alignScrollOffsetIfNeeded(
+                            pagerPage: expectedPagerPage(),
+                            totalPages: totalPagerPages,
+                            expectedWidth: viewportSize.width,
+                            isRtl: isRtl,
+                            isZoomed: isCurrentPageZoomed
+                        ) {
+                            scrollAlignmentRevision &+= 1
+                        }
+                    }
                     programmaticScrollTarget = nil
                 }
             }
@@ -1333,7 +1389,12 @@ private final class PagerScrollInteractionTracker: NSObject {
     private var isPanGestureActive = false
     private var isPollingNativeIdle = false
     #elseif os(macOS)
+    private struct WeakNSViewBox {
+        weak var view: NSView?
+    }
+
     private(set) weak var scrollView: NSScrollView?
+    private var cellViews: [Int: WeakNSViewBox] = [:]
     private nonisolated(unsafe) var willStartObserver: NSObjectProtocol?
     private nonisolated(unsafe) var didEndObserver: NSObjectProtocol?
     private var isMacLiveScrolling = false
@@ -1458,21 +1519,31 @@ private final class PagerScrollInteractionTracker: NSObject {
         }
         return false
         #elseif os(macOS)
-        guard isZoomed, let sv = scrollView else { return false }
+        guard let sv = scrollView, let docView = sv.documentView else { return false }
         sv.layoutSubtreeIfNeeded()
         let svWidth = sv.contentView.bounds.width
-        let docWidth = sv.documentView?.frame.width ?? 0
+        let docWidth = docView.frame.width
         guard svWidth > 1,
               abs(svWidth - expectedWidth) <= 1.5,
               docWidth >= svWidth else { return false }
         let clampedPage = min(max(pagerPage, 0), totalPages - 1)
         let expectedX: CGFloat
-        if isRtl {
-            guard docWidth >= CGFloat(clampedPage + 1) * svWidth - 2.0 else { return false }
-            expectedX = max(docWidth - CGFloat(clampedPage + 1) * svWidth, 0)
+        if let cellView = cellViews[clampedPage]?.view,
+           cellView.window != nil,
+           cellView.isDescendant(of: docView),
+           abs(cellView.bounds.width - svWidth) <= 2.0 {
+            let cellFrame = docView.convert(cellView.bounds, from: cellView)
+            expectedX = min(max(cellFrame.minX, 0), max(docWidth - svWidth, 0))
+        } else if isZoomed {
+            if isRtl {
+                guard docWidth >= CGFloat(clampedPage + 1) * svWidth - 2.0 else { return false }
+                expectedX = max(docWidth - CGFloat(clampedPage + 1) * svWidth, 0)
+            } else {
+                guard docWidth >= CGFloat(clampedPage + 1) * svWidth - 2.0 else { return false }
+                expectedX = CGFloat(clampedPage) * svWidth
+            }
         } else {
-            guard docWidth >= CGFloat(clampedPage + 1) * svWidth - 2.0 else { return false }
-            expectedX = CGFloat(clampedPage) * svWidth
+            return false
         }
         if abs(sv.contentView.bounds.origin.x - expectedX) > 1.0 {
             sv.contentView.scroll(to: CGPoint(x: expectedX, y: 0))
@@ -1588,6 +1659,16 @@ private final class PagerScrollInteractionTracker: NSObject {
         }
     }
 
+    func registerCellView(_ view: NSView, for pagerPage: Int) {
+        cellViews[pagerPage] = WeakNSViewBox(view: view)
+    }
+
+    func unregisterCellView(_ view: NSView, for pagerPage: Int) {
+        if cellViews[pagerPage]?.view === view {
+            cellViews.removeValue(forKey: pagerPage)
+        }
+    }
+
     func detach() {
         if let willStartObserver {
             NotificationCenter.default.removeObserver(willStartObserver)
@@ -1600,6 +1681,7 @@ private final class PagerScrollInteractionTracker: NSObject {
         isMacLiveScrolling = false
         isNotifiedInteracting = false
         hasUnconsumedUserScroll = false
+        cellViews.removeAll()
         scrollView = nil
     }
 
@@ -1712,6 +1794,56 @@ private final class PagerScrollProbeNSView: NSView {
         if let scrollView = enclosingScrollView {
             tracker?.attach(to: scrollView)
         }
+    }
+}
+
+private struct PagerCellViewProbe: NSViewRepresentable {
+    let tracker: PagerScrollInteractionTracker
+    let pagerPage: Int
+
+    func makeNSView(context: Context) -> PagerCellProbeNSView {
+        let view = PagerCellProbeNSView()
+        view.tracker = tracker
+        view.pagerPage = pagerPage
+        tracker.registerCellView(view, for: pagerPage)
+        return view
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PagerCellProbeNSView, context: Context) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    func updateNSView(_ nsView: PagerCellProbeNSView, context: Context) {
+        if nsView.pagerPage != pagerPage {
+            nsView.tracker?.unregisterCellView(nsView, for: nsView.pagerPage)
+            nsView.pagerPage = pagerPage
+        }
+        nsView.tracker = tracker
+        tracker.registerCellView(nsView, for: pagerPage)
+    }
+
+    static func dismantleNSView(_ nsView: PagerCellProbeNSView, coordinator: ()) {
+        nsView.tracker?.unregisterCellView(nsView, for: nsView.pagerPage)
+    }
+}
+
+private final class PagerCellProbeNSView: NSView {
+    weak var tracker: PagerScrollInteractionTracker?
+    var pagerPage: Int = 0
+    private var lastWidth: CGFloat = 0
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let oldWidth = lastWidth
+        super.setFrameSize(newSize)
+        lastWidth = newSize.width
+        guard oldWidth > 0, newSize.width > 0, abs(newSize.width - oldWidth) > 0.5 else { return }
+        let work: @MainActor @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            self.tracker?.onContentWidthChanged?()
+        }
+        DispatchQueue.main.async(execute: work)
     }
 }
 #endif
@@ -2716,15 +2848,18 @@ private struct MangaPageFrameReporterView: View {
     let pageIndex: Int
     var zoomToken: ZoomGeometryToken = .init()
     @Environment(\.mangaReaderIsScrollSettled) private var isScrollSettled
+    @Environment(\.mangaReaderScrollAlignmentRevision) private var alignmentRevision
 
     var body: some View {
         if isScrollSettled {
             GeometryReader { proxy in
                 let _ = zoomToken
-                Color.clear.preference(
-                    key: MangaReaderPageFramesPreferenceKey.self,
-                    value: [pageIndex: proxy.frame(in: .named("manga_reader_canvas"))]
-                )
+                Color.clear
+                    .id(alignmentRevision)
+                    .preference(
+                        key: MangaReaderPageFramesPreferenceKey.self,
+                        value: [pageIndex: proxy.frame(in: .named("manga_reader_canvas"))]
+                    )
             }
         }
     }
