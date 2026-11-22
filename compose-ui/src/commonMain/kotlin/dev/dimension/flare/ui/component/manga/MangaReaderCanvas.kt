@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -32,11 +33,13 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,10 +74,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import coil3.Extras
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
+import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import coil3.request.NullRequestData
 import coil3.request.crossfade
 import coil3.size.Size
 import compose.icons.FontAwesomeIcons
@@ -132,6 +138,21 @@ private const val MAX_READER_ZOOM = 4f
 private const val DOUBLE_TAP_ZOOM = 2.5f
 private const val ZOOM_EPSILON = 1.005f
 private const val DEFAULT_WEBTOON_ASPECT_RATIO = 0.7f
+private val readerRetryNonceExtra = Extras.Key(0)
+
+private class PagedStepHandlers(
+    val stepForward: () -> Unit,
+    val stepBackward: () -> Unit,
+)
+
+private class WebtoonScrollSyncState(
+    initialPage: Int,
+    initialHeaderCount: Int,
+) {
+    var lastReportedPage: Int = initialPage
+    var lastHeaderCount: Int = initialHeaderCount
+    var settledProgrammaticPos: Pair<Int, Int>? = null
+}
 
 @Composable
 public fun MangaReaderCanvas(
@@ -151,7 +172,28 @@ public fun MangaReaderCanvas(
 
     var activeZoomReset by remember { mutableStateOf<(() -> Unit)?>(null) }
     var activeWebtoonListState by remember { mutableStateOf<LazyListState?>(null) }
+    var activePagedStepHandlers by remember { mutableStateOf<PagedStepHandlers?>(null) }
     var viewportHeightPx by remember { mutableFloatStateOf(0f) }
+
+    val performStepForward: () -> Unit = {
+        val readerState = currentState
+        val pagedHandlers = activePagedStepHandlers
+        if (readerState.direction != MangaReadingDirection.Webtoon && pagedHandlers != null) {
+            pagedHandlers.stepForward()
+        } else {
+            readerState.stepForward()
+        }
+    }
+
+    val performStepBackward: () -> Unit = {
+        val readerState = currentState
+        val pagedHandlers = activePagedStepHandlers
+        if (readerState.direction != MangaReadingDirection.Webtoon && pagedHandlers != null) {
+            pagedHandlers.stepBackward()
+        } else {
+            readerState.stepBackward()
+        }
+    }
 
     val openExternalUrl: (String) -> Unit =
         remember(uriHandler) {
@@ -181,18 +223,18 @@ public fun MangaReaderCanvas(
                     when (event.key) {
                         Key.DirectionLeft -> {
                             if (readerState.direction == MangaReadingDirection.Rtl) {
-                                readerState.stepForward()
+                                performStepForward()
                             } else {
-                                readerState.stepBackward()
+                                performStepBackward()
                             }
                             true
                         }
 
                         Key.DirectionRight -> {
                             if (readerState.direction == MangaReadingDirection.Rtl) {
-                                readerState.stepBackward()
+                                performStepBackward()
                             } else {
-                                readerState.stepForward()
+                                performStepForward()
                             }
                             true
                         }
@@ -207,7 +249,7 @@ public fun MangaReaderCanvas(
                                     readerState.stepForward()
                                 }
                             } else {
-                                readerState.stepForward()
+                                performStepForward()
                             }
                             true
                         }
@@ -222,7 +264,7 @@ public fun MangaReaderCanvas(
                                     readerState.stepBackward()
                                 }
                             } else {
-                                readerState.stepBackward()
+                                performStepBackward()
                             }
                             true
                         }
@@ -235,14 +277,14 @@ public fun MangaReaderCanvas(
                                     val delta = (viewportHeightPx * 0.8f).coerceAtLeast(200f)
                                     scope.launch { listState.animateScrollBy(-delta) }
                                 } else {
-                                    readerState.stepBackward()
+                                    performStepBackward()
                                 }
                             } else {
                                 if (isWebtoon && listState != null && listState.canScrollForward) {
                                     val delta = (viewportHeightPx * 0.8f).coerceAtLeast(200f)
                                     scope.launch { listState.animateScrollBy(delta) }
                                 } else {
-                                    readerState.stepForward()
+                                    performStepForward()
                                 }
                             }
                             true
@@ -286,17 +328,17 @@ public fun MangaReaderCanvas(
             when {
                 fraction < LEFT_TAP_ZONE_FRACTION -> {
                     if (currentState.direction == MangaReadingDirection.Rtl) {
-                        currentState.stepForward()
+                        performStepForward()
                     } else {
-                        currentState.stepBackward()
+                        performStepBackward()
                     }
                 }
 
                 fraction > RIGHT_TAP_ZONE_FRACTION -> {
                     if (currentState.direction == MangaReadingDirection.Rtl) {
-                        currentState.stepBackward()
+                        performStepBackward()
                     } else {
-                        currentState.stepForward()
+                        performStepForward()
                     }
                 }
 
@@ -309,6 +351,7 @@ public fun MangaReaderCanvas(
         when (val loadState = state.loadState) {
             is UiState.Loading -> {
                 activeWebtoonListState = null
+                activePagedStepHandlers = null
                 activeZoomReset = null
                 Box(
                     modifier =
@@ -325,6 +368,7 @@ public fun MangaReaderCanvas(
 
             is UiState.Error -> {
                 activeWebtoonListState = null
+                activePagedStepHandlers = null
                 activeZoomReset = null
                 val locked = state.lockedChapter
                 if (locked != null) {
@@ -358,6 +402,7 @@ public fun MangaReaderCanvas(
             is UiState.Success -> {
                 key(state.activeChapterId) {
                     if (state.direction == MangaReadingDirection.Webtoon) {
+                        activePagedStepHandlers = null
                         MangaWebtoonStrip(
                             state = state,
                             onZoneTap = handleZoneTap,
@@ -371,6 +416,7 @@ public fun MangaReaderCanvas(
                             state = state,
                             onZoneTap = handleZoneTap,
                             onOpenLockedUrl = openExternalUrl,
+                            onStepHandlersChanged = { activePagedStepHandlers = it },
                             onZoomResetChanged = { activeZoomReset = it },
                         )
                     }
@@ -407,6 +453,7 @@ private fun PrefetchReaderMediaEffect(state: MangaReaderPresenter.State) {
                     ImageRequest
                         .Builder(context)
                         .media(media, snapshot)
+                        .size(Size.ORIGINAL)
                         .crossfade(false)
                         .applyAllowHardware(allowHardware)
                         .build()
@@ -425,6 +472,7 @@ private fun MangaPagedCanvas(
     state: MangaReaderPresenter.State,
     onZoneTap: (Offset, IntSize) -> Unit,
     onOpenLockedUrl: (String) -> Unit,
+    onStepHandlersChanged: (PagedStepHandlers?) -> Unit,
     onZoomResetChanged: ((() -> Unit)?) -> Unit,
 ) {
     val hasPrevBoundary = state.previousBoundary != ChapterBoundary.None
@@ -437,7 +485,16 @@ private fun MangaPagedCanvas(
             state.slots.size + startBoundaryOffset + (if (hasNextBoundary) 1 else 0)
         }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            onStepHandlersChanged(null)
+        }
+    }
+
     if (totalPagerPages == 0) {
+        LaunchedEffect(Unit) {
+            onStepHandlersChanged(null)
+        }
         Box(
             modifier =
                 Modifier
@@ -457,21 +514,112 @@ private fun MangaPagedCanvas(
             pageCount = { totalPagerPages },
         )
 
-    var programmaticTargetPage by remember { mutableStateOf<Int?>(null) }
+    val pagerScope = rememberCoroutineScope()
+    var programmaticScrollsInFlight by remember { mutableIntStateOf(0) }
+    var boundaryScrollJob by remember { mutableStateOf<Job?>(null) }
     var isCurrentPageZoomed by remember { mutableStateOf(false) }
 
+    val latestState by rememberUpdatedState(state)
     val latestSlots by rememberUpdatedState(state.slots)
     val latestCurrentSlotIndex by rememberUpdatedState(state.currentSlotIndex)
+    val latestHasPrevBoundary by rememberUpdatedState(hasPrevBoundary)
+    val latestHasNextBoundary by rememberUpdatedState(hasNextBoundary)
     val latestStartOffset by rememberUpdatedState(startBoundaryOffset)
+    val latestTotalPagerPages by rememberUpdatedState(totalPagerPages)
+
+    fun animatePagerProgrammatically(targetPage: Int) {
+        val clamped = targetPage.coerceIn(0, (latestTotalPagerPages - 1).coerceAtLeast(0))
+        boundaryScrollJob?.cancel()
+        boundaryScrollJob =
+            pagerScope.launch {
+                programmaticScrollsInFlight++
+                try {
+                    pagerState.animateScrollToPage(clamped)
+                } finally {
+                    programmaticScrollsInFlight--
+                }
+            }
+    }
+
+    val stepHandlers =
+        remember(pagerState) {
+            PagedStepHandlers(
+                stepForward = {
+                    val activePage = if (pagerState.isScrollInProgress) pagerState.targetPage else pagerState.currentPage
+                    val prevBoundaryPage = if (latestHasPrevBoundary) 0 else -1
+                    val nextBoundaryPage = if (latestHasNextBoundary) latestStartOffset + latestSlots.size else -1
+                    when {
+                        activePage == prevBoundaryPage -> {
+                            if (latestSlots.isNotEmpty()) {
+                                latestState.goToSlot(0)
+                                animatePagerProgrammatically(latestStartOffset)
+                            }
+                        }
+
+                        activePage == nextBoundaryPage -> {
+                            val next = latestState.nextBoundary
+                            if (next is ChapterBoundary.Unlocked) {
+                                boundaryScrollJob?.cancel()
+                                latestState.openAdjacentChapter(next)
+                            }
+                        }
+
+                        latestSlots.isNotEmpty() -> {
+                            val slotIndex = (activePage - latestStartOffset).coerceIn(0, latestSlots.lastIndex)
+                            if (slotIndex != latestCurrentSlotIndex) {
+                                latestState.goToSlot(slotIndex)
+                            }
+                            boundaryScrollJob?.cancel()
+                            latestState.stepForward()
+                        }
+                    }
+                },
+                stepBackward = {
+                    val activePage = if (pagerState.isScrollInProgress) pagerState.targetPage else pagerState.currentPage
+                    val prevBoundaryPage = if (latestHasPrevBoundary) 0 else -1
+                    val nextBoundaryPage = if (latestHasNextBoundary) latestStartOffset + latestSlots.size else -1
+                    when {
+                        activePage == nextBoundaryPage -> {
+                            if (latestSlots.isNotEmpty()) {
+                                latestState.goToSlot(latestSlots.lastIndex)
+                                animatePagerProgrammatically(latestStartOffset + latestSlots.lastIndex)
+                            }
+                        }
+
+                        activePage == prevBoundaryPage -> {
+                            val prev = latestState.previousBoundary
+                            if (prev is ChapterBoundary.Unlocked) {
+                                boundaryScrollJob?.cancel()
+                                latestState.openAdjacentChapter(prev)
+                            }
+                        }
+
+                        latestSlots.isNotEmpty() -> {
+                            val slotIndex = (activePage - latestStartOffset).coerceIn(0, latestSlots.lastIndex)
+                            if (slotIndex != latestCurrentSlotIndex) {
+                                latestState.goToSlot(slotIndex)
+                            }
+                            boundaryScrollJob?.cancel()
+                            latestState.stepBackward()
+                        }
+                    }
+                },
+            )
+        }
+
+    LaunchedEffect(stepHandlers) {
+        onStepHandlersChanged(stepHandlers)
+    }
 
     LaunchedEffect(state.currentSlotIndex, startBoundaryOffset, totalPagerPages) {
         val target = (state.currentSlotIndex + startBoundaryOffset).coerceIn(0, (totalPagerPages - 1).coerceAtLeast(0))
-        if (pagerState.currentPage != target && !pagerState.isScrollInProgress) {
-            programmaticTargetPage = target
+        if (pagerState.currentPage != target && (!pagerState.isScrollInProgress || programmaticScrollsInFlight > 0)) {
+            boundaryScrollJob?.cancel()
+            programmaticScrollsInFlight++
             try {
                 pagerState.scrollToPage(target)
             } finally {
-                programmaticTargetPage = null
+                programmaticScrollsInFlight--
             }
         }
     }
@@ -482,10 +630,10 @@ private fun MangaPagedCanvas(
             .collect { settled ->
                 if (settled == lastObservedSettled) return@collect
                 lastObservedSettled = settled
-                if (programmaticTargetPage != null) return@collect
+                if (programmaticScrollsInFlight > 0) return@collect
                 val slotIndex = settled - latestStartOffset
                 if (slotIndex in latestSlots.indices && slotIndex != latestCurrentSlotIndex) {
-                    state.goToSlot(slotIndex)
+                    latestState.goToSlot(slotIndex)
                 }
             }
     }
@@ -776,42 +924,53 @@ private fun MangaWebtoonStrip(
         onZoomResetChanged(if (isZoomed) resetZoom else null)
     }
 
-    var programmaticTargetIndex by remember { mutableStateOf<Int?>(null) }
+    val syncState =
+        remember {
+            WebtoonScrollSyncState(
+                initialPage = state.currentPageIndex,
+                initialHeaderCount = headerCount,
+            )
+        }
+    val latestState by rememberUpdatedState(state)
     val latestHeaderCount by rememberUpdatedState(headerCount)
     val latestPageCount by rememberUpdatedState(state.pages.size)
     val latestCurrentPageIndex by rememberUpdatedState(state.currentPageIndex)
 
     LaunchedEffect(state.currentPageIndex, headerCount, state.pages.size) {
         if (state.pages.isEmpty()) return@LaunchedEffect
-        val targetItemIndex = state.currentPageIndex + headerCount
-        val visiblePageIndices =
-            listState.layoutInfo.visibleItemsInfo
-                .map { it.index - headerCount }
-                .filter { it in state.pages.indices }
-        val primaryVisiblePage = visiblePageIndices.firstOrNull()
-        if (!listState.isScrollInProgress && primaryVisiblePage != state.currentPageIndex) {
-            programmaticTargetIndex = targetItemIndex
-            try {
-                listState.scrollToItem(targetItemIndex)
-            } finally {
-                programmaticTargetIndex = null
-            }
+        val headerChanged = headerCount != syncState.lastHeaderCount
+        syncState.lastHeaderCount = headerCount
+        if (state.currentPageIndex != syncState.lastReportedPage || headerChanged) {
+            val targetItemIndex = state.currentPageIndex + headerCount
+            syncState.lastReportedPage = state.currentPageIndex
+            listState.scrollToItem(targetItemIndex)
+            syncState.settledProgrammaticPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        } else if (syncState.settledProgrammaticPos == null && !listState.isScrollInProgress) {
+            syncState.settledProgrammaticPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
         }
     }
 
     LaunchedEffect(listState) {
+        var lastObservedPos: Pair<Int, Int>? = null
         snapshotFlow {
             val info = listState.layoutInfo
-            val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            val pageItem =
-                info.visibleItemsInfo
-                    .filter { (it.index - latestHeaderCount) in 0 until latestPageCount }
-                    .minByOrNull { item -> abs((item.offset + item.size / 2) - viewportCenter) }
-            listState.isScrollInProgress to pageItem?.let { it.index - latestHeaderCount }
-        }.collect { (scrolling, visiblePage) ->
-            if (programmaticTargetIndex != null) return@collect
-            if (scrolling && visiblePage != null && visiblePage != latestCurrentPageIndex) {
-                state.goToPage(visiblePage)
+            val pos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+            val visiblePage = info.centerPageIndex(latestHeaderCount, latestPageCount)
+            pos to visiblePage
+        }.collect { (pos, visiblePage) ->
+            if (lastObservedPos == null) {
+                lastObservedPos = pos
+                return@collect
+            }
+            if (pos == lastObservedPos) return@collect
+            lastObservedPos = pos
+            if (pos == syncState.settledProgrammaticPos) return@collect
+            syncState.settledProgrammaticPos = null
+            if (visiblePage != null) {
+                syncState.lastReportedPage = visiblePage
+                if (visiblePage != latestCurrentPageIndex) {
+                    latestState.goToPage(visiblePage)
+                }
             }
         }
     }
@@ -996,90 +1155,146 @@ private fun ReaderPageCell(
         is PageMediaStatus.Ready -> {
             val translating = state.imageTranslation.item(status.original).loading
             val blurRadius by animateDpAsState(if (translating) 8.dp else 0.dp, label = "MangaPageTranslationBlur")
+            var retryNonce by remember(page.id, status.displayed.url) { mutableIntStateOf(0) }
+            var loadError by remember(page.id, status.displayed.url) { mutableStateOf<Throwable?>(null) }
             val baseRequest = rememberMediaImageRequest(status.displayed, crossfade = false)
             val fullSizeRequest =
-                remember(baseRequest) {
+                remember(baseRequest, retryNonce) {
                     baseRequest
                         .newBuilder()
                         .size(Size.ORIGINAL)
-                        .build()
+                        .apply {
+                            if (retryNonce > 0) {
+                                extras[readerRetryNonceExtra] = retryNonce
+                                memoryCachePolicy(CachePolicy.WRITE_ONLY)
+                            }
+                        }.build()
                 }
-            var imageLoading by remember(status.displayed.url) { mutableStateOf(status.displayed.isRemote) }
+            var imageLoading by remember(page.id, status.displayed.url, retryNonce) {
+                mutableStateOf(status.displayed.isRemote || retryNonce > 0)
+            }
 
-            Box(
-                modifier = modifier,
-                contentAlignment = contentAlignment,
-            ) {
-                AsyncImage(
-                    model = fullSizeRequest,
-                    contentDescription = status.displayed.accessibleDescription(),
-                    contentScale = contentScale,
-                    alignment = contentAlignment,
-                    onLoading = {
-                        imageLoading = true
+            val currentError = loadError
+            if (currentError != null) {
+                ReaderPageErrorContent(
+                    error = currentError,
+                    pageId = page.id,
+                    onRetry = {
+                        loadError = null
+                        retryNonce++
+                        state.retryPage(page.id)
                     },
-                    onSuccess = { success ->
-                        imageLoading = false
-                        val decoded = success.result.image
-                        state.onPageDimensionsLoaded(
-                            pageId = page.id,
-                            width = decoded.width.toFloat(),
-                            height = decoded.height.toFloat(),
-                        )
-                    },
-                    onError = {
-                        imageLoading = false
-                        if (status.displayed.url != status.original.url) {
-                            state.imageTranslation.imageFailed(status.original, status.displayed.url)
-                        }
-                    },
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .blur(blurRadius),
+                    modifier = modifier,
                 )
-                if (translating || imageLoading) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        PlatformCircularProgressIndicator()
+            } else {
+                val requestReady = fullSizeRequest.data != NullRequestData
+                Box(
+                    modifier = modifier,
+                    contentAlignment = contentAlignment,
+                ) {
+                    if (requestReady) {
+                        AsyncImage(
+                            model = fullSizeRequest,
+                            contentDescription = status.displayed.accessibleDescription(),
+                            contentScale = contentScale,
+                            alignment = contentAlignment,
+                            onLoading = {
+                                imageLoading = true
+                            },
+                            onSuccess = { success ->
+                                imageLoading = false
+                                loadError = null
+                                val decoded = success.result.image
+                                state.onPageDimensionsLoaded(
+                                    pageId = page.id,
+                                    width = decoded.width.toFloat(),
+                                    height = decoded.height.toFloat(),
+                                )
+                            },
+                            onError = { error ->
+                                imageLoading = false
+                                if (status.displayed.url != status.original.url) {
+                                    state.imageTranslation.imageFailed(status.original, status.displayed.url)
+                                }
+                                loadError = error.result.throwable
+                            },
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .blur(blurRadius),
+                        )
+                    }
+                    if (!requestReady || translating || imageLoading) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            PlatformCircularProgressIndicator()
+                        }
                     }
                 }
             }
         }
 
         is PageMediaStatus.Failed -> {
-            Box(
-                modifier = modifier.padding(16.dp),
-                contentAlignment = Alignment.Center,
+            ReaderPageErrorContent(
+                error = status.error,
+                pageId = page.id,
+                onRetry = { state.retryPage(page.id) },
+                modifier = modifier,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderPageErrorContent(
+    error: Throwable,
+    pageId: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.padding(16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PlatformText(
+                text = error.message?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.manga_page_retry),
+                style = PlatformTheme.typography.body,
+                color = Color.White.copy(alpha = 0.85f),
+                textAlign = TextAlign.Center,
+            )
+            PlatformFilledTonalButton(
+                onClick = onRetry,
+                modifier = Modifier.testTag("manga_page_retry_$pageId"),
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    PlatformText(
-                        text = status.error.message?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.manga_page_retry),
-                        style = PlatformTheme.typography.body,
-                        color = Color.White.copy(alpha = 0.85f),
-                        textAlign = TextAlign.Center,
-                    )
-                    PlatformFilledTonalButton(
-                        onClick = { state.retryPage(page.id) },
-                        modifier = Modifier.testTag("manga_page_retry_${page.id}"),
-                    ) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.RotateRight,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.size(6.dp))
-                        PlatformText(text = stringResource(Res.string.manga_page_retry))
-                    }
-                }
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.RotateRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.size(6.dp))
+                PlatformText(text = stringResource(Res.string.manga_page_retry))
             }
         }
     }
+}
+
+private fun LazyListLayoutInfo.centerPageIndex(
+    headerCount: Int,
+    pageCount: Int,
+): Int? {
+    if (pageCount <= 0) return null
+    val viewportCenter = (viewportStartOffset + viewportEndOffset) / 2
+    val pageItem =
+        visibleItemsInfo
+            .filter { (it.index - headerCount) in 0 until pageCount }
+            .minByOrNull { item -> abs((item.offset + item.size / 2) - viewportCenter) }
+    return pageItem?.let { it.index - headerCount }
 }
 
 @Composable

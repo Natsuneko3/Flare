@@ -12,6 +12,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -210,16 +211,18 @@ internal fun MangaReaderContent(
 ) {
     var hudVisible by remember { mutableStateOf(true) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var isWideViewport by remember { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
     val currentPage = state.pages.getOrNull(state.currentPageIndex)
     val currentReady = currentPage?.status as? PageMediaStatus.Ready
 
-    Box(
+    BoxWithConstraints(
         modifier =
             Modifier
                 .fillMaxSize()
                 .background(Color.Black),
     ) {
+        isWideViewport = maxWidth >= 720.dp
         MangaReaderCanvas(
             state = state,
             hudVisible = hudVisible,
@@ -476,7 +479,10 @@ internal fun MangaReaderContent(
         ModalBottomSheet(
             onDismissRequest = { showSettingsSheet = false },
         ) {
-            AndroidMangaReaderSettingsSheet(state = state)
+            AndroidMangaReaderSettingsSheet(
+                state = state,
+                isWideViewport = isWideViewport,
+            )
         }
     }
 }
@@ -564,7 +570,10 @@ private fun AndroidMangaPageSlider(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AndroidMangaReaderSettingsSheet(state: MangaReaderPresenter.State) {
+private fun AndroidMangaReaderSettingsSheet(
+    state: MangaReaderPresenter.State,
+    isWideViewport: Boolean,
+) {
     Column(
         modifier =
             Modifier
@@ -609,7 +618,7 @@ private fun AndroidMangaReaderSettingsSheet(state: MangaReaderPresenter.State) {
             }
         }
 
-        if (state.direction != MangaReadingDirection.Webtoon) {
+        if (isWideViewport && state.direction != MangaReadingDirection.Webtoon) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

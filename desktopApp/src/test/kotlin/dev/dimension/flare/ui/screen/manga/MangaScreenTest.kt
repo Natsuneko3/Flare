@@ -13,7 +13,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
-import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -21,6 +20,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
+import coil3.ColorImage
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.decode.DataSource
+import coil3.fetch.Fetcher
+import coil3.fetch.ImageFetchResult
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.toPagingState
 import dev.dimension.flare.data.model.appearance.GlobalAppearance
@@ -59,14 +64,45 @@ import dev.dimension.flare.ui.theme.FlareTheme
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(coil3.annotation.DelicateCoilApi::class)
 class MangaScreenTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Before
+    fun setUp() {
+        SingletonImageLoader.setUnsafe { context ->
+            ImageLoader
+                .Builder(context)
+                .components {
+                    add(
+                        Fetcher.Factory<Any> { data, _, _ ->
+                            val text = data.toString()
+                            if (!text.startsWith("local-")) return@Factory null
+                            Fetcher {
+                                ImageFetchResult(
+                                    image = ColorImage(color = 0xFF445566.toInt(), width = 1000, height = 1400),
+                                    isSampled = false,
+                                    dataSource = DataSource.MEMORY,
+                                )
+                            }
+                        },
+                    )
+                }.build()
+        }
+    }
+
+    @After
+    fun tearDown() {
+        SingletonImageLoader.reset()
+    }
 
     @Test
     fun rendersGroupedTagsAndChaptersAndHandlesLockedChapterClick() {
@@ -322,6 +358,34 @@ class MangaScreenTest {
             click(Offset(canvasBounds.width * 0.5f, canvasBounds.height * 0.5f))
         }
         compose.onNodeWithTag("manga_reader_collapsed_page_badge").assertIsDisplayed()
+    }
+
+    @Test
+    fun readerSettingsHidesDoublePageSpreadOnNarrowViewport() {
+        val fakeReaderState = FakeDesktopReaderState(pageCount = 4, initialDirection = MangaReadingDirection.Rtl)
+        var viewportWidth by mutableStateOf(500.dp)
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                Box(Modifier.size(viewportWidth, 700.dp)) {
+                    MangaReaderContent(
+                        state = fakeReaderState,
+                        onBack = {},
+                    )
+                }
+            }
+        }
+
+        // Open reader settings flyout on narrow viewport (< 720.dp) -> Double-page spread must be hidden
+        compose.onNodeWithTag("manga_reader_settings_button").performClick()
+        compose.onNodeWithText("Reading direction").assertIsDisplayed()
+        compose.onNodeWithText("Double-page spread").assertDoesNotExist()
+
+        // Widen viewport (>= 720.dp) -> Double-page spread becomes available
+        compose.runOnIdle {
+            viewportWidth = 900.dp
+        }
+        compose.onNodeWithText("Double-page spread").assertIsDisplayed()
     }
 }
 
