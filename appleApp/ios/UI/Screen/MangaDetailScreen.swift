@@ -97,7 +97,8 @@ struct MangaDetailContentView: View {
     @State private var selectedTab: IOSMangaDetailTab = .chapters
     @State private var lockedPromptChapter: UiMangaChapter?
     @State private var isHeroVisible = true
-    @State private var compactHeroMetrics = CompactHeroMetrics()
+    @State private var compactHeroRowHeight: CGFloat = 0
+    @State private var compactScrolledPastTop: CGFloat = 0
     @State private var compactSafeTopMinY: CGFloat = 0
 
     init(
@@ -241,11 +242,13 @@ struct MangaDetailContentView: View {
         .onChange(of: loadedDetail == nil) { _, isNil in
             if isNil {
                 isHeroVisible = true
-                compactHeroMetrics = CompactHeroMetrics()
+                compactHeroRowHeight = 0
+                compactScrolledPastTop = 0
             }
         }
         .onChange(of: isRegularWidth) { _, _ in
             isHeroVisible = true
+            compactScrolledPastTop = 0
         }
         .toolbar {
             if !isRegularWidth, let title = loadedDetail?.title, !title.isEmpty {
@@ -374,6 +377,15 @@ struct MangaDetailContentView: View {
         }
     }
 
+    private func updateCompactHeroVisibility(heroHeight: CGFloat, scrolledPastTop: CGFloat) {
+        let remainingHero = heroHeight - scrolledPastTop
+        if isHeroVisible && remainingHero < 20 {
+            isHeroVisible = false
+        } else if !isHeroVisible && remainingHero > 40 {
+            isHeroVisible = true
+        }
+    }
+
     private func compactBody(detail: UiMangaDetail) -> some View {
         ZStack(alignment: .top) {
             Color.clear
@@ -389,11 +401,11 @@ struct MangaDetailContentView: View {
             GeometryReader { backdropProxy in
                 let backdropMinY = backdropProxy.frame(in: .global).minY
                 let topInset = max(compactSafeTopMinY - backdropMinY, 0)
-                let visibleBottom = compactHeroMetrics.height > 0
-                    ? max(compactHeroMetrics.maxY - backdropMinY, 0)
+                let baseHeight = topInset + compactHeroRowHeight
+                let visibleBottom = compactHeroRowHeight > 0
+                    ? max(baseHeight - compactScrolledPastTop, 0)
                     : 0
                 if visibleBottom > 0 {
-                    let baseHeight = topInset + compactHeroMetrics.height
                     let renderHeight = max(baseHeight, visibleBottom)
                     let offsetY = min(visibleBottom - baseHeight, 0)
                     MangaBlurredCoverBackdropView(
@@ -401,6 +413,7 @@ struct MangaDetailContentView: View {
                         targetBackgroundColor: .flareSystemGroupedBackground
                     )
                     .frame(width: backdropProxy.size.width, height: renderHeight)
+                    .accessibilityIdentifier("manga_compact_hero_backdrop")
                     .background {
                         GeometryReader { innerProxy in
                             Color.clear.preference(
@@ -419,27 +432,18 @@ struct MangaDetailContentView: View {
 
             List {
                 heroHeader(detail: detail, usesCardSurface: false)
-                    .onDisappear {
-                        isHeroVisible = false
-                        compactHeroMetrics = CompactHeroMetrics()
-                    }
-                    .onGeometryChange(for: CompactHeroMetrics.self) { proxy in
-                        let frame = proxy.frame(in: .global)
-                        return CompactHeroMetrics(
-                            minY: frame.minY,
-                            maxY: frame.maxY,
-                            height: frame.height
-                        )
-                    } action: { metrics in
-                        compactHeroMetrics = metrics
-                        guard metrics.height > 0 else { return }
-                        let collapseThreshold = max(compactSafeTopMinY + 8, 44)
-                        let expandThreshold = collapseThreshold + 24
-                        if isHeroVisible && metrics.maxY < collapseThreshold {
-                            isHeroVisible = false
-                        } else if !isHeroVisible && metrics.maxY > expandThreshold {
-                            isHeroVisible = true
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .global)
+                    } action: { frame in
+                        guard frame.height > 0 else { return }
+                        compactHeroRowHeight = frame.height
+                        if #unavailable(iOS 18.0) {
+                            compactScrolledPastTop = compactSafeTopMinY - frame.minY
                         }
+                        updateCompactHeroVisibility(
+                            heroHeight: frame.height,
+                            scrolledPastTop: compactScrolledPastTop
+                        )
                     }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets())
@@ -476,6 +480,15 @@ struct MangaDetailContentView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .listRowSpacing(2)
+            .onCompactMangaScrollOffsetChange { scrolledPastTop in
+                compactScrolledPastTop = scrolledPastTop
+                if compactHeroRowHeight > 0 {
+                    updateCompactHeroVisibility(
+                        heroHeight: compactHeroRowHeight,
+                        scrolledPastTop: scrolledPastTop
+                    )
+                }
+            }
             .refreshable {
                 onRefresh()
             }
@@ -979,10 +992,21 @@ private struct MangaCompactNavigationTitle: ToolbarContent {
     }
 }
 
-private nonisolated struct CompactHeroMetrics: Equatable, Sendable {
-    var minY: CGFloat = 0
-    var maxY: CGFloat = 0
-    var height: CGFloat = 0
+private extension View {
+    @ViewBuilder
+    func onCompactMangaScrollOffsetChange(
+        _ onScrolledPastTopChange: @escaping (CGFloat) -> Void
+    ) -> some View {
+        if #available(iOS 18.0, *) {
+            self.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y + geometry.contentInsets.top
+            } action: { _, scrolledPastTop in
+                onScrolledPastTopChange(scrolledPastTop)
+            }
+        } else {
+            self
+        }
+    }
 }
 
 struct IOSMangaCompactBackdropFramePreferenceKey: PreferenceKey {

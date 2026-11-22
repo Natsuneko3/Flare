@@ -1854,25 +1854,22 @@ final class MangaReaderAndDetailTests: XCTestCase {
                 pageCount: 24
             )
         }
+        let navModel = CompactNavPathModel()
         var navHeroFrames = MangaDetailPaneFrames()
         var navBackdropFrame: CGRect?
         var navHeroVisible: Bool?
+        var isDummyDestinationMounted = false
         let navHost = UIHostingController(
-            rootView: NavigationStack(path: .constant([1])) {
-                Color.clear
-                    .navigationDestination(for: Int.self) { _ in
-                        MangaDetailContentView(
-                            detail: UiStateSuccess(data: detailWithCover),
-                            chapters: manyChapterItems,
-                            primaryReadTarget: readTarget,
-                            onNavigate: { _ in }
-                        )
-                        .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self) { navHeroFrames = $0 }
-                        .onPreferenceChange(IOSMangaCompactBackdropFramePreferenceKey.self) { navBackdropFrame = $0 }
-                        .onPreferenceChange(IOSMangaCompactHeroVisiblePreferenceKey.self) { navHeroVisible = $0 }
-                    }
-            }
-            .environment(\.horizontalSizeClass, .compact)
+            rootView: CompactNavTestHost(
+                model: navModel,
+                detail: detailWithCover,
+                chapters: manyChapterItems,
+                readTarget: readTarget,
+                onHeroFrames: { navHeroFrames = $0 },
+                onBackdropFrame: { navBackdropFrame = $0 },
+                onHeroVisible: { navHeroVisible = $0 },
+                onDummyDestinationLifecycle: { isDummyDestinationMounted = $0 }
+            )
         )
         window.rootViewController = navHost
         window.layoutIfNeeded()
@@ -1904,6 +1901,34 @@ final class MangaReaderAndDetailTests: XCTestCase {
         )
         XCTAssertEqual(navHeroVisible, true)
 
+        // Push dummy destination onto NavigationStack at scroll offset 0, then pop back:
+        // blurred cover backdrop and isHeroVisible == true must be preserved (no lost backdrop or duplicate inline title)
+        navModel.path = [1, 2]
+        try await eventually(window: window) {
+            isDummyDestinationMounted
+        }
+        try await Task.sleep(for: .milliseconds(40))
+        window.layoutIfNeeded()
+
+        navModel.path = [1]
+        try await eventually(window: window) {
+            !isDummyDestinationMounted
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+
+        XCTAssertEqual(
+            navHeroVisible,
+            true,
+            "Popping back to MangaDetailContentView at scroll offset 0 must keep isHeroVisible == true"
+        )
+        let poppedBackdrop = try XCTUnwrap(
+            navBackdropFrame,
+            "Popping back to MangaDetailContentView at scroll offset 0 must preserve manga_compact_hero_backdrop"
+        )
+        XCTAssertGreaterThan(poppedBackdrop.height, initialHero.height)
+        XCTAssertEqual(poppedBackdrop.maxY, initialHero.maxY, accuracy: 2.0)
+
         let navListCollection = try XCTUnwrap(
             descendants(navHost.view).compactMap { $0 as? UICollectionView }.first
         )
@@ -1917,10 +1942,9 @@ final class MangaReaderAndDetailTests: XCTestCase {
             navHeroVisible == false
         }
 
-        // Scroll back up so cell 0 is remounted while still above collapse threshold (maxY == 24 < 44) -> must NOT flicker isHeroVisible back to true
-        let currentHeroOrEstimateHeight = initialHero.height
-        let targetMaxY: CGFloat = 24
-        let partialOffset = currentHeroOrEstimateHeight - targetMaxY
+        // Scroll back up so cell 0 is remounted with remainingHero == 16 (< 40 expand hysteresis) -> must NOT flicker isHeroVisible back to true
+        let scrolledPastForPartial = initialHero.height - 16
+        let partialOffset = scrolledPastForPartial - navListCollection.adjustedContentInset.top
         navListCollection.setContentOffset(CGPoint(x: 0, y: partialOffset), animated: false)
         window.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(50))
@@ -1928,7 +1952,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertEqual(
             navHeroVisible,
             false,
-            "Remounting hero cell while maxY (\(String(describing: navHeroFrames.heroCard?.maxY))) < collapse threshold must not flicker isHeroVisible back to true"
+            "Remounting hero cell while remainingHero (16pt) < 40pt expand threshold must not flicker isHeroVisible back to true"
         )
         if let midHero = navHeroFrames.heroCard, let midBackdrop = navBackdropFrame, midHero.maxY > 5 {
             XCTAssertEqual(midBackdrop.maxY, midHero.maxY, accuracy: 2.5)
@@ -2367,4 +2391,46 @@ private final class NoopImageTranslationState: NSObject, ImageTranslationPresent
     func regenerate(media: any UiMedia) {}
     func setErrorDetailsVisible(media: any UiMedia, visible: Bool) {}
     func toggle(media: any UiMedia) {}
+}
+
+@MainActor
+@Observable
+private final class CompactNavPathModel {
+    var path: [Int] = [1]
+}
+
+private struct CompactNavTestHost: View {
+    @Bindable var model: CompactNavPathModel
+    let detail: UiMangaDetail
+    let chapters: [UiMangaChapterItem]
+    let readTarget: PrimaryReadTarget
+    let onHeroFrames: (MangaDetailPaneFrames) -> Void
+    let onBackdropFrame: (CGRect?) -> Void
+    let onHeroVisible: (Bool?) -> Void
+    let onDummyDestinationLifecycle: (Bool) -> Void
+
+    var body: some View {
+        NavigationStack(path: $model.path) {
+            Color.clear
+                .navigationDestination(for: Int.self) { step in
+                    if step == 1 {
+                        MangaDetailContentView(
+                            detail: UiStateSuccess(data: detail),
+                            chapters: chapters,
+                            primaryReadTarget: readTarget,
+                            onNavigate: { _ in }
+                        )
+                        .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self, perform: onHeroFrames)
+                        .onPreferenceChange(IOSMangaCompactBackdropFramePreferenceKey.self, perform: onBackdropFrame)
+                        .onPreferenceChange(IOSMangaCompactHeroVisiblePreferenceKey.self, perform: onHeroVisible)
+                    } else {
+                        Text("Dummy Reader Destination")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .onAppear { onDummyDestinationLifecycle(true) }
+                            .onDisappear { onDummyDestinationLifecycle(false) }
+                    }
+                }
+        }
+        .environment(\.horizontalSizeClass, .compact)
+    }
 }
