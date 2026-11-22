@@ -4,10 +4,13 @@ import androidx.room3.Room
 import dev.dimension.flare.RobolectricTest
 import dev.dimension.flare.createTestFileSystem
 import dev.dimension.flare.createTestRootPath
+import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datastore.AppDataStore
+import dev.dimension.flare.data.datastore.model.AiRequestHeader
 import dev.dimension.flare.data.datastore.model.AppSettings
+import dev.dimension.flare.data.datastore.model.ImageTranslationConfig
 import dev.dimension.flare.data.io.OkioFileStorage
 import dev.dimension.flare.data.model.AppearanceSettings
 import dev.dimension.flare.data.model.HomeTimelineTabItem
@@ -45,10 +48,12 @@ import dev.dimension.flare.testPlatformRuntimeData
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.presenter.settings.StoragePresenter
 import dev.dimension.flare.unavailableAccountService
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -65,6 +70,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SettingsImportExportPresenterTest : RobolectricTest() {
+    private lateinit var appDatabase: AppDatabase
     private lateinit var cacheDatabase: CacheDatabase
     private val json = Json { ignoreUnknownKeys = true }
     private lateinit var root: Path
@@ -73,6 +79,12 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
 
     @BeforeTest
     fun setup() {
+        appDatabase =
+            Room
+                .memoryDatabaseBuilder<AppDatabase>()
+                .setDriver(createDatabaseDriver())
+                .setQueryCoroutineContext(Dispatchers.Unconfined)
+                .build()
         cacheDatabase =
             Room
                 .memoryDatabaseBuilder<CacheDatabase>()
@@ -95,6 +107,7 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
                 module {
                     testSingle { settingsRepository }
                     testSingle { appDataStore }
+                    testSingle { appDatabase }
                     testSingle { cacheDatabase }
                 },
             )
@@ -103,6 +116,7 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
 
     @AfterTest
     fun tearDown() {
+        appDatabase.close()
         cacheDatabase.close()
         stopKoin()
         deleteTestRootPath(root)
@@ -142,6 +156,26 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
             ImportSettingsPresenter(exported).import()
 
             assertEquals(config, settingsRepository.appSettings.first().aiConfig)
+        }
+
+    @Test
+    fun settingsExportOmitsCustomHeadersFromEveryAIConnection() =
+        runTest {
+            val base = AppSettings.AiConfig.Type.OpenAI("https://basic.example/v1/", "existing-key", "model")
+            val settings =
+                AppSettings.AiConfig(
+                    type = base.copy(customHeaders = listOf(AiRequestHeader("X-Base-Secret", "base-header-value"))),
+                    agentType = base.copy(customHeaders = listOf(AiRequestHeader("X-Agent-Secret", "agent-header-value"))),
+                )
+            val image = ImageTranslationConfig(openAIHeaders = listOf(AiRequestHeader("X-Image-Secret", "image-header-value")))
+            settingsRepository.updateAppSettings { copy(aiConfig = settings, imageTranslationConfig = image) }
+
+            val exported = ExportSettingsPresenter().export()
+
+            assertFalse(exported.contains("-header-value"))
+            assertFalse(exported.contains("-Secret"))
+            assertEquals(settings, settingsRepository.appSettings.first().aiConfig)
+            assertEquals(image, settingsRepository.appSettings.first().imageTranslationConfig)
         }
 
     @Test
@@ -446,8 +480,26 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
                                 ),
                         ),
                 )
-            val nextGroup = async { settingsRepository.homeTimelineTab(initialGroup.id).drop(1).first() as? UiGroupTimelineTabItem }
-            val nextChild = async { settingsRepository.homeTimelineTab(initialChild.id).drop(1).first() }
+            val firstGroupEmitted = CompletableDeferred<Unit>()
+            val firstChildEmitted = CompletableDeferred<Unit>()
+            val nextGroup =
+                async {
+                    settingsRepository
+                        .homeTimelineTab(initialGroup.id)
+                        .onEach { firstGroupEmitted.complete(Unit) }
+                        .drop(1)
+                        .first() as? UiGroupTimelineTabItem
+                }
+            val nextChild =
+                async {
+                    settingsRepository
+                        .homeTimelineTab(initialChild.id)
+                        .onEach { firstChildEmitted.complete(Unit) }
+                        .drop(1)
+                        .first()
+                }
+            firstGroupEmitted.await()
+            firstChildEmitted.await()
 
             settingsRepository.updateTabSettingsV2 {
                 TabSettingsV2(homeSlots = listOf(updatedGroup))

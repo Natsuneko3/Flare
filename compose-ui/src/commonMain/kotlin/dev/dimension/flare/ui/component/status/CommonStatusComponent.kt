@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -44,15 +45,21 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.fastForEachIndexed
 import compose.icons.FontAwesomeIcons
@@ -69,6 +76,7 @@ import compose.icons.fontawesomeicons.solid.Reply
 import compose.icons.fontawesomeicons.solid.Robot
 import compose.icons.fontawesomeicons.solid.TriangleExclamation
 import compose.icons.fontawesomeicons.solid.Tv
+import dev.dimension.flare.common.SystemUtils
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.bookmark_add
 import dev.dimension.flare.compose.ui.bookmark_remove
@@ -126,10 +134,10 @@ import dev.dimension.flare.compose.ui.vote
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.applyPostActionLayout
 import dev.dimension.flare.data.model.PostActionStyle
+import dev.dimension.flare.data.model.TimelineDisplayMode
 import dev.dimension.flare.data.model.TimelineMediaLayout
 import dev.dimension.flare.ui.component.AdaptiveGrid
 import dev.dimension.flare.ui.component.AvatarComponent
-import dev.dimension.flare.ui.component.AvatarComponentDefaults
 import dev.dimension.flare.ui.component.DateTimeText
 import dev.dimension.flare.ui.component.EmojiImage
 import dev.dimension.flare.ui.component.FAIcon
@@ -138,6 +146,7 @@ import dev.dimension.flare.ui.component.HorizontalDivider
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
+import dev.dimension.flare.ui.component.allowLinkAnnotation
 import dev.dimension.flare.ui.component.placeholder
 import dev.dimension.flare.ui.component.platform.PlatformCard
 import dev.dimension.flare.ui.component.platform.PlatformCheckbox
@@ -156,12 +165,15 @@ import dev.dimension.flare.ui.component.toImageVector
 import dev.dimension.flare.ui.model.ClickContext
 import dev.dimension.flare.ui.model.TranslationDisplayState
 import dev.dimension.flare.ui.model.UiCard
+import dev.dimension.flare.ui.model.UiCommunityNote
 import dev.dimension.flare.ui.model.UiPoll
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.render.RenderContent
+import dev.dimension.flare.ui.render.RenderRun
 import dev.dimension.flare.ui.render.UiRichText
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
@@ -172,6 +184,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import moe.tlaster.precompose.molecule.producePresenter
 import org.jetbrains.compose.resources.stringResource
+import kotlin.math.ceil
 
 @Composable
 public fun CommonStatusComponent(
@@ -191,347 +204,482 @@ public fun CommonStatusComponent(
     avatarModifier: Modifier = Modifier,
     actionsModifier: Modifier = Modifier,
     forceHideActions: Boolean = false,
-) {
-    val uriHandler = LocalUriHandler.current
-    val openPostLabel = stringResource(Res.string.status_open_post)
-    val appearanceSettings = LocalTimelineAppearance.current
-    val showAsFullWidth = !appearanceSettings.fullWidthPost && !isQuote && !isDetail
-    val carouselEdgePadding = if (isQuote) 8.dp else carouselOuterHorizontalPadding
-    val carouselLeadingPadding =
-        carouselEdgePadding +
-            if (showAsFullWidth && item.user != null) {
-                AvatarComponentDefaults.size + 8.dp
-            } else {
-                0.dp
-            }
-    val usesSideAvatarCarousel =
-        showAsFullWidth &&
-            item.user != null &&
-            showMedia &&
-            allowMediaCarousel &&
-            appearanceSettings.mediaLayout == TimelineMediaLayout.Carousel &&
-            item.images.size > 1
-    Row(
-        modifier =
-            Modifier
-                .let {
-                    if (isDetail || !isClickable) {
-                        it
-                    } else {
-                        it.clickable(onClickLabel = openPostLabel) {
-                            item.onClicked.invoke(
-                                ClickContext(
-                                    launcher = { url ->
-                                        uriHandler.openUri(url)
-                                    },
-                                ),
-                            )
-                        }
-                    }
-                }.then(modifier),
+    showReplyTo: Boolean = true,
+): Unit =
+    CompositionLocalProvider(
+        PlatformTextStyle provides PlatformTheme.typography.postBody,
+        PlatformContentColor provides StatusComponentDefaults.contentColor,
     ) {
-        if (showAsFullWidth) {
-            item.user?.let {
-                AvatarComponent(
-                    it.avatar,
-                    contentDescription =
-                        stringResource(
-                            Res.string.profile_open_user,
-                            it.handle.display,
-                        ),
-                    modifier =
-                        Modifier.clickable {
-                            it.onClicked.invoke(
-                                ClickContext(
-                                    launcher = {
-                                        uriHandler.openUri(it)
-                                    },
-                                ),
-                            )
-                        },
-                )
-                Spacer(modifier = Modifier.width(8.dp))
+        val uriHandler = LocalUriHandler.current
+        val openPostLabel = stringResource(Res.string.status_open_post)
+        val appearanceSettings = LocalTimelineAppearance.current
+        val isGalleryFallback = LocalEffectiveTimelineDisplayMode.current == TimelineDisplayMode.Gallery
+        val usesSideAvatar = !appearanceSettings.fullWidthPost && !isQuote && !isDetail
+        val hasFullWidthHeader = !usesSideAvatar && !isQuote && item.user != null
+        val sideAvatarTopInset = with(LocalDensity.current) { (PlatformTheme.typography.postBody.fontSize * 0.25f).toDp() }
+        val replyToHandle = item.replyToHandle?.takeIf { showReplyTo }
+        val translationDisplayed = item.translationDisplayState == TranslationDisplayState.Translated
+        val showOriginal = appearanceSettings.aiConfig.showOriginalWithTranslation
+        val visibleContent =
+            remember(item.content, translationDisplayed, showOriginal) {
+                item.content.visiblePostText(translationDisplayed, showOriginal)
             }
-        }
-        Column {
-            Column(
-                modifier =
-                    if (usesSideAvatarCarousel) {
-                        Modifier.heightIn(min = AvatarComponentDefaults.size)
-                    } else {
-                        Modifier
-                    },
-            ) {
-                item.user?.let { user ->
-                    val dateContent = @Composable {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            item.visibility?.let {
-                                StatusVisibilityComponent(
-                                    visibility = it,
-                                    modifier =
-                                        Modifier
-                                            .size(PlatformTheme.typography.caption.fontSize.value.dp),
-                                    tint = PlatformTheme.colorScheme.caption,
+        val visibleContentWarning =
+            remember(item.contentWarning, translationDisplayed, showOriginal) {
+                item.contentWarning?.visiblePostText(translationDisplayed, showOriginal).orEmpty()
+            }
+        val showsDetailTranslation = isDetail && !item.content.original.isEmpty && appearanceSettings.showTranslateButton
+        val hasTextContent = visibleContent.any { !it.isEmpty } || visibleContentWarning.any { !it.isEmpty }
+        val hasBodyContent = hasTextContent || item.poll != null
+        val headerSpacing =
+            when {
+                hasFullWidthHeader -> 8.dp
+                isQuote && !isGalleryFallback && hasTextContent -> 4.dp
+                else -> 2.dp
+            }
+        val hasBodyAfterReply = hasBodyContent || showsDetailTranslation
+        val hasPreMediaBody = replyToHandle != null || hasBodyAfterReply
+        val showsImages = item.images.isNotEmpty() && showMedia
+        val showsCard = item.card != null && appearanceSettings.showLinkPreview && item.images.isEmpty() && quotes.isEmpty()
+        val showsQuotes = quotes.isNotEmpty() && !isQuote
+        val communityNote = item.communityNote
+        val showsAttachments = showsImages || showsCard || showsQuotes || communityNote != null
+        val hasVisibleEmojiReactions = appearanceSettings.showEmojiReactions && item.emojiReactions.isNotEmpty()
+        val showsReactions = !isQuote && (hasVisibleEmojiReactions || item.sourceChannel != null)
+        val showsActions = (appearanceSettings.postActionStyle != PostActionStyle.Hidden || isDetail) && !forceHideActions
+        val replyBeforeAttachments = replyToHandle != null && !isGalleryFallback && !hasBodyAfterReply
+        val replyBeforeFooter = replyBeforeAttachments && !showsAttachments
+        val replyBeforeTimestampOrActions = replyBeforeFooter && !showsReactions
+        val firstAttachmentSpacing =
+            when {
+                replyBeforeAttachments -> 0.dp
+                hasFullWidthHeader && !hasPreMediaBody -> 8.dp
+                else -> StatusComponentDefaults.attachmentSpacing
+            }
+        val carouselEdgePadding = if (isQuote) StatusComponentDefaults.quotePadding else carouselOuterHorizontalPadding
+        val carouselLeadingPadding =
+            carouselEdgePadding +
+                if (usesSideAvatar && item.user != null) {
+                    StatusComponentDefaults.avatarSize + 8.dp
+                } else {
+                    0.dp
+                }
+        val usesSideAvatarCarousel =
+            usesSideAvatar &&
+                item.user != null &&
+                showMedia &&
+                allowMediaCarousel &&
+                appearanceSettings.mediaLayout == TimelineMediaLayout.Carousel &&
+                item.images.size > 1
+        Row(
+            modifier =
+                Modifier
+                    .let {
+                        if (isDetail || !isClickable) {
+                            it
+                        } else {
+                            it.clickable(onClickLabel = openPostLabel) {
+                                item.onClicked.invoke(
+                                    ClickContext(
+                                        launcher = { url ->
+                                            uriHandler.openUri(url)
+                                        },
+                                    ),
                                 )
                             }
-                            AnimatedVisibility(
-                                visible = item.translationDisplayState != TranslationDisplayState.Hidden,
-                            ) {
-                                TranslationDisplayBadge(
-                                    state = item.translationDisplayState,
-                                )
-                            }
-                            if (appearanceSettings.showPlatformLogo) {
-                                TabIcon(
-                                    icon = item.platformIcon,
-                                    contentDescription =
-                                        stringResource(
-                                            Res.string.status_platform,
-                                            item.platformId,
+                        }
+                    }.then(modifier),
+        ) {
+            if (usesSideAvatar) {
+                item.user?.let {
+                    Box(Modifier.padding(top = sideAvatarTopInset)) {
+                        AvatarComponent(
+                            it.avatar,
+                            size = StatusComponentDefaults.avatarSize,
+                            contentDescription =
+                                stringResource(
+                                    Res.string.profile_open_user,
+                                    it.handle.display,
+                                ),
+                            modifier =
+                                Modifier.clickable {
+                                    it.onClicked.invoke(
+                                        ClickContext(
+                                            launcher = {
+                                                uriHandler.openUri(it)
+                                            },
                                         ),
-                                    size = PlatformTheme.typography.caption.fontSize.value.dp,
-                                    color = PlatformTheme.colorScheme.caption,
-                                )
-                            }
-                            if (!isDetail) {
-                                DateTimeText(
-                                    item.createdAt,
-                                    style = PlatformTheme.typography.caption,
-                                    color = PlatformTheme.colorScheme.caption,
-                                )
-                            }
-                            if (appearanceSettings.aiConfig.agent) {
-                                PlatformIconButton(
-                                    onClick = {
-                                        uriHandler.openUri(
-                                            DeeplinkRoute
-                                                .Status
-                                                .Insight(
-                                                    accountType = item.accountType,
-                                                    statusKey = item.statusKey,
-                                                ).toUri(),
-                                        )
-                                    },
-                                    modifier =
-                                        Modifier
-                                            .size(24.dp),
-                                ) {
-                                    FAIcon(
-                                        imageVector = FontAwesomeIcons.Solid.Robot,
-                                        contentDescription = stringResource(Res.string.status_view_insight),
+                                    )
+                                },
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+            }
+            Column {
+                Column(
+                    modifier =
+                        if (usesSideAvatarCarousel) {
+                            Modifier.heightIn(
+                                min = StatusComponentDefaults.avatarSize + sideAvatarTopInset - firstAttachmentSpacing,
+                            )
+                        } else {
+                            Modifier
+                        },
+                ) {
+                    item.user?.let { user ->
+                        val dateContent = @Composable {
+                            val iconSize =
+                                with(LocalDensity.current) {
+                                    PlatformTheme.typography.postBody.fontSize
+                                        .toDp()
+                                }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                item.visibility?.let {
+                                    StatusVisibilityComponent(
+                                        visibility = it,
                                         modifier =
                                             Modifier
-                                                .size(PlatformTheme.typography.caption.fontSize.value.dp),
-                                        tint = PlatformTheme.colorScheme.caption,
+                                                .size(iconSize),
+                                        tint = StatusComponentDefaults.secondaryColor,
                                     )
+                                }
+                                AnimatedVisibility(
+                                    visible = item.translationDisplayState != TranslationDisplayState.Hidden,
+                                ) {
+                                    TranslationDisplayBadge(
+                                        state = item.translationDisplayState,
+                                        iconSize = iconSize,
+                                    )
+                                }
+                                if (appearanceSettings.showPlatformLogo) {
+                                    TabIcon(
+                                        icon = item.platformIcon,
+                                        contentDescription =
+                                            stringResource(
+                                                Res.string.status_platform,
+                                                item.platformId,
+                                            ),
+                                        size = iconSize,
+                                        color = StatusComponentDefaults.secondaryColor,
+                                    )
+                                }
+                                if (!isDetail) {
+                                    DateTimeText(
+                                        item.createdAt,
+                                        style = PlatformTheme.typography.postBody,
+                                        color = StatusComponentDefaults.secondaryColor,
+                                    )
+                                }
+                                if (appearanceSettings.aiConfig.agent) {
+                                    PlatformIconButton(
+                                        onClick = {
+                                            uriHandler.openUri(
+                                                DeeplinkRoute
+                                                    .Status
+                                                    .Insight(
+                                                        accountType = item.accountType,
+                                                        statusKey = item.statusKey,
+                                                    ).toUri(),
+                                            )
+                                        },
+                                        modifier =
+                                            Modifier
+                                                .size(maxOf(24.dp, iconSize + 4.dp)),
+                                    ) {
+                                        FAIcon(
+                                            imageVector = FontAwesomeIcons.Solid.Robot,
+                                            contentDescription = stringResource(Res.string.status_view_insight),
+                                            modifier =
+                                                Modifier
+                                                    .size(iconSize),
+                                            tint = StatusComponentDefaults.secondaryColor,
+                                        )
+                                    }
                                 }
                             }
                         }
+                        if (usesSideAvatar) {
+                            UserCompat(
+                                user = user,
+                                isPost = true,
+                                subtitle = item.authorSubtitle,
+                                onUserClick = {
+                                    user.onClicked.invoke(
+                                        ClickContext(
+                                            launcher = {
+                                                uriHandler.openUri(it)
+                                            },
+                                        ),
+                                    )
+                                },
+                                leading = null,
+                            ) {
+                                dateContent.invoke()
+                            }
+                        } else if (isQuote) {
+                            UserCompat(
+                                user,
+                                isPost = true,
+                                subtitle = item.authorSubtitle,
+                                onUserClick = {
+                                    user.onClicked.invoke(
+                                        ClickContext(
+                                            launcher = {
+                                                uriHandler.openUri(it)
+                                            },
+                                        ),
+                                    )
+                                },
+                            ) {
+                                dateContent.invoke()
+                            }
+                        } else {
+                            CommonStatusHeaderComponent(
+                                data = user,
+                                isPost = true,
+                                subtitle = item.authorSubtitle,
+                                nameModifier = nameModifier,
+                                handleModifier = handleModifier,
+                                avatarModifier = avatarModifier,
+                                onUserClick = {
+                                    user.onClicked.invoke(
+                                        ClickContext(
+                                            launcher = {
+                                                uriHandler.openUri(it)
+                                            },
+                                        ),
+                                    )
+                                },
+                            ) {
+                                dateContent.invoke()
+                            }
+                        }
                     }
-                    if (showAsFullWidth) {
-                        UserCompat(
-                            user = user,
-                            subtitle = item.authorSubtitle,
-                            onUserClick = {
-                                user.onClicked.invoke(
-                                    ClickContext(
-                                        launcher = {
-                                            uriHandler.openUri(it)
-                                        },
-                                    ),
-                                )
-                            },
-                            leading = null,
-                        ) {
-                            dateContent.invoke()
-                        }
-                    } else if (isQuote) {
-                        UserCompat(
-                            user,
-                            subtitle = item.authorSubtitle,
-                            onUserClick = {
-                                user.onClicked.invoke(
-                                    ClickContext(
-                                        launcher = {
-                                            uriHandler.openUri(it)
-                                        },
-                                    ),
-                                )
-                            },
-                        ) {
-                            dateContent.invoke()
-                        }
-                    } else {
-                        CommonStatusHeaderComponent(
-                            data = user,
-                            subtitle = item.authorSubtitle,
-                            nameModifier = nameModifier,
-                            handleModifier = handleModifier,
-                            avatarModifier = avatarModifier,
-                            onUserClick = {
-                                user.onClicked.invoke(
-                                    ClickContext(
-                                        launcher = {
-                                            uriHandler.openUri(it)
-                                        },
-                                    ),
-                                )
-                            },
-                        ) {
-                            dateContent.invoke()
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
+                    replyToHandle?.let { replyHandle ->
+                        val topSpacing =
+                            when {
+                                !isGalleryFallback -> 4.dp
+                                !hasBodyAfterReply && showsAttachments -> firstAttachmentSpacing
+                                else -> 8.dp
+                            }
+                        val bottomSpacing =
+                            when {
+                                !isGalleryFallback -> 4.dp
+                                hasBodyContent -> 8.dp
+                                else -> 0.dp
+                            }
+                        StatusReplyComponent(
+                            replyHandle = replyHandle,
+                            modifier = Modifier.padding(top = topSpacing, bottom = bottomSpacing),
+                        )
                     }
-                }
-                item.replyToHandle?.let { replyHandle ->
-                    Spacer(modifier = Modifier.height(if (showAsFullWidth || isQuote) 2.dp else 4.dp))
-                    StatusReplyComponent(
-                        replyHandle = replyHandle,
-                    )
-                }
-                if (isDetail) {
-                    SelectionContainer {
+                    val body = @Composable {
                         StatusContentComponent(
-                            content = item.content,
-                            contentWarning = item.contentWarning,
+                            visibleContent = visibleContent,
+                            visibleContentWarning = visibleContentWarning,
                             poll = item.poll,
-                            maxLines = Int.MAX_VALUE,
+                            maxLines = if (isDetail) Int.MAX_VALUE else maxLines,
                             showExpandButton = showExpandButton,
-                            translationDisplayed = item.translationDisplayState == TranslationDisplayState.Translated,
+                            topSpacing = if (replyToHandle == null && item.user != null) headerSpacing else 0.dp,
                         )
                     }
-                } else {
-                    StatusContentComponent(
-                        content = item.content,
-                        contentWarning = item.contentWarning,
-                        poll = item.poll,
-                        maxLines = maxLines,
-                        showExpandButton = showExpandButton,
-                        translationDisplayed = item.translationDisplayState == TranslationDisplayState.Translated,
-                        topSpacing = if ((showAsFullWidth || isQuote) && (item.user != null || item.replyToHandle != null)) 2.dp else 0.dp,
-                    )
-                }
+                    if (isDetail) {
+                        SelectionContainer(content = body)
+                    } else {
+                        body()
+                    }
 
-                if (isDetail && !item.content.original.isEmpty && appearanceSettings.showTranslateButton) {
-                    TranslationComponent(
-                        item = item,
-                        statusKey = item.stableItemKey,
-                        contentWarning = item.contentWarning?.original,
-                        rawContent = item.content.original.innerText,
-                        content = item.content.original,
-                    )
-                }
-            }
-
-            if (item.images.isNotEmpty() && showMedia) {
-                Spacer(modifier = Modifier.height(8.dp))
-                StatusMediasComponent(
-                    item,
-                    isQuote = isQuote,
-                    allowMediaCarousel = allowMediaCarousel,
-                    carouselLeadingPadding = carouselLeadingPadding,
-                    carouselTrailingPadding = carouselEdgePadding,
-                    onMediaClick = { index ->
-                        item.openMedia(
-                            index = index,
-                            launcher = uriHandler::openUri,
+                    if (showsDetailTranslation) {
+                        Spacer(
+                            modifier =
+                                Modifier.height(
+                                    if (replyToHandle != null && !isGalleryFallback &&
+                                        !hasBodyContent
+                                    ) {
+                                        0.dp
+                                    } else {
+                                        8.dp
+                                    },
+                                ),
                         )
-                    },
-                )
-            }
-            item.card?.let { card ->
-                if (appearanceSettings.showLinkPreview && item.images.isEmpty() && quotes.isEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    StatusCardComponent(
-                        card = card,
+                        TranslationComponent(
+                            item = item,
+                            statusKey = item.stableItemKey,
+                            contentWarning = item.contentWarning?.original,
+                            rawContent = item.content.original.innerText,
+                            content = item.content.original,
+                        )
+                    }
+                }
+
+                if (showsImages) {
+                    Spacer(modifier = Modifier.height(firstAttachmentSpacing))
+                    StatusMediasComponent(
+                        item,
+                        isQuote = isQuote,
+                        allowMediaCarousel = allowMediaCarousel,
+                        carouselLeadingPadding = carouselLeadingPadding,
+                        carouselTrailingPadding = carouselEdgePadding,
+                        onMediaClick = { index ->
+                            item.openMedia(
+                                index = index,
+                                launcher = uriHandler::openUri,
+                            )
+                        },
+                    )
+                }
+                item.card?.let { card ->
+                    if (showsCard) {
+                        Spacer(modifier = Modifier.height(firstAttachmentSpacing))
+                        StatusCardComponent(
+                            card = card,
+                            modifier =
+                                Modifier
+                                    .border(
+                                        FlareDividerDefaults.thickness,
+                                        color = FlareDividerDefaults.color,
+                                        shape =
+                                            if (isQuote) {
+                                                PlatformTheme.shapes.small
+                                            } else {
+                                                PlatformTheme.shapes.medium
+                                            },
+                                    ).clip(
+                                        shape =
+                                            if (isQuote) {
+                                                PlatformTheme.shapes.small
+                                            } else {
+                                                PlatformTheme.shapes.medium
+                                            },
+                                    ).pointerHoverIcon(PointerIcon.Hand)
+                                    .clickable {
+                                        uriHandler.openUri(card.url)
+                                    }.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (showsQuotes) {
+                    Spacer(
+                        modifier = Modifier.height(if (showsImages) 8.dp else firstAttachmentSpacing),
+                    )
+                    StatusQuoteComponent(
+                        quotes = quotes,
+                        allowMediaCarousel = allowMediaCarousel,
+                    )
+                }
+
+                communityNote?.let { note ->
+                    Spacer(modifier = Modifier.height(firstAttachmentSpacing))
+                    StatusCommunityNoteComponent(note)
+                }
+
+                if (showsReactions) {
+                    Spacer(modifier = Modifier.height(if (replyBeforeFooter) 0.dp else 8.dp))
+                    StatusReactionComponent(
+                        data = item,
+                        isDetail = isDetail,
+                        showEmojiReactions = hasVisibleEmojiReactions,
+                    )
+                }
+
+                if (isDetail) {
+                    Spacer(modifier = Modifier.height(if (replyBeforeTimestampOrActions) 0.dp else 8.dp))
+                    DateTimeText(
+                        item.createdAt,
+                        style = PlatformTheme.typography.postBody,
+                        color = StatusComponentDefaults.secondaryColor,
+                        fullTime = true,
+                    )
+                }
+                if (showsActions) {
+                    val actionsTopSpacing =
+                        when {
+                            replyBeforeTimestampOrActions && !isDetail -> 0.dp
+                            hasFullWidthHeader && !isDetail && !hasPreMediaBody && !showsAttachments && !showsReactions -> 8.dp
+                            else -> StatusComponentDefaults.actionsSpacing
+                        }
+                    StatusActions(
+                        item.actions,
                         modifier =
                             Modifier
-                                .border(
-                                    FlareDividerDefaults.thickness,
-                                    color = FlareDividerDefaults.color,
-                                    shape =
-                                        if (isQuote) {
-                                            PlatformTheme.shapes.small
-                                        } else {
-                                            PlatformTheme.shapes.medium
-                                        },
-                                ).clip(
-                                    shape =
-                                        if (isQuote) {
-                                            PlatformTheme.shapes.small
-                                        } else {
-                                            PlatformTheme.shapes.medium
-                                        },
-                                ).pointerHoverIcon(PointerIcon.Hand)
-                                .clickable {
-                                    uriHandler.openUri(card.url)
-                                }.fillMaxWidth(),
+                                .fillMaxWidth()
+                                .padding(top = actionsTopSpacing)
+                                .expandHorizontally(leading = 4.dp, trailing = 4.dp)
+                                .then(actionsModifier),
                     )
-                }
-            }
-            if (quotes.isNotEmpty() && !isQuote) {
-                Spacer(modifier = Modifier.height(4.dp))
-                StatusQuoteComponent(
-                    quotes = quotes,
-                    allowMediaCarousel = allowMediaCarousel,
-                )
-            }
-
-            val hasVisibleEmojiReactions =
-                appearanceSettings.showEmojiReactions && item.emojiReactions.isNotEmpty()
-            if (!isQuote && (hasVisibleEmojiReactions || item.sourceChannel != null)) {
-                Spacer(modifier = Modifier.height(4.dp))
-                StatusReactionComponent(
-                    data = item,
-                    isDetail = isDetail,
-                    showEmojiReactions = hasVisibleEmojiReactions,
-                )
-            }
-
-            if (isDetail) {
-                Spacer(modifier = Modifier.height(8.dp))
-                DateTimeText(
-                    item.createdAt,
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
-                    fullTime = true,
-                )
-            }
-            if ((appearanceSettings.postActionStyle != PostActionStyle.Hidden || isDetail) && !forceHideActions) {
-                if (isDetail) {
-                    CompositionLocalProvider(
-                        PlatformContentColor provides PlatformTheme.colorScheme.text,
-                        PlatformTextStyle provides PlatformTheme.typography.body,
-                    ) {
-                        StatusActions(
-                            item.actions,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp)
-                                    .then(actionsModifier),
-                        )
-                    }
-                } else {
-                    CompositionLocalProvider(
-                        PlatformContentColor provides PlatformTheme.colorScheme.caption,
-                        PlatformTextStyle provides PlatformTheme.typography.caption,
-                    ) {
-                        StatusActions(
-                            item.actions,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp)
-                                    .then(actionsModifier),
-                        )
-                    }
                 }
             }
         }
+    }
+
+@Composable
+private fun StatusCommunityNoteComponent(note: UiCommunityNote) {
+    val uriHandler = LocalUriHandler.current
+    val textColor = if (SystemUtils.isAndroid) PlatformTheme.colorScheme.onCard else PlatformContentColor.current
+    val outline =
+        if (SystemUtils.isAndroid) {
+            val background = LocalStatusBackgroundColor.current ?: PlatformTheme.colorScheme.background
+            textColor
+                .copy(alpha = 0.10f)
+                .compositeOver(background)
+        } else {
+            FlareDividerDefaults.color
+        }
+    val shape = PlatformTheme.shapes.medium
+    val titleLink =
+        note.url?.let { url ->
+            Modifier.pointerHoverIcon(PointerIcon.Hand).clickable { uriHandler.openUri(url) }
+        } ?: Modifier
+    val sourceLinkSemantics =
+        if (allowLinkAnnotation) {
+            Modifier
+        } else {
+            val actions =
+                remember(note.body, uriHandler) {
+                    note.body.renderRuns
+                        .filterIsInstance<RenderContent.Text>()
+                        .flatMap { it.runs.filterIsInstance<RenderRun.Text>() }
+                        .mapNotNull { run ->
+                            val link = run.style.link ?: return@mapNotNull null
+                            CustomAccessibilityAction(run.text) {
+                                uriHandler.openUri(link)
+                                true
+                            }
+                        }
+                }
+            Modifier.semantics(mergeDescendants = true) { customActions = actions }
+        }
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .border(FlareDividerDefaults.thickness, outline, shape),
+    ) {
+        PlatformText(
+            text = note.title,
+            color = textColor,
+            fontWeight = FontWeight.Bold,
+            style = PlatformTheme.typography.postBody,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .background(outline)
+                    .then(titleLink)
+                    .semantics { heading() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+        RichText(
+            text = note.body,
+            modifier = Modifier.then(sourceLinkSemantics).padding(12.dp),
+            color = textColor,
+            textStyle = PlatformTheme.typography.postBody,
+        )
     }
 }
 
@@ -563,13 +711,13 @@ internal fun StatusMediasComponent(
                     modifier =
                         Modifier
                             .size(12.dp),
-                    tint = PlatformTheme.colorScheme.caption,
+                    tint = StatusComponentDefaults.secondaryColor,
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 PlatformText(
                     text = stringResource(resource = Res.string.hide_media),
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
+                    style = PlatformTheme.typography.postBody,
+                    color = StatusComponentDefaults.secondaryColor,
                 )
             }
         }
@@ -604,13 +752,13 @@ internal fun StatusMediasComponent(
                 modifier =
                     Modifier
                         .size(12.dp),
-                tint = PlatformTheme.colorScheme.caption,
+                tint = StatusComponentDefaults.secondaryColor,
             )
             Spacer(modifier = Modifier.width(4.dp))
             PlatformText(
                 text = stringResource(resource = Res.string.show_media),
-                style = PlatformTheme.typography.caption,
-                color = PlatformTheme.colorScheme.caption,
+                style = PlatformTheme.typography.postBody,
+                color = StatusComponentDefaults.secondaryColor,
             )
         }
     }
@@ -647,7 +795,7 @@ private fun StatusQuoteComponent(
                         allowMediaCarousel = allowMediaCarousel,
                         modifier =
                             Modifier
-                                .padding(8.dp),
+                                .padding(StatusComponentDefaults.quotePadding),
                     )
                     if (index != quotes.lastIndex && quotes.size > 1) {
                         HorizontalDivider()
@@ -668,7 +816,7 @@ private fun StatusReactionComponent(
     val uriHandler = LocalUriHandler.current
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         data.sourceChannel?.let { channel ->
             Row(
@@ -678,15 +826,15 @@ private fun StatusReactionComponent(
                 FAIcon(
                     imageVector = FontAwesomeIcons.Solid.Tv,
                     contentDescription = channel.name,
-                    tint = PlatformTheme.colorScheme.caption,
+                    tint = StatusComponentDefaults.secondaryColor,
                     modifier =
                         Modifier
                             .size(12.dp),
                 )
                 PlatformText(
                     text = channel.name,
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
+                    style = PlatformTheme.typography.postBody,
+                    color = StatusComponentDefaults.secondaryColor,
                     maxLines = 1,
                 )
             }
@@ -753,7 +901,9 @@ private fun StatusReactionComponent(
 internal fun TranslationDisplayBadge(
     state: TranslationDisplayState,
     modifier: Modifier = Modifier,
+    iconSize: Dp? = null,
 ) {
+    val color = if (iconSize == null) PlatformTheme.colorScheme.caption else StatusComponentDefaults.secondaryColor
     val description =
         when (state) {
             TranslationDisplayState.Translating -> {
@@ -783,14 +933,15 @@ internal fun TranslationDisplayBadge(
         FAIcon(
             FontAwesomeIcons.Solid.Language,
             contentDescription = null,
-            tint = PlatformTheme.colorScheme.caption,
+            modifier = Modifier.size(iconSize ?: 20.dp),
+            tint = color,
         )
         AnimatedContent(state) { state ->
             when (state) {
                 TranslationDisplayState.Translating -> {
                     PlatformCircularProgressIndicator(
-                        modifier = Modifier.size(12.dp),
-                        color = PlatformTheme.colorScheme.caption,
+                        modifier = Modifier.size(iconSize ?: 12.dp),
+                        color = color,
                     )
                 }
 
@@ -800,8 +951,8 @@ internal fun TranslationDisplayBadge(
                     FAIcon(
                         FontAwesomeIcons.Solid.TriangleExclamation,
                         contentDescription = null,
-                        tint = PlatformTheme.colorScheme.caption,
-                        modifier = Modifier.size(12.dp),
+                        tint = color,
+                        modifier = Modifier.size(iconSize ?: 12.dp),
                     )
                 }
 
@@ -835,6 +986,7 @@ private fun TranslationComponent(
             },
         ) {
             PlatformText(
+                style = PlatformTheme.typography.postBody,
                 text =
                     stringResource(
                         resource = Res.string.status_detail_translate,
@@ -850,6 +1002,7 @@ private fun TranslationComponent(
                 },
             ) {
                 PlatformText(
+                    style = PlatformTheme.typography.postBody,
                     text =
                         stringResource(
                             resource = Res.string.status_detail_tldr,
@@ -859,14 +1012,15 @@ private fun TranslationComponent(
         }
     }
     if (enabledTldr) {
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        val targetLanguage = LocalLocale.current.language
         val state by producePresenter(
-            "tldr_${contentWarning}_${rawContent}_${Locale.current.language}",
+            "tldr_${contentWarning}_${rawContent}_$targetLanguage",
         ) {
             statusTldrPresenter(
                 contentWarning = contentWarning,
                 content = content,
-                targetLanguage = Locale.current.language,
+                targetLanguage = targetLanguage,
             )
         }
         state
@@ -882,15 +1036,16 @@ private fun TranslationComponent(
             }
     }
     if (enabledTranslate) {
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        val targetLanguage = LocalLocale.current.language
         val state by producePresenter(
-            "translate_${contentWarning}_${rawContent}_${Locale.current.language}_${timelineAppearance.aiConfig.translation}",
+            "translate_${contentWarning}_${rawContent}_${targetLanguage}_${timelineAppearance.aiConfig.translation}",
         ) {
             statusTranslatePresenter(
                 item = item,
                 contentWarning = contentWarning,
                 content = content,
-                targetLanguage = Locale.current.language,
+                targetLanguage = targetLanguage,
             )
         }
         state.contentWarning
@@ -1000,20 +1155,32 @@ public fun StatusVisibilityComponent(
 internal fun StatusActions(
     items: ImmutableList<ActionMenu>,
     modifier: Modifier = Modifier,
+    isPost: Boolean = true,
+) = CompositionLocalProvider(
+    PlatformTextStyle provides
+        PlatformTheme.typography.postBody.let {
+            val reduction = if (isPost) StatusComponentDefaults.postActionTextSizeReduction else 2
+            it.copy(fontSize = (it.fontSize.value - reduction).sp)
+        },
+    PlatformContentColor provides StatusComponentDefaults.secondaryColor,
 ) {
     val appearanceSettings = LocalTimelineAppearance.current
     val displayItems =
         remember(items, appearanceSettings.postActionLayout) {
             items.applyPostActionLayout(appearanceSettings.postActionLayout).filterNot { it == ActionMenu.Divider }
         }
-    if (displayItems.isEmpty()) return
+    if (displayItems.isEmpty()) return@CompositionLocalProvider
     val haptics = LocalHapticFeedback.current
     val launcher = LocalUriHandler.current
+    val density = LocalDensity.current
     val isStretched = appearanceSettings.postActionStyle == PostActionStyle.Stretch
-    val trailingNumberWidth = PlatformTextStyle.current.fontSize.value.dp * 2.5f + 2.dp
+    val isAndroidPost = isPost && SystemUtils.isAndroid
+    val iconSize = if (isPost) StatusComponentDefaults.postActionIconSize else StatusComponentDefaults.actionIconSize
+    val trailingNumberWidth =
+        with(density) { PlatformTextStyle.current.fontSize.toDp() } * 2.5f + StatusComponentDefaults.actionLabelSpacing
     Row(
         modifier = modifier,
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = if (isPost) Alignment.CenterVertically else Alignment.Bottom,
         horizontalArrangement =
             when (appearanceSettings.postActionStyle) {
                 PostActionStyle.Hidden -> Arrangement.spacedBy(4.dp, Alignment.Start)
@@ -1023,18 +1190,45 @@ internal fun StatusActions(
             },
     ) {
         displayItems.fastForEachIndexed { index, action ->
-            val number =
+            val item =
                 when (action) {
-                    is ActionMenu.Item -> action.count
-                    is ActionMenu.Group -> action.displayItem.count
-                    ActionMenu.Divider -> null
+                    is ActionMenu.Item -> action
+                    is ActionMenu.Group -> action.displayItem
+                    ActionMenu.Divider -> return@fastForEachIndexed
                 }
-            // Equal leading slots keep icon centers independent of the count's width.
+            val number = item.count
+            val icon = item.icon?.toImageVector() ?: FontAwesomeIcons.Solid.Ellipsis
+            val iconWidth =
+                if (isAndroidPost) {
+                    with(density) {
+                        // Reserve enough pixels for aspect-fit to use the full height.
+                        ceil(iconSize.roundToPx() * (icon.defaultWidth / icon.defaultHeight)).toDp()
+                    }
+                } else {
+                    iconSize
+                }
             val actionModifier =
                 when {
-                    !isStretched || displayItems.size == 1 -> Modifier
-                    index != displayItems.lastIndex -> Modifier.weight(1f)
-                    else -> Modifier.width(28.dp + if (number != null) trailingNumberWidth else 0.dp)
+                    !isStretched || displayItems.size == 1 -> {
+                        Modifier
+                    }
+
+                    index != displayItems.lastIndex -> {
+                        Modifier.weight(1f)
+                    }
+
+                    else -> {
+                        val iconSlotWidth = maxOf(StatusComponentDefaults.actionIconSlotWidth, iconWidth)
+                        val padding = StatusComponentDefaults.actionButtonPadding
+                        val actionWidth =
+                            if (isAndroidPost) {
+                                with(density) { (iconSlotWidth.roundToPx() + padding.roundToPx() * 2).toDp() }
+                            } else {
+                                iconSlotWidth + padding * 2
+                            }
+                        val trailingNumber = if (isAndroidPost) number.visibleActionNumber(appearanceSettings.showNumbers) else number
+                        Modifier.width(actionWidth + if (trailingNumber != null) trailingNumberWidth else 0.dp)
+                    }
                 }
             if (index == displayItems.lastIndex && appearanceSettings.postActionStyle == PostActionStyle.LeftAligned) {
                 Spacer(modifier = Modifier.weight(1f))
@@ -1043,10 +1237,10 @@ internal fun StatusActions(
                 is ActionMenu.Group -> {
                     StatusActionGroup(
                         modifier = actionModifier,
-                        icon =
-                            action.displayItem.icon?.toImageVector()
-                                ?: FontAwesomeIcons.Solid.Ellipsis,
-                        number = action.displayItem.count,
+                        icon = icon,
+                        number = number,
+                        iconSize = iconSize,
+                        iconWidth = iconWidth,
                         color =
                             action.displayItem.color?.toComposeColor()
                                 ?: PlatformContentColor.current,
@@ -1079,16 +1273,15 @@ internal fun StatusActions(
                 is ActionMenu.Item -> {
                     StatusActionButton(
                         modifier = actionModifier,
-                        icon =
-                            action.icon?.toImageVector()
-                                ?: FontAwesomeIcons.Solid.Ellipsis,
-                        // Fallback or handle null
-                        number = action.count,
+                        icon = icon,
+                        number = number,
                         color = action.color?.toComposeColor() ?: PlatformContentColor.current,
                         contentDescription =
                             action.text?.asString()
                                 ?: stringResource(Res.string.more),
                         enabled = action.enabled,
+                        iconSize = iconSize,
+                        iconWidth = iconWidth,
                         withTextMinWidth =
                             !isStretched && appearanceSettings.postActionFixedWidth &&
                                 action.count != null &&
@@ -1304,64 +1497,50 @@ private fun StatusReplyComponent(
     modifier: Modifier = Modifier,
 ) {
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         FAIcon(
             imageVector = FontAwesomeIcons.Solid.Reply,
             contentDescription = stringResource(resource = Res.string.reply_to),
-            tint = PlatformTheme.colorScheme.caption,
+            tint = StatusComponentDefaults.secondaryColor,
             modifier =
                 Modifier
                     .size(12.dp),
         )
         PlatformText(
             text = stringResource(resource = Res.string.reply_to, replyHandle),
-            style = PlatformTheme.typography.caption,
-            color = PlatformTheme.colorScheme.caption,
+            style = PlatformTheme.typography.postBody,
+            color = StatusComponentDefaults.secondaryColor,
             maxLines = 1,
         )
     }
 }
 
+private fun UiTranslatableText.visiblePostText(
+    translated: Boolean,
+    showOriginal: Boolean,
+): List<UiRichText> {
+    val translatedText = translation
+    return when {
+        !translated || translatedText == null -> listOf(original)
+        showOriginal -> listOf(original, translatedText)
+        else -> listOf(translatedText)
+    }
+}
+
 @Composable
 private fun StatusContentComponent(
-    content: UiTranslatableText,
-    contentWarning: UiTranslatableText?,
+    visibleContent: List<UiRichText>,
+    visibleContentWarning: List<UiRichText>,
     poll: UiPoll?,
     maxLines: Int?,
     showExpandButton: Boolean,
-    translationDisplayed: Boolean,
     topSpacing: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     val appearanceSettings = LocalTimelineAppearance.current
-    val showOriginalWithTranslation = appearanceSettings.aiConfig.showOriginalWithTranslation
-    val translation = content.translation
-    val visibleContent =
-        if (translationDisplayed && translation != null) {
-            if (showOriginalWithTranslation) {
-                listOf(content.original, translation)
-            } else {
-                listOf(translation)
-            }
-        } else {
-            listOf(content.original)
-        }
-    val visibleContentWarning =
-        contentWarning
-            ?.let { warning ->
-                val warningTranslation = warning.translation
-                if (translationDisplayed && warningTranslation != null) {
-                    if (showOriginalWithTranslation) {
-                        listOf(warning.original, warningTranslation)
-                    } else {
-                        listOf(warningTranslation)
-                    }
-                } else {
-                    listOf(warning.original)
-                }
-            }.orEmpty()
     val effectiveMaxLines = (maxLines ?: appearanceSettings.lineLimit).coerceAtLeast(1)
     val collapseThresholdLines = maxLines?.coerceAtLeast(1) ?: 15
     var expanded by rememberSaveable {
@@ -1373,7 +1552,7 @@ private fun StatusContentComponent(
     Column(
         modifier = modifier,
     ) {
-        if (topSpacing > 0.dp && visibleContentWarning.all { it.isEmpty } && visibleContent.any { !it.isEmpty }) {
+        if (topSpacing > 0.dp && (visibleContentWarning.any { !it.isEmpty } || visibleContent.any { !it.isEmpty } || poll != null)) {
             Spacer(modifier = Modifier.height(topSpacing))
         }
         val expandContentWarning = appearanceSettings.expandContentWarning
@@ -1381,9 +1560,8 @@ private fun StatusContentComponent(
             Column(
                 modifier =
                     Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                        .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 visibleContentWarning.forEach { warning ->
                     if (!warning.isEmpty) {
@@ -1400,16 +1578,27 @@ private fun StatusContentComponent(
                         },
                     ) {
                         if (expanded) {
-                            PlatformText(stringResource(Res.string.mastodon_item_show_less))
+                            PlatformText(stringResource(Res.string.mastodon_item_show_less), style = PlatformTheme.typography.postBody)
                         } else {
-                            PlatformText(stringResource(Res.string.mastodon_item_show_more))
+                            PlatformText(stringResource(Res.string.mastodon_item_show_more), style = PlatformTheme.typography.postBody)
                         }
                     }
                 }
             }
         }
         AnimatedVisibility(visible = expanded || expandContentWarning || visibleContentWarning.all { it.isEmpty }) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                modifier =
+                    Modifier.padding(
+                        top =
+                            if (visibleContentWarning.any { !it.isEmpty } && (visibleContent.any { !it.isEmpty } || poll != null)) {
+                                8.dp
+                            } else {
+                                0.dp
+                            },
+                    ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 key(visibleContent, effectiveMaxLines) {
                     visibleContent.forEachIndexed { index, visibleText ->
                         if (!visibleText.isEmpty) {
@@ -1445,13 +1634,13 @@ private fun StatusContentComponent(
                         ) {
                             PlatformText(
                                 stringResource(Res.string.post_show_full_text),
+                                style = PlatformTheme.typography.postBody,
                                 color = PlatformTheme.colorScheme.primary,
                             )
                         }
                     }
                 }
                 poll?.let {
-                    Spacer(modifier = Modifier.height(8.dp))
                     StatusPollComponent(
                         poll = it,
                     )
@@ -1470,12 +1659,18 @@ private fun CollapsibleRichText(
 ) {
     val lineHeight =
         with(LocalDensity.current) {
-            PlatformTextStyle.current.lineHeight
+            PlatformTextStyle.current
+                .lineHeight
                 .roundToPx()
                 .coerceAtLeast(1)
         }
     var fullHeight by remember(text) { mutableStateOf(0) }
-    val overflows = shouldCollapseRichText(fullHeight, lineHeight, maxOf(lineLimit, collapseThresholdLines))
+    var textLayout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
+    val singleTextBlock = text.renderRuns.singleOrNull() is RenderContent.Text
+    val threshold = maxOf(lineLimit, collapseThresholdLines)
+    val overflows =
+        textLayout?.let { it.lineCount > threshold }
+            ?: shouldCollapseRichText(fullHeight, lineHeight, threshold)
     LaunchedEffect(overflows) {
         onOverflowChanged(overflows)
     }
@@ -1488,6 +1683,7 @@ private fun CollapsibleRichText(
                     Modifier
                         .fillMaxWidth()
                         .onSizeChanged { fullHeight = it.height },
+                onTextLayout = { if (singleTextBlock) textLayout = it },
             )
         },
     ) { measurables, constraints ->
@@ -1496,7 +1692,14 @@ private fun CollapsibleRichText(
                 constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity),
             )
         val height =
-            collapsedRichTextHeight(
+            textLayout?.let { result ->
+                if (result.lineCount > threshold) {
+                    placeable.height - result.size.height + ceil(result.getLineBottom(lineLimit.coerceAtLeast(1) - 1)).toInt()
+                } else {
+                    placeable.height
+                }
+            } ?: collapsedRichTextHeight(
+                // shortcut: multi-block rich text keeps height-based folding until block layout metrics are available.
                 fullHeight = placeable.height,
                 lineHeight = lineHeight,
                 lineLimit = lineLimit,
@@ -1568,8 +1771,8 @@ private fun StatusPollComponent(
                 modifier =
                     Modifier
                         .align(Alignment.End),
-                style = PlatformTheme.typography.caption,
-                color = PlatformTheme.colorScheme.caption,
+                style = PlatformTheme.typography.postBody,
+                color = StatusComponentDefaults.secondaryColor,
             )
         } else {
             poll.expiredAt?.let { expiredAt ->
@@ -1582,8 +1785,8 @@ private fun StatusPollComponent(
                     modifier =
                         Modifier
                             .align(Alignment.End),
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
+                    style = PlatformTheme.typography.postBody,
+                    color = StatusComponentDefaults.secondaryColor,
                 )
             }
         }
@@ -1600,6 +1803,7 @@ private fun StatusPollComponent(
             ) {
                 PlatformText(
                     text = stringResource(resource = Res.string.vote),
+                    style = PlatformTheme.typography.postBody,
                 )
             }
         }
@@ -1657,7 +1861,7 @@ private fun PollOption(
             headlineContent = {
                 PlatformText(
                     text = option.title,
-                    color = PlatformTheme.colorScheme.caption,
+                    color = StatusComponentDefaults.secondaryColor,
                     modifier =
                         Modifier
                             .padding(8.dp),
@@ -1754,8 +1958,8 @@ private fun ExpandedCard(
             card.description?.let {
                 PlatformText(
                     text = it,
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
+                    style = PlatformTheme.typography.postBody,
+                    color = StatusComponentDefaults.secondaryColor,
                     maxLines = 2,
                 )
             }
@@ -1793,8 +1997,8 @@ private fun CompatCard(
             card.description?.let {
                 PlatformText(
                     text = it,
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
+                    style = PlatformTheme.typography.postBody,
+                    color = StatusComponentDefaults.secondaryColor,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )

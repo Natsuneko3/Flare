@@ -39,7 +39,7 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     check(schemaVersion == PluginAbiV1.MANIFEST_SCHEMA_VERSION, "manifest.schema", "schemaVersion", "Unsupported schema")
     check(apiVersion in PluginAbiV1.supportedApiVersions, "manifest.api", "apiVersion", "Unsupported API version")
     check(PLUGIN_ID.matches(id), "manifest.id", "id", "Invalid plugin ID")
-    check(SEMVER.matches(version), "manifest.version", "version", "Invalid semantic version")
+    check(PLUGIN_SEMVER.matches(version), "manifest.version", "version", "Invalid semantic version")
     check(isValidLocaleTag(defaultLocale), "manifest.locale", "defaultLocale", "Invalid default locale")
     validateText(name, "name", errors)
     description?.let { validateText(it, "description", errors) }
@@ -210,6 +210,21 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 path,
                 "Capability is missing operations required by the Host interface",
             )
+            if (capabilityId == PluginAbiV1.Capabilities.POST) {
+                val operations = declaration.operations.keys
+                check(
+                    apiVersion >= 2 || operations.none { it in PluginAbiV1.postContextTabOperations },
+                    "capability.version",
+                    path,
+                    "Post context tabs require plugin API v2",
+                )
+                check(
+                    PluginAbiV1.hasPairedPostContextTabOperations(operations),
+                    "capability.incomplete",
+                    path,
+                    "Post context tabs require both contextTabs and contextPage",
+                )
+            }
             declaration.operations.forEach { (operation, config) ->
                 if (operation in knownOperations) {
                     check(config.directions.size <= 3, "capability.directions", "$path.$operation.directions", "Invalid paging directions")
@@ -713,7 +728,7 @@ private val PATH_SEGMENT = Regex("[^/\\s?#]{1,256}")
 private val TARGET_CAPTURE = Regex("\\{([A-Za-z][A-Za-z0-9_.-]{0,127})\\}")
 private val HTTPS_URL = Regex("https://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?(?:/[^\\s]*)?")
 private const val SEMVER_IDENTIFIER = "(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
-private val SEMVER =
+internal val PLUGIN_SEMVER =
     Regex(
         "(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)" +
             "(?:-$SEMVER_IDENTIFIER(?:\\.$SEMVER_IDENTIFIER)*)?" +

@@ -8,6 +8,7 @@ import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.fallbackString
+import kotlinx.serialization.Serializable
 
 @Immutable
 public data class ProfileTab(
@@ -31,11 +32,26 @@ public data class ProfileTab(
         id = id,
     )
 
+    public fun toCached(): CachedProfileTab =
+        CachedProfileTab(
+            id = id,
+            displayType = displayType,
+            showAllImagesInGallery = showAllImagesInGallery,
+        )
+
+    @Serializable
     public enum class DisplayType {
         Timeline,
         Gallery,
     }
 }
+
+@Serializable
+public data class CachedProfileTab(
+    public val id: String,
+    public val displayType: ProfileTab.DisplayType = ProfileTab.DisplayType.Timeline,
+    public val showAllImagesInGallery: Boolean = true,
+)
 
 private fun profileTabId(
     name: UiText,

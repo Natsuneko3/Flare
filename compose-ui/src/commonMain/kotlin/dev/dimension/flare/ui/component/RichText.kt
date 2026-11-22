@@ -88,6 +88,7 @@ public fun RichText(
         ),
     imageHeaders: ImmutableMap<String, String>? = null,
 ) {
+    val inheritedStyle = PlatformTextStyle.current.merge(textStyle)
     val h1 = PlatformTheme.typography.h1
     val h2 = PlatformTheme.typography.h2
     val h3 = PlatformTheme.typography.h3
@@ -99,7 +100,7 @@ public fun RichText(
         LocalLayoutDirection provides layoutDirection,
     ) {
         CompositionLocalProvider(
-            PlatformTextStyle provides PlatformTextStyle.current.merge(textStyle),
+            PlatformTextStyle provides inheritedStyle,
         ) {
             val state =
                 remember(text, textStyle, linkStyle, color) {
@@ -122,7 +123,7 @@ public fun RichText(
 
             androidx.compose.foundation.layout.Column(
                 modifier = modifier,
-                verticalArrangement = Arrangement.spacedBy(with(LocalDensity.current) { PlatformTextStyle.current.lineHeight.toDp() / 2 }),
+                verticalArrangement = Arrangement.spacedBy(with(LocalDensity.current) { inheritedStyle.lineHeight.toDp() / 2 }),
             ) {
                 val inlineContentMap =
                     state.inlineContent

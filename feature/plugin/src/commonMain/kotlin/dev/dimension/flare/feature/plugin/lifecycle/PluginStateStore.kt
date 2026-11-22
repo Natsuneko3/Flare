@@ -48,6 +48,16 @@ public class PluginStateStore private constructor(
         mutate { index -> index.copy(plugins = index.plugins.map { if (it.pluginId == pluginId) it.copy(removing = true) else it }) }
     }
 
+    internal suspend fun recordUpdateDate(
+        installed: InstalledPluginV1,
+        date: String,
+    ) {
+        mutate { index ->
+            if (!index.plugins.contains(installed)) return@mutate index
+            index.copy(plugins = index.plugins.map { if (it == installed) it.copy(updatedAt = date) else it })
+        }
+    }
+
     public suspend fun uninstall(pluginId: String) {
         mutate { index -> index.copy(plugins = index.plugins.filterNot { it.pluginId == pluginId }) }
     }
@@ -144,6 +154,7 @@ public class PluginStateStore private constructor(
                     throw PluginIndexCorruptException("Plugin index is corrupt")
                 }
             val updated = transform(current)
+            if (updated === current) return@withLock
             validateEncodedIndex(updated)
             writeIndex(updated)
             mutableDesired.value =

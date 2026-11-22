@@ -20,9 +20,11 @@ struct StatusMediaView: View {
     @Environment(\.timelineAppearance.mediaLayout) private var mediaLayout
     @Environment(\.timelineAppearance.limitMediaGridToNine) private var limitMediaGridToNine
     @Environment(\.timelineMediaActionHandler) private var timelineMediaActionHandler
+    @Environment(\.displayScale) private var displayScale
     @State private var isBlur: Bool
     @State private var activeCarouselIndex: Int?
     @Environment(\.timelinePlaybackCoordinator) private var playback
+    @Environment(\.timelineGalleryFallback) private var isGalleryFallback
     @State private var carouselID = UUID().uuidString
     @State private var carouselOffset: CGFloat?
     @State private var verticalOffset: CGFloat?
@@ -36,6 +38,7 @@ struct StatusMediaView: View {
         allowsCarousel: Bool,
         carouselLeadingPadding: CGFloat,
         carouselTrailingPadding: CGFloat,
+        initialIsBlur: Bool? = nil,
         onMediaClicked: @escaping (any UiMedia, Int) -> Void
     ) {
         self.post = post
@@ -46,18 +49,23 @@ struct StatusMediaView: View {
         self.allowsCarousel = allowsCarousel
         self.carouselLeadingPadding = carouselLeadingPadding
         self.carouselTrailingPadding = carouselTrailingPadding
-        self.isBlur = sensitive
+        self._isBlur = State(initialValue: initialIsBlur ?? sensitive)
         self._activeCarouselIndex = State(initialValue: nil)
     }
+
+    private var showsBlur: Bool { sensitive && isBlur }
 
     var body: some View {
         mediaContent
         .onAppear { registerMediaSelection() }
         .onChange(of: data.map(\.url)) { _, _ in registerMediaSelection() }
+        .onChange(of: sensitive) { _, newValue in
+            isBlur = newValue
+        }
         .onDisappear { playback?.mediaSelections.remove(id: carouselID) }
-        .blur(radius: isBlur ? 20 : 0)
+        .blur(radius: showsBlur ? 20 : 0)
         .overlay(
-            alignment: isBlur ? .center : .topLeading
+            alignment: showsBlur ? .center : .topLeading
         ) {
             if sensitive {
                 if isBlur {
@@ -170,7 +178,7 @@ struct StatusMediaView: View {
                                     data[index],
                                     index: index,
                                     overflowCount: 0,
-                                    allowsAutoplay: !isBlur
+                                    allowsAutoplay: !showsBlur
                                 )
                                 .environment(\.timelineCarouselItem, TimelineCarouselItem(
                                     groupID: carouselID,
@@ -178,6 +186,7 @@ struct StatusMediaView: View {
                                 ))
                                 .frame(width: itemSize.width, height: itemSize.height)
                                 .clipShape(.rect(cornerRadius: cornerRadius))
+                                .overlay { mediaOutline(RoundedRectangle(cornerRadius: cornerRadius)) }
                                 .id(index)
                             }
                         }
@@ -252,10 +261,29 @@ struct StatusMediaView: View {
                     visibleData[index],
                     index: index,
                     overflowCount: index == visibleData.count - 1 ? overflowCount : 0,
-                    allowsAutoplay: !isBlur
+                    allowsAutoplay: !showsBlur
                 )
+                .overlay { mediaOutline(gridShape(at: index, count: visibleData.count)) }
             }
         }
+    }
+
+    private func mediaOutline<Shape: InsettableShape>(_ shape: Shape) -> some View {
+        let borderColor = isGalleryFallback ? Color(white: 179.0 / 255) : .flareSeparator
+        return shape.strokeBorder(borderColor, lineWidth: 1 / displayScale)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func gridShape(at index: Int, count: Int) -> UnevenRoundedRectangle {
+        let topEnd = count <= 2 ? count - 1 : (count <= 4 ? 1 : 2)
+        let bottomStart = count <= 3 ? 0 : (count == 4 ? 2 : (count - 1) / 3 * 3)
+        return UnevenRoundedRectangle(
+            topLeadingRadius: index == 0 ? cornerRadius : 0,
+            bottomLeadingRadius: index == bottomStart ? cornerRadius : 0,
+            bottomTrailingRadius: index == count - 1 ? cornerRadius : 0,
+            topTrailingRadius: index == topEnd ? cornerRadius : 0
+        )
     }
 
     private var singleExpandedMedia: (any UiMedia)? {
@@ -292,7 +320,7 @@ struct StatusMediaView: View {
                     AltTextOverlay(altText: alt)
                 }
             }
-            .if(!isBlur && timelineMediaActionHandler != nil) { view in
+            .if(!showsBlur && timelineMediaActionHandler != nil) { view in
                 view.contextMenu {
                     if let timelineMediaActionHandler {
                         TimelineMediaContextMenu(

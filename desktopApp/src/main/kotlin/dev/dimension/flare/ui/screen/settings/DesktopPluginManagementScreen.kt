@@ -2,9 +2,13 @@ package dev.dimension.flare.ui.screen.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -44,8 +48,10 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import compose.icons.FontAwesomeIcons
@@ -92,7 +98,6 @@ import dev.dimension.flare.plugin_github_path_hint
 import dev.dimension.flare.plugin_github_repository
 import dev.dimension.flare.plugin_install
 import dev.dimension.flare.plugin_install_github
-import dev.dimension.flare.plugin_installed
 import dev.dimension.flare.plugin_issue_files_missing
 import dev.dimension.flare.plugin_issue_index_corrupt
 import dev.dimension.flare.plugin_issue_platform_conflict
@@ -100,12 +105,13 @@ import dev.dimension.flare.plugin_issue_platform_invalid
 import dev.dimension.flare.plugin_issues
 import dev.dimension.flare.plugin_large_repository_message
 import dev.dimension.flare.plugin_large_repository_title
+import dev.dimension.flare.plugin_local_import
 import dev.dimension.flare.plugin_marketplace
 import dev.dimension.flare.plugin_marketplace_cached
+import dev.dimension.flare.plugin_marketplace_community_notice
 import dev.dimension.flare.plugin_marketplace_empty
 import dev.dimension.flare.plugin_marketplace_failed
 import dev.dimension.flare.plugin_marketplace_install
-import dev.dimension.flare.plugin_marketplace_loading
 import dev.dimension.flare.plugin_marketplace_local
 import dev.dimension.flare.plugin_marketplace_manage
 import dev.dimension.flare.plugin_marketplace_refresh
@@ -130,6 +136,7 @@ import dev.dimension.flare.plugin_uninstall_confirm_title
 import dev.dimension.flare.plugin_unverified_github_warning
 import dev.dimension.flare.plugin_unverified_warning
 import dev.dimension.flare.plugin_update
+import dev.dimension.flare.plugin_updated_at
 import dev.dimension.flare.plugin_warning_added_permission
 import dev.dimension.flare.plugin_warning_changed_package
 import dev.dimension.flare.plugin_warning_compatibility
@@ -139,6 +146,7 @@ import dev.dimension.flare.plugin_warning_tag_moved
 import dev.dimension.flare.search_empty
 import dev.dimension.flare.settings_plugins_subtitle
 import dev.dimension.flare.settings_plugins_title
+import dev.dimension.flare.ui.component.CardExpanderItem
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareScrollBar
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
@@ -152,7 +160,6 @@ import io.github.composefluent.background.BackgroundSizing
 import io.github.composefluent.background.Layer
 import io.github.composefluent.component.AccentButton
 import io.github.composefluent.component.Button
-import io.github.composefluent.component.CardExpanderItem
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.FluentDialog
@@ -175,6 +182,10 @@ import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.koinInject
 import java.awt.FileDialog
 import java.io.File
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 
 @Composable
 internal fun DesktopPluginManagementScreen(
@@ -183,7 +194,6 @@ internal fun DesktopPluginManagementScreen(
     onOpenMarketplace: () -> Unit = {},
     marketplace: Boolean = false,
 ) {
-    val window = LocalComposeWindow.current
     val subsystem = koinInject<PluginSubsystemV1>()
     val scope = rememberCoroutineScope()
     val presenter =
@@ -198,7 +208,6 @@ internal fun DesktopPluginManagementScreen(
         onDispose { presenter.close() }
     }
     val state by presenter.state.collectAsState()
-    val marketplaceSearch = rememberTextFieldState()
     LaunchedEffect(marketplace, presenter) {
         if (marketplace) {
             presenter.loadMarketplace()
@@ -206,6 +215,30 @@ internal fun DesktopPluginManagementScreen(
             scope.launchPresenterAction { presenter.checkUpdates(forceRefresh = false) }
         }
     }
+    DesktopPluginManagementContent(
+        state = state,
+        presenter = presenter,
+        subsystem = subsystem,
+        onBack = onBack,
+        onCreateWithAI = onCreateWithAI,
+        onOpenMarketplace = onOpenMarketplace,
+        marketplace = marketplace,
+    )
+}
+
+@Composable
+internal fun DesktopPluginManagementContent(
+    state: PluginManagementStateV1,
+    presenter: PluginManagementPresenterV1,
+    subsystem: PluginSubsystemV1,
+    onBack: () -> Unit,
+    onCreateWithAI: () -> Unit,
+    onOpenMarketplace: () -> Unit,
+    marketplace: Boolean,
+) {
+    val window = LocalComposeWindow.current
+    val scope = rememberCoroutineScope()
+    val marketplaceSearch = rememberTextFieldState()
     val installLabel = stringResource(Res.string.plugin_install)
     var showsMaintenanceMenu by remember { mutableStateOf(false) }
     var showsDevelopment by remember { mutableStateOf(false) }
@@ -467,6 +500,15 @@ internal fun PluginMarketplaceList(
                 contentPadding = PaddingValues(horizontal = screenHorizontalPadding, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
+                if (query.isBlank() && plugins.isNotEmpty()) {
+                    item(key = "marketplace-community-notice") {
+                        InfoBar(
+                            title = {},
+                            message = { Text(stringResource(Res.string.plugin_marketplace_community_notice)) },
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        )
+                    }
+                }
                 if (marketplace.error != null) {
                     item(key = "marketplace-error") {
                         InfoBar(
@@ -499,67 +541,56 @@ internal fun PluginMarketplaceList(
                 }
                 items(plugins, key = { it.id }) { entry ->
                     val iconPath by produceState<String?>(null, entry.icon) { value = onIcon(entry.id) }
-                    val installed = state.isInstalled(entry.id)
                     val managed = state.isManaged(entry.id)
-                    CardExpanderItem(
-                        heading = { Text(entry.name) },
-                        caption = {
-                            Column {
-                                Text(entry.description)
-                                if (managed) {
-                                    Text(
-                                        stringResource(if (installed) Res.string.plugin_installed else Res.string.plugin_marketplace_local),
+                    PluginListCard(
+                        name = entry.name,
+                        iconPath = iconPath,
+                        actions = {
+                            if (managed) {
+                                Button(onClick = onManage, modifier = Modifier.weight(1f, fill = false)) {
+                                    Text(stringResource(Res.string.plugin_marketplace_manage))
+                                }
+                            } else {
+                                AccentButton(
+                                    onClick = { onInstall(entry.id) },
+                                    disabled = !state.canInstallFromMarketplace,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                ) { Text(stringResource(Res.string.plugin_marketplace_install)) }
+                            }
+                            MenuFlyoutContainer(
+                                adaptivePlacement = true,
+                                flyout = {
+                                    MenuFlyoutItem(
+                                        text = { Text(stringResource(Res.string.plugin_marketplace_repository)) },
+                                        onClick = {
+                                            isFlyoutVisible = false
+                                            uriHandler.openUri(entry.repositoryWebUrl)
+                                        },
+                                    )
+                                },
+                            ) {
+                                SubtleButton(onClick = { isFlyoutVisible = !isFlyoutVisible }, iconOnly = true) {
+                                    FAIcon(
+                                        FontAwesomeIcons.Solid.EllipsisVertical,
+                                        contentDescription = "${stringResource(Res.string.more)}: ${entry.name}",
                                     )
                                 }
                             }
                         },
-                        icon = {
-                            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                                if (iconPath == null) FAIcon(FontAwesomeIcons.Solid.PuzzlePiece, contentDescription = null)
-                                iconPath?.let {
-                                    AsyncImage(
-                                        model = File(it),
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
-                                    )
-                                }
-                            }
-                        },
-                        trailing = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Button(
-                                    onClick = { if (managed) onManage() else onInstall(entry.id) },
-                                    disabled = !managed && !state.canInstallFromMarketplace,
-                                ) {
-                                    Text(
-                                        stringResource(
-                                            if (managed) Res.string.plugin_marketplace_manage else Res.string.plugin_marketplace_install,
-                                        ),
-                                    )
-                                }
-                                MenuFlyoutContainer(
-                                    adaptivePlacement = true,
-                                    flyout = {
-                                        MenuFlyoutItem(
-                                            text = { Text(stringResource(Res.string.plugin_marketplace_repository)) },
-                                            onClick = {
-                                                isFlyoutVisible = false
-                                                uriHandler.openUri(entry.repository)
-                                            },
-                                        )
-                                    },
-                                ) {
-                                    SubtleButton(onClick = { isFlyoutVisible = !isFlyoutVisible }, iconOnly = true) {
-                                        FAIcon(
-                                            FontAwesomeIcons.Solid.EllipsisVertical,
-                                            contentDescription = "${stringResource(Res.string.more)}: ${entry.name}",
-                                        )
-                                    }
-                                }
-                            }
-                        },
-                    )
+                    ) {
+                        PluginRepositoryLink(entry.repositoryFullName, entry.repositoryWebUrl)
+                        if (entry.description.isNotBlank()) {
+                            Text(entry.description, style = FluentTheme.typography.body, color = FluentTheme.colors.text.text.secondary)
+                        }
+                        PluginReleaseInfo(entry.version, entry.updatedAt)
+                        if (managed && !state.isInstalled(entry.id)) {
+                            Text(
+                                stringResource(Res.string.plugin_marketplace_local),
+                                style = FluentTheme.typography.caption,
+                                color = FluentTheme.colors.text.text.secondary,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -792,6 +823,7 @@ internal fun PluginManagementList(
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    val items = state.items
     FlareScrollBar(state = listState, modifier = modifier) {
         LazyColumn(
             state = listState,
@@ -872,7 +904,7 @@ internal fun PluginManagementList(
                     )
                 }
             }
-            if (state.items.isEmpty()) {
+            if (items.isEmpty()) {
                 item(key = "empty") {
                     CardExpanderItem(
                         heading = { Text(stringResource(Res.string.plugin_empty)) },
@@ -882,7 +914,7 @@ internal fun PluginManagementList(
                 }
             } else {
                 items(
-                    state.items,
+                    items,
                     key = PluginManagementItemV1::pluginId,
                 ) { plugin ->
                     PluginItem(
@@ -909,68 +941,177 @@ internal fun PluginItem(
     onUpdate: (String) -> Unit,
 ) {
     val name = plugin.nameText.resolveText().ifBlank { stringResource(Res.string.plugin_ai_untitled) }
+    val repositoryUrl = plugin.repositoryWebUrl
+    PluginListCard(
+        name = name,
+        iconPath = plugin.iconPath,
+        localImport = plugin.sourceUrl == null && plugin.authoring == null,
+        actions = {
+            if (plugin.availableUpdate != null) {
+                AccentButton(disabled = busy, onClick = { onUpdate(plugin.pluginId) }, modifier = Modifier.weight(1f, fill = false)) {
+                    Text(stringResource(Res.string.plugin_update))
+                }
+            }
+            if (plugin.authoring?.canCancelUpdate == true) {
+                Button(disabled = busy, onClick = { onCancelUpdate(plugin.pluginId) }, modifier = Modifier.weight(1f, fill = false)) {
+                    Text(stringResource(Res.string.plugin_ai_stop))
+                }
+            }
+            PluginItemMenu(
+                pluginId = plugin.pluginId,
+                name = name,
+                busy = busy,
+                repositoryUrl = repositoryUrl,
+                onUninstall = { onUninstall(plugin.pluginId) },
+            )
+        },
+    ) {
+        val repositoryName = plugin.repositoryFullName
+        if (repositoryName != null && repositoryUrl != null) {
+            PluginRepositoryLink(repositoryName, repositoryUrl)
+        }
+        PluginReleaseInfo(plugin.version, plugin.updatedAt)
+        plugin.authoring?.let { authoring ->
+            ProvideTextStyle(FluentTheme.typography.caption.copy(color = FluentTheme.colors.text.text.secondary)) {
+                Text(stringResource(Res.string.plugin_ai_source_revision, authoring.revision))
+                if (authoring.phase != PluginAuthoringPhase.Idle && authoring.phase != PluginAuthoringPhase.Applied) {
+                    Text(pluginAuthoringLabel(authoring.phase))
+                }
+                authoring.error?.let { Text(it) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PluginListCard(
+    name: String,
+    iconPath: String?,
+    localImport: Boolean = false,
+    actions: @Composable RowScope.() -> Unit,
+    content: @Composable () -> Unit,
+) {
     Layer(
         modifier = Modifier.fillMaxWidth(),
         color = FluentTheme.colors.background.card.default,
+        shape = FluentTheme.shapes.control,
         backgroundSizing = BackgroundSizing.InnerBorderEdge,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = File(plugin.iconPath),
-                contentDescription = name,
-                contentScale = ContentScale.Fit,
-                modifier =
-                    Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-            )
-            Column(Modifier.weight(1f)) {
-                Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                ProvideTextStyle(FluentTheme.typography.caption.copy(color = FluentTheme.colors.text.text.secondary)) {
-                    Text(
-                        plugin.authoring?.let { stringResource(Res.string.plugin_ai_source_revision, it.revision) }
-                            ?: "${plugin.platformId} · ${plugin.version}",
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                if (iconPath.isNullOrEmpty()) {
+                    FAIcon(FontAwesomeIcons.Solid.PuzzlePiece, contentDescription = name)
+                } else {
+                    AsyncImage(
+                        model = File(iconPath),
+                        contentDescription = name,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
                     )
-                    plugin.sourceUrl?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    plugin.availableUpdate?.let { update ->
-                        SubtleButton(disabled = busy, onClick = { onUpdate(plugin.pluginId) }) {
-                            Text("${stringResource(Res.string.plugin_update)} ${update.tag}")
-                        }
-                    }
-                    plugin.authoring?.let { authoring ->
-                        if (authoring.phase != PluginAuthoringPhase.Idle && authoring.phase != PluginAuthoringPhase.Applied) {
-                            Text(pluginAuthoringLabel(authoring.phase))
-                        }
-                        authoring.error?.let { Text(it) }
-                        if (authoring.canCancelUpdate) {
-                            Button(disabled = busy, onClick = { onCancelUpdate(plugin.pluginId) }) {
-                                Text(stringResource(Res.string.plugin_ai_stop))
-                            }
-                        }
-                    }
                 }
             }
-            PluginItemMenu(name = name, busy = busy, onUninstall = { onUninstall(plugin.pluginId) })
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(name, style = FluentTheme.typography.bodyStrong)
+                    if (localImport) {
+                        Text(
+                            stringResource(Res.string.plugin_local_import),
+                            style = FluentTheme.typography.caption,
+                            color = FluentTheme.colors.text.text.secondary,
+                        )
+                    }
+                }
+                content()
+            }
+            BoxWithConstraints(Modifier.align(Alignment.CenterVertically)) {
+                // Leave room for plugin details when a translated action needs to wrap.
+                Row(
+                    modifier = Modifier.widthIn(max = maxWidth * 2 / 3),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actions,
+                )
+            }
         }
     }
 }
 
 @Composable
+private fun PluginRepositoryLink(
+    name: String,
+    url: String,
+) {
+    val linkStyles = TextLinkStyles(SpanStyle(color = FluentTheme.colors.text.accent.primary, textDecoration = TextDecoration.Underline))
+    Text(
+        buildAnnotatedString {
+            withLink(LinkAnnotation.Url(url, linkStyles)) { append(name) }
+        },
+        style = FluentTheme.typography.caption,
+    )
+}
+
+@Composable
+private fun PluginReleaseInfo(
+    version: String?,
+    updatedAt: String?,
+) {
+    val locale = Locale.getDefault()
+    val date =
+        remember(updatedAt, locale) {
+            updatedAt?.let { isoDate ->
+                val formatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
+                runCatching { LocalDate.parse(isoDate).format(formatter) }.getOrNull()
+            }
+        }
+    val updated = date?.let { stringResource(Res.string.plugin_updated_at, it) }
+    val info =
+        buildAnnotatedString {
+            if (!version.isNullOrBlank()) {
+                withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append("v$version") }
+            }
+            if (updated != null) {
+                if (length > 0) append(" · ")
+                append(updated)
+            }
+        }
+    if (info.isNotEmpty()) {
+        Text(info, style = FluentTheme.typography.caption, color = FluentTheme.colors.text.text.secondary)
+    }
+}
+
+@Composable
 internal fun PluginItemMenu(
+    pluginId: String,
     name: String,
     busy: Boolean,
+    repositoryUrl: String?,
     onUninstall: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
     var expanded by remember { mutableStateOf(false) }
     Box {
         SubtleButton(disabled = busy, iconOnly = true, onClick = { expanded = true }) {
             FAIcon(FontAwesomeIcons.Solid.EllipsisVertical, contentDescription = "${stringResource(Res.string.more)}: $name")
         }
         MenuFlyout(visible = expanded, onDismissRequest = { expanded = false }, placement = FlyoutPlacement.BottomAlignedEnd) {
+            if (repositoryUrl != null) {
+                MenuFlyoutItem(
+                    text = { Text(stringResource(Res.string.plugin_marketplace_repository)) },
+                    onClick = {
+                        expanded = false
+                        uriHandler.openUri(repositoryUrl)
+                    },
+                )
+            } else {
+                MenuFlyoutItem(text = { Text(pluginId) }, onClick = {}, enabled = false)
+            }
             MenuFlyoutItem(
                 text = { Text(stringResource(Res.string.plugin_uninstall)) },
                 icon = { FAIcon(FontAwesomeIcons.Solid.Trash, contentDescription = null) },

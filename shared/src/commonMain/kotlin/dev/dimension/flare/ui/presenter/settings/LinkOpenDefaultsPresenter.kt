@@ -5,6 +5,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import dev.dimension.flare.common.combineLatestFlowLists
+import dev.dimension.flare.common.deeplink.linkOpenDefaultHosts
 import dev.dimension.flare.data.datasource.microblog.accountProfileFlow
 import dev.dimension.flare.data.datastore.model.AppSettings
 import dev.dimension.flare.data.datastore.model.LinkOpenDefaultMethod
@@ -91,7 +92,7 @@ public class LinkOpenDefaultsActionsPresenter(
 
 private fun String.toLinkOpenDefaultHost(): String? =
     runCatching {
-        Url(this).host.takeIf { it.isNotBlank() }
+        Url(this).host.lowercase().takeIf { it.isNotBlank() }
     }.getOrNull()
 
 public class LinkOpenDefaultsPresenter : PresenterBase<LinkOpenDefaultsPresenter.State>() {
@@ -107,12 +108,7 @@ public class LinkOpenDefaultsPresenter : PresenterBase<LinkOpenDefaultsPresenter
                     val spec = platformRegistry.get(service.platformId) ?: return@mapNotNull null
                     val hosts =
                         spec
-                            .deepLinks(service.accountKey)
-                            .mapNotNull { deepLink ->
-                                Url(deepLink.uriPattern).host.takeIf { host ->
-                                    host.isNotBlank() && !host.contains('{') && !host.contains('}')
-                                }
-                            }.distinct()
+                            .linkOpenDefaultHosts(service.accountKey)
                     if (hosts.isEmpty()) {
                         return@mapNotNull null
                     }

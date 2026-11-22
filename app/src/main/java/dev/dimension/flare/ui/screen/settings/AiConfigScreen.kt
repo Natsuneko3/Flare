@@ -14,7 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -28,6 +28,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedSecureTextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Switch
@@ -42,9 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
@@ -298,6 +296,9 @@ internal fun AiConfigScreen(onBack: () -> Unit) {
                             placeholder = apiKeyHint,
                             onConfirm = state::setOpenAIApiKey,
                         )
+                    }
+                    AnimatedVisibility(visible = state.aiType == AiTypeOption.OpenAI) {
+                        AiConfigHeadersSetting(state.openAIHeaders, ListItemDefaults.item()) { state.setOpenAIHeaders(it) }
                     }
                     AnimatedVisibility(visible = state.aiType == AiTypeOption.OpenAI) {
                         SegmentedListItem(
@@ -681,7 +682,9 @@ internal fun TextEditDialog(
     singleLine: Boolean = false,
     isValid: (String) -> Boolean = { true },
 ) {
+    val secretState = remember(value) { TextFieldState(initialText = value) }
     var text by remember(value) { mutableStateOf(value) }
+    val currentText = if (suggestions.isEmpty() && secret) secretState.text.toString() else text
     var showSuggestions by remember(value) { mutableStateOf(false) }
     val filteredSuggestions =
         remember(text, suggestions) {
@@ -697,21 +700,31 @@ internal fun TextEditDialog(
         text = {
             Column {
                 if (suggestions.isEmpty()) {
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = {
-                            text = it
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = singleLine,
-                        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
-                        keyboardOptions = if (secret) KeyboardOptions(keyboardType = KeyboardType.Password) else KeyboardOptions.Default,
-                        placeholder = {
-                            if (placeholder.isNotBlank()) {
-                                Text(text = placeholder)
-                            }
-                        },
-                    )
+                    if (secret) {
+                        OutlinedSecureTextField(
+                            state = secretState,
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = {
+                                if (placeholder.isNotBlank()) {
+                                    Text(text = placeholder)
+                                }
+                            },
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = text,
+                            onValueChange = {
+                                text = it
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = singleLine,
+                            placeholder = {
+                                if (placeholder.isNotBlank()) {
+                                    Text(text = placeholder)
+                                }
+                            },
+                        )
+                    }
                 } else {
                     ExposedDropdownMenuBox(
                         expanded = showSuggestions && filteredSuggestions.isNotEmpty(),
@@ -767,7 +780,7 @@ internal fun TextEditDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = isValid(text), onClick = { onConfirm(text) }) {
+            TextButton(enabled = isValid(currentText), onClick = { onConfirm(currentText) }) {
                 Text(text = stringResource(id = android.R.string.ok))
             }
         },

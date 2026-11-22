@@ -13,8 +13,8 @@ public struct ProfileTabPicker: View {
 
     public var body: some View {
         Picker(selection: $selectedTab) {
-            ForEach(0..<tabs.count, id: \.self) { index in
-                Text(profileTabTitle(for: tabs[index]))
+            ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                Text(profileTabTitle(for: tab))
                     .tag(index)
             }
         } label: {
@@ -26,6 +26,7 @@ public struct ProfileTabPicker: View {
 public struct ProfileTabBar: View {
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     @Environment(\.isMultipleColumn) private var isMultipleColumn
+    @Environment(\.profileUsesPlainStyle) private var profileUsesPlainStyle
     private let tabs: [ProfileState.Tab]
     @Binding private var selectedTab: Int
     private let selectionProgress: CGFloat?
@@ -42,13 +43,13 @@ public struct ProfileTabBar: View {
 
     public var body: some View {
         ZStack(alignment: .bottom) {
-            if timelineDisplayMode == .plain && !isMultipleColumn {
+            if profileUsesPlainStyle || (timelineDisplayMode == .plain && !isMultipleColumn) {
                 Divider()
             }
 
             ScrollView(.horizontal) {
                 HStack {
-                    ForEach(0..<tabs.count, id: \.self) { index in
+                    ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                         Button {
                             if selectionProgress == nil {
                                 withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
@@ -58,7 +59,7 @@ public struct ProfileTabBar: View {
                                 selectedTab = index
                             }
                         } label: {
-                            let title = profileTabTitle(for: tabs[index])
+                            let title = profileTabTitle(for: tab)
                             Text(title)
                                 .foregroundStyle(Color.secondary)
                                 .overlay {
@@ -153,6 +154,7 @@ private struct ProfileTabFramePreferenceKey: PreferenceKey {
 public struct ProfileTabsLoadingPlaceholder: View {
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     @Environment(\.isMultipleColumn) private var isMultipleColumn
+    @Environment(\.profileUsesPlainStyle) private var profileUsesPlainStyle
 
     private let placeholderTitles = [
         "Posts",
@@ -166,7 +168,7 @@ public struct ProfileTabsLoadingPlaceholder: View {
 
     public var body: some View {
         ZStack(alignment: .bottom) {
-            if timelineDisplayMode == .plain && !isMultipleColumn {
+            if profileUsesPlainStyle || (timelineDisplayMode == .plain && !isMultipleColumn) {
                 Divider()
             }
 
@@ -207,7 +209,7 @@ public struct ProfileTimelineLoadingPlaceholder: View {
             ForEach(0..<count, id: \.self) { index in
                 AdaptiveTimelineCard(index: index, totalCount: count) {
                     TimelinePlaceholderView()
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, TimelineHorizontalInsets.content)
                         .padding(.vertical, 8)
                 }
             }

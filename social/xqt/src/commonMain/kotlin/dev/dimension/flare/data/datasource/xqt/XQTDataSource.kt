@@ -5,6 +5,7 @@ import androidx.paging.map
 import dev.dimension.flare.common.decodeJson
 import dev.dimension.flare.common.encodeJson
 import dev.dimension.flare.data.datasource.microblog.AuthenticatedMicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.CachedProfileTab
 import dev.dimension.flare.data.datasource.microblog.ComposeConfig
 import dev.dimension.flare.data.datasource.microblog.ComposeData
 import dev.dimension.flare.data.datasource.microblog.ComposeDataSource
@@ -13,6 +14,10 @@ import dev.dimension.flare.data.datasource.microblog.DatabaseUpdater
 import dev.dimension.flare.data.datasource.microblog.DirectMessageDataSource
 import dev.dimension.flare.data.datasource.microblog.NotificationFilter
 import dev.dimension.flare.data.datasource.microblog.NotificationTimelineDataSource
+import dev.dimension.flare.data.datasource.microblog.PostDetailFilter
+import dev.dimension.flare.data.datasource.microblog.PostDetailFilterOption
+import dev.dimension.flare.data.datasource.microblog.PostDetailTab
+import dev.dimension.flare.data.datasource.microblog.PostDetailTabs
 import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
 import dev.dimension.flare.data.datasource.microblog.SearchOperation
@@ -41,6 +46,10 @@ import dev.dimension.flare.data.model.tab.ShortcutSpec
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.network.xqt.XQTMediaUploader
 import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.UserApi
+import dev.dimension.flare.data.network.xqt.api.XQT_POLL_CONFIG
+import dev.dimension.flare.data.network.xqt.api.createPoll
+import dev.dimension.flare.data.network.xqt.api.publishTweet
 import dev.dimension.flare.data.network.xqt.model.CreateBookmarkRequest
 import dev.dimension.flare.data.network.xqt.model.CreateBookmarkRequestVariables
 import dev.dimension.flare.data.network.xqt.model.DeleteBookmarkRequest
@@ -61,6 +70,7 @@ import dev.dimension.flare.data.network.xqt.model.PostMediaMetadataCreateRequest
 import dev.dimension.flare.data.network.xqt.model.PostUnfavoriteTweetRequest
 import dev.dimension.flare.data.network.xqt.model.TweetUnion
 import dev.dimension.flare.data.network.xqt.model.User
+import dev.dimension.flare.data.network.xqt.model.toXqtConversationControl
 import dev.dimension.flare.data.platform.CommonTimelineSpecs
 import dev.dimension.flare.data.platform.XQTCredential
 import dev.dimension.flare.data.platform.XqtPlatformSpec
@@ -77,6 +87,7 @@ import dev.dimension.flare.ui.model.UiPodcast
 import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.contentPostOrNull
 import dev.dimension.flare.ui.model.mapper.render
 import dev.dimension.flare.ui.model.mapper.renderArticle
@@ -105,6 +116,7 @@ private val MEDIA_COMPRESSION =
 internal class XQTDataSource(
     override val accountKey: MicroBlogKey,
     sourceCredentialFlow: Flow<XQTCredential>,
+    profileTabApi: UserApi? = null,
 ) : AuthenticatedMicroblogDataSource,
     NotificationTimelineDataSource,
     ComposeDataSource,
@@ -131,6 +143,7 @@ internal class XQTDataSource(
                     .map { it.chocolate },
         )
     }
+    private val profileTabApi = profileTabApi ?: service
     private val loader by lazy {
         XQTLoader(
             accountKey = accountKey,
@@ -526,6 +539,42 @@ internal class XQTDataSource(
             statusOnly = false,
         )
 
+    override suspend fun postDetailTabs(statusKey: MicroBlogKey): PostDetailTabs =
+        PostDetailTabs(
+            tabs =
+                listOf(
+                    PostDetailTab(
+                        id = "replies",
+                        title = UiStrings.Replies.asText(),
+                        filter =
+                            PostDetailFilter(
+                                options = ReplyRanking.entries.map { PostDetailFilterOption(it.name, it.title.asText()) },
+                                defaultOptionId = ReplyRanking.Relevance.name,
+                            ),
+                        includesPostContext = true,
+                        loader = { optionId ->
+                            RankedStatusDetailLoader(
+                                statusKey = statusKey,
+                                service = service,
+                                accountKey = accountKey,
+                                rankingMode = ReplyRanking.entries.firstOrNull { it.name == optionId } ?: ReplyRanking.Relevance,
+                            )
+                        },
+                    ),
+                    PostDetailTab(
+                        id = "quotes",
+                        title = UiStrings.Quotes.asText(),
+                        loader = { SearchStatusPagingSource(service, accountKey, quotedPost = statusKey) },
+                    ),
+                    PostDetailTab(
+                        id = "reposted-by",
+                        title = UiStrings.RepostedBy.asText(),
+                        loader = { RepostedByLoader(service, accountKey, statusKey) },
+                    ),
+                ),
+            replyTabId = "replies",
+        )
+
     override suspend fun publish(
         data: ComposeData,
         progress: () -> Unit,
@@ -537,6 +586,14 @@ internal class XQTDataSource(
                     it as? ComposeStatus.Reply
                 }?.statusKey
                 ?.id
+        val conversationControl = data.replyRestriction.toXqtConversationControl()
+        require(inReplyToID == null || conversationControl == null) { "X replies inherit the conversation's reply settings." }
+        val cardUri =
+            data.poll?.let {
+                require(data.content.isNotBlank()) { "X polls require a question." }
+                require(data.medias.isEmpty()) { "X polls cannot include media attachments." }
+                service.createPoll(it)
+            }
         val quoteId =
             data.referenceStatus
                 ?.composeStatus
@@ -551,36 +608,31 @@ internal class XQTDataSource(
                 ?.handle
                 ?.normalizedRaw
         val mediaIds =
-            data.medias.mapIndexed { index, (item, altText) ->
+            data.medias.map { (item, altText) ->
                 val upload = item.uploadMedia().compressImage(imageCompressor, MEDIA_COMPRESSION)
                 XQTMediaUploader(service).upload(upload).also {
                     if (data.sensitive || !altText.isNullOrEmpty()) {
-                        service.postMediaMetadataCreate(
-                            body =
-                                PostMediaMetadataCreateRequest(
-                                    mediaId = it,
-                                    sensitiveMediaWarning =
-                                        if (data.sensitive) {
-                                            listOf(
-                                                PostMediaMetadataCreateRequest.SensitiveMediaWarning.Other,
-                                            )
-                                        } else {
-                                            null
-                                        },
-                                    altText =
-                                        if (!altText.isNullOrEmpty()) {
-                                            PostMediaMetadataCreateRequest.AltText(altText)
-                                        } else {
-                                            null
-                                        },
-                                ),
-                        )
+                        val response =
+                            service.postMediaMetadataCreate(
+                                body =
+                                    PostMediaMetadataCreateRequest(
+                                        mediaId = it,
+                                        sensitiveMediaWarning =
+                                            if (data.sensitive) {
+                                                listOf(PostMediaMetadataCreateRequest.SensitiveMediaWarning.Other)
+                                            } else {
+                                                null
+                                            },
+                                        altText = altText?.takeIf(String::isNotEmpty)?.let { PostMediaMetadataCreateRequest.AltText(it) },
+                                    ),
+                            )
+                        check(response.isSuccessful) { "X could not save media settings (HTTP ${response.code})." }
                     }
                     progress()
                 }
             }
-        service.postCreateTweet(
-            postCreateTweetRequest =
+        service.publishTweet(
+            request =
                 PostCreateTweetRequest(
                     features = PostCreateTweetRequestFeatures(),
                     variables =
@@ -596,6 +648,8 @@ internal class XQTDataSource(
                                         },
                                 ),
                             tweetText = data.content,
+                            conversationControl = conversationControl,
+                            cardUri = cardUri,
                             reply =
                                 inReplyToID?.let {
                                     PostCreateTweetRequestVariablesReply(
@@ -645,6 +699,8 @@ internal class XQTDataSource(
     override fun composeConfig(type: ComposeType): ComposeConfig =
         ComposeConfig(
             text = ComposeConfig.Text.withLength(280, String::xWeightedLength),
+            poll = XQT_POLL_CONFIG,
+            canRestrictReplies = type != ComposeType.Reply,
             media =
                 ComposeConfig.Media(
                     maxCount = 20,
@@ -669,16 +725,43 @@ internal class XQTDataSource(
             accountKey = accountKey,
         )
 
-    override suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab> {
-        val user =
-            service
-                .userById(userKey.id)
-                .body()
-                ?.data
-                ?.user
-                ?.result as? User
+    override val supportsProfileTabsCache: Boolean = true
 
-        return listOfNotNull(
+    override suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab> {
+        val response = profileTabApi.userById(userKey.id)
+        check(response.isSuccessful) { "Could not load X profile tabs (HTTP ${response.code})" }
+        val body = checkNotNull(response.body()) { "X returned no profile data" }
+        check(body.errors.isNullOrEmpty()) { "Could not load X profile tabs: ${body.errors?.firstOrNull()?.message}" }
+        val user = checkNotNull(body.data.user.result) { "X returned no user for profile tabs" } as? User
+
+        return buildProfileTabs(
+            userKey = userKey,
+            includeHighlights = user?.hasHighlightsTab == true,
+            includeArticles = user?.hasArticlesTab == true,
+        )
+    }
+
+    override fun restoreProfileTabs(
+        userKey: MicroBlogKey,
+        cached: List<CachedProfileTab>,
+    ): ImmutableList<ProfileTab>? {
+        val cachedIds = cached.map { it.id }
+        val remaining =
+            buildProfileTabs(
+                userKey = userKey,
+                includeHighlights = UserProfileTimelineType.Highlights.pagingKey(userKey, accountKey) in cachedIds,
+                includeArticles = UserProfileTimelineType.Articles.pagingKey(userKey, accountKey) in cachedIds,
+            ).associateByTo(mutableMapOf()) { it.toCached() }
+        val restored = cached.map { remaining.remove(it) ?: return null }
+        return restored.takeIf { remaining.isEmpty() }?.toPersistentList()
+    }
+
+    private fun buildProfileTabs(
+        userKey: MicroBlogKey,
+        includeHighlights: Boolean,
+        includeArticles: Boolean,
+    ): ImmutableList<ProfileTab> =
+        listOfNotNull(
             ProfileTab(
                 name = UiStrings.Posts,
                 loader = userTimeline(userKey, false),
@@ -702,7 +785,7 @@ internal class XQTDataSource(
                         userKey = userKey,
                     ),
             ),
-            if (user?.hasHighlightsTab == true) {
+            if (includeHighlights) {
                 ProfileTab(
                     name = UiStrings.Highlights,
                     loader =
@@ -721,7 +804,7 @@ internal class XQTDataSource(
                 displayType = ProfileTab.DisplayType.Gallery,
                 loader = userTimeline(userKey, mediaOnly = true),
             ),
-            if (user?.hasArticlesTab == true) {
+            if (includeArticles) {
                 ProfileTab(
                     name = UiStrings.Articles,
                     loader =
@@ -749,7 +832,6 @@ internal class XQTDataSource(
                 null
             },
         ).toPersistentList()
-    }
 
     override fun listTimeline(listId: String) =
         ListTimelineRemoteMediator(

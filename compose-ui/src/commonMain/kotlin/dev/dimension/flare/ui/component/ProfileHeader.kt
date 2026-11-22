@@ -73,6 +73,7 @@ import dev.dimension.flare.ui.presenter.profile.ProfileState
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.PlatformTheme
+import dev.dimension.flare.ui.theme.profileName
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import org.jetbrains.compose.resources.stringResource
 
@@ -109,6 +110,7 @@ public fun ProfileHeader(
     onFansListClick: (userKey: MicroBlogKey) -> Unit,
     modifier: Modifier = Modifier,
     isBigScreen: Boolean = false,
+    useCard: Boolean = !isBigScreen(),
 ) {
     when (val userState = state.userState) {
         is UiState.Loading -> {
@@ -131,6 +133,7 @@ public fun ProfileHeader(
                 isMe = state.isMe,
                 menu = menu,
                 expandMatrices = isBigScreen,
+                useCard = useCard,
                 onAvatarClick = onAvatarClick,
                 onBannerClick = onBannerClick,
                 onFollowListClick = onFollowListClick,
@@ -154,6 +157,7 @@ private fun ProfileHeaderSuccess(
     menu: @Composable RowScope.() -> Unit,
     onFollowListClick: (userKey: MicroBlogKey) -> Unit,
     onFansListClick: (userKey: MicroBlogKey) -> Unit,
+    useCard: Boolean,
     modifier: Modifier = Modifier,
     expandMatrices: Boolean = false,
 ) {
@@ -165,6 +169,7 @@ private fun ProfileHeaderSuccess(
         displayName = user.name,
         userKey = user.key,
         handle = user.handle,
+        useCard = useCard,
         headerTrailing = {
             isMe.onSuccess {
                 if (!it) {
@@ -483,7 +488,7 @@ public fun ProfileHeaderLoading(
                 ) {
                     PlatformText(
                         text = "Loading user",
-                        style = PlatformTheme.typography.title,
+                        style = PlatformTheme.typography.profileName,
                         modifier = Modifier.placeholder(true),
                     )
                     PlatformText(

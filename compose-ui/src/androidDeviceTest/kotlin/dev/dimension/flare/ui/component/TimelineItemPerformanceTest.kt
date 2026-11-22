@@ -267,6 +267,32 @@ class TimelineItemPerformanceTest {
     }
 
     @Test
+    fun translatingViewportAndVideoTogetherDoesNotPausePlayback() {
+        val counts = Counts()
+        val events = mutableListOf<Boolean>()
+        val offset = mutableStateOf(0.dp)
+        withPlayback { playback ->
+            composeRule.runOnUiThread { playback.register("video") { events += it } }
+            composeRule.setContent {
+                Box(Modifier.size(300.dp)) {
+                    Box(
+                        Modifier
+                            .offset(y = offset.value)
+                            .size(100.dp)
+                            .onGloballyPositioned { playback.viewport = it.boundsInWindow() },
+                    ) {
+                        AutoplayHost(playback, counts)
+                    }
+                }
+            }
+            composeRule.waitUntil(2_000) { events.isNotEmpty() }
+            val initialTop = composeRule.runOnIdle { counts.bounds.top.also { offset.value = 150.dp } }
+            composeRule.waitUntil(2_000) { counts.bounds.top > initialTop }
+            composeRule.runOnIdle { assertEquals(listOf(true), events) }
+        }
+    }
+
+    @Test
     fun columnModeChangesReevaluateStationaryVideoDistances() {
         val first = Counts()
         val second = Counts()

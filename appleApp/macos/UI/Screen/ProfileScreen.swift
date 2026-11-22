@@ -13,7 +13,7 @@ struct ProfileScreen: View {
     @Environment(\.timelineAppearance.aiConfig.agent) private var agentEnabled
 
     @State private var presenter: KotlinPresenter<ProfileState>
-    @State private var selectedTab = 0
+    @State private var tabSelection = ProfileTabSelection()
 
     init(
         accountType: AccountType,
@@ -36,37 +36,57 @@ struct ProfileScreen: View {
     }
 
     var body: some View {
-        compatBody
+        GeometryReader { proxy in
+            profileContent(usesPlainProfileStyle: proxy.size.width < 840)
+        }
     }
 
-    var compatBody: some View {
-        ScrollView {
-            LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-                ProfileHeader(
-                    user: presenter.state.userState,
-                    relation: presenter.state.relationState,
-                    followButtonState: presenter.state.followButtonState,
-                    isMe: presenter.state.isMe,
-                    onFollowClick: { user, followButtonState in
-                        handleFollowAction(user: user, followButtonState: followButtonState)
-                    },
-                    onFollowingClick: onFollowingClick,
-                    onFansClick: onFansClick
-                )
+    private func profileContent(usesPlainProfileStyle: Bool) -> some View {
+        let tabsState = presenter.state.tabs
+        let tabCount: Int? = switch onEnum(of: tabsState) {
+        case .loading: nil
+        case .success(let state): state.data.cast(ProfileState.Tab.self).count
+        case .error: 0
+        }
+        let showsTabBar = tabCount.map { $0 > 1 } ?? true
 
-                Section {
-                    StateView(state: presenter.state.tabs) { tabsArray in
-                        let tabs = tabsArray.cast(ProfileState.Tab.self)
-                        profileTabsContent(tabs: tabs)
-                    } errorContent: { error in
-                        ListErrorView(error: error) {
-                            presenter.state.retryTabs()
-                        }
-                    } loadingContent: {
-                        ProfileTimelineLoadingPlaceholder()
+        return ScrollView {
+            VStack(spacing: usesPlainProfileStyle && showsTabBar ? 0 : 12) {
+                VStack(spacing: 0) {
+                    ProfileHeader(
+                        user: presenter.state.userState,
+                        relation: presenter.state.relationState,
+                        followButtonState: presenter.state.followButtonState,
+                        isMe: presenter.state.isMe,
+                        onFollowClick: { user, followButtonState in
+                            handleFollowAction(user: user, followButtonState: followButtonState)
+                        },
+                        onFollowingClick: onFollowingClick,
+                        onFansClick: onFansClick
+                    )
+                    if usesPlainProfileStyle && tabCount == 1 {
+                        Divider()
+                            .padding(.top, 8)
                     }
-                } header: {
-                    profileTabPinnedHeader
+                }
+                .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
+                .background(usesPlainProfileStyle ? Color.flareSystemBackground : .clear)
+
+                LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        StateView(state: tabsState) { tabsArray in
+                            let tabs = tabsArray.cast(ProfileState.Tab.self)
+                            profileTabsContent(tabs: tabs)
+                        } errorContent: { error in
+                            ListErrorView(error: error) {
+                                presenter.state.retryTabs()
+                            }
+                        } loadingContent: {
+                            ProfileTimelineLoadingPlaceholder()
+                        }
+                    } header: {
+                        profileTabPinnedHeader(usesPlainProfileStyle: usesPlainProfileStyle)
+                    }
                 }
             }
             .padding(.bottom, 16)
@@ -74,6 +94,9 @@ struct ProfileScreen: View {
         .navigationTitle(title)
         .background(timelineDisplayMode == .card ? Color(.secondarySystemFill) : Color(.windowBackgroundColor))
         .detectScrolling()
+        .onSuccessOf(of: tabsState) { tabs in
+            tabSelection.update(availableIDs: tabs.cast(ProfileState.Tab.self).map(\.id))
+        }
         .toolbar {
 //            ToolbarItem(placement: .automatic) {
 //                switch onEnum(of: presenter.state.userState) {
@@ -117,38 +140,35 @@ struct ProfileScreen: View {
 
     @ViewBuilder
     private func profileTabsContent(tabs: [ProfileState.Tab]) -> some View {
-        Group {
-            if tabs.isEmpty {
-                ListEmptyView()
-                    .padding()
-            } else {
-                profileTabContent(tab: tabs[clampedSelectedTabIndex(for: tabs)])
-            }
-        }
-        .onAppear {
-            normalizeSelectedTab(tabCount: tabs.count)
-        }
-        .onChange(of: tabs.count) { _, count in
-            normalizeSelectedTab(tabCount: count)
+        if tabs.isEmpty {
+            ListEmptyView()
+                .padding()
+        } else {
+            profileTabContent(tab: tabs[tabSelection[indexIn: tabs.map(\.id)]])
         }
     }
 
     @ViewBuilder
-    private var profileTabPinnedHeader: some View {
+    private func profileTabPinnedHeader(usesPlainProfileStyle: Bool) -> some View {
+        let background = usesPlainProfileStyle ? AnyShapeStyle(Color.flareSystemBackground) : AnyShapeStyle(.bar)
         switch onEnum(of: presenter.state.tabs) {
         case .loading:
             ProfileTabsLoadingPlaceholder()
                 .frame(maxWidth: .infinity)
-                .background(.bar)
+                .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
+                .background(background)
                 .overlay(alignment: .bottom) {
-                    Divider()
+                    if !usesPlainProfileStyle {
+                        Divider()
+                    }
                 }
         case .success(let tabState):
             let tabs = tabState.data.cast(ProfileState.Tab.self)
             if tabs.count > 1 {
-                ProfileTabBar(tabs: tabs, selectedTab: $selectedTab)
+                ProfileTabBar(tabs: tabs, selectedTab: $tabSelection[indexIn: tabs.map(\.id)])
                     .frame(maxWidth: .infinity)
-                    .background(.bar)
+                    .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
+                    .background(background)
             }
         case .error:
             EmptyView()
@@ -168,18 +188,6 @@ struct ProfileScreen: View {
             )
             .id(ObjectIdentifier(media.presenter))
         }
-    }
-
-    private func clampedSelectedTabIndex(for tabs: [ProfileState.Tab]) -> Int {
-        min(max(selectedTab, 0), max(tabs.count - 1, 0))
-    }
-
-    private func normalizeSelectedTab(tabCount: Int) {
-        guard tabCount > 0 else {
-            selectedTab = 0
-            return
-        }
-        selectedTab = min(max(selectedTab, 0), tabCount - 1)
     }
 
     private func handleFollowAction(user: UiProfile, followButtonState: FollowButtonState) {

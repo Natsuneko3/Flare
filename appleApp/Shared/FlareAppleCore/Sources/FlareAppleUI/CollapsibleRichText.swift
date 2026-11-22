@@ -10,15 +10,18 @@ struct CollapsibleRichText: View {
     let onOverflowChanged: (Bool) -> Void
 
     @ScaledMetric(relativeTo: .body) private var fallbackLineHeight: CGFloat = 20
+    @Environment(\.lineSpacing) private var baseLineSpacing
     @State private var fullHeight: CGFloat = 0
     @State private var lineHeight: CGFloat = 0
 
+    private var lineSpacing: CGFloat { baseLineSpacing * RichText.lineSpacingMultiplier }
+
     private var effectiveLineHeight: CGFloat {
-        max(lineHeight, fallbackLineHeight)
+        max(lineHeight, fallbackLineHeight) + lineSpacing
     }
 
     private var overflows: Bool {
-        fullHeight > ceil(effectiveLineHeight * CGFloat(max(collapseThreshold, 1))) + 1
+        fullHeight > ceil(effectiveLineHeight * CGFloat(max(collapseThreshold, 1)) - lineSpacing) + 1
     }
 
     private var showsPreview: Bool {
@@ -89,7 +92,7 @@ struct CollapsibleRichText: View {
             onOverflowChanged(false)
             return
         }
-        let thresholdHeight = ceil(max(lineHeight, fallbackLineHeight) * CGFloat(max(collapseThreshold, 1)))
+        let thresholdHeight = ceil((max(lineHeight, fallbackLineHeight) + lineSpacing) * CGFloat(max(collapseThreshold, 1)) - lineSpacing)
         onOverflowChanged(fullHeight > thresholdHeight + 1)
     }
 }

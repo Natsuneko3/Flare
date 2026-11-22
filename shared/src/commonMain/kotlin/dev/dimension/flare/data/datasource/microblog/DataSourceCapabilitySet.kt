@@ -123,7 +123,15 @@ public class ProfileCapability(
 
     public fun fans(userKey: MicroBlogKey): RemoteLoader<UiProfile> = delegate.fans(userKey)
 
+    public val supportsProfileTabsCache: Boolean
+        get() = delegate.supportsProfileTabsCache
+
     public suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab> = delegate.profileTabs(userKey)
+
+    public fun restoreProfileTabs(
+        userKey: MicroBlogKey,
+        cached: List<CachedProfileTab>,
+    ): ImmutableList<ProfileTab>? = delegate.restoreProfileTabs(userKey, cached)
 }
 
 @HiddenFromObjC

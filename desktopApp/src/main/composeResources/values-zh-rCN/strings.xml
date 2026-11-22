@@ -229,6 +229,11 @@
     <string name="settings_ai_config_type_openai">AI 兼容 API</string>
     <string name="settings_ai_config_api_key">API 密钥</string>
     <string name="settings_ai_config_api_key_hint">输入 API 密钥</string>
+    <string name="settings_ai_config_custom_headers">自定义请求头</string>
+    <string name="settings_ai_config_header_add">添加请求头</string>
+    <string name="settings_ai_config_header_name">请求头名称</string>
+    <string name="settings_ai_config_header_value">请求头值</string>
+    <string name="settings_ai_config_headers_invalid">请使用有效且不重复的请求头名称，值须为单行 ASCII 文本。</string>
     <string name="settings_ai_config_model">模型</string>
     <string name="settings_ai_config_model_description">从此端点选择一个模型</string>
     <string name="settings_ai_config_model_select">选择模型</string>
@@ -401,6 +406,8 @@
     <string name="compose_title">发布</string>
     <string name="compose_hint">在想些什么？</string>
     <string name="compose_poll_option_hint">选项 %1$s</string>
+    <string name="compose_poll_unsupported_accounts">有选中的账号不支持发布投票。</string>
+    <string name="compose_poll_option_limits">填写 2 到 %1$d 个选项，每项最多 %2$d 个字符。</string>
     <string name="compose_poll_single_choice">单选</string>
     <string name="compose_poll_multiple_choice">多选</string>
     <string name="compose_poll_expiration_at">截止时间：%1$s</string>
@@ -467,6 +474,10 @@
     <string name="dm_deleted">已删除</string>
     <string name="dm_conversation">私信对话</string>
     <string name="dm_sending">发送中</string>
+    <string name="dm_add_image">添加图片</string>
+    <string name="dm_remove_image">移除图片</string>
+    <string name="dm_image_attached">已添加图片</string>
+    <string name="dm_image_send_failed">图片发送失败，请重试。</string>
     <string name="dm_leave">退出对话</string>
     <string name="dm_to_profile">查看资料</string>
     <string name="tab_settings_mixed_timeline">启用混合时间轴标签页</string>
@@ -777,7 +788,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">自动</string>
     <string name="image_translation_original_file">原文件上传</string>
-    <string name="image_translation_use_shared_description">共用服务地址、API 密钥和模型。服务与模型需要支持输出图片；关闭后可单独配置。</string>
+    <string name="image_translation_use_shared_description">共用服务地址、API 密钥、模型和自定义请求头。服务与模型需要支持输出图片；关闭后可单独配置。</string>
     <string name="settings_plugins_title">插件（Beta）</string>
     <string name="plugin_beta_description">插件仍处于 Beta 阶段，功能尚不完善。遇到问题可前往 %1$s 提交反馈。</string>
     <string name="plugin_report_issue">GitHub Issues</string>
@@ -817,6 +828,8 @@
     <string name="plugin_install_github">从 GitHub 安装</string>
     <string name="plugin_github_repository">GitHub 仓库链接</string>
     <string name="plugin_check_updates">检查更新</string>
+    <string name="plugin_local_import">本地导入</string>
+    <string name="plugin_updated_at">更新于 %1$s</string>
     <string name="plugin_update">更新</string>
     <string name="plugin_up_to_date">GitHub 插件均为最新版本</string>
     <string name="plugin_warning_source_changed">此次安装将更改插件来源</string>
@@ -885,6 +898,7 @@
     <string name="plugin_marketplace_install">安装</string>
     <string name="plugin_marketplace_local">本地插件</string>
     <string name="plugin_marketplace_search">搜索插件</string>
+    <string name="plugin_marketplace_community_notice">插件市场收录的插件均由社区第三方开发，并非官方出品。安装前请核对来源仓库。</string>
     <string name="pixiv_ranking_day_ai_title">AI 日榜</string>
     <string name="pixiv_ranking_day_r18_title">R-18 日榜</string>
     <string name="pixiv_ranking_week_r18_title">R-18 周榜</string>

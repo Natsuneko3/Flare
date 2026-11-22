@@ -22,12 +22,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.feed_open_article
+import dev.dimension.flare.data.model.TimelineDisplayMode
 import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.ui.component.AvatarComponent
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
@@ -79,7 +82,9 @@ public fun GalleryTimelineItem(
                         .clip(GalleryTileShape)
                         .background(PlatformTheme.colorScheme.card),
             ) {
-                StatusItem(item = item)
+                CompositionLocalProvider(LocalEffectiveTimelineDisplayMode provides TimelineDisplayMode.Gallery) {
+                    StatusItem(item = item)
+                }
             }
         }
     }
@@ -89,6 +94,9 @@ public fun GalleryTimelineItem(
 private fun GalleryPostTile(
     post: UiTimelineV2.Post,
     modifier: Modifier = Modifier,
+) = CompositionLocalProvider(
+    LocalStatusBackgroundColor provides
+        PlatformTheme.colorScheme.card.compositeOver(LocalStatusBackgroundColor.current ?: PlatformTheme.colorScheme.background),
 ) {
     val uriHandler = LocalUriHandler.current
     val appearance = LocalTimelineAppearance.current
@@ -156,13 +164,15 @@ private fun GalleryPostTile(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(8.dp),
+                            .padding(horizontal = StatusComponentDefaults.horizontalPadding, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     visibleContent.forEach { content ->
                         if (!content.isEmpty) {
                             RichText(
                                 text = content,
+                                textStyle = PlatformTheme.typography.postBody,
+                                color = StatusComponentDefaults.contentColor,
                                 modifier = Modifier.fillMaxWidth(),
                                 maxLines = GALLERY_TEXT_MAX_LINES,
                             )
@@ -181,7 +191,12 @@ private fun GalleryPostTile(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
+                        .padding(
+                            start = StatusComponentDefaults.horizontalPadding,
+                            end = StatusComponentDefaults.horizontalPadding,
+                            top = 4.dp,
+                            bottom = 8.dp,
+                        ),
             )
         }
     }
@@ -282,7 +297,9 @@ private fun GalleryBottomRow(
         Spacer(modifier = Modifier.width(6.dp))
         PlatformText(
             text = name,
-            style = PlatformTheme.typography.caption,
+            style = if (isCircle) PlatformTheme.typography.postBody else PlatformTheme.typography.caption,
+            fontWeight = if (isCircle) FontWeight.Bold else null,
+            color = if (isCircle) StatusComponentDefaults.contentColor else Color.Unspecified,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

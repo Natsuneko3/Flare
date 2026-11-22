@@ -2,6 +2,7 @@ package dev.dimension.flare.data.datasource.xqt
 
 import dev.dimension.flare.common.encodeJson
 import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.UserApi
 import dev.dimension.flare.data.network.xqt.model.User
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -26,7 +27,7 @@ internal data class ProfileSpotlightsQueryRequest(
     val screenName: String? = null,
 )
 
-internal suspend fun XQTService.userById(id: String) =
+internal suspend fun UserApi.userById(id: String) =
     getUserByRestId(
         variables =
             UserByRestIdRequest(

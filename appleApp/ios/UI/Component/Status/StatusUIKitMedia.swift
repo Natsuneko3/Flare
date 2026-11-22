@@ -499,8 +499,6 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
 
         grid.translatesAutoresizingMaskIntoConstraints = false
         addSubview(grid)
-        overflowView.isHidden = true
-        grid.addSubview(overflowView)
 
         NSLayoutConstraint.activate([
             grid.topAnchor.constraint(equalTo: topAnchor),
@@ -558,7 +556,6 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        layer.cornerRadius = usesCarousel ? 0 : cornerRadius
         if usesCarousel {
             if let index = pendingReturnedIndex, carousel.bounds.width > 0, items.indices.contains(index) {
                 pendingReturnedIndex = nil
@@ -672,7 +669,6 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
                 carousel.setContentOffset(.zero, animated: false)
             }
         }
-        layer.cornerRadius = usesCarousel ? 0 : cornerRadius
         updateAspectConstraint()
         reloadMediaLayout()
         updateBlurUI()
@@ -751,7 +747,7 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
             )
             carouselLayout.invalidateLayout()
             carousel.reloadData()
-            overflowView.isHidden = true
+            overflowView.removeFromSuperview()
             trimCellPool(activeCount: 0)
         } else {
             if isCarouselInstalled {
@@ -788,7 +784,7 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
                 media: item,
                 index: index,
                 showsDownloadAll: items.count > 1,
-                cornerRadius: 0,
+                cornerRadius: cornerRadius,
                 fitsMedia: limitsSingleMedia && item is UiMediaVideo
             )
         }
@@ -798,11 +794,12 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
             }
         }
         if overflowCount > 0 {
+            let lastCell = cellPool[visibleCount - 1]
             overflowView.configure(count: overflowCount)
-            overflowView.isHidden = false
-            grid.bringSubviewToFront(overflowView)
+            overflowView.frame = lastCell.bounds
+            lastCell.addSubview(overflowView)
         } else {
-            overflowView.isHidden = true
+            overflowView.removeFromSuperview()
         }
         setNeedsLayout()
         invalidateIntrinsicContentSize()
@@ -864,12 +861,19 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
 
     private func layoutGrid() {
         let frames = gridFrames(for: grid.bounds.width)
+        let bottom = frames.last?.maxY ?? 0
         for (view, frame) in zip(cellPool.prefix(visibleItemCount), frames) {
+            var corners: CACornerMask = []
+            if frame.minX == 0 {
+                if frame.minY == 0 { corners.insert(.layerMinXMinYCorner) }
+                if frame.maxY >= bottom - 0.5 { corners.insert(.layerMinXMaxYCorner) }
+            }
+            if frame.maxX >= grid.bounds.width - 0.5 {
+                if frame.minY == 0 { corners.insert(.layerMaxXMinYCorner) }
+                if frame.maxY >= bottom - 0.5 { corners.insert(.layerMaxXMaxYCorner) }
+            }
+            view.layer.maskedCorners = corners
             view.frame = frame
-        }
-        if overflowCount > 0, let lastFrame = frames.last {
-            overflowView.frame = lastFrame
-            grid.bringSubviewToFront(overflowView)
         }
     }
 
@@ -1144,7 +1148,10 @@ final class StatusMediaUIView: UIView, TimelineHeightProviding, UICollectionView
         if sensitive {
             installSensitiveControlsIfNeeded()
         }
-        blurView.isHidden = !(sensitive && isBlurred)
+        let showsBlur = sensitive && isBlurred
+        // Share one clip while blurred so rounded edges cannot expose the media underneath.
+        layer.cornerRadius = showsBlur && !usesCarousel ? cornerRadius : 0
+        blurView.isHidden = !showsBlur
         if !sensitive {
             toggleButton.isHidden = true
             return
@@ -1190,6 +1197,7 @@ private final class MediaOverflowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
         backgroundColor = UIColor.black.withAlphaComponent(0.55)
 
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -1231,6 +1239,7 @@ private final class MediaGridCellView: UIView, UIContextMenuInteractionDelegate,
     override init(frame: CGRect) {
         super.init(frame: frame)
         clipsToBounds = true
+        useSeparatorBorderColor()
         mediaView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(mediaView)
         NSLayoutConstraint.activate([
@@ -1251,6 +1260,7 @@ private final class MediaGridCellView: UIView, UIContextMenuInteractionDelegate,
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        layer.borderWidth = 1 / max(traitCollection.displayScale, 1)
         guard let button = altButton, !button.isHidden, bounds.width > 0, bounds.height > 0 else { return }
         let size = button.sizeThatFits(UIView.layoutFittingCompressedSize)
         let scale = min(1, bounds.width / max(size.width, 1), bounds.height / max(size.height, 1))

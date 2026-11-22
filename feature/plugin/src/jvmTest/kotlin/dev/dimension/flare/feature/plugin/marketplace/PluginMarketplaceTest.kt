@@ -44,19 +44,77 @@ class PluginMarketplaceTest {
     }
 
     @Test
-    fun searchMatchesOnlyNamesAndDescriptionsAndPreservesCatalogOrder() {
-        val first = PluginMarketplaceEntryV1("hidden.id", "Zhihu", "知乎热榜与推荐", "https://github.com/hidden/repository", "")
-        val second = first.copy(id = "other.id", name = "Reader", description = "A ZHIHU reader")
-        val state = PluginMarketplaceStateV1(plugins = listOf(first, second), loaded = true)
+    fun entryFormatsOwnerHandleAndRepositoryDisplayPathSafely() {
+        val rootEntry =
+            PluginMarketplaceEntryV1(
+                id = "dev.maxlec.zhihu",
+                name = "知乎",
+                description = "知乎热榜",
+                repository = "https://github.com/anamaxlec/flare-zhihu-plugin",
+                icon = "",
+            )
+        val subPathEntry =
+            rootEntry.copy(
+                id = "dev.alice.zhihu",
+                repository = "https://github.com/alice/flare-plugins.git?path=/plugins/My%20Plugin/",
+            )
+        val malformed = rootEntry.copy(repository = "not-a-github-url")
 
-        assertEquals(listOf(first, second), state.search("  zHiHu  "))
-        assertEquals(listOf(first), state.search("推荐"))
+        assertEquals("@anamaxlec", rootEntry.ownerHandle)
+        assertEquals("flare-zhihu-plugin", rootEntry.repositoryDisplayPath)
+        assertEquals("@alice", subPathEntry.ownerHandle)
+        assertEquals("flare-plugins/plugins/My Plugin", subPathEntry.repositoryDisplayPath)
+        assertEquals("alice/flare-plugins/plugins/My Plugin", subPathEntry.repositoryFullName)
+        assertEquals("https://github.com/alice/flare-plugins/tree/HEAD/plugins/My%20Plugin", subPathEntry.repositoryWebUrl)
+        val sha = "a".repeat(40)
+        assertEquals(
+            "https://github.com/alice/flare-plugins/tree/$sha/plugins/My%20Plugin",
+            subPathEntry.copy(commitSha = sha).repositoryWebUrl,
+        )
+        assertEquals(rootEntry.repository, rootEntry.repositoryWebUrl)
+        assertEquals("", malformed.ownerHandle)
+        assertEquals("not-a-github-url", malformed.repositoryDisplayPath)
+    }
+
+    @Test
+    fun searchMatchesNameDescriptionIdAndSourceWhileExcludingIconUrlAndPreservingOrder() {
+        val first =
+            PluginMarketplaceEntryV1(
+                id = "dev.maxlec.zhihu",
+                name = "知乎",
+                description = "知乎热榜与推荐",
+                repository = "https://github.com/anamaxlec/flare-zhihu-plugin",
+                icon =
+                    "https://raw.githubusercontent.com/anamaxlec/flare-zhihu-plugin/" +
+                        "557b6195db413fecc65468195c6646c668b64d64/assets/icon.png",
+            )
+        val second =
+            PluginMarketplaceEntryV1(
+                id = "dev.alice.zhihu.lite",
+                name = "知乎",
+                description = "轻量只读版",
+                repository = "https://github.com/alice/flare-plugins.git?path=/plugins/My%20Plugin/",
+                icon =
+                    "https://raw.githubusercontent.com/alice/flare-plugins/" +
+                        "1111111111111111111111111111111111111111/assets/unique-icon.png",
+            )
+        val malformed = second.copy(id = "broken.entry", name = "Broken", repository = "not-a-github-url")
+        val state = PluginMarketplaceStateV1(plugins = listOf(first, second, malformed), loaded = true)
+
+        assertEquals(listOf(first, second), state.search("  知乎  "))
+        assertEquals(listOf(first), state.search("@ANAMAXLEC"))
+        assertEquals(listOf(first), state.search("anamaxlec/flare-zhihu-plugin"))
+        assertEquals(listOf(first), state.search("@anamaxlec/flare-zhihu-plugin"))
+        assertEquals(listOf(second), state.search("alice/flare-plugins/plugins/My Plugin"))
+        assertEquals(listOf(second), state.search("my plugin"))
+        assertEquals(listOf(second), state.search("dev.alice.zhihu"))
+        assertEquals(listOf(malformed), state.search("broken.entry"))
+        assertEquals(listOf(malformed), state.search("not-a-github-url"))
+        assertEquals(listOf(first, second), state.search("@"))
         assertEquals(state.plugins, state.search(" \n\t "))
-        assertTrue(state.search("hidden.id").isEmpty())
-        assertTrue(state.search("hidden/repository").isEmpty())
+        assertTrue(state.search("githubusercontent").isEmpty())
+        assertTrue(state.search("unique-icon.png").isEmpty())
         assertTrue(state.search("unmatched").isEmpty())
-        assertTrue(state.copy(plugins = listOf(second)).search("推荐").isEmpty())
-        assertEquals(2, state.plugins.size)
     }
 
     @Test
@@ -111,6 +169,8 @@ class PluginMarketplaceTest {
                 assertNull(client.cachedCatalog())
                 val catalog = client.load()
                 assertEquals("example.plugin", catalog.plugins.single().id)
+                assertNull(catalog.plugins.single().updatedAt)
+                assertNull(catalog.plugins.single().version)
                 assertEquals(catalog, client.load())
                 assertEquals(1, requests)
                 client.load(forceRefresh = true)
@@ -160,6 +220,24 @@ class PluginMarketplaceTest {
                 assertEquals("example.plugin", assertNotNull(unavailable.cachedCatalog()).plugins.single().id)
             } finally {
                 unavailable.close()
+            }
+        }
+
+    @Test
+    fun invalidOptionalLabelsDoNotHideOtherEntriesOrTurnABadSnapshotIntoAnUnpinnedInstall() =
+        runBlocking {
+            val badDate = ENTRY.replace("\"name\":", "\"version\":\"1.2.0\",\"updatedAt\":\"2026-02-30\",\"name\":")
+            val healthy = ENTRY.replace("example.plugin", "healthy.plugin")
+            val badPin = ENTRY.replace("example.plugin", "bad.pin").replace("\"name\":", "\"commitSha\":\"HEAD\",\"name\":")
+            val client = PluginMarketplace(files, MockEngine { respond(CATALOG.replace(ENTRY, "$badDate,$healthy,$badPin")) })
+            try {
+                val catalog = client.load()
+                assertEquals(listOf("example.plugin", "healthy.plugin"), catalog.plugins.map { it.id })
+                assertEquals("1.2.0", catalog.plugins.first().version)
+                assertNull(catalog.plugins.first().updatedAt)
+                assertEquals(catalog, client.cachedCatalog())
+            } finally {
+                client.close()
             }
         }
 

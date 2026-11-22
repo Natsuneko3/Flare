@@ -1,7 +1,7 @@
 import XCTest
 import SwiftUI
 import KotlinSharedUI
-import FlareAppleUI
+@testable import FlareAppleUI
 @testable import Flare
 
 @MainActor
@@ -18,10 +18,12 @@ final class StatusActionColorTests: XCTestCase {
             previousWindow?.makeKeyAndVisible()
         }
         let colors: [ActionMenu.ItemColor?] = [nil, .contentColor, .primaryColor, .red]
+        let testAppearance = appearance(style: .stretch, fixed: false, numbers: true)
         let uiView = StatusActionsUIView()
 
         for theme in [UIUserInterfaceStyle.light, .dark] {
             window.overrideUserInterfaceStyle = theme
+            root.view.traitOverrides[FlareTextBackgroundTrait.self] = theme == .dark ? .black : .white
             for isDetail in [false, true] {
                 for isGroup in [false, true] {
                     for enabled in [true, false] {
@@ -33,16 +35,21 @@ final class StatusActionColorTests: XCTestCase {
                             let action: ActionMenu = isGroup ? ActionMenu.Group(displayItem: item, actions: [item]) : item
                             let host = UIHostingController(rootView:
                                 StatusActionsView(data: [action], useText: false, applyPostActionLayout: false, isDetail: isDetail)
-                                    .font(isDetail ? .body : .footnote)
-                                    .foregroundStyle(isDetail ? .primary : .secondary)
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                                    .environment(\.timelineAppearance, testAppearance)
+                                    .environment(\.isPostContent, true)
+                                    .flareTextBackground(theme == .dark ? .black : .white)
                                     .environment(\.colorScheme, theme == .dark ? .dark : .light)
+                                    .environment(\.layoutDirection, .leftToRight)
                             )
                             host.safeAreaRegions = []
                             root.addChild(host)
-                            let swiftImage = await snapshot(host.view, in: root, theme: theme)
+                            let swiftImage = await snapshot(host.view, in: root, theme: theme, scale: 3)
                             host.removeFromParent()
                             uiView.configure(data: [action], useText: false, postActionStyle: .leftAligned,
-                                             applyPostActionLayout: false, showNumbers: true, isDetail: isDetail)
+                                             applyPostActionLayout: false, showNumbers: true, isDetail: isDetail,
+                                             isPostContent: true)
                             let uiImage = await snapshot(uiView, in: root, theme: theme)
                             let expected = expectedRGB(color: color, isDetail: isDetail, enabled: enabled, theme: theme)
                             let context = "theme=\(theme.rawValue), detail=\(isDetail), group=\(isGroup), enabled=\(enabled), color=\(String(describing: color))"
@@ -52,6 +59,15 @@ final class StatusActionColorTests: XCTestCase {
                                     XCTAssertEqual(actual[channel], expected[channel], accuracy: 3,
                                                    "\(renderer): \(context), RGB=\(actual), expected=\(expected)")
                                 }
+                            }
+                            let countStart = Int((StatusActionLayoutMetrics.padding + StatusActionLayoutMetrics.iconWidth
+                                + StatusActionLayoutMetrics.labelSpacing) * swiftImage.scale)
+                            let icon = try dominantRGB(swiftImage, theme: theme, columns: 0..<countStart)
+                            let count = try dominantRGB(swiftImage, theme: theme,
+                                columns: countStart..<Int(swiftImage.size.width * swiftImage.scale))
+                            for channel in 0..<3 {
+                                XCTAssertEqual(icon[channel], count[channel], accuracy: 3,
+                                               "SwiftUI icon RGB=\(icon), count RGB=\(count), \(context)")
                             }
                         }
                     }
@@ -94,6 +110,7 @@ final class StatusActionColorTests: XCTestCase {
                         for numbers in [false, true] {
                             let host = UIHostingController(rootView:
                                 StatusActionsView(data: data, useText: false, applyPostActionLayout: false, isDetail: detail)
+                                    .environment(\.isPostContent, true)
                                     .environment(\.timelineAppearance, appearance(style: style, fixed: fixed, numbers: numbers))
                                     .environment(\.colorScheme, .light)
                                     .environment(\.layoutDirection, rightToLeft ? .rightToLeft : .leftToRight)
@@ -104,7 +121,7 @@ final class StatusActionColorTests: XCTestCase {
                             host.removeFromParent()
                             native.configure(data: data, useText: false, postActionStyle: style,
                                              postActionFixedWidth: fixed, applyPostActionLayout: false,
-                                             showNumbers: numbers, isDetail: detail)
+                                             showNumbers: numbers, isDetail: detail, isPostContent: true)
                             let ui = await snapshot(native, in: root, theme: .light, width: width)
                             for green in [false, true] {
                                 let a = try coloredBounds(swift, green: green)
@@ -170,7 +187,8 @@ final class StatusActionColorTests: XCTestCase {
         return CGRect(x: minX, y: 0, width: maxX - minX + 1, height: cg.height)
     }
 
-    private func snapshot(_ view: UIView, in root: UIViewController, theme: UIUserInterfaceStyle, width: CGFloat = 240) async -> UIImage {
+    private func snapshot(_ view: UIView, in root: UIViewController, theme: UIUserInterfaceStyle,
+                          width: CGFloat = 240, scale: CGFloat = 1) async -> UIImage {
         view.frame = CGRect(x: 0, y: 0, width: width, height: 48)
         view.backgroundColor = theme == .dark ? .black : .white
         root.view.addSubview(view)
@@ -178,7 +196,7 @@ final class StatusActionColorTests: XCTestCase {
         view.layoutIfNeeded()
         try? await Task.sleep(for: .milliseconds(60))
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        format.scale = scale
         let image = UIGraphicsImageRenderer(size: view.bounds.size, format: format).image { _ in
             view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
         }
@@ -192,7 +210,9 @@ final class StatusActionColorTests: XCTestCase {
         switch color {
         case .red: base = .systemRed
         case .primaryColor: base = UIColor(red: 0, green: 186.0 / 255, blue: 124.0 / 255, alpha: 1)
-        default: base = isDetail ? .label : .secondaryLabel
+        default: base = theme == .dark
+            ? UIColor(red: 113.0 / 255, green: 118.0 / 255, blue: 123.0 / 255, alpha: 1)
+            : .secondaryLabel
         }
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
         base.resolvedColor(with: UITraitCollection(userInterfaceStyle: theme))
@@ -202,7 +222,7 @@ final class StatusActionColorTests: XCTestCase {
         return [red, green, blue].map { ($0 * opacity + background * (1 - opacity)) * 255 }
     }
 
-    private func dominantRGB(_ image: UIImage, theme: UIUserInterfaceStyle) throws -> [CGFloat] {
+    private func dominantRGB(_ image: UIImage, theme: UIUserInterfaceStyle, columns: Range<Int>? = nil) throws -> [CGFloat] {
         let cgImage = try XCTUnwrap(image.cgImage)
         let width = cgImage.width, height = cgImage.height
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
@@ -215,6 +235,7 @@ final class StatusActionColorTests: XCTestCase {
         let background = theme == .dark ? 0 : 255
         var counts: [Int: Int] = [:]
         for offset in stride(from: 0, to: pixels.count, by: 4) {
+            if let columns, !columns.contains((offset / 4) % width) { continue }
             let rgb = [Int(pixels[offset]), Int(pixels[offset + 1]), Int(pixels[offset + 2])]
             guard rgb.contains(where: { abs($0 - background) > 3 }) else { continue }
             counts[(rgb[0] << 16) | (rgb[1] << 8) | rgb[2], default: 0] += 1

@@ -38,6 +38,8 @@
     <string name="compose_vvo_comment_title">Comment</string>
     <string name="compose_hint">What\'s happening?</string>
     <string name="compose_poll_option_hint">Option %1$s</string>
+    <string name="compose_poll_unsupported_accounts">One or more selected accounts cannot publish polls.</string>
+    <string name="compose_poll_option_limits">Enter 2 to %1$d choices, up to %2$d characters each.</string>
     <string name="compose_poll_single_choice">Single choice</string>
     <string name="compose_poll_multiple_choice">Multiple choice</string>
     <string name="compose_poll_expiration_at">Expiration at: %1$s</string>
@@ -207,6 +209,11 @@
     <string name="settings_ai_config_value_empty_placeholder">Not set</string>
     <string name="settings_ai_config_api_key">API Key</string>
     <string name="settings_ai_config_api_key_hint">Enter API key</string>
+    <string name="settings_ai_config_custom_headers">Custom headers</string>
+    <string name="settings_ai_config_header_add">Add header</string>
+    <string name="settings_ai_config_header_name">Header name</string>
+    <string name="settings_ai_config_header_value">Header value</string>
+    <string name="settings_ai_config_headers_invalid">Use valid, unique header names and single-line ASCII values.</string>
     <string name="settings_ai_config_model">Model</string>
     <string name="settings_ai_config_model_description">Choose a model from this endpoint</string>
     <string name="settings_ai_config_model_select">Select model</string>
@@ -480,6 +487,7 @@
     <string name="service_select_empty_message">No servers found</string>
 
     <string name="media_viewer_title">Media viewer</string>
+    <string name="media_image_loading">Loading image</string>
 
     <string name="settings_accounts_remove">Remove</string>
     <string name="settings_accounts_remove_confirm">Are you sure you want to remove account %1$s from this device?</string>
@@ -621,6 +629,10 @@
     <string name="dm_deleted">Deleted message</string>
     <string name="dm_conversation">Direct message conversation</string>
     <string name="dm_sending">Sending…</string>
+    <string name="dm_add_image">Attach image</string>
+    <string name="dm_remove_image">Remove image</string>
+    <string name="dm_image_attached">Image attached</string>
+    <string name="dm_image_send_failed">Could not send image. Try again.</string>
     <string name="dm_leave">Leave conversation</string>
     <string name="dm_to_profile">Open profile</string>
 
@@ -931,7 +943,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automatic</string>
     <string name="image_translation_original_file">Original file</string>
-    <string name="image_translation_use_shared_description">Share the service URL, API key and model. The service and model must support image output. Turn off to configure image translation separately.</string>
+    <string name="image_translation_use_shared_description">Share the service URL, API key, model and custom headers. The service and model must support image output. Turn off to configure image translation separately.</string>
     <string name="settings_plugins_title">Plugins (Beta)</string>
     <string name="plugin_beta_description">Plugins are still in beta and may be incomplete. If you run into problems, report them on %1$s.</string>
     <string name="plugin_report_issue">GitHub Issues</string>
@@ -971,6 +983,8 @@
     <string name="plugin_install_github">Install from GitHub</string>
     <string name="plugin_github_repository">GitHub repository URL</string>
     <string name="plugin_check_updates">Check for updates</string>
+    <string name="plugin_local_import">Local import</string>
+    <string name="plugin_updated_at">Updated %1$s</string>
     <string name="plugin_update">Update</string>
     <string name="plugin_up_to_date">GitHub plugins are up to date</string>
     <string name="plugin_warning_source_changed">This installation changes the plugin source</string>
@@ -1073,4 +1087,5 @@
     <string name="plugin_marketplace_install">Install</string>
     <string name="plugin_marketplace_local">Local plugin</string>
     <string name="plugin_marketplace_search">Search plugins</string>
+    <string name="plugin_marketplace_community_notice">Plugins in the marketplace are created by third-party community developers and are not official. Review the source repository before installing.</string>
 </resources>
