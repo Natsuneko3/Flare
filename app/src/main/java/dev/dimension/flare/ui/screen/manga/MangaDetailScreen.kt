@@ -57,6 +57,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -146,6 +148,9 @@ import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import moe.tlaster.nestedscrollview.NestedScrollViewState
 import moe.tlaster.nestedscrollview.VerticalNestedScrollView
@@ -194,6 +199,33 @@ internal fun resolveAndroidMangaTabAfterCapabilityChange(
     selectedTab: AndroidMangaTab,
     availableTabs: List<AndroidMangaTab>,
 ): Int = availableTabs.indexOf(selectedTab).takeIf { it >= 0 } ?: 0
+
+internal fun resolveAndroidPagerActivePage(
+    selectedTab: AndroidMangaTab,
+    availableTabs: List<AndroidMangaTab>,
+    previousTabs: List<AndroidMangaTab>,
+    pagerCurrentPage: Int,
+): Int {
+    val targetIndex =
+        resolveAndroidMangaTabAfterCapabilityChange(
+            selectedTab = selectedTab,
+            availableTabs = availableTabs,
+        )
+    return if (availableTabs != previousTabs) {
+        targetIndex
+    } else {
+        resolveActiveAndroidMangaTabIndex(
+            currentPage = pagerCurrentPage,
+            tabCount = availableTabs.size,
+        )
+    }
+}
+
+internal fun UiMangaDetail.hasRenderableSynopsis(): Boolean {
+    val text = content ?: return false
+    return !text.isEmpty &&
+        (text.innerText.isNotBlank() || text.imageUrls.isNotEmpty() || text.imageMedias.isNotEmpty())
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -266,6 +298,19 @@ internal fun MangaDetailContent(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val uriHandler = LocalUriHandler.current
     var lockedPromptChapter by remember { mutableStateOf<UiMangaChapter?>(null) }
+    val availableTabs =
+        remember(state.supportsComments, state.supportsRecommendations) {
+            buildAndroidMangaTabs(
+                supportsComments = state.supportsComments,
+                supportsRecommendations = state.supportsRecommendations,
+            )
+        }
+    var selectedTab by rememberSaveable { mutableStateOf(AndroidMangaTab.Chapters) }
+    LaunchedEffect(availableTabs) {
+        if (selectedTab !in availableTabs) {
+            selectedTab = AndroidMangaTab.Chapters
+        }
+    }
 
     val loadedDetail = state.detail.takeSuccess()
     val hasLoadedDetail = loadedDetail != null
@@ -323,23 +368,7 @@ internal fun MangaDetailContent(
                             )
                         },
                         navigationIcon = {
-                            Box {
-                                if (showHeroIconPills) {
-                                    Spacer(
-                                        modifier =
-                                            Modifier
-                                                .matchParentSize()
-                                                .padding(horizontal = 16.dp)
-                                                .graphicsLayer {
-                                                    alpha = 0.72f * (1f - titleAlpha)
-                                                }.background(
-                                                    color = MaterialTheme.colorScheme.surface,
-                                                    shape = CircleShape,
-                                                ),
-                                    )
-                                }
-                                BackButton(onBack = onBack)
-                            }
+                            BackButton(onBack = onBack)
                         },
                         actions = {
                             Box(modifier = Modifier.padding(end = 8.dp)) {
@@ -429,6 +458,9 @@ internal fun MangaDetailContent(
                                 WideAndroidMangaDetailContent(
                                     detail = detail,
                                     state = state,
+                                    availableTabs = availableTabs,
+                                    selectedTab = selectedTab,
+                                    onSelectTab = { selectedTab = it },
                                     contentPadding = contentPadding,
                                     navigate = navigate,
                                     onLockedChapterClick = { lockedPromptChapter = it },
@@ -437,6 +469,9 @@ internal fun MangaDetailContent(
                                 CompactAndroidMangaDetailContent(
                                     detail = detail,
                                     state = state,
+                                    availableTabs = availableTabs,
+                                    selectedTab = selectedTab,
+                                    onSelectTab = { selectedTab = it },
                                     nestedScrollState = nestedScrollState,
                                     contentPadding = contentPadding,
                                     navigate = navigate,
@@ -501,6 +536,9 @@ private fun MangaCardTimeline(content: @Composable () -> Unit) {
 private fun WideAndroidMangaDetailContent(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
+    availableTabs: List<AndroidMangaTab>,
+    selectedTab: AndroidMangaTab,
+    onSelectTab: (AndroidMangaTab) -> Unit,
     contentPadding: PaddingValues,
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
@@ -533,7 +571,7 @@ private fun WideAndroidMangaDetailContent(
                         navigate = navigate,
                     )
                 }
-                if (detail.content != null || detail.tagGroups.any { it.tags.isNotEmpty() }) {
+                if (detail.hasRenderableSynopsis() || detail.tagGroups.any { it.tags.isNotEmpty() }) {
                     item(key = "synopsis_tags") {
                         Box(modifier = Modifier.padding(horizontal = screenHorizontalPadding)) {
                             MangaAndroidSynopsisAndTagsCard(detail = detail)
@@ -548,6 +586,9 @@ private fun WideAndroidMangaDetailContent(
         MangaAndroidTabsPager(
             detail = detail,
             state = state,
+            availableTabs = availableTabs,
+            selectedTab = selectedTab,
+            onSelectTab = onSelectTab,
             bottomPadding = bottomPadding,
             navigate = navigate,
             onLockedChapterClick = onLockedChapterClick,
@@ -563,12 +604,15 @@ private fun WideAndroidMangaDetailContent(
 private fun CompactAndroidMangaDetailContent(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
+    availableTabs: List<AndroidMangaTab>,
+    selectedTab: AndroidMangaTab,
+    onSelectTab: (AndroidMangaTab) -> Unit,
     nestedScrollState: NestedScrollViewState,
     contentPadding: PaddingValues,
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
 ) {
-    val hasSynopsisOrTags = detail.content != null || detail.tagGroups.any { it.tags.isNotEmpty() }
+    val hasSynopsisOrTags = detail.hasRenderableSynopsis() || detail.tagGroups.any { it.tags.isNotEmpty() }
     VerticalNestedScrollView(
         state = nestedScrollState,
         contentTopPadding = contentPadding.calculateTopPadding(),
@@ -605,6 +649,9 @@ private fun CompactAndroidMangaDetailContent(
             MangaAndroidTabsPager(
                 detail = detail,
                 state = state,
+                availableTabs = availableTabs,
+                selectedTab = selectedTab,
+                onSelectTab = onSelectTab,
                 bottomPadding = contentPadding.calculateBottomPadding(),
                 navigate = navigate,
                 onLockedChapterClick = onLockedChapterClick,
@@ -618,26 +665,15 @@ private fun CompactAndroidMangaDetailContent(
 private fun MangaAndroidTabsPager(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
+    availableTabs: List<AndroidMangaTab>,
+    selectedTab: AndroidMangaTab,
+    onSelectTab: (AndroidMangaTab) -> Unit,
     bottomPadding: Dp,
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val availableTabs =
-        remember(state.supportsComments, state.supportsRecommendations) {
-            buildAndroidMangaTabs(
-                supportsComments = state.supportsComments,
-                supportsRecommendations = state.supportsRecommendations,
-            )
-        }
-    var selectedTab by remember { mutableStateOf(AndroidMangaTab.Chapters) }
-    var previousTabs by remember { mutableStateOf(availableTabs) }
-
     if (availableTabs.size == 1) {
-        LaunchedEffect(availableTabs) {
-            selectedTab = AndroidMangaTab.Chapters
-            previousTabs = availableTabs
-        }
         MangaAndroidChaptersTab(
             detail = detail,
             state = state,
@@ -649,6 +685,11 @@ private fun MangaAndroidTabsPager(
         return
     }
 
+    var previousTabs by remember { mutableStateOf(availableTabs) }
+    val currentSelectedTab by rememberUpdatedState(selectedTab)
+    val currentAvailableTabs by rememberUpdatedState(availableTabs)
+    val currentOnSelectTab by rememberUpdatedState(onSelectTab)
+
     val targetIndex =
         resolveAndroidMangaTabAfterCapabilityChange(
             selectedTab = selectedTab,
@@ -656,31 +697,46 @@ private fun MangaAndroidTabsPager(
         )
     val pagerState = rememberPagerState(initialPage = targetIndex, pageCount = { availableTabs.size })
     val activePage =
-        resolveActiveAndroidMangaTabIndex(
-            currentPage = targetIndex,
-            tabCount = availableTabs.size,
+        resolveAndroidPagerActivePage(
+            selectedTab = selectedTab,
+            availableTabs = availableTabs,
+            previousTabs = previousTabs,
+            pagerCurrentPage = pagerState.currentPage,
         )
     LaunchedEffect(pagerState, availableTabs) {
         if (availableTabs != previousTabs) {
             val resolvedIndex =
                 resolveAndroidMangaTabAfterCapabilityChange(
-                    selectedTab = selectedTab,
+                    selectedTab = currentSelectedTab,
                     availableTabs = availableTabs,
                 )
-            selectedTab = availableTabs.getOrElse(resolvedIndex) { AndroidMangaTab.Chapters }
-            previousTabs = availableTabs
-            if (
-                pagerState.currentPage != resolvedIndex ||
-                pagerState.settledPage != resolvedIndex ||
-                pagerState.currentPageOffsetFraction != 0f
-            ) {
-                pagerState.scrollToPage(resolvedIndex)
+            val resolvedTab = availableTabs.getOrElse(resolvedIndex) { AndroidMangaTab.Chapters }
+            if (currentSelectedTab != resolvedTab) {
+                currentOnSelectTab(resolvedTab)
             }
+            try {
+                if (
+                    pagerState.currentPage != resolvedIndex ||
+                    pagerState.settledPage != resolvedIndex ||
+                    pagerState.currentPageOffsetFraction != 0f
+                ) {
+                    pagerState.scrollToPage(resolvedIndex)
+                }
+            } catch (e: CancellationException) {
+                currentCoroutineContext().ensureActive()
+            }
+            previousTabs = availableTabs
         }
+    }
+    LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage to pagerState.isScrollInProgress }
             .collect { (settledPage, isScrolling) ->
-                if (!isScrolling) {
-                    selectedTab = availableTabs.getOrElse(settledPage) { AndroidMangaTab.Chapters }
+                val tabs = currentAvailableTabs
+                if (!isScrolling && tabs == previousTabs) {
+                    val settledTab = tabs.getOrElse(settledPage) { AndroidMangaTab.Chapters }
+                    if (currentSelectedTab != settledTab) {
+                        currentOnSelectTab(settledTab)
+                    }
                 }
             }
     }
@@ -695,7 +751,7 @@ private fun MangaAndroidTabsPager(
                 Tab(
                     selected = activePage == index,
                     onClick = {
-                        selectedTab = tab
+                        onSelectTab(tab)
                         scope.launch { pagerState.animateScrollToPage(index) }
                     },
                     text = {
@@ -1092,7 +1148,14 @@ private fun MangaAndroidHeroHeader(
                                 } else {
                                     UiIcon.Like.toImageVector()
                                 },
-                            contentDescription = null,
+                            contentDescription =
+                                stringResource(
+                                    if (detail.isBookmarked) {
+                                        R.string.channel_item_unfavourite
+                                    } else {
+                                        R.string.channel_item_favourite
+                                    },
+                                ),
                             tint =
                                 if (detail.isBookmarked) {
                                     MaterialTheme.colorScheme.error
@@ -1144,7 +1207,10 @@ private fun MangaAndroidStatusBadge(status: UiMangaStatus) {
 @Composable
 private fun MangaAndroidSynopsisAndTagsCard(detail: UiMangaDetail) {
     AdaptiveCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .testTag("manga_synopsis_tags_card"),
         index = 0,
         totalCount = 1,
     ) {
@@ -1155,7 +1221,7 @@ private fun MangaAndroidSynopsisAndTagsCard(detail: UiMangaDetail) {
                     .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            detail.content?.takeIf { !it.isEmpty }?.let { content ->
+            detail.content?.takeIf { detail.hasRenderableSynopsis() }?.let { content ->
                 MangaAndroidCollapsibleSynopsis(content = content)
             }
             MangaTagGroupsSection(

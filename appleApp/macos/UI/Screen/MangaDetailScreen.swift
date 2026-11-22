@@ -706,12 +706,10 @@ private struct MacMangaInspectorPane: View {
                                 detail.onBookmark(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
                             } label: {
                                 Image(fontAwesome: detail.isBookmarked ? .heartFill : .heart)
-                                    .frame(width: 34, height: 34)
-                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
                             .disabled(isBookmarkDisabled)
-                            .opacity(isBookmarkDisabled ? 0.45 : 1.0)
                             .foregroundStyle(detail.isBookmarked ? Color.red : Color.secondary)
                             .accessibilityIdentifier("manga_cta_bookmark_fallback")
                             .accessibilityLabel(
@@ -913,14 +911,11 @@ private struct MacMangaChapterCell: View {
         MangaDetailFormatting.resolveLockedChapterURL(chapter: item.chapter, detailURL: detailURL)
     }
 
-    private var cellBackground: Color {
+    private var cellOverlayFill: Color {
         if item.isCurrent {
-            return Color.accentColor.opacity(0.12)
+            return Color.accentColor.opacity(isHovered ? 0.18 : 0.12)
         }
-        if isHovered {
-            return Color.primary.opacity(0.06)
-        }
-        return .flareSecondarySystemGroupedBackground
+        return isHovered ? Color.primary.opacity(0.06) : .clear
     }
 
     private var cleanedSubtitle: String? {
@@ -972,7 +967,7 @@ private struct MacMangaChapterCell: View {
                         Text(verbatim: item.chapter.title)
                             .font(.body.weight(emphasis == .current ? .semibold : .regular))
                             .foregroundStyle(titleColor)
-                            .lineLimit(1)
+                            .lineLimit(2)
                             .multilineTextAlignment(.leading)
 
                         if hasMetadataSubtitle {
@@ -1034,16 +1029,13 @@ private struct MacMangaChapterCell: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .flareTextBackground(.flareSecondarySystemGroupedBackground)
-        .background(
-            cellBackground,
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .overlay {
+        .background {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(
-                    item.isCurrent ? Color.accentColor.opacity(0.35) : Color.flareSeparator.opacity(0.45),
-                    lineWidth: 1
-                )
+                .fill(Color.flareSecondarySystemGroupedBackground)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(cellOverlayFill)
+                }
         }
         .onHover { hovering in
             isHovered = hovering

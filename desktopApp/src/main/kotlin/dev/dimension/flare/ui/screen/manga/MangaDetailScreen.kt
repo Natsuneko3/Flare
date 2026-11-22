@@ -181,6 +181,12 @@ private enum class DesktopMangaTab {
     Recommendations,
 }
 
+internal fun UiMangaDetail.hasRenderableSynopsis(): Boolean {
+    val text = content ?: return false
+    return !text.isEmpty &&
+        (text.innerText.isNotBlank() || text.imageUrls.isNotEmpty() || text.imageMedias.isNotEmpty())
+}
+
 @Composable
 internal fun MangaDetailScreen(
     mangaKey: MicroBlogKey,
@@ -244,6 +250,21 @@ internal fun MangaDetailContent(
 ) {
     val uriHandler = LocalUriHandler.current
     var lockedPromptChapter by remember { mutableStateOf<UiMangaChapter?>(null) }
+    val availableTabs =
+        remember(state.supportsComments, state.supportsRecommendations) {
+            buildList {
+                add(DesktopMangaTab.Chapters)
+                if (state.supportsComments) add(DesktopMangaTab.Comments)
+                if (state.supportsRecommendations) add(DesktopMangaTab.Recommendations)
+            }
+        }
+    var selectedTab by remember { mutableStateOf(DesktopMangaTab.Chapters) }
+    val activeTab = selectedTab.takeIf { it in availableTabs } ?: DesktopMangaTab.Chapters
+    LaunchedEffect(availableTabs) {
+        if (selectedTab !in availableTabs) {
+            selectedTab = DesktopMangaTab.Chapters
+        }
+    }
 
     MangaCardTimeline {
         state.detail
@@ -253,6 +274,9 @@ internal fun MangaDetailContent(
                         CompactMangaDetailContent(
                             detail = detail,
                             state = state,
+                            availableTabs = availableTabs,
+                            activeTab = activeTab,
+                            onSelectTab = { selectedTab = it },
                             viewportWidth = maxWidth,
                             navigate = navigate,
                             onLockedChapterClick = { lockedPromptChapter = it },
@@ -261,6 +285,9 @@ internal fun MangaDetailContent(
                         WideMangaDetailContent(
                             detail = detail,
                             state = state,
+                            availableTabs = availableTabs,
+                            activeTab = activeTab,
+                            onSelectTab = { selectedTab = it },
                             navigate = navigate,
                             onLockedChapterClick = { lockedPromptChapter = it },
                         )
@@ -362,24 +389,12 @@ private fun MangaDetailTabFilter(
 private fun WideMangaDetailContent(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
+    availableTabs: List<DesktopMangaTab>,
+    activeTab: DesktopMangaTab,
+    onSelectTab: (DesktopMangaTab) -> Unit,
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
 ) {
-    val availableTabs =
-        remember(state.supportsComments, state.supportsRecommendations) {
-            buildList {
-                add(DesktopMangaTab.Chapters)
-                if (state.supportsComments) add(DesktopMangaTab.Comments)
-                if (state.supportsRecommendations) add(DesktopMangaTab.Recommendations)
-            }
-        }
-    var selectedTab by remember { mutableStateOf(DesktopMangaTab.Chapters) }
-    val activeTab = selectedTab.takeIf { it in availableTabs } ?: DesktopMangaTab.Chapters
-    LaunchedEffect(availableTabs) {
-        if (selectedTab !in availableTabs) {
-            selectedTab = DesktopMangaTab.Chapters
-        }
-    }
     val metaListState = rememberLazyListState()
 
     Row(Modifier.fillMaxSize()) {
@@ -413,7 +428,7 @@ private fun WideMangaDetailContent(
                             navigate = navigate,
                         )
                     }
-                    if (detail.content != null || detail.tagGroups.any { it.tags.isNotEmpty() }) {
+                    if (detail.hasRenderableSynopsis() || detail.tagGroups.any { it.tags.isNotEmpty() }) {
                         item(key = "synopsis_tags") {
                             MangaSynopsisAndTagsCard(detail = detail)
                         }
@@ -436,7 +451,7 @@ private fun WideMangaDetailContent(
                 MangaDetailTabFilter(
                     availableTabs = availableTabs,
                     activeTab = activeTab,
-                    onSelectTab = { selectedTab = it },
+                    onSelectTab = onSelectTab,
                     modifier =
                         Modifier
                             .fillMaxWidth()
@@ -495,25 +510,13 @@ private fun WideMangaDetailContent(
 private fun CompactMangaDetailContent(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
+    availableTabs: List<DesktopMangaTab>,
+    activeTab: DesktopMangaTab,
+    onSelectTab: (DesktopMangaTab) -> Unit,
     viewportWidth: Dp,
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
 ) {
-    val availableTabs =
-        remember(state.supportsComments, state.supportsRecommendations) {
-            buildList {
-                add(DesktopMangaTab.Chapters)
-                if (state.supportsComments) add(DesktopMangaTab.Comments)
-                if (state.supportsRecommendations) add(DesktopMangaTab.Recommendations)
-            }
-        }
-    var selectedTab by remember { mutableStateOf(DesktopMangaTab.Chapters) }
-    val activeTab = selectedTab.takeIf { it in availableTabs } ?: DesktopMangaTab.Chapters
-    LaunchedEffect(availableTabs) {
-        if (selectedTab !in availableTabs) {
-            selectedTab = DesktopMangaTab.Chapters
-        }
-    }
     val itemSpacing =
         when (activeTab) {
             DesktopMangaTab.Chapters -> 2.dp
@@ -567,7 +570,7 @@ private fun CompactMangaDetailContent(
                     )
                 }
             }
-            if (detail.content != null || detail.tagGroups.any { it.tags.isNotEmpty() }) {
+            if (detail.hasRenderableSynopsis() || detail.tagGroups.any { it.tags.isNotEmpty() }) {
                 item(span = StaggeredGridItemSpan.FullLine, key = "synopsis_tags") {
                     Box(modifier = Modifier.padding(bottom = sectionBottomPadding)) {
                         MangaSynopsisAndTagsCard(detail = detail)
@@ -579,7 +582,7 @@ private fun CompactMangaDetailContent(
                     MangaDetailTabFilter(
                         availableTabs = availableTabs,
                         activeTab = activeTab,
-                        onSelectTab = { selectedTab = it },
+                        onSelectTab = onSelectTab,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -1124,7 +1127,12 @@ private fun MangaStatusBadge(status: UiMangaStatus) {
 
 @Composable
 private fun MangaSynopsisAndTagsCard(detail: UiMangaDetail) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .testTag("manga_synopsis_tags_card"),
+    ) {
         Column(
             modifier =
                 Modifier
@@ -1132,7 +1140,7 @@ private fun MangaSynopsisAndTagsCard(detail: UiMangaDetail) {
                     .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            detail.content?.takeIf { !it.isEmpty }?.let { content ->
+            detail.content?.takeIf { detail.hasRenderableSynopsis() }?.let { content ->
                 MangaDesktopCollapsibleSynopsis(content = content)
             }
             MangaTagGroupsSection(

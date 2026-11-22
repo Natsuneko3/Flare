@@ -1493,6 +1493,52 @@ final class MangaScreenTests: XCTestCase {
             0,
             "Read-only guest left inspector hero section must render zero NSButtons when primaryReadTarget is nil"
         )
+
+        // 5. MacMangaChapterCell wraps long chapter titles up to 2 lines instead of truncating to 1 line
+        let shortChapter = UiMangaChapter(
+            id: "ch-short",
+            title: "Chapter 1",
+            subtitle: nil,
+            uploadedAt: nil,
+            locked: false,
+            url: nil
+        )
+        let longChapter = UiMangaChapter(
+            id: "ch-long",
+            title: "Chapter 2: Across Uncharted Star Seas Toward The Far Horizon Of Eternity And Beyond",
+            subtitle: nil,
+            uploadedAt: nil,
+            locked: false,
+            url: nil
+        )
+        var wrapFrames: [String: CGRect] = [:]
+        let wrapHosting = NSHostingView(
+            rootView: MangaDetailContentView(
+                detail: UiStateSuccess(data: detail),
+                selectedGroupId: "main",
+                chapterSortDescending: false,
+                chapters: [
+                    UiMangaChapterItem(chapter: shortChapter, isRead: false, isCurrent: false, lastPageIndex: 0, pageCount: 10),
+                    UiMangaChapterItem(chapter: longChapter, isRead: false, isCurrent: true, lastPageIndex: 0, pageCount: 10),
+                ],
+                primaryReadTarget: nil,
+                onNavigate: { _ in }
+            )
+            .onPreferenceChange(MangaChapterFramesPreferenceKey.self) { wrapFrames = $0 }
+        )
+        wrapHosting.sizingOptions = []
+        window.contentView = wrapHosting
+        window.setContentSize(NSSize(width: 960, height: 720))
+        try await eventually(window: window) {
+            wrapFrames["ch-short"] != nil && wrapFrames["ch-long"] != nil
+        }
+        let shortCellHeight = try XCTUnwrap(wrapFrames["ch-short"]).height
+        let longCellHeight = try XCTUnwrap(wrapFrames["ch-long"]).height
+        XCTAssertGreaterThan(
+            longCellHeight,
+            shortCellHeight + 10,
+            "Expected 2-line wrapped MacMangaChapterCell (\(longCellHeight)) to grow taller than 1-line cell (\(shortCellHeight))"
+        )
     }
 
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {

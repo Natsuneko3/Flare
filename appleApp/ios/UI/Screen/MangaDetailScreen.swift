@@ -97,6 +97,8 @@ struct MangaDetailContentView: View {
     @State private var selectedTab: IOSMangaDetailTab = .chapters
     @State private var lockedPromptChapter: UiMangaChapter?
     @State private var isHeroVisible = true
+    @State private var compactHeroMetrics = CompactHeroMetrics()
+    @State private var compactSafeTopMinY: CGFloat = 0
 
     init(
         state: any MangaDetailPresenterState,
@@ -223,8 +225,9 @@ struct MangaDetailContentView: View {
             !isRegularWidth && isHeroVisible && loadedDetail != nil ? Visibility.hidden : Visibility.automatic,
             for: .navigationBar
         )
-        .navigationTitle(!isRegularWidth && isHeroVisible ? "" : (loadedDetail?.title ?? ""))
+        .navigationTitle(isRegularWidth ? (loadedDetail?.title ?? "") : "")
         .navigationBarTitleDisplayMode(.inline)
+        .preference(key: IOSMangaCompactHeroVisiblePreferenceKey.self, value: isHeroVisible)
         .onAppear {
             if !availableTabs.contains(selectedTab) {
                 selectedTab = .chapters
@@ -238,9 +241,28 @@ struct MangaDetailContentView: View {
         .onChange(of: loadedDetail == nil) { _, isNil in
             if isNil {
                 isHeroVisible = true
+                compactHeroMetrics = CompactHeroMetrics()
             }
         }
+        .onChange(of: isRegularWidth) { _, _ in
+            isHeroVisible = true
+        }
         .toolbar {
+            if !isRegularWidth, let title = loadedDetail?.title, !title.isEmpty {
+                if #available(iOS 27.1, *) {
+                    MangaCompactNavigationTitle(title: title, isVisible: !isHeroVisible)
+                } else {
+                    ToolbarItem(placement: .principal) {
+                        Text(verbatim: title)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .opacity(isHeroVisible ? 0 : 1)
+                            .accessibilityHidden(isHeroVisible)
+                            .accessibilityIdentifier("manga_compact_nav_title")
+                    }
+                }
+            }
+
             ToolbarItemGroup(placement: .primaryAction) {
                 if let translation {
                     Button {
@@ -353,59 +375,112 @@ struct MangaDetailContentView: View {
     }
 
     private func compactBody(detail: UiMangaDetail) -> some View {
-        List {
-            heroHeader(detail: detail, usesCardSurface: false)
-                .onAppear { isHeroVisible = true }
-                .onDisappear { isHeroVisible = false }
+        ZStack(alignment: .top) {
+            Color.clear
+                .frame(height: 0)
                 .onGeometryChange(for: CGFloat.self) { proxy in
-                    let frame = proxy.frame(in: .global)
-                    return frame.height == 0 ? 10_000 : frame.maxY
-                } action: { maxY in
-                    if isHeroVisible && maxY < 88 {
-                        isHeroVisible = false
-                    } else if !isHeroVisible && maxY > 108 {
-                        isHeroVisible = true
-                    }
+                    proxy.frame(in: .global).minY
+                } action: { minY in
+                    compactSafeTopMinY = minY
                 }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
 
-            if hasSynopsisOrTags(detail) {
-                MangaSynopsisAndTagsCardView(detail: detail)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(
-                        EdgeInsets(
-                            top: 4,
-                            leading: TimelineHorizontalInsets.card,
-                            bottom: 6,
-                            trailing: TimelineHorizontalInsets.card
-                        )
+            GeometryReader { backdropProxy in
+                let backdropMinY = backdropProxy.frame(in: .global).minY
+                let topInset = max(compactSafeTopMinY - backdropMinY, 0)
+                let visibleBottom = compactHeroMetrics.height > 0
+                    ? max(compactHeroMetrics.maxY - backdropMinY, 0)
+                    : 0
+                if visibleBottom > 0 {
+                    let baseHeight = topInset + compactHeroMetrics.height
+                    let renderHeight = max(baseHeight, visibleBottom)
+                    let offsetY = min(visibleBottom - baseHeight, 0)
+                    MangaBlurredCoverBackdropView(
+                        cover: detail.cover,
+                        targetBackgroundColor: .flareSystemGroupedBackground
                     )
-                    .listRowBackground(Color.clear)
+                    .frame(width: backdropProxy.size.width, height: renderHeight)
+                    .background {
+                        GeometryReader { innerProxy in
+                            Color.clear.preference(
+                                key: IOSMangaCompactBackdropFramePreferenceKey.self,
+                                value: innerProxy.frame(in: .global)
+                            )
+                        }
+                    }
+                    .offset(y: offsetY)
+                }
             }
+            .clipped()
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
 
-            if availableTabs.count > 1 {
-                Section {
-                    compactTabRows(detail: detail, tab: activeTab)
-                } header: {
-                    stickyTabPickerHeader
+            List {
+                heroHeader(detail: detail, usesCardSurface: false)
+                    .onDisappear {
+                        isHeroVisible = false
+                        compactHeroMetrics = CompactHeroMetrics()
+                    }
+                    .onGeometryChange(for: CompactHeroMetrics.self) { proxy in
+                        let frame = proxy.frame(in: .global)
+                        return CompactHeroMetrics(
+                            minY: frame.minY,
+                            maxY: frame.maxY,
+                            height: frame.height
+                        )
+                    } action: { metrics in
+                        compactHeroMetrics = metrics
+                        guard metrics.height > 0 else { return }
+                        let collapseThreshold = max(compactSafeTopMinY + 8, 44)
+                        let expandThreshold = collapseThreshold + 24
+                        if isHeroVisible && metrics.maxY < collapseThreshold {
+                            isHeroVisible = false
+                        } else if !isHeroVisible && metrics.maxY > expandThreshold {
+                            isHeroVisible = true
+                        }
+                    }
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+
+                if hasSynopsisOrTags(detail) {
+                    MangaSynopsisAndTagsCardView(detail: detail)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(
+                            EdgeInsets(
+                                top: 4,
+                                leading: TimelineHorizontalInsets.card,
+                                bottom: 6,
+                                trailing: TimelineHorizontalInsets.card
+                            )
+                        )
+                        .listRowBackground(Color.clear)
                 }
-                .id("manga_compact_tabs_multi")
-            } else {
-                Section {
-                    compactTabRows(detail: detail, tab: .chapters)
+
+                if availableTabs.count > 1 {
+                    Section {
+                        compactTabRows(detail: detail, tab: activeTab)
+                    } header: {
+                        stickyTabPickerHeader
+                    }
+                    .id("manga_compact_tabs_multi")
+                } else {
+                    Section {
+                        compactTabRows(detail: detail, tab: .chapters)
+                    }
+                    .id("manga_compact_tabs_single")
                 }
-                .id("manga_compact_tabs_single")
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .listRowSpacing(2)
+            .refreshable {
+                onRefresh()
+            }
+            .detectScrolling()
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .listRowSpacing(2)
-        .refreshable {
-            onRefresh()
-        }
-        .detectScrolling()
     }
 
     private var stickyTabPickerHeader: some View {
@@ -860,10 +935,12 @@ private struct IOSMangaHeroHeaderView: View {
         .padding(.bottom, 16)
         .flareTextBackground(usesCardSurface ? .flareSecondarySystemGroupedBackground : .flareSystemGroupedBackground)
         .background {
-            MangaBlurredCoverBackdropView(
-                cover: detail.cover,
-                targetBackgroundColor: targetBackdropColor
-            )
+            if usesCardSurface {
+                MangaBlurredCoverBackdropView(
+                    cover: detail.cover,
+                    targetBackgroundColor: targetBackdropColor
+                )
+            }
         }
         .clipShape(
             RoundedRectangle(
@@ -878,6 +955,52 @@ private struct IOSMangaHeroHeaderView: View {
                     value: MangaDetailPaneFrames(heroCard: proxy.frame(in: .global))
                 )
             }
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct MangaCompactNavigationTitle: ToolbarContent {
+    @Environment(\.toolbarVerticalEdge) private var toolbarVerticalEdge
+    let title: String
+    let isVisible: Bool
+
+    var body: some ToolbarContent {
+        if toolbarVerticalEdge == nil {
+            ToolbarItem(placement: .principal) {
+                Text(verbatim: title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .opacity(isVisible ? 1 : 0)
+                    .accessibilityHidden(!isVisible)
+                    .accessibilityIdentifier("manga_compact_nav_title")
+            }
+        }
+    }
+}
+
+private nonisolated struct CompactHeroMetrics: Equatable, Sendable {
+    var minY: CGFloat = 0
+    var maxY: CGFloat = 0
+    var height: CGFloat = 0
+}
+
+struct IOSMangaCompactBackdropFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect? { nil }
+
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        if let next = nextValue() {
+            value = next
+        }
+    }
+}
+
+struct IOSMangaCompactHeroVisiblePreferenceKey: PreferenceKey {
+    static var defaultValue: Bool? { nil }
+
+    static func reduce(value: inout Bool?, nextValue: () -> Bool?) {
+        if let next = nextValue() {
+            value = next
         }
     }
 }

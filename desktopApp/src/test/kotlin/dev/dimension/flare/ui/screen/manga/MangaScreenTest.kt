@@ -71,6 +71,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -731,6 +732,104 @@ class MangaScreenTest {
         compose.onNodeWithText("Recommendations").assertIsDisplayed()
         compose.onNodeWithText("Chapters (2)").assertIsDisplayed()
         compose.onNodeWithTag("manga_chapter_row_ch-1").assertIsDisplayed()
+    }
+
+    @Test
+    fun resizingAcrossBreakpointPreservesSelectedTabAndOmitsBlankSynopsisCard() {
+        val mangaKey = MicroBlogKey("manga-resize-tab", "manga.example")
+        val accountType = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
+        val blankDetail =
+            UiMangaDetail(
+                pluginId = "plugin.manga",
+                platformId = "manga-plat",
+                mangaKey = mangaKey,
+                accountType = accountType,
+                title = "Resize Tab Preservation",
+                altTitles = persistentListOf(),
+                cover = null,
+                author = null,
+                authors = persistentListOf("Hana Sato"),
+                artists = persistentListOf(),
+                status = UiMangaStatus.Ongoing,
+                content = "   \n\t  ".toUiPlainText(),
+                url = "https://manga.example/series/resize-tab",
+                updatedAt = null,
+                readingDirection = MangaReadingDirection.Rtl,
+                tagGroups =
+                    persistentListOf(
+                        UiMangaTagGroup(
+                            id = "empty-group",
+                            title = UiText.Raw("Empty"),
+                            tags = persistentListOf(),
+                        ),
+                    ),
+                chapterGroups =
+                    persistentListOf(
+                        UiMangaChapterGroup(
+                            id = "main",
+                            title = null,
+                            chapters =
+                                persistentListOf(
+                                    UiMangaChapter("ch-1", "Chapter 1: Dawn", null, null, locked = false, url = null),
+                                    UiMangaChapter("ch-2", "Chapter 2: Horizon", null, null, locked = false, url = null),
+                                ),
+                        ),
+                    ),
+                isBookmarked = false,
+                bookmarkAction = ClickEvent.Noop,
+                actions = persistentListOf(),
+                sourceLanguages = persistentListOf("en"),
+            )
+
+        assertFalse(blankDetail.hasRenderableSynopsis())
+        assertFalse(blankDetail.copy(content = "".toUiPlainText()).hasRenderableSynopsis())
+        assertTrue(blankDetail.copy(content = "Valid synopsis".toUiPlainText()).hasRenderableSynopsis())
+
+        val fakeState =
+            FakeMangaDetailState(blankDetail).apply {
+                supportsComments = true
+                supportsRecommendations = true
+            }
+        var viewportWidth by mutableStateOf(1100.dp)
+
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalTimelineAppearance provides TimelineAppearance(),
+                LocalGlobalAppearance provides GlobalAppearance(),
+            ) {
+                FlareTheme(isDarkTheme = false) {
+                    Box(Modifier.size(viewportWidth, 850.dp)) {
+                        MangaDetailContent(
+                            state = fakeState,
+                            navigate = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        // Wide layout (>= 720.dp): blank UiRichText with empty tagGroups must not mount a hollow synopsis card
+        compose.onNodeWithTag("manga_synopsis_tags_card").assertDoesNotExist()
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertIsDisplayed()
+
+        // Select Comments on wide layout (1100.dp), then shrink across 720.dp breakpoint to 520.dp
+        compose.onNodeWithText("Comments").performClick()
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertDoesNotExist()
+
+        compose.runOnIdle {
+            viewportWidth = 520.dp
+        }
+        // Compact layout (< 720.dp) must preserve Comments selection and still omit hollow synopsis card
+        compose.onNodeWithTag("manga_synopsis_tags_card").assertDoesNotExist()
+        compose.onNodeWithText("Comments").assertIsDisplayed()
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertDoesNotExist()
+        compose.onNodeWithText("Chapters (2)").assertDoesNotExist()
+
+        // Widen back to 1100.dp -> Comments remains selected
+        compose.runOnIdle {
+            viewportWidth = 1100.dp
+        }
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertDoesNotExist()
     }
 }
 

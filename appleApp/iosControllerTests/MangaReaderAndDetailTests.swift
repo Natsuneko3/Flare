@@ -1836,6 +1836,112 @@ final class MangaReaderAndDetailTests: XCTestCase {
             navigatedRoutes.isEmpty,
             "Selecting the hero List row must not trigger merged cover or Read CTA actions (\(navigatedRoutes))"
         )
+
+        // 4. Compact NavigationStack backdrop extends behind transparent nav bar and scroll-up prefetch does not flicker title
+        let manyChapterItems: [UiMangaChapterItem] = (1...24).map { idx in
+            UiMangaChapterItem(
+                chapter: UiMangaChapter(
+                    id: "ch-\(idx)",
+                    title: "Chapter \(idx): Starlight Voyage",
+                    subtitle: "24p",
+                    uploadedAt: nil,
+                    locked: false,
+                    url: nil
+                ),
+                isRead: false,
+                isCurrent: idx == 1,
+                lastPageIndex: 0,
+                pageCount: 24
+            )
+        }
+        var navHeroFrames = MangaDetailPaneFrames()
+        var navBackdropFrame: CGRect?
+        var navHeroVisible: Bool?
+        let navHost = UIHostingController(
+            rootView: NavigationStack(path: .constant([1])) {
+                Color.clear
+                    .navigationDestination(for: Int.self) { _ in
+                        MangaDetailContentView(
+                            detail: UiStateSuccess(data: detailWithCover),
+                            chapters: manyChapterItems,
+                            primaryReadTarget: readTarget,
+                            onNavigate: { _ in }
+                        )
+                        .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self) { navHeroFrames = $0 }
+                        .onPreferenceChange(IOSMangaCompactBackdropFramePreferenceKey.self) { navBackdropFrame = $0 }
+                        .onPreferenceChange(IOSMangaCompactHeroVisiblePreferenceKey.self) { navHeroVisible = $0 }
+                    }
+            }
+            .environment(\.horizontalSizeClass, .compact)
+        )
+        window.rootViewController = navHost
+        window.layoutIfNeeded()
+
+        try await eventually(window: window) {
+            guard let hero = navHeroFrames.heroCard,
+                  let backdrop = navBackdropFrame else {
+                return false
+            }
+            return hero.minY >= 8 && backdrop.height > hero.height && navHeroVisible == true
+        }
+        let initialHero = try XCTUnwrap(navHeroFrames.heroCard)
+        let initialBackdrop = try XCTUnwrap(navBackdropFrame)
+        XCTAssertLessThanOrEqual(
+            initialBackdrop.minY,
+            1.0,
+            "Expected compact blurred backdrop (\(initialBackdrop)) to extend behind top navigation bar"
+        )
+        XCTAssertGreaterThan(
+            initialHero.minY,
+            initialBackdrop.minY + 5.0,
+            "Expected hero row (\(initialHero)) to sit below top safe area while backdrop starts at top"
+        )
+        XCTAssertEqual(
+            initialBackdrop.maxY,
+            initialHero.maxY,
+            accuracy: 2.0,
+            "Expected compact blurred backdrop bottom (\(initialBackdrop.maxY)) to match hero row bottom (\(initialHero.maxY))"
+        )
+        XCTAssertEqual(navHeroVisible, true)
+
+        let navListCollection = try XCTUnwrap(
+            descendants(navHost.view).compactMap { $0 as? UICollectionView }.first
+        )
+        // Step-scroll down so UICollectionView materializes chapter rows and hero row leaves viewport -> isHeroVisible becomes false
+        for offsetY in stride(from: CGFloat(180), through: 720, by: 180) {
+            navListCollection.setContentOffset(CGPoint(x: 0, y: offsetY), animated: false)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await eventually(window: window) {
+            navHeroVisible == false
+        }
+
+        // Scroll back up so cell 0 is remounted while still above collapse threshold (maxY == 24 < 44) -> must NOT flicker isHeroVisible back to true
+        let currentHeroOrEstimateHeight = initialHero.height
+        let targetMaxY: CGFloat = 24
+        let partialOffset = currentHeroOrEstimateHeight - targetMaxY
+        navListCollection.setContentOffset(CGPoint(x: 0, y: partialOffset), animated: false)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        window.layoutIfNeeded()
+        XCTAssertEqual(
+            navHeroVisible,
+            false,
+            "Remounting hero cell while maxY (\(String(describing: navHeroFrames.heroCard?.maxY))) < collapse threshold must not flicker isHeroVisible back to true"
+        )
+        if let midHero = navHeroFrames.heroCard, let midBackdrop = navBackdropFrame, midHero.maxY > 5 {
+            XCTAssertEqual(midBackdrop.maxY, midHero.maxY, accuracy: 2.5)
+        }
+
+        // Scroll back to top -> transparent hero state restored
+        navListCollection.setContentOffset(
+            CGPoint(x: 0, y: -navListCollection.adjustedContentInset.top),
+            animated: false
+        )
+        try await eventually(window: window) {
+            navHeroVisible == true
+        }
     }
 
     private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
