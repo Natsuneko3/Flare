@@ -103,14 +103,8 @@ struct ProfileScreen: View {
                         }
                         .accessibilityLabel(Text(String(localized: "profile_insight_title", defaultValue: "Profile insight")))
                     }
-                    if !presenter.state.actions.isEmpty {
-                        StatusActionsView(
-                            data: presenter.state.actions,
-                            useText: false,
-                            allowSpacer: false,
-                            applyPostActionLayout: false,
-                            isDetail: true
-                        )
+                    if let group = presenter.state.actions.first as? ActionMenu.Group {
+                        ProfileToolbarMenu(group: group)
                     }
                 }
             }
@@ -349,6 +343,20 @@ struct ProfileScreen: View {
 
     private var shouldGateBlockedProfile: Bool {
         isBlockedProfile && !showBlockedProfileContent
+    }
+}
+
+struct ProfileToolbarMenu: View {
+    let group: ActionMenu.Group
+
+    var body: some View {
+        Menu {
+            StatusActionsView(data: group.actions, useText: true, applyPostActionLayout: false)
+        } label: {
+            (group.displayItem.icon ?? .more).image
+        }
+        .accessibilityLabel(Text("more"))
+        .disabled(!group.displayItem.enabled)
     }
 }
 

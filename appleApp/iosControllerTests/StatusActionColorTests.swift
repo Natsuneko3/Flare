@@ -1,11 +1,46 @@
 import XCTest
 import SwiftUI
 import KotlinSharedUI
+import FlareAppleCore
 @testable import FlareAppleUI
 @testable import Flare
 
 @MainActor
 final class StatusActionColorTests: XCTestCase {
+    func testProfileMoreIconInheritsTheButtonTintInLightAndDark() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previousWindow?.makeKeyAndVisible() }
+
+        let item = ActionMenu.Item(updateKey: "", icon: .moreVerticel, text: nil, count: nil, color: nil,
+                                   clickEvent: ClickEventNoop.shared, actionFamily: nil, enabled: true)
+        let group = ActionMenu.Group(displayItem: item, actions: [item])
+        for theme in [UIUserInterfaceStyle.light, .dark] {
+            window.overrideUserInterfaceStyle = theme
+            let host = UIHostingController(rootView: HStack(spacing: 0) {
+                Button {} label: { UiIcon.moreVerticel.image }.frame(width: 60)
+                ProfileToolbarMenu(group: group).frame(width: 60)
+            }
+            .buttonStyle(.borderless)
+            .tint(.purple))
+            host.safeAreaRegions = []
+            root.addChild(host)
+            let image = await snapshot(host.view, in: root, theme: theme, width: 120, scale: 3)
+            host.removeFromParent()
+            let width = try XCTUnwrap(image.cgImage).width
+            let reference = try dominantRGB(image, theme: theme, columns: 0..<width / 2)
+            let more = try dominantRGB(image, theme: theme, columns: width / 2..<width)
+            XCTAssertGreaterThan(reference[2], reference[1] + 30, "The reference button should pick up the purple tint")
+            for (actual, expected) in zip(more, reference) {
+                XCTAssertEqual(actual, expected, accuracy: 3, "Profile More: \(more), native button: \(reference), theme: \(theme.rawValue)")
+            }
+        }
+    }
+
     func testActionsAndGroupLabelsFollowAndroidColorsAndDisabledOpacity() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousWindow = scene.windows.first(where: \.isKeyWindow)
