@@ -2,13 +2,97 @@ import FlareAppleCore
 import FlareAppleUI
 import Foundation
 @preconcurrency import KotlinSharedUI
+import Observation
 import SwiftUI
 import UIKit
+
+nonisolated struct IOSMangaExportAlert: Identifiable, Equatable, Sendable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
+struct IOSMangaReaderShareButtonVisiblePreferenceKey: PreferenceKey {
+    static var defaultValue: Bool { false }
+
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = value || nextValue()
+    }
+}
+
+private enum IOSMangaShareError: LocalizedError {
+    case missingPresenter
+
+    var errorDescription: String? {
+        String(localized: "Unable to present the share sheet")
+    }
+}
+
+@MainActor
+@Observable
+final class IOSMangaReaderShareCoordinator {
+    var isPreparingShare = false
+    var exportAlert: IOSMangaExportAlert?
+
+    func sharePage(
+        displayed: any UiMedia,
+        mangaId: String,
+        chapterId: String,
+        pageIndex: Int,
+        chapterUrl: String?,
+        onShareChapterURL: (String) -> Void,
+        onPreparingNeeded: @escaping @Sendable () -> Void = { MediaSaver.showPreparingMedia() },
+        presentFile: @escaping @MainActor (URL) throws -> Void
+    ) async {
+        if let localURL = URL(string: displayed.url), localURL.isFileURL {
+            do {
+                let exportedFile = try ImageTranslationExportFile.prepare(localURL)
+                try presentFile(exportedFile)
+            } catch {
+                exportAlert = IOSMangaExportAlert(
+                    title: FlareAppleUILocalization.string("fx_share", fallback: "Share"),
+                    message: error.localizedDescription
+                )
+            }
+            return
+        }
+
+        if displayed is UiMediaImage || displayed is UiMediaGif {
+            guard !isPreparingShare else { return }
+            isPreparingShare = true
+            defer { isPreparingShare = false }
+            do {
+                let fileURL = try await OriginalImageShareFile.make(
+                    media: displayed,
+                    statusKey: "\(mangaId)_\(chapterId)",
+                    userHandle: "p\(pageIndex + 1)",
+                    onPreparingNeeded: onPreparingNeeded
+                )
+                guard !Task.isCancelled else { return }
+                try presentFile(fileURL)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                exportAlert = IOSMangaExportAlert(
+                    title: FlareAppleUILocalization.string("fx_share", fallback: "Share"),
+                    message: error.localizedDescription
+                )
+            }
+            return
+        }
+
+        if let shareUrl = chapterUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !shareUrl.isEmpty {
+            onShareChapterURL(shareUrl)
+        }
+    }
+}
 
 struct MangaReaderScreen: View {
     @State private var presenter: KotlinPresenter<MangaReaderPresenterState>
     @State private var hudVisible = true
-    @State private var isPreparingShare = false
+    @State private var shareCoordinator = IOSMangaReaderShareCoordinator()
 
     private let accountType: AccountType
     private let mangaKey: MicroBlogKey
@@ -55,6 +139,15 @@ struct MangaReaderScreen: View {
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(!hudVisible)
         .preferredColorScheme(.dark)
+        .alert(item: $shareCoordinator.exportAlert) { alert in
+            Alert(
+                title: Text(verbatim: alert.title),
+                message: Text(verbatim: alert.message),
+                dismissButton: .default(
+                    Text(verbatim: FlareAppleUILocalization.string("Ok", fallback: "OK"))
+                )
+            )
+        }
     }
 
     private func savePage(original: any UiMedia, displayed: any UiMedia, pageIndex: Int) {
@@ -74,45 +167,25 @@ struct MangaReaderScreen: View {
     }
 
     private func sharePage(displayed: any UiMedia, pageIndex: Int) {
-        if let localURL = URL(string: displayed.url), localURL.isFileURL {
-            guard let exportedFile = try? ImageTranslationExportFile.prepare(localURL),
-                  let host = Self.topViewController() else {
-                return
-            }
-            presentActivitySheet(items: [exportedFile], from: host)
-            return
-        }
-
-        if let image = displayed as? UiMediaImage {
-            guard !isPreparingShare else { return }
-            isPreparingShare = true
-            let activeChapter = presenter.state.activeChapterId
-            Task { @MainActor in
-                defer { isPreparingShare = false }
-                do {
-                    let fileURL = try await OriginalImageShareFile.make(
-                        media: image,
-                        statusKey: "\(mangaKey.id)_\(activeChapter)",
-                        userHandle: "p\(pageIndex + 1)",
-                        onPreparingNeeded: {
-                            MediaSaver.showPreparingMedia()
-                        }
-                    )
-                    guard !Task.isCancelled,
-                          let host = Self.topViewController() else {
-                        return
+        let activeChapter = presenter.state.activeChapterId
+        let chapterUrl = presenter.state.chapterUrl
+        Task { @MainActor in
+            await shareCoordinator.sharePage(
+                displayed: displayed,
+                mangaId: mangaKey.id,
+                chapterId: activeChapter,
+                pageIndex: pageIndex,
+                chapterUrl: chapterUrl,
+                onShareChapterURL: { shareUrl in
+                    onNavigate(.statusShareSheet(accountType, mangaKey, shareUrl, nil, nil))
+                },
+                presentFile: { fileURL in
+                    guard let host = Self.topViewController() else {
+                        throw IOSMangaShareError.missingPresenter
                     }
                     presentActivitySheet(items: [fileURL], from: host)
-                } catch {
-                    return
                 }
-            }
-            return
-        }
-
-        if let shareUrl = presenter.state.chapterUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !shareUrl.isEmpty {
-            onNavigate(.statusShareSheet(accountType, mangaKey, shareUrl, nil, nil))
+            )
         }
     }
 
@@ -338,7 +411,7 @@ struct MangaReaderContentView: View {
                     )
                 }
 
-                if let onSharePage, ready.displayed is UiMediaImage {
+                if let onSharePage, ready.displayed is UiMediaImage || ready.displayed is UiMediaGif {
                     Button {
                         onSharePage(ready.original, ready.displayed, Int(state.currentPageIndex))
                     } label: {
@@ -348,6 +421,8 @@ struct MangaReaderContentView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
+                    .accessibilityIdentifier("manga_reader_share_button")
+                    .preference(key: IOSMangaReaderShareButtonVisiblePreferenceKey.self, value: true)
                     .accessibilityLabel(
                         Text(verbatim: FlareAppleUILocalization.string("media_menu_share_image", fallback: "Share image"))
                     )

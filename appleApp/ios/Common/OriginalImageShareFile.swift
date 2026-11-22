@@ -5,19 +5,21 @@ import KotlinSharedUI
 
 struct OriginalImageShareFile {
     static func make(
-        media: UiMediaImage,
+        media: any UiMedia,
         statusKey: String? = nil,
         userHandle: String? = nil,
         onPreparingNeeded: (@Sendable () -> Void)? = nil
     ) async throws -> URL {
-        let imageURL = try makeImageURL(media.url)
+        let fallbackExtension = media is UiMediaGif ? "gif" : "jpg"
+        let imageURL = try makeImageURL(media.urlForDownload)
         if let cachedFileURL = cachedImageFileURL(for: media.cacheKey) {
             let data = try Data(contentsOf: cachedFileURL)
             return try makeShareFile(
                 data: data,
                 url: imageURL,
                 statusKey: statusKey,
-                userHandle: userHandle
+                userHandle: userHandle,
+                fallbackExtension: fallbackExtension
             )
         }
 
@@ -27,7 +29,8 @@ struct OriginalImageShareFile {
             data: data,
             url: imageURL,
             statusKey: statusKey,
-            userHandle: userHandle
+            userHandle: userHandle,
+            fallbackExtension: fallbackExtension
         )
     }
 
@@ -39,9 +42,14 @@ struct OriginalImageShareFile {
         data: Data,
         url: URL,
         statusKey: String?,
-        userHandle: String?
+        userHandle: String?,
+        fallbackExtension: String
     ) throws -> URL {
-        let extensionName = AppleMediaFileExtension.image(url: url, data: data)
+        let extensionName = AppleMediaFileExtension.image(
+            url: url,
+            data: data,
+            fallback: fallbackExtension
+        )
         let fileName = makeFileName(
             url: url,
             statusKey: statusKey,

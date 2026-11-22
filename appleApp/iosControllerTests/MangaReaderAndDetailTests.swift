@@ -1,6 +1,7 @@
 import FlareAppleCore
 @testable import FlareAppleUI
 import Foundation
+import Kingfisher
 import KotlinSharedUI
 import Observation
 import PDFKit
@@ -263,7 +264,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
             hostBox.retryPageIds.contains("flaky-p0")
         }
 
-        // Webtoon mode: external scrubber jump scrolls target page into viewport without snapping back
+        // Webtoon mode: unscaled 1x strip width, full bottom reachability, and external scrubber jump without snapping back
         let webtoonPages = makeSamplePages(count: 6)
         let webtoonSlots = (0..<6).map { ReaderSlotSingle(pageIndex: Int32($0)) as any ReaderSlot }
         let webtoonState = FakeMangaReaderState(
@@ -276,12 +277,248 @@ final class MangaReaderAndDetailTests: XCTestCase {
         try await eventually(window: window) {
             hostBox.pageFrames[0] != nil
         }
+        let page0WebtoonFrame = try XCTUnwrap(hostBox.pageFrames[0])
+        XCTAssertEqual(page0WebtoonFrame.width, 600, accuracy: 1.5)
+        XCTAssertNil(controller.zoomResetHandler)
 
         webtoonState.goToPage(pageIndex: 5)
         try await eventually(window: window) {
             guard let page5Frame = hostBox.pageFrames[5] else { return false }
             return page5Frame.minY < 800 && page5Frame.maxY > 0 && webtoonState.currentPageIndex == 5
         }
+        let page5WebtoonFrame = try XCTUnwrap(hostBox.pageFrames[5])
+        XCTAssertEqual(page5WebtoonFrame.width, 600, accuracy: 1.5)
+    }
+
+    func testMidChapterRtlLtrSwitchPreservesSlotOnFourSlotFixture() async throws {
+        let pages = makeSamplePages(count: 4)
+        let slots: [any ReaderSlot] = (0..<4).map { ReaderSlotSingle(pageIndex: Int32($0)) }
+        let fakeState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: pages,
+            slots: slots
+        )
+        let controller = MangaReaderInteractionController()
+        let hostBox = ReaderTestHostModel(state: fakeState, controller: controller)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        window.rootViewController = UIHostingController(rootView: ReaderTestHostView(model: hostBox))
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        try await eventually(window: window) { controller.isBound && hostBox.pageFrames[0] != nil }
+
+        // Advance to slot 2 (out of 0..3) in RTL
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertEqual(fakeState.currentSlotIndex, 2)
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[2] else { return false }
+            return frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+
+        // Switch RTL -> LTR mid-chapter on slot 2: must NOT clobber currentSlotIndex to mirrored page (3 - 2 = 1)
+        fakeState.setDirection(direction: .ltr)
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[2] else { return false }
+            return controller.activePagerPage == 2 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 2, "Switching RTL -> LTR mid-chapter must preserve currentSlotIndex == 2")
+
+        // Left arrow in LTR now steps backward from slot 2 -> slot 1
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+
+        // Switch LTR -> RTL mid-chapter on slot 1: must NOT clobber currentSlotIndex to mirrored page (3 - 1 = 2)
+        fakeState.setDirection(direction: .rtl)
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Switching LTR -> RTL mid-chapter must preserve currentSlotIndex == 1")
+
+        // Left arrow in RTL steps forward from slot 1 -> slot 2
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertEqual(fakeState.currentSlotIndex, 2)
+    }
+
+    func testReaderGifPageShowsShareButtonExportsGifAndSurfacesShareErrors() async throws {
+        let gifURL = "https://manga.example/ch-1/page-\(UUID().uuidString).gif"
+        let gifMedia = UiMediaGif(
+            url: gifURL,
+            previewUrl: gifURL,
+            description: "Animated page",
+            height: 1400,
+            width: 1000,
+            customHeaders: ["Referer": "https://manga.example/ch-1"],
+            proxy: ProxyRef.Global.shared
+        )
+        let gifState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: [
+                ReaderPageState(
+                    id: "gif-p0",
+                    index: 0,
+                    status: PageMediaStatusReady(original: gifMedia, displayed: gifMedia),
+                    aspectRatio: KotlinFloat(value: 0.71)
+                ),
+            ],
+            slots: [ReaderSlotSingle(pageIndex: 0)]
+        )
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        // 1. HUD shows Share button on UiMediaGif pages (and hides it on UiMediaUgoira)
+        var shareVisibleForGif = false
+        window.rootViewController = UIHostingController(
+            rootView: MangaReaderContentView(
+                state: gifState,
+                hudVisible: .constant(true),
+                goBack: {},
+                onSharePage: { _, _, _ in }
+            )
+            .onPreferenceChange(IOSMangaReaderShareButtonVisiblePreferenceKey.self) { shareVisibleForGif = $0 }
+        )
+        window.makeKeyAndVisible()
+        try await eventually(window: window) { shareVisibleForGif }
+
+        let ugoiraAccount = MicroBlogKey(id: "u1", host: "pixiv.net")
+        let ugoiraMedia = UiMediaUgoira(
+            statusKey: MicroBlogKey(id: "s1", host: "pixiv.net"),
+            accountKey: ugoiraAccount,
+            previewUrl: gifURL,
+            originalFrameUrl: nil,
+            description: nil,
+            height: 1400,
+            width: 1000,
+            sensitive: false,
+            customHeaders: nil,
+            proxy: ProxyRef.companion.forAccount(accountKey: ugoiraAccount),
+            sourceUrl: nil
+        )
+        let ugoiraState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: [
+                ReaderPageState(
+                    id: "ugoira-p0",
+                    index: 0,
+                    status: PageMediaStatusReady(original: ugoiraMedia, displayed: ugoiraMedia),
+                    aspectRatio: KotlinFloat(value: 0.71)
+                ),
+            ],
+            slots: [ReaderSlotSingle(pageIndex: 0)]
+        )
+        var shareVisibleForUgoira = true
+        window.rootViewController = UIHostingController(
+            rootView: MangaReaderContentView(
+                state: ugoiraState,
+                hudVisible: .constant(true),
+                goBack: {},
+                onSharePage: { _, _, _ in }
+            )
+            .onPreferenceChange(IOSMangaReaderShareButtonVisiblePreferenceKey.self) { shareVisibleForUgoira = $0 }
+        )
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(shareVisibleForUgoira)
+
+        // 2. Cached UiMediaGif exports a .gif share file with no error alert
+        let minimalGifBytes = Data([
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B,
+        ])
+        try await KingfisherManager.shared.cache.storeToDisk(minimalGifBytes, forKey: gifMedia.cacheKey)
+        defer {
+            Task { try? await KingfisherManager.shared.cache.removeImage(forKey: gifMedia.cacheKey) }
+        }
+
+        let coordinator = IOSMangaReaderShareCoordinator()
+        var exportedShareURL: URL?
+        await coordinator.sharePage(
+            displayed: gifMedia,
+            mangaId: "manga-99",
+            chapterId: "ch-1",
+            pageIndex: 0,
+            chapterUrl: "https://manga.example/ch-1",
+            onShareChapterURL: { _ in XCTFail("Should share GIF file, not fallback chapter URL") },
+            onPreparingNeeded: {},
+            presentFile: { url in exportedShareURL = url }
+        )
+        XCTAssertNil(coordinator.exportAlert)
+        let sharedGifURL = try XCTUnwrap(exportedShareURL)
+        defer { try? FileManager.default.removeItem(at: sharedGifURL) }
+        XCTAssertEqual(sharedGifURL.pathExtension.lowercased(), "gif")
+        XCTAssertEqual(try Data(contentsOf: sharedGifURL), minimalGifBytes)
+
+        // 3. Unowned local file:// URL surfaces exportAlert instead of silently swallowing the failure
+        let unownedLocalURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unowned-translated-\(UUID().uuidString).png")
+        let localDisplayed = UiMediaImage(
+            url: unownedLocalURL.absoluteString,
+            previewUrl: unownedLocalURL.absoluteString,
+            description: nil,
+            height: 100,
+            width: 100,
+            sensitive: false,
+            customHeaders: nil,
+            proxy: ProxyRef.Unbound.shared
+        )
+        await coordinator.sharePage(
+            displayed: localDisplayed,
+            mangaId: "manga-99",
+            chapterId: "ch-1",
+            pageIndex: 0,
+            chapterUrl: nil,
+            onShareChapterURL: { _ in },
+            onPreparingNeeded: {},
+            presentFile: { _ in XCTFail("Should not present unowned local file") }
+        )
+        XCTAssertNotNil(coordinator.exportAlert, "Local export failure must surface exportAlert")
+
+        // 4. Unreachable remote UiMediaGif surfaces exportAlert after firing onPreparingNeeded
+        coordinator.exportAlert = nil
+        nonisolated(unsafe) var didNotifyPreparing = false
+        let unreachableGif = UiMediaGif(
+            url: "http://127.0.0.1:1/unreachable-\(UUID().uuidString).gif",
+            previewUrl: "http://127.0.0.1:1/unreachable.png",
+            description: nil,
+            height: 100,
+            width: 100,
+            customHeaders: ["Referer": "https://manga.example"],
+            proxy: ProxyRef.Unbound.shared
+        )
+        await coordinator.sharePage(
+            displayed: unreachableGif,
+            mangaId: "manga-99",
+            chapterId: "ch-1",
+            pageIndex: 0,
+            chapterUrl: nil,
+            onShareChapterURL: { _ in },
+            onPreparingNeeded: { didNotifyPreparing = true },
+            presentFile: { _ in XCTFail("Should not present failed download") }
+        )
+        XCTAssertTrue(didNotifyPreparing)
+        XCTAssertNotNil(coordinator.exportAlert, "Remote download failure must surface exportAlert")
     }
 
     func testMangaDetailRendersGroupedTagsChapterPillsReadStateAndLockedFallback() async throws {

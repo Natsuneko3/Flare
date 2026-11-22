@@ -332,6 +332,7 @@ public struct MangaReaderCanvas: View {
                                 controller: controller,
                                 onOpenLockedUrl: openLockedURL
                             )
+                            .id("\(state.activeChapterId)|\(state.direction == .rtl)")
                         }
                     }
                     .id(state.activeChapterId)
@@ -413,6 +414,31 @@ private struct MangaPagedCanvas: View {
     @State private var programmaticScrollTarget: Int?
     @State private var isCurrentPageZoomed = false
 
+    init(
+        state: any MangaReaderPresenterState,
+        viewportSize: CGSize,
+        controller: MangaReaderInteractionController,
+        onOpenLockedUrl: @escaping (String) -> Void
+    ) {
+        self.state = state
+        self.viewportSize = viewportSize
+        self.controller = controller
+        self.onOpenLockedUrl = onOpenLockedUrl
+
+        let hasPrev = !(state.previousBoundary is ChapterBoundaryNone)
+        let hasNext = !(state.nextBoundary is ChapterBoundaryNone)
+        let offset = hasPrev ? 1 : 0
+        let total = state.slots.isEmpty ? 0 : (state.slots.count + offset + (hasNext ? 1 : 0))
+        if total > 0 {
+            let initial = min(max(Int(state.currentSlotIndex) + offset, 0), total - 1)
+            self._activePagerPage = State(initialValue: nil)
+            self._programmaticScrollTarget = State(initialValue: initial)
+        } else {
+            self._activePagerPage = State(initialValue: nil)
+            self._programmaticScrollTarget = State(initialValue: nil)
+        }
+    }
+
     private var hasPrevBoundary: Bool {
         !(state.previousBoundary is ChapterBoundaryNone)
     }
@@ -443,10 +469,9 @@ private struct MangaPagedCanvas: View {
     }
 
     var body: some View {
-        let _ = installStepHandlers()
-
         Group {
             if totalPagerPages == 0 {
+                let _ = installStepHandlers(scrollProxy: nil)
                 Color.clear
                     .contentShape(Rectangle())
                     .mangaZoneTap(in: viewportSize, controller: controller, onDoubleTap: nil)
@@ -454,65 +479,83 @@ private struct MangaPagedCanvas: View {
                         controller.clearPagerStatus()
                     }
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 0) {
-                        ForEach(0..<totalPagerPages, id: \.self) { pagerPage in
-                            pagerCell(for: pagerPage)
-                                .frame(width: max(viewportSize.width, 1), height: max(viewportSize.height, 1))
-                                .id(pagerPage)
+                ScrollViewReader { scrollProxy in
+                    let _ = installStepHandlers(scrollProxy: scrollProxy)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(0..<totalPagerPages, id: \.self) { pagerPage in
+                                pagerCell(for: pagerPage)
+                                    .frame(width: max(viewportSize.width, 1), height: max(viewportSize.height, 1))
+                                    .id(pagerPage)
+                            }
                         }
+                        .scrollTargetLayout()
                     }
-                    .scrollTargetLayout()
-                }
-                .scrollIndicators(.hidden)
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: $activePagerPage)
-                .scrollDisabled(isCurrentPageZoomed)
-                .environment(\.layoutDirection, isRtl ? .rightToLeft : .leftToRight)
-                .onAppear {
-                    controller.webtoonScrollByPage = nil
-                    let initial = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
-                    programmaticScrollTarget = initial
-                    activePagerPage = initial
-                    controller.updatePagerStatus(
-                        activePage: initial,
-                        prevBoundaryPage: prevBoundaryPage,
-                        nextBoundaryPage: nextBoundaryPage
-                    )
-                }
-                .onChange(of: state.currentSlotIndex) { _, newSlot in
-                    let target = clampedPagerPage(Int(newSlot) + startBoundaryOffset)
-                    if activePagerPage != target {
-                        scrollProgrammatically(to: target, animated: false)
-                    }
-                }
-                .onChange(of: totalPagerPages) { _, _ in
-                    let target = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
-                    if activePagerPage == nil || (activePagerPage ?? 0) >= totalPagerPages {
-                        scrollProgrammatically(to: target, animated: false)
-                    } else {
+                    .scrollIndicators(.hidden)
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $activePagerPage)
+                    .scrollDisabled(isCurrentPageZoomed)
+                    .environment(\.layoutDirection, isRtl ? .rightToLeft : .leftToRight)
+                    .id(isRtl)
+                    .onAppear {
+                        controller.webtoonScrollByPage = nil
+                        let initial = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
+                        programmaticScrollTarget = initial
                         controller.updatePagerStatus(
-                            activePage: activePagerPage,
+                            activePage: initial,
                             prevBoundaryPage: prevBoundaryPage,
                             nextBoundaryPage: nextBoundaryPage
                         )
                     }
-                }
-                .onChange(of: activePagerPage) { _, newPage in
-                    controller.updatePagerStatus(
-                        activePage: newPage,
-                        prevBoundaryPage: prevBoundaryPage,
-                        nextBoundaryPage: nextBoundaryPage
-                    )
-                    guard let newPage else { return }
-                    if programmaticScrollTarget == newPage {
-                        programmaticScrollTarget = nil
-                        return
+                    .task {
+                        let initial = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
+                        programmaticScrollTarget = initial
+                        activePagerPage = initial
+                        scrollProxy.scrollTo(initial)
                     }
-                    programmaticScrollTarget = nil
-                    let slotIdx = newPage - startBoundaryOffset
-                    if state.slots.indices.contains(slotIdx), slotIdx != Int(state.currentSlotIndex) {
-                        state.goToSlot(slotIndex: Int32(slotIdx))
+                    .onChange(of: state.currentSlotIndex) { _, newSlot in
+                        let target = clampedPagerPage(Int(newSlot) + startBoundaryOffset)
+                        if activePagerPage != target {
+                            scrollProgrammatically(to: target, animated: false, scrollProxy: scrollProxy)
+                        }
+                    }
+                    .onChange(of: totalPagerPages) { _, _ in
+                        let target = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
+                        if activePagerPage == nil || (activePagerPage ?? 0) >= totalPagerPages {
+                            scrollProgrammatically(to: target, animated: false, scrollProxy: scrollProxy)
+                        } else {
+                            controller.updatePagerStatus(
+                                activePage: activePagerPage,
+                                prevBoundaryPage: prevBoundaryPage,
+                                nextBoundaryPage: nextBoundaryPage
+                            )
+                        }
+                    }
+                    .onChange(of: activePagerPage) { _, newPage in
+                        guard let newPage else { return }
+                        if let target = programmaticScrollTarget {
+                            if newPage == target {
+                                programmaticScrollTarget = nil
+                                controller.updatePagerStatus(
+                                    activePage: newPage,
+                                    prevBoundaryPage: prevBoundaryPage,
+                                    nextBoundaryPage: nextBoundaryPage
+                                )
+                            } else {
+                                activePagerPage = target
+                                scrollProxy.scrollTo(target, anchor: .leading)
+                            }
+                            return
+                        }
+                        controller.updatePagerStatus(
+                            activePage: newPage,
+                            prevBoundaryPage: prevBoundaryPage,
+                            nextBoundaryPage: nextBoundaryPage
+                        )
+                        let slotIdx = newPage - startBoundaryOffset
+                        if state.slots.indices.contains(slotIdx), slotIdx != Int(state.currentSlotIndex) {
+                            state.goToSlot(slotIndex: Int32(slotIdx))
+                        }
                     }
                 }
             }
@@ -591,14 +634,14 @@ private struct MangaPagedCanvas: View {
         }
     }
 
-    private func installStepHandlers() {
+    private func installStepHandlers(scrollProxy: ScrollViewProxy?) {
         controller.pagedStepForward = {
             guard totalPagerPages > 0 else { return }
             let current = activePagerPage ?? clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
             if current == prevBoundaryPage {
                 guard !state.slots.isEmpty else { return }
                 state.goToSlot(slotIndex: 0)
-                scrollProgrammatically(to: startBoundaryOffset, animated: true)
+                scrollProgrammatically(to: startBoundaryOffset, animated: true, scrollProxy: scrollProxy)
             } else if current == nextBoundaryPage {
                 if let nextUnlocked = state.nextBoundary as? ChapterBoundaryUnlocked {
                     state.openAdjacentChapter(boundary: nextUnlocked)
@@ -612,7 +655,7 @@ private struct MangaPagedCanvas: View {
                 state.stepForward()
                 let afterSlot = Int(state.currentSlotIndex)
                 if afterSlot != beforeSlot {
-                    scrollProgrammatically(to: startBoundaryOffset + afterSlot, animated: true)
+                    scrollProgrammatically(to: startBoundaryOffset + afterSlot, animated: true, scrollProxy: scrollProxy)
                 }
             }
         }
@@ -624,7 +667,7 @@ private struct MangaPagedCanvas: View {
                 guard !state.slots.isEmpty else { return }
                 let lastIdx = state.slots.count - 1
                 state.goToSlot(slotIndex: Int32(lastIdx))
-                scrollProgrammatically(to: startBoundaryOffset + lastIdx, animated: true)
+                scrollProgrammatically(to: startBoundaryOffset + lastIdx, animated: true, scrollProxy: scrollProxy)
             } else if current == prevBoundaryPage {
                 if let prevUnlocked = state.previousBoundary as? ChapterBoundaryUnlocked {
                     state.openAdjacentChapter(boundary: prevUnlocked)
@@ -638,29 +681,31 @@ private struct MangaPagedCanvas: View {
                 state.stepBackward()
                 let afterSlot = Int(state.currentSlotIndex)
                 if afterSlot != beforeSlot {
-                    scrollProgrammatically(to: startBoundaryOffset + afterSlot, animated: true)
+                    scrollProgrammatically(to: startBoundaryOffset + afterSlot, animated: true, scrollProxy: scrollProxy)
                 }
             }
         }
 
         controller.pagedScrollToBoundary = { isNext in
             if isNext, nextBoundaryPage >= 0 {
-                scrollProgrammatically(to: nextBoundaryPage, animated: false)
+                scrollProgrammatically(to: nextBoundaryPage, animated: false, scrollProxy: scrollProxy)
             } else if !isNext, prevBoundaryPage >= 0 {
-                scrollProgrammatically(to: prevBoundaryPage, animated: false)
+                scrollProgrammatically(to: prevBoundaryPage, animated: false, scrollProxy: scrollProxy)
             }
         }
     }
 
-    private func scrollProgrammatically(to target: Int, animated: Bool) {
+    private func scrollProgrammatically(to target: Int, animated: Bool, scrollProxy: ScrollViewProxy?) {
         let clamped = clampedPagerPage(target)
         programmaticScrollTarget = clamped
         if animated {
             withAnimation(.snappy(duration: 0.22)) {
                 activePagerPage = clamped
+                scrollProxy?.scrollTo(clamped, anchor: .leading)
             }
         } else {
             activePagerPage = clamped
+            scrollProxy?.scrollTo(clamped, anchor: .leading)
         }
         controller.updatePagerStatus(
             activePage: clamped,
@@ -871,6 +916,7 @@ private struct ZoomPanGestureModifier: ViewModifier {
 private final class WebtoonScrollSyncBox {
     var lastReportedPage: Int
     var programmaticTargetPage: Int?
+    var settledCenterPage: Int?
 
     init(initialPage: Int) {
         self.lastReportedPage = initialPage
@@ -892,10 +938,6 @@ private struct MangaWebtoonStrip: View {
     let onOpenLockedUrl: (String) -> Void
 
     @State private var syncBox: WebtoonScrollSyncBox
-    @State private var committedScale: CGFloat = 1.0
-    @State private var pinchScale: CGFloat = 1.0
-    @State private var committedOffsetX: CGFloat = 0
-    @State private var dragDeltaX: CGFloat = 0
 
     init(
         state: any MangaReaderPresenterState,
@@ -918,32 +960,22 @@ private struct MangaWebtoonStrip: View {
         !(state.nextBoundary is ChapterBoundaryNone)
     }
 
-    private var effectiveScale: CGFloat {
-        min(max(committedScale * pinchScale, 1.0), mangaMaxReaderZoom)
-    }
-
-    private var isZoomed: Bool {
-        effectiveScale > mangaZoomEpsilon
-    }
-
-    private var clampedOffsetX: CGFloat {
-        clampHorizontalOffset(committedOffsetX + dragDeltaX, for: effectiveScale, width: viewportSize.width)
-    }
-
     var body: some View {
         ScrollViewReader { scrollProxy in
             webtoonScrollView
                 .onPreferenceChange(MangaWebtoonFramesPreferenceKey.self) { frames in
-                    handleVisibleWebtoonFrames(frames)
+                    handleVisibleWebtoonFrames(frames, scrollProxy: scrollProxy)
                 }
                 .onAppear {
                     controller.clearPagerStatus()
+                    controller.zoomResetHandler = nil
                     installWebtoonKeyScroll(scrollProxy: scrollProxy)
                     let initialPage = Int(state.currentPageIndex)
                     syncBox.lastReportedPage = initialPage
                     if initialPage > 0 && state.pages.indices.contains(initialPage) {
                         syncBox.programmaticTargetPage = initialPage
-                        scrollProxy.scrollTo("webtoon_page_\(initialPage)", anchor: .top)
+                        syncBox.settledCenterPage = nil
+                        scrollProxy.scrollTo(initialPage, anchor: .top)
                     }
                 }
                 .onChange(of: state.currentPageIndex) { _, newIndex in
@@ -952,14 +984,8 @@ private struct MangaWebtoonStrip: View {
                     if targetPage != syncBox.lastReportedPage {
                         syncBox.lastReportedPage = targetPage
                         syncBox.programmaticTargetPage = targetPage
-                        scrollProxy.scrollTo("webtoon_page_\(targetPage)", anchor: .top)
-                    }
-                }
-                .onChange(of: isZoomed) { _, zoomed in
-                    if zoomed {
-                        controller.zoomResetHandler = { resetZoom() }
-                    } else {
-                        controller.zoomResetHandler = nil
+                        syncBox.settledCenterPage = nil
+                        scrollProxy.scrollTo(targetPage, anchor: .top)
                     }
                 }
         }
@@ -968,8 +994,6 @@ private struct MangaWebtoonStrip: View {
     private var webtoonScrollView: some View {
         ScrollView(.vertical, showsIndicators: true) {
             webtoonStackContent
-                .scaleEffect(effectiveScale, anchor: .top)
-                .offset(x: clampedOffsetX)
         }
         .coordinateSpace(name: "manga_webtoon_scroll")
         .accessibilityIdentifier("manga_webtoon_list")
@@ -977,10 +1001,8 @@ private struct MangaWebtoonStrip: View {
         .mangaZoneTap(
             in: viewportSize,
             controller: controller,
-            onDoubleTap: handleWebtoonDoubleTap
+            onDoubleTap: nil
         )
-        .simultaneousGesture(webtoonMagnifyGesture)
-        .simultaneousGesture(webtoonHorizontalPanGesture)
     }
 
     private var webtoonStackContent: some View {
@@ -999,8 +1021,8 @@ private struct MangaWebtoonStrip: View {
                 .id("webtoon_boundary_prev")
             }
 
-            ForEach(state.pages, id: \.id) { page in
-                webtoonPageRow(page)
+            ForEach(0..<state.pages.count, id: \.self) { pageIdx in
+                webtoonPageRow(state.pages[pageIdx], pageIdx: pageIdx)
             }
 
             if hasNextBoundary {
@@ -1019,9 +1041,8 @@ private struct MangaWebtoonStrip: View {
         }
     }
 
-    private func webtoonPageRow(_ page: ReaderPageState) -> some View {
+    private func webtoonPageRow(_ page: ReaderPageState, pageIdx: Int) -> some View {
         let ratio = clampedWebtoonAspectRatio(page.aspectRatio?.floatValue)
-        let pageIdx = Int(page.index)
         return ReaderPageCell(
             page: page,
             state: state,
@@ -1038,58 +1059,7 @@ private struct MangaWebtoonStrip: View {
                 )
             }
         }
-        .id("webtoon_page_\(page.index)")
-    }
-
-    private func handleWebtoonDoubleTap(_ tapLocation: CGPoint) {
-        withAnimation(.spring(duration: 0.22)) {
-            if isZoomed {
-                resetZoom()
-            } else {
-                let targetScale = mangaDoubleTapZoom
-                let centerX = viewportSize.width / 2
-                let proposedX = (centerX - tapLocation.x) * (targetScale - 1)
-                committedScale = targetScale
-                committedOffsetX = clampHorizontalOffset(proposedX, for: targetScale, width: viewportSize.width)
-            }
-        }
-    }
-
-    private var webtoonMagnifyGesture: some Gesture {
-        MagnifyGesture()
-            .onChanged { value in
-                pinchScale = value.magnification
-            }
-            .onEnded { value in
-                let nextScale = min(max(committedScale * value.magnification, 1.0), mangaMaxReaderZoom)
-                pinchScale = 1.0
-                if nextScale <= mangaZoomEpsilon {
-                    resetZoom()
-                } else {
-                    committedScale = nextScale
-                    committedOffsetX = clampHorizontalOffset(committedOffsetX, for: nextScale, width: viewportSize.width)
-                }
-            }
-    }
-
-    private var webtoonHorizontalPanGesture: some Gesture {
-        DragGesture(minimumDistance: 12)
-            .onChanged { value in
-                guard isZoomed else { return }
-                dragDeltaX = value.translation.width
-            }
-            .onEnded { value in
-                guard isZoomed else {
-                    dragDeltaX = 0
-                    return
-                }
-                committedOffsetX = clampHorizontalOffset(
-                    committedOffsetX + value.translation.width,
-                    for: effectiveScale,
-                    width: viewportSize.width
-                )
-                dragDeltaX = 0
-            }
+        .id(pageIdx)
     }
 
     private func installWebtoonKeyScroll(scrollProxy: ScrollViewProxy) {
@@ -1100,9 +1070,10 @@ private struct MangaWebtoonStrip: View {
                 guard next < state.pages.count else { return false }
                 syncBox.lastReportedPage = next
                 syncBox.programmaticTargetPage = next
+                syncBox.settledCenterPage = nil
                 state.goToPage(pageIndex: Int32(next))
                 withAnimation(.easeOut(duration: 0.2)) {
-                    scrollProxy.scrollTo("webtoon_page_\(next)", anchor: .top)
+                    scrollProxy.scrollTo(next, anchor: .top)
                 }
                 return true
             } else {
@@ -1110,16 +1081,17 @@ private struct MangaWebtoonStrip: View {
                 guard prev >= 0 else { return false }
                 syncBox.lastReportedPage = prev
                 syncBox.programmaticTargetPage = prev
+                syncBox.settledCenterPage = nil
                 state.goToPage(pageIndex: Int32(prev))
                 withAnimation(.easeOut(duration: 0.2)) {
-                    scrollProxy.scrollTo("webtoon_page_\(prev)", anchor: .top)
+                    scrollProxy.scrollTo(prev, anchor: .top)
                 }
                 return true
             }
         }
     }
 
-    private func handleVisibleWebtoonFrames(_ frames: [Int: CGRect]) {
+    private func handleVisibleWebtoonFrames(_ frames: [Int: CGRect], scrollProxy: ScrollViewProxy) {
         guard !state.pages.isEmpty, viewportSize.height > 0 else { return }
         let viewportCenterY = viewportSize.height / 2
         let visibleCandidates = frames.filter { index, rect in
@@ -1128,34 +1100,36 @@ private struct MangaWebtoonStrip: View {
         guard let nearest = visibleCandidates.min(by: { lhs, rhs in
             abs(lhs.value.midY - viewportCenterY) < abs(rhs.value.midY - viewportCenterY)
         }) else {
+            if let target = syncBox.programmaticTargetPage {
+                scrollProxy.scrollTo(target, anchor: .top)
+            }
             return
         }
 
         let centerPage = nearest.key
         if let target = syncBox.programmaticTargetPage {
-            if centerPage == target {
+            if let targetRect = frames[target],
+               targetRect.maxY > 0 && targetRect.minY < viewportSize.height {
                 syncBox.programmaticTargetPage = nil
+                syncBox.lastReportedPage = target
+                syncBox.settledCenterPage = centerPage
+            } else {
+                scrollProxy.scrollTo(target, anchor: .top)
             }
             return
+        }
+
+        if let settled = syncBox.settledCenterPage {
+            if centerPage == settled {
+                return
+            }
+            syncBox.settledCenterPage = nil
         }
 
         syncBox.lastReportedPage = centerPage
         if centerPage != Int(state.currentPageIndex) {
             state.goToPage(pageIndex: Int32(centerPage))
         }
-    }
-
-    private func resetZoom() {
-        committedScale = 1.0
-        pinchScale = 1.0
-        committedOffsetX = 0
-        dragDeltaX = 0
-    }
-
-    private func clampHorizontalOffset(_ value: CGFloat, for scale: CGFloat, width: CGFloat) -> CGFloat {
-        guard scale > mangaZoomEpsilon else { return 0 }
-        let maxX = max((width * (scale - 1)) / 2, 0)
-        return min(max(value, -maxX), maxX)
     }
 
     private func clampedWebtoonAspectRatio(_ rawRatio: Float?) -> CGFloat {

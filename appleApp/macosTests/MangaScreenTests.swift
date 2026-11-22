@@ -368,6 +368,88 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertTrue(renderedText.contains("Chapter 2: Locked Extra"), renderedText)
     }
 
+    func testMacMidChapterRtlLtrSwitchOnFourSlotsAndWebtoonReachability() async throws {
+        _ = NSApplication.shared
+        let pages = makeMacSamplePages(count: 4)
+        let slots: [any ReaderSlot] = (0..<4).map { ReaderSlotSingle(pageIndex: Int32($0)) }
+        let fakeState = FakeMacMangaReaderState(
+            direction: .rtl,
+            pages: pages,
+            slots: slots
+        )
+        let controller = MangaReaderInteractionController()
+        let hostModel = MacReaderTestHostModel(state: fakeState, controller: controller)
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let hostingView = NSHostingView(rootView: MacReaderTestHostView(model: hostModel))
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        try await eventually(window: window) { controller.isBound && hostModel.pageFrames[0] != nil }
+
+        // Advance to slot 2 (out of 0..3) in RTL
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertEqual(fakeState.currentSlotIndex, 2)
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[2] else { return false }
+            return frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+
+        // Switch RTL -> LTR mid-chapter on slot 2: must NOT clobber currentSlotIndex to mirrored page (3 - 2 = 1)
+        fakeState.setDirection(direction: .ltr)
+        try await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[2] else { return false }
+            return controller.activePagerPage == 2 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 2, "Switching RTL -> LTR mid-chapter must preserve currentSlotIndex == 2")
+
+        // Left arrow in LTR steps backward from slot 2 -> slot 1
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+
+        // Switch LTR -> RTL mid-chapter on slot 1: must NOT clobber currentSlotIndex to mirrored page (3 - 1 = 2)
+        fakeState.setDirection(direction: .rtl)
+        try await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Switching LTR -> RTL mid-chapter must preserve currentSlotIndex == 1")
+
+        // Webtoon mode: unscaled 1x strip width and full bottom page reachability
+        let webtoonPages = makeMacSamplePages(count: 6)
+        let webtoonSlots: [any ReaderSlot] = (0..<6).map { ReaderSlotSingle(pageIndex: Int32($0)) }
+        let webtoonState = FakeMacMangaReaderState(
+            direction: .webtoon,
+            pages: webtoonPages,
+            slots: webtoonSlots
+        )
+        hostModel.pageFrames.removeAll()
+        hostModel.setState(webtoonState)
+        try await eventually(window: window) { hostModel.pageFrames[0] != nil }
+        XCTAssertEqual(try XCTUnwrap(hostModel.pageFrames[0]).width, 800, accuracy: 1.5)
+        XCTAssertNil(controller.zoomResetHandler)
+
+        webtoonState.goToPage(pageIndex: 5)
+        try await eventually(window: window) {
+            guard let page5Frame = hostModel.pageFrames[5] else { return false }
+            return page5Frame.minY < 600 && page5Frame.maxY > 0 && webtoonState.currentPageIndex == 5
+        }
+        XCTAssertEqual(try XCTUnwrap(hostModel.pageFrames[5]).width, 800, accuracy: 1.5)
+    }
+
     private func renderPDFText<V: View>(_ view: V, width: CGFloat, height: CGFloat) throws -> String {
         let content = view.frame(width: width, height: height)
         let data = NSMutableData()
