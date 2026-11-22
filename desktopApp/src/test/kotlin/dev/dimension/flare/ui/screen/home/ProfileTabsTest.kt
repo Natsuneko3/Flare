@@ -4,8 +4,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -48,6 +51,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -166,7 +170,7 @@ class ProfileTabsTest {
                     actions = persistentListOf(ActionMenu.Item(text = ActionMenu.Item.Text.Raw("Report"))),
                 ),
             )
-        showProfile()
+        showProfile(dark = true)
 
         val user = createSampleUser().copy(key = userKey, avatar = null, banner = null)
         for (size in listOf(WindowSizeClass.Compact, WindowSizeClass.Expanded)) {
@@ -179,12 +183,16 @@ class ProfileTabsTest {
             compose.runOnIdle { userState = UiState.Success(user) }
             waitForText(user.handle.display)
             compose.onNodeWithText("Report").assertIsDisplayed().performClick()
+            val icon = compose.onNodeWithContentDescription("Profile actions").captureToImage()
+            val pixels = IntArray(icon.width * icon.height)
+            icon.readPixels(pixels)
+            assertTrue("The $size header uses white icons in dark mode", Color.White.toArgb() in pixels)
         }
     }
 
-    private fun showProfile() {
+    private fun showProfile(dark: Boolean = false) {
         compose.setContent {
-            FlareTheme(isDarkTheme = false) {
+            FlareTheme(isDarkTheme = dark) {
                 CompositionLocalProvider(
                     LocalViewModelStoreOwner provides owner,
                     LocalWindowSizeClass provides windowSize,

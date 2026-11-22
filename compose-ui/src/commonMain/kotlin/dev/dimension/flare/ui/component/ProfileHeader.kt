@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentWithReceiverOf
 import androidx.compose.runtime.remember
@@ -74,6 +75,7 @@ import dev.dimension.flare.ui.presenter.profile.FollowButtonState
 import dev.dimension.flare.ui.presenter.profile.ProfileState
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
+import dev.dimension.flare.ui.theme.PlatformContentColor
 import dev.dimension.flare.ui.theme.PlatformTheme
 import dev.dimension.flare.ui.theme.profileName
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
@@ -116,7 +118,12 @@ public fun ProfileHeader(
 ) {
     // Keep an open menu attached when the loaded header replaces its placeholder.
     val currentMenu by rememberUpdatedState(menu)
-    val headerMenu = remember { movableContentWithReceiverOf<RowScope> { currentMenu() } }
+    val headerMenu =
+        remember {
+            movableContentWithReceiverOf<RowScope> {
+                CompositionLocalProvider(PlatformContentColor provides PlatformTheme.colorScheme.onCard) { currentMenu() }
+            }
+        }
     when (val userState = state.userState) {
         is UiState.Loading -> {
             ProfileHeaderLoading(modifier = modifier, withStatusBarHeight = true, menu = headerMenu)

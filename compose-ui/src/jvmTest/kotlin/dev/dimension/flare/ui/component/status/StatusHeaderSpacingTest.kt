@@ -284,12 +284,16 @@ class StatusHeaderSpacingTest {
     }
 
     @Test
-    fun postActionGlyphsShrinkInsideTheOriginalSlots() {
+    fun postAndProfileActionGlyphsUseTheirOwnSizeAndForeground() {
         val action = ActionMenu.Item(icon = UiIcon.Reply)
         val items = persistentListOf(action, ActionMenu.Group(displayItem = action, actions = persistentListOf(action)))
+        val toolbarColor = Color.Cyan
+        var postColor = Color.Unspecified
         compose.setContent {
             FluentTheme(colors = darkColors()) {
+                postColor = StatusComponentDefaults.secondaryColor
                 CompositionLocalProvider(
+                    PlatformContentColor provides toolbarColor,
                     LocalTimelineAppearance provides TimelineAppearance(postActionStyle = PostActionStyle.RightAligned),
                     LocalDensity provides Density(1f),
                 ) {
@@ -303,11 +307,14 @@ class StatusHeaderSpacingTest {
 
         for ((tag, expectedGlyphWidth) in listOf("post-actions" to 14, "profile-actions" to 16)) {
             val pixels = compose.onNodeWithTag(tag).captureToImage().toPixelMap()
+            val foreground = (if (tag == "post-actions") postColor else toolbarColor).compositeOver(Color.Black).toArgb()
             assertEquals(24, pixels.height, tag)
             val middle = pixels.width / 2
             for (section in listOf(0 until middle, middle until pixels.width)) {
                 val glyphColumns = section.filter { x -> (0 until pixels.height).any { y -> pixels[x, y] != Color.Black } }
                 assertEquals(expectedGlyphWidth, glyphColumns.last() - glyphColumns.first() + 1, tag)
+                val hasForeground = glyphColumns.any { x -> (0 until pixels.height).any { y -> pixels[x, y].toArgb() == foreground } }
+                assertTrue(hasForeground, tag)
             }
         }
     }

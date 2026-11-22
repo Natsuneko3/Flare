@@ -346,20 +346,6 @@ struct ProfileScreen: View {
     }
 }
 
-struct ProfileToolbarMenu: View {
-    let group: ActionMenu.Group
-
-    var body: some View {
-        Menu {
-            StatusActionsView(data: group.actions, useText: true, applyPostActionLayout: false)
-        } label: {
-            (group.displayItem.icon ?? .more).image
-        }
-        .accessibilityLabel(Text("more"))
-        .disabled(!group.displayItem.enabled)
-    }
-}
-
 private extension View {
     func plainProfileAccessory() -> some View {
         self
