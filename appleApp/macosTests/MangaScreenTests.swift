@@ -190,9 +190,36 @@ final class MangaScreenTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
 
-        try await eventually(window: window) { controller.isBound }
+        try await eventually(window: window) { controller.isBound && hostModel.pageFrames[0] != nil }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
 
-        fakeState.goToSlot(slotIndex: 1)
+        // Manual horizontal scroll after initial mount with previousBoundary (initial == 1 > 0) must advance slot 0 -> slot 1 without yanking back
+        let boundaryScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
+        simulateMacUserHorizontalScroll(boundaryScrollView, by: 800)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 && controller.activePagerPage == 2
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+        XCTAssertEqual(controller.activePagerPage, 2)
+
+        // Redundant scrollToBoundary when activePagerPage already equals clamped must not leave programmaticScrollTarget armed
+        controller.scrollToBoundary(isNext: true)
+        try await eventually(window: window) {
+            controller.isOnNextBoundaryPage && boundaryScrollView.contentView.bounds.origin.x >= 2390
+        }
+        controller.scrollToBoundary(isNext: true)
+        try await Task.sleep(for: .milliseconds(30))
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.contentView?.displayIfNeeded()
+        XCTAssertTrue(controller.isOnNextBoundaryPage)
+        simulateMacUserHorizontalScroll(boundaryScrollView, by: -800)
+        try await eventually(window: window) {
+            controller.activePagerPage == 2 && !controller.isOnNextBoundaryPage
+        }
+
         controller.scrollToBoundary(isNext: true)
         XCTAssertTrue(controller.isOnNextBoundaryPage)
         XCTAssertTrue(controller.handleKey(.leftArrow))
@@ -394,9 +421,22 @@ final class MangaScreenTests: XCTestCase {
         defer { window.close() }
 
         try await eventually(window: window) { controller.isBound && hostModel.pageFrames[0] != nil }
+        // Let .task finish initial positioning so we exercise post-.task manual scroll behavior
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
 
-        // Advance to slot 2 (out of 0..3) in RTL
-        XCTAssertTrue(controller.handleKey(.leftArrow))
+        // 1. Simulated manual horizontal user scroll after initial mount (slot 0 -> slot 1 in RTL) must NOT yank back
+        let initialScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
+        simulateMacUserHorizontalScroll(initialScrollView, by: -800)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 && controller.activePagerPage == 1
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Manual scroll after initial mount must update currentSlotIndex without yanking back")
+        XCTAssertEqual(controller.activePagerPage, 1)
+
+        // Advance one more slot to slot 2 (out of 0..3) in RTL
         XCTAssertTrue(controller.handleKey(.leftArrow))
         XCTAssertEqual(fakeState.currentSlotIndex, 2)
         try await eventually(window: window) {
@@ -404,7 +444,7 @@ final class MangaScreenTests: XCTestCase {
             return frame.minX >= -1.5 && frame.maxX <= 801.5
         }
 
-        // Switch RTL -> LTR mid-chapter on slot 2: must NOT clobber currentSlotIndex to mirrored page (3 - 2 = 1)
+        // 2. Switch RTL -> LTR mid-chapter on slot 2: must NOT clobber currentSlotIndex to mirrored page (3 - 2 = 1)
         fakeState.setDirection(direction: .ltr)
         try await Task.sleep(for: .milliseconds(80))
         window.contentView?.layoutSubtreeIfNeeded()
@@ -413,12 +453,25 @@ final class MangaScreenTests: XCTestCase {
             return controller.activePagerPage == 2 && frame.minX >= -1.5 && frame.maxX <= 801.5
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 2, "Switching RTL -> LTR mid-chapter must preserve currentSlotIndex == 2")
+        XCTAssertNil(controller.zoomResetHandler)
 
-        // Left arrow in LTR steps backward from slot 2 -> slot 1
+        // 3. Simulated manual horizontal user scroll after RTL -> LTR switch (slot 2 -> slot 3 in LTR) must NOT yank back
+        let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
+        simulateMacUserHorizontalScroll(ltrScrollView, by: 800)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 3 && controller.activePagerPage == 3
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fakeState.currentSlotIndex, 3, "Manual scroll after RTL -> LTR switch must not be yanked back")
+        XCTAssertEqual(controller.activePagerPage, 3)
+
+        // Step backward twice in LTR (slot 3 -> slot 1)
+        XCTAssertTrue(controller.handleKey(.leftArrow))
         XCTAssertTrue(controller.handleKey(.leftArrow))
         XCTAssertEqual(fakeState.currentSlotIndex, 1)
 
-        // Switch LTR -> RTL mid-chapter on slot 1: must NOT clobber currentSlotIndex to mirrored page (3 - 1 = 2)
+        // 4. Switch LTR -> RTL mid-chapter on slot 1: must NOT clobber currentSlotIndex to mirrored page (3 - 1 = 2)
         fakeState.setDirection(direction: .rtl)
         try await Task.sleep(for: .milliseconds(80))
         window.contentView?.layoutSubtreeIfNeeded()
@@ -427,6 +480,18 @@ final class MangaScreenTests: XCTestCase {
             return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Switching LTR -> RTL mid-chapter must preserve currentSlotIndex == 1")
+        XCTAssertNil(controller.zoomResetHandler)
+
+        // 5. Simulated manual horizontal user scroll after LTR -> RTL switch (slot 1 -> slot 2 in RTL) must NOT yank back
+        let rtlScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
+        simulateMacUserHorizontalScroll(rtlScrollView, by: -800)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fakeState.currentSlotIndex, 2, "Manual scroll after LTR -> RTL switch must not be yanked back")
+        XCTAssertEqual(controller.activePagerPage, 2)
 
         // Webtoon mode: unscaled 1x strip width and full bottom page reachability
         let webtoonPages = makeMacSamplePages(count: 6)
@@ -461,6 +526,31 @@ final class MangaScreenTests: XCTestCase {
         context.endPDFPage()
         context.closePDF()
         return try XCTUnwrap(PDFDocument(data: data as Data)?.string)
+    }
+
+    private func findHorizontalPagingScrollView(in root: NSView) -> NSScrollView? {
+        if let scrollView = root as? NSScrollView,
+           scrollView.contentView.bounds.width >= 300,
+           (scrollView.documentView?.frame.width ?? 0) > scrollView.contentView.bounds.width + 10 {
+            return scrollView
+        }
+        for subview in root.subviews {
+            if let found = findHorizontalPagingScrollView(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func simulateMacUserHorizontalScroll(_ scrollView: NSScrollView, by deltaX: CGFloat) {
+        let docWidth = scrollView.documentView?.frame.width ?? 0
+        let maxX = max(docWidth - scrollView.contentView.bounds.width, 0)
+        let nextX = min(max(scrollView.contentView.bounds.origin.x + deltaX, 0), maxX)
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
+        scrollView.contentView.scroll(to: CGPoint(x: nextX, y: 0))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: scrollView)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
     }
 
     private func eventually(
