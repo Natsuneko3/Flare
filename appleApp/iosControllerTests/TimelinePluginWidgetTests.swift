@@ -8,6 +8,22 @@ import FlareAppleCore
 
 @MainActor
 final class TimelinePluginWidgetTests: XCTestCase {
+    func testSpokenSparklineIncludesTheLocalizedScaleWithOrWithoutLabels() throws {
+        func description(_ low: String?, _ high: String?) throws -> (label: String, value: String) {
+            let chart = UiWidgetNode.Sparkline(points: [2.0, 0.01234, 7.125], tone: .neutral,
+                                               minLabel: low, maxLabel: high, height: .sm, weight: nil)
+            return try XCTUnwrap(pluginWidgetSparklineAccessibility(chart, locale: Locale(identifier: "en_US")))
+        }
+        let numeric = try description(nil, nil)
+        XCTAssertEqual(numeric.label, FlareAppleUILocalization.string("plugin_widget_sparkline_rising", fallback: "Rising trend"))
+        XCTAssertTrue(numeric.value.contains("0.01234"))
+        XCTAssertTrue(numeric.value.contains("7.125"))
+        let mixed = try description("   ", " Peak ")
+        XCTAssertTrue(mixed.value.contains("0.01234"))
+        XCTAssertTrue(mixed.value.contains("Peak"))
+        XCTAssertFalse(mixed.value.contains("7.125"))
+    }
+
     func testWidgetVisibilityFollowsWarningRevealRefreshAndCellReuse() throws {
         let plain = makeSampleTimelinePost(id: "match", warning: "Spoiler", pluginWidgets: [])
         let card = makeSamplePluginWidgetCard(id: "score", title: "Final score")

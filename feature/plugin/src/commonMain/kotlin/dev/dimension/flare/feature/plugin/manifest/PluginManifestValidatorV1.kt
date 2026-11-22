@@ -459,6 +459,8 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     return ManifestValidationV1(errors = errors, warnings = warnings)
 }
 
+internal const val TIMELINE_PROCESS_BATCH_METHOD = "timelineProcessor.processBatch"
+
 public fun PluginManifestV1.requiredMethods(): Set<String> =
     buildSet {
         platform?.let { platform ->
@@ -494,7 +496,7 @@ public fun PluginManifestV1.requiredMethods(): Set<String> =
         }
         platformExtension?.actions?.forEach { add("platformExtension.actions.${it.id}") }
         if (timelineProcessor != null) {
-            add("timelineProcessor.processBatch")
+            add(TIMELINE_PROCESS_BATCH_METHOD)
         }
     }
 

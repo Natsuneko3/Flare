@@ -407,6 +407,8 @@ public sealed class UiTimelineV2 {
         val authorSubtitle: String
             get() = authorSubtitleInternal ?: user?.handle?.display.orEmpty()
 
+        internal val pluginPostInput: ExtractedPluginPostInput by lazy { buildPluginPostInput() }
+
         @Transient
         override val stableItemKey: String = calculateStableItemKey()
         override val searchText: String =

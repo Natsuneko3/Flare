@@ -1,4 +1,5 @@
 import SwiftUI
+import Kingfisher
 @preconcurrency import KotlinSharedUI
 import FlareAppleCore
 
@@ -38,7 +39,7 @@ private struct PluginWidgetHiddenSizingPassKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    fileprivate var isPluginWidgetHiddenSizingPass: Bool {
+    var isPluginWidgetHiddenSizingPass: Bool {
         get { self[PluginWidgetHiddenSizingPassKey.self] }
         set { self[PluginWidgetHiddenSizingPassKey.self] = newValue }
     }
@@ -274,7 +275,6 @@ private struct PluginWidgetCardHeader: View {
                     .truncationMode(.tail)
                 if let badge = card.badge {
                     PluginWidgetBadgePill(badge: badge)
-                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -300,7 +300,7 @@ private struct PluginWidgetCardHeader: View {
                             .frame(width: 12, height: 12)
                             .flareSecondaryText()
                             .frame(width: 22, height: 22)
-                            .contentShape(Circle())
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(card.onRefresh == nil)
@@ -314,34 +314,33 @@ private struct PluginWidgetCardHeader: View {
 private struct PluginWidgetLocalIconView: View {
     let path: String
     let accessibilityLabel: String
+    @Environment(\.isPluginWidgetHiddenSizingPass) private var isHiddenSizingPass
 
-    private var resolvedFilePath: String {
+    private var fileURL: URL {
         if path.hasPrefix("file://"), let url = URL(string: path) {
-            return url.path
+            return url
         }
-        return path
+        return URL(fileURLWithPath: path, isDirectory: false)
     }
 
     var body: some View {
-        #if os(iOS)
-        if let image = UIImage(contentsOfFile: resolvedFilePath) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 16, height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .accessibilityLabel(Text(verbatim: accessibilityLabel))
+        Group {
+            if isHiddenSizingPass {
+                Color.clear
+            } else {
+                KFImage(source: .provider(LocalFileImageDataProvider(fileURL: fileURL)))
+                    .setProcessor(DownsamplingImageProcessor(size: CGSize(width: 48, height: 48)))
+                    .cacheMemoryOnly()
+                    .flareAsyncCacheTypeCheck()
+                    .loadDiskFileSynchronously(false)
+                    .cancelOnDisappear(true)
+                    .resizable()
+                    .scaledToFit()
+                    .accessibilityLabel(Text(verbatim: accessibilityLabel))
+            }
         }
-        #elseif os(macOS)
-        if let image = NSImage(contentsOfFile: resolvedFilePath) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 16, height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .accessibilityLabel(Text(verbatim: accessibilityLabel))
-        }
-        #endif
+        .frame(width: 16, height: 16)
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 
@@ -404,7 +403,7 @@ private struct PluginWidgetNodeView: View {
             .frame(maxWidth: fillWidth ? .infinity : nil, alignment: frameAlignment)
 
         case .stat(let statNode):
-            PluginWidgetStatNodeView(node: statNode, fillWidth: fillWidth)
+            PluginWidgetStatNodeView(node: statNode)
 
         case .matchup(let matchupNode):
             PluginWidgetMatchupNodeView(node: matchupNode, fillWidth: fillWidth)
@@ -744,7 +743,6 @@ private struct PluginWidgetTextNodeView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(verbatim: "\(copyLabel) \(node.text)"))
-                .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
                 .task(id: copyTrigger) {
                     guard copyTrigger > 0 else { return }
                     try? await Task.sleep(for: .milliseconds(1500))
@@ -753,7 +751,6 @@ private struct PluginWidgetTextNodeView: View {
                 }
             } else {
                 styledText(font)
-                    .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
             }
         }
     }
@@ -761,7 +758,6 @@ private struct PluginWidgetTextNodeView: View {
 
 private struct PluginWidgetStatNodeView: View {
     let node: UiWidgetNode.Stat
-    let fillWidth: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -804,7 +800,6 @@ private struct PluginWidgetStatNodeView: View {
                     .truncationMode(.tail)
             }
         }
-        .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
     }
 }
 
@@ -916,6 +911,7 @@ private struct PluginWidgetSparklineNodeView: View {
     let node: UiWidgetNode.Sparkline
     let fillWidth: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
 
     private var chartHeight: CGFloat {
         switch node.height {
@@ -935,6 +931,7 @@ private struct PluginWidgetSparklineNodeView: View {
     }
 
     var body: some View {
+        let accessibility = pluginWidgetSparklineAccessibility(node, locale: locale)
         let normalized = node.normalizedPoints.map { value -> CGFloat in
             let raw = CGFloat(value.floatValue)
             return raw.isFinite ? min(max(raw, 0), 1) : 0.5
@@ -1022,7 +1019,34 @@ private struct PluginWidgetSparklineNodeView: View {
         }
         .frame(width: fillWidth ? nil : 88)
         .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .contentShape(.accessibility, Rectangle())
+        .accessibilityLabel(Text(verbatim: accessibility?.label ?? ""))
+        .accessibilityValue(Text(verbatim: accessibility?.value ?? ""))
+        .accessibilityHidden(accessibility == nil)
     }
+}
+
+func pluginWidgetSparklineAccessibility(
+    _ node: UiWidgetNode.Sparkline,
+    locale: Locale
+) -> (label: String, value: String)? {
+    guard let summary = node.summary else { return nil }
+    let label: String = switch summary.trend {
+    case .rising: FlareAppleUILocalization.string("plugin_widget_sparkline_rising", fallback: "Rising trend")
+    case .falling: FlareAppleUILocalization.string("plugin_widget_sparkline_falling", fallback: "Falling trend")
+    case .flat: FlareAppleUILocalization.string("plugin_widget_sparkline_flat", fallback: "Flat trend")
+    case .fluctuating: FlareAppleUILocalization.string("plugin_widget_sparkline_fluctuating", fallback: "Fluctuating trend")
+    }
+    func bound(_ label: String?, _ value: Double) -> String {
+        if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty { return label }
+        return value.formatted(.number.locale(locale).precision(.significantDigits(1...16)))
+    }
+    let value = FlareAppleUILocalization.string(
+        "plugin_widget_sparkline_range", fallback: "Low %1$@, high %2$@",
+        arguments: [bound(node.minLabel, summary.minimum), bound(node.maxLabel, summary.maximum)]
+    )
+    return (label, value)
 }
 
 private struct PluginWidgetSegmentedBarNodeView: View {

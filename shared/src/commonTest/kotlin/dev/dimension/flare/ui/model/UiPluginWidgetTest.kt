@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -75,8 +76,22 @@ class UiPluginWidgetTest {
                 card = UiCard(url = "https://polymarket.com/event/fed", title = "Fed Decision", description = null, media = null),
             )
         val extracted = post.extractPluginPostInput()
+        assertSame(extracted, post.extractPluginPostInput())
         assertTrue(extracted.contentPlain.startsWith("-----BEGIN PGP MESSAGE-----\n\nhQEMA123\n=abcd"))
         assertEquals(listOf("https://polymarket.com/event/fed"), extracted.links)
+    }
+
+    @Test
+    fun sparklineSummaryDescribesOverallDirectionAndFiniteRange() {
+        fun summary(vararg points: Double) = UiWidgetNode.Sparkline(persistentListOf(*points.toTypedArray())).summary
+
+        assertEquals(UiWidgetSparklineSummary(UiWidgetSparklineTrend.Rising, -2.5, 4.0), summary(-2.5, 4.0, 1.5))
+        assertEquals(UiWidgetSparklineTrend.Falling, summary(2.0, 3.0, -1.0)?.trend)
+        assertEquals(UiWidgetSparklineTrend.Fluctuating, summary(2.0, 3.0, 2.0)?.trend)
+        assertEquals(UiWidgetSparklineTrend.Flat, summary(2.0, 2.0)?.trend)
+        assertEquals(UiWidgetSparklineTrend.Flat, summary(Double.NaN, 1.25)?.trend)
+        assertNull(summary(Double.POSITIVE_INFINITY))
+        assertNull(summary())
     }
 
     @Test

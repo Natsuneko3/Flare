@@ -46,10 +46,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +61,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -76,6 +80,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -1302,6 +1308,209 @@ class PluginTimelineProcessorIntegrationTest {
         }
 
     @Test
+    fun processorStorageWritesKeepResultsAndConcurrentSettingsChangesInvalidateThem() =
+        runTest {
+            withTimelineProcessorTestHarness(workDispatcher = StandardTestDispatcher(testScheduler)) { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.stats",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                const store = flare.storage.open("stats");
+                                const { values } = await store.read();
+                                await store.write({ set: { calls: (values.calls || 0) + 1 } });
+                                return { results: req.items.map(i => ({ itemId: i.itemId,
+                                  cards: [{ id: "stats", body: [{ type: "text", text: values.label || "original" }] }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val revision = service.processingRevision.first { it > 0L }
+                val post = createSamplePost(text = "one post")
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                testScheduler.advanceUntilIdle()
+
+                fun label() =
+                    (
+                        service
+                            .widgetsForPost(post)
+                            .single()
+                            .body
+                            .single() as UiWidgetNode.Text
+                    ).text
+                assertEquals("original", label())
+                assertEquals(revision, service.processingRevision.value)
+
+                harness.gateNextRuntimeCallNonCancellable(pluginId)
+                service.refreshPostPlugin(post, pluginId)
+                harness.awaitRuntimeCallEntered(pluginId)
+                val settings = harness.subsystem.storage.access(pluginId) {}
+                settings.write("stats", PluginStorageChangesV1(mapOf("label" to JsonPrimitive("updated"))))
+                service.processingRevision.first { it > revision }
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+                assertTrue(service.widgetsForPost(post).isEmpty())
+
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals("updated", label())
+                assertEquals(3, harness.invocationCount(pluginId))
+                assertEquals(revision + 1L, service.processingRevision.value)
+            }
+        }
+
+    @Test
+    fun queuedRefreshUsesEditedInputAndCoalescesMatchingInFlightReads() =
+        runTest {
+            withTimelineProcessorTestHarness(workDispatcher = StandardTestDispatcher(testScheduler)) { harness ->
+                val service = harness.service
+                val pluginId = harness.installAndConfirmTimelineProcessor(id = "org.example.edits", script = echoInputScript)
+                val original = createSamplePost(id = "edited", text = "original")
+                val edited = createSamplePost(id = "edited", text = "corrected")
+                service.submitPosts(listOf(original))
+                harness.awaitIdle()
+                harness.gateNextRuntimeCall(pluginId)
+                service.submitPosts(listOf(createSamplePost(text = "other work")))
+                harness.awaitRuntimeCallEntered(pluginId)
+                service.refreshPostPlugin(original, pluginId)
+                testScheduler.runCurrent()
+                service.submitPosts(listOf(edited))
+                testScheduler.advanceUntilIdle()
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+
+                fun assertManual(
+                    post: UiTimelineV2.Post,
+                    text: String,
+                ) {
+                    val card = service.widgetsForPost(post).single()
+                    assertEquals("manualRefresh", card.title)
+                    assertEquals(text, (card.body.single() as UiWidgetNode.Text).text)
+                }
+                assertManual(edited, "corrected")
+                assertTrue(service.widgetsForPost(original).isEmpty())
+                assertEquals(3, harness.invocationCount(pluginId))
+
+                val latest = createSamplePost(id = "edited", text = "latest")
+                harness.gateNextRuntimeCall(pluginId)
+                service.refreshPostPlugin(latest, pluginId)
+                harness.awaitRuntimeCallEntered(pluginId)
+                service.submitPosts(listOf(latest))
+                testScheduler.advanceUntilIdle()
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+                assertManual(latest, "latest")
+                assertEquals(4, harness.invocationCount(pluginId))
+            }
+        }
+
+    @OptIn(InternalCoroutinesApi::class)
+    @Test
+    fun queuedRefreshUsesTheLaterSubmissionWhenTheFirstDispatchRunsLast() =
+        runTest {
+            val delegate = StandardTestDispatcher(testScheduler)
+            val holdNext = AtomicReference<CompletableDeferred<Runnable>?>(null)
+            val dispatcher =
+                object : CoroutineDispatcher(), Delay by delegate {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) {
+                        val gate = holdNext.getAndSet(null)
+                        if (gate == null) delegate.dispatch(context, block) else gate.complete(block)
+                    }
+                }
+            withTimelineProcessorTestHarness(workDispatcher = dispatcher) { harness ->
+                val service = harness.service
+                val id = harness.installAndConfirmTimelineProcessor(id = "org.example.order", script = echoInputScript)
+                for ((manualFirst, finishAutoFirst) in listOf(true to false, false to false, true to true)) {
+                    val key = "row-$manualFirst-$finishAutoFirst"
+                    val older = createSamplePost(id = key, text = "old")
+                    val newer = createSamplePost(id = key, text = "new")
+                    service.submitPosts(listOf(if (manualFirst) older else createSamplePost(id = key, text = "cached")))
+                    harness.awaitIdle()
+                    harness.gateNextRuntimeCall(id)
+                    service.submitPosts(listOf(createSamplePost(text = "other work")))
+                    harness.awaitRuntimeCallEntered(id)
+                    val calls = harness.invocationCount(id)
+                    val held = CompletableDeferred<Runnable>().also(holdNext::set)
+                    if (manualFirst) service.refreshPostPlugin(older, id) else service.submitPosts(listOf(older))
+                    val firstDispatch = held.await()
+                    if (manualFirst) service.submitPosts(listOf(newer)) else service.refreshPostPlugin(newer, id)
+                    testScheduler.advanceUntilIdle()
+                    if (finishAutoFirst) {
+                        harness.releaseGatedRuntimeCall(id)
+                        service.overlayRevision.first { service.widgetsForPost(newer).isNotEmpty() }
+                        testScheduler.advanceUntilIdle()
+                    }
+                    delegate.dispatch(EmptyCoroutineContext, firstDispatch)
+                    testScheduler.advanceUntilIdle()
+                    if (!finishAutoFirst) harness.releaseGatedRuntimeCall(id)
+                    harness.awaitIdle()
+
+                    val card = service.widgetsForPost(newer).single()
+                    assertEquals(if (finishAutoFirst) "auto" else "manualRefresh", card.title)
+                    assertEquals("new", (card.body.single() as UiWidgetNode.Text).text)
+                    assertTrue(service.widgetsForPost(older).isEmpty())
+                    assertFalse(card.isRefreshing)
+                    assertEquals(calls + 1, harness.invocationCount(id))
+                    if (finishAutoFirst) {
+                        service.refreshPostPlugin(newer, id)
+                        harness.awaitIdle()
+                        assertEquals("manualRefresh", service.widgetsForPost(newer).single().title)
+                        assertEquals(calls + 2, harness.invocationCount(id))
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun concurrentCachedReadsRefreshRecencyAndEvictedRowsRunAgainOnRevisit() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.recency",
+                        maxBatchSize = 50,
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "memoryOnly" },
+                                  cards: [{ id: "row", body: [{ type: "text", text: i.postKey.id }] }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val posts = List(1_024) { createSamplePost(id = "row-$it", text = "row") }
+                service.submitPosts(posts)
+                harness.awaitIdle()
+                val initialCalls = harness.invocationCount(pluginId)
+                coroutineScope {
+                    repeat(4) { index ->
+                        launch(Dispatchers.Default) { repeat(30) { service.submitPosts(listOf(posts[index])) } }
+                    }
+                }
+                service.submitPosts(listOf(createSamplePost(text = "one more row")))
+                harness.awaitIdle()
+                assertEquals(initialCalls + 1, harness.invocationCount(pluginId))
+                assertTrue(posts.take(4).all { service.widgetsForPost(it).isNotEmpty() })
+                assertTrue(service.widgetsForPost(posts[4]).isEmpty())
+                service.submitPosts(listOf(posts[4]))
+                harness.awaitIdle()
+                assertEquals("row", service.widgetsForPost(posts[4]).single().id)
+                assertEquals(initialCalls + 2, harness.invocationCount(pluginId))
+            }
+        }
+
+    @Test
     fun nonDiskResponsesDeletePriorRowsInMixedBatchesAndSingleManualRefreshes() =
         runTest {
             withTimelineProcessorTestHarness { harness ->
@@ -1555,6 +1764,17 @@ class PluginTimelineProcessorIntegrationTest {
 }
 
 private val nextPostId = AtomicInteger(1)
+
+private val echoInputScript =
+    """
+    defineFlareTimelineProcessorPlugin({
+      processBatch(req) {
+        return { results: req.items.map(i => ({ itemId: i.itemId, cards: [{
+          id: "c", title: req.trigger, body: [{ type: "text", text: i.contentPlain }]
+        }] })) };
+      }
+    });
+    """.trimIndent()
 
 private fun createSamplePost(
     id: String = "post-${nextPostId.getAndIncrement()}",

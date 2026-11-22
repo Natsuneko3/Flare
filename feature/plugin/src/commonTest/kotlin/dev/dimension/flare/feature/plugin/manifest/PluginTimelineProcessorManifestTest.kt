@@ -19,6 +19,33 @@ class PluginTimelineProcessorManifestTest {
     }
 
     @Test
+    fun shorthandClassesAndWordBoundariesHaveTheSameAsciiMeaningOnEveryHost() {
+        fun matches(
+            pattern: String,
+            text: String,
+        ) = requireNotNull(compileTimelineFilterRegex(pattern)) { pattern }(text)
+
+        assertTrue(matches("""^\d+$""", "42"))
+        assertFalse(matches("""^\d+$""", "٤٢"))
+        assertTrue(matches("""^\p{Nd}+$""", "٤٢"))
+        assertTrue(matches("""^[\D_]+$""", "٤_"))
+        assertFalse(matches("""^[^\W]+$""", "東京"))
+        assertTrue(matches("""^[^\W]+$""", "A_2"))
+        assertTrue(matches("""^\s$""", "\u000c"))
+        assertFalse(matches("""^\s$""", "\u000b"))
+        assertTrue(matches("""^[\S]$""", "\u00a0"))
+        assertTrue(matches("""\bABC\b""", "東ABC京"))
+        assertFalse(matches("""\b東京\b""", "東京"))
+        assertTrue(matches("""\B東京\B""", "東京"))
+        assertFalse(matches("""(?i)\bK\b""", "K"))
+        assertFalse(matches("""^[[:digit:]]+$""", "٤٢"))
+        assertTrue(matches("""^[[:^digit:]]+$""", "٤٢"))
+        assertTrue(matches("""^[]\w]$""", "]"))
+        assertTrue(matches("""^[a&&b]$""", "&"))
+        assertTrue(matches("""^\Q\d[\b]\E\\w$""", """\d[\b]\w"""))
+    }
+
+    @Test
     fun standaloneTimelineProcessorRequiresApiV2ValidFilterAndProcessBatchMethod() {
         val base =
             PluginManifestV1(

@@ -13,6 +13,7 @@ import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
 import dev.dimension.flare.feature.plugin.manifest.PluginTimelineFilterManifestV1
+import dev.dimension.flare.feature.plugin.manifest.TIMELINE_PROCESS_BATCH_METHOD
 import dev.dimension.flare.feature.plugin.manifest.compileTimelineFilterRegex
 import dev.dimension.flare.feature.plugin.manifest.fallbackText
 import dev.dimension.flare.feature.plugin.manifest.isValidLocaleTag
@@ -40,7 +41,9 @@ import dev.dimension.flare.ui.model.pluginPostEntityKey
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -208,7 +211,7 @@ internal class PluginTimelineProcessorServiceV1(
             plugin = plugin,
             key = key,
             context = context,
-            method = METHOD_PROCESS_BATCH,
+            method = TIMELINE_PROCESS_BATCH_METHOD,
             request = request,
             timeout = PluginCallTimeoutV1.Extended,
             validate = validate,
@@ -228,7 +231,9 @@ internal class PluginTimelineProcessorServiceV1(
 
     private val memoryState = MutableStateFlow(MemorySnapshot())
     private val compiledFilters = MutableStateFlow<Map<FilterCacheKey, CompiledTimelineFilter?>>(emptyMap())
+    private val activePluginCache = MutableStateFlow<ActivePluginsSnapshot?>(null)
     private val clearState = MutableStateFlow(ClearEpochsSnapshot())
+    private val submissionOrder = MutableStateFlow(0L)
     private val pendingSubmissions = MutableStateFlow(PendingSubmissionsState())
     private val pluginWorkerJobs = MutableStateFlow<Map<String, Job>>(emptyMap())
 
@@ -307,29 +312,17 @@ internal class PluginTimelineProcessorServiceV1(
 
     override fun submitPosts(posts: List<UiTimelineV2.Post>) {
         if (posts.isEmpty()) return
-        if (!grants.isHydrated) {
-            val hasTimelineProcessorCandidate =
-                subsystem.running.value.plugins.values
-                    .any { it.installed.manifest.timelineProcessor != null }
-            if (!hasTimelineProcessorCandidate) return
-            val dedupedInputs = LinkedHashMap<String, ExtractedPluginPostInput>(posts.size)
-            posts.forEach { post ->
-                val input = post.extractPluginPostInput()
-                dedupedInputs[input.postEntityKey] = input
+        val activePlugins = if (grants.isHydrated) currentActivePlugins() else null
+        if (activePlugins == null) {
+            val running = subsystem.running.value.plugins.values
+            if (running.any { it.installed.manifest.timelineProcessor != null }) {
+                enqueuePendingSubmissions(posts.map { it.extractPluginPostInput() })
             }
-            enqueuePendingSubmissions(dedupedInputs.values.toList())
             return
         }
-
-        val activePlugins = currentActivePlugins()
         if (activePlugins.isEmpty()) return
 
-        val dedupedInputs = LinkedHashMap<String, ExtractedPluginPostInput>(posts.size)
-        posts.forEach { post ->
-            val input = post.extractPluginPostInput()
-            dedupedInputs[input.postEntityKey] = input
-        }
-        val inputs = dedupedInputs.values.toList()
+        val inputs = posts.map { it.extractPluginPostInput() }
         val now = nowEpochMillis()
         val snapshot = memoryState.value
 
@@ -341,7 +334,7 @@ internal class PluginTimelineProcessorServiceV1(
                 }
             }
         if (!needsAnyWork) {
-            touchLruKeys(inputs.map { it.postEntityKey })
+            memoryState.update { current -> inputs.fold(current) { next, input -> next.touch(input.postEntityKey) } }
             return
         }
 
@@ -350,14 +343,15 @@ internal class PluginTimelineProcessorServiceV1(
 
     private fun enqueuePendingSubmissions(inputs: List<ExtractedPluginPostInput>) {
         if (inputs.isEmpty()) return
+        val stamp = clearState.value
+        val order = submissionOrder.updateAndGet { it + 1L }
         var shouldLaunchDrain = false
         while (true) {
-            val stamp = clearState.value
             val current = pendingSubmissions.value
             val merged = LinkedHashMap<String, StampedInput>(current.items.size + inputs.size)
             merged.putAll(current.items)
             inputs.forEach { input ->
-                merged[input.postEntityKey] = StampedInput(input = input, stamp = stamp)
+                merged[input.postEntityKey] = StampedInput(input, stamp, order).latest(merged[input.postEntityKey])
             }
             val launchNewDrain = !current.draining
             val next = PendingSubmissionsState(items = merged, draining = true)
@@ -493,6 +487,7 @@ internal class PluginTimelineProcessorServiceV1(
         pluginId: String,
     ) {
         val initialStamp = clearState.value
+        val order = submissionOrder.updateAndGet { it + 1L }
         if (!grants.isHydrated) {
             val candidate =
                 subsystem.running.value.plugins[pluginId]
@@ -509,7 +504,7 @@ internal class PluginTimelineProcessorServiceV1(
                     pluginId = pluginId,
                     expectedCacheKey = active.cacheKey,
                     trigger = TimelineProcessTriggerV1.ManualRefresh,
-                    items = listOf(StampedInput(input = input, stamp = initialStamp)),
+                    items = listOf(StampedInput(input, initialStamp, order)),
                 )
             }
             return
@@ -525,7 +520,7 @@ internal class PluginTimelineProcessorServiceV1(
                 pluginId = pluginId,
                 expectedCacheKey = active.cacheKey,
                 trigger = TimelineProcessTriggerV1.ManualRefresh,
-                items = listOf(StampedInput(input = input, stamp = initialStamp)),
+                items = listOf(StampedInput(input, initialStamp, order)),
             )
         }
     }
@@ -666,7 +661,6 @@ internal class PluginTimelineProcessorServiceV1(
                 for (queue in pluginQueues.values) {
                     queue.pendingManual.keys.removeAll { it.startsWith(prefix) }
                     queue.pendingAuto.keys.removeAll { it.startsWith(prefix) }
-                    queue.inFlightAuto.keys.removeAll { it.startsWith(prefix) }
                 }
             }
             dbMutex.withLock {
@@ -720,7 +714,6 @@ internal class PluginTimelineProcessorServiceV1(
                 for (queue in pluginQueues.values) {
                     queue.pendingManual.entries.removeAll { it.value.stamp.globalEpoch < clearedGlobalEpoch }
                     queue.pendingAuto.entries.removeAll { it.value.stamp.globalEpoch < clearedGlobalEpoch }
-                    queue.inFlightAuto.entries.removeAll { it.value.stamp.globalEpoch < clearedGlobalEpoch }
                     if (queue.pendingManual.isEmpty() && queue.pendingAuto.isEmpty() && queue.workerJob?.isActive != true) {
                         queue.workerJob = null
                     }
@@ -791,7 +784,7 @@ internal class PluginTimelineProcessorServiceV1(
                 }
             hydrateFromDatabase(uncheckedItems, dbRows, preDbStamp)
         } else {
-            touchLruKeys(liveAfterGrants.map { it.input.postEntityKey })
+            memoryState.update { current -> liveAfterGrants.fold(current) { next, stamped -> next.touch(stamped.input.postEntityKey) } }
         }
 
         val livePlugins = currentActivePlugins()
@@ -842,7 +835,7 @@ internal class PluginTimelineProcessorServiceV1(
                             next.updatePost(input.postEntityKey) { record ->
                                 val existing = record.entries[active.pluginId]
                                 if (existing != null && existing.pluginCacheKey == active.cacheKey &&
-                                    existing.sourceHash == input.sourceHash
+                                    (existing.sourceHash == input.sourceHash || existing.inputOrder > stamped.order)
                                 ) {
                                     record
                                 } else {
@@ -854,6 +847,7 @@ internal class PluginTimelineProcessorServiceV1(
                                                         CachedPluginPostEntry(
                                                             pluginCacheKey = active.cacheKey,
                                                             sourceHash = input.sourceHash,
+                                                            inputOrder = stamped.order,
                                                             cards = emptyList(),
                                                             expiresAtMillis = null,
                                                             cachePolicy = WidgetCachePolicyV1.MemoryOnly,
@@ -919,7 +913,9 @@ internal class PluginTimelineProcessorServiceV1(
 
                             updatedHydrated = updatedHydrated + (pluginId to livePlugin.cacheKey)
                             val existing = updatedEntries[pluginId]
-                            if (existing?.isCurrent(livePlugin.cacheKey, input.sourceHash, now) == true) {
+                            if (existing?.isCurrent(livePlugin.cacheKey, input.sourceHash, now) == true ||
+                                existing?.supersedes(livePlugin.cacheKey, stamped) == true
+                            ) {
                                 continue
                             }
 
@@ -940,6 +936,7 @@ internal class PluginTimelineProcessorServiceV1(
                                         CachedPluginPostEntry(
                                             pluginCacheKey = livePlugin.cacheKey,
                                             sourceHash = input.sourceHash,
+                                            inputOrder = maxOf(stamped.order, existing?.inputOrder ?: 0L),
                                             cards = decodedCards,
                                             expiresAtMillis = row.expiresAtMillis,
                                             cachePolicy = WidgetCachePolicyV1.Disk,
@@ -985,8 +982,11 @@ internal class PluginTimelineProcessorServiceV1(
                         if (!stamped.stamp.isPostPluginStillValid(postKey, pluginId, currentClear)) {
                             cancelledInputs.add(stamped.input)
                         } else {
-                            queue.pendingAuto.remove(postKey)
-                            queue.pendingManual[postKey] = stamped
+                            queue.pendingManual[postKey] =
+                                stamped
+                                    .latest(queue.pendingAuto.remove(postKey))
+                                    .latest(queue.pendingManual[postKey])
+                                    .latest(queue.inFlight?.items?.get(postKey))
                         }
                     }
                     if (cancelledInputs.isNotEmpty()) {
@@ -1003,20 +1003,24 @@ internal class PluginTimelineProcessorServiceV1(
                         if (!stamped.stamp.isPostPluginStillValid(postKey, pluginId, currentClear)) {
                             return@forEach
                         }
-                        val inFlight = queue.inFlightAuto[postKey]
+                        val pendingManual = queue.pendingManual[postKey]
+                        if (pendingManual != null) {
+                            queue.pendingManual[postKey] = stamped.latest(pendingManual)
+                            return@forEach
+                        }
+                        val batch = queue.inFlight
+                        val inFlight = batch?.items?.get(postKey)
                         val alreadyInFlight =
                             inFlight != null &&
-                                inFlight.cacheKey == expectedCacheKey &&
-                                inFlight.sourceHash == input.sourceHash &&
+                                batch.active.cacheKey == expectedCacheKey &&
+                                (inFlight.order > stamped.order || inFlight.input.sourceHash == input.sourceHash) &&
                                 inFlight.stamp.isPostPluginStillValid(postKey, pluginId, currentClear)
-                        val alreadyManual = postKey in queue.pendingManual
                         val record = snapshot.posts[postKey]
                         if (
                             !alreadyInFlight &&
-                            !alreadyManual &&
                             !isSatisfiedOrCoolingDown(record, active, input.sourceHash, now)
                         ) {
-                            queue.pendingAuto[postKey] = stamped
+                            queue.pendingAuto[postKey] = stamped.latest(queue.pendingAuto[postKey])
                         }
                     }
                 }
@@ -1041,104 +1045,59 @@ internal class PluginTimelineProcessorServiceV1(
         pluginId: String,
         workerEpoch: Long,
     ) {
+        val owner = kotlin.coroutines.coroutineContext[Job]
         try {
             while (true) {
-                val immediateManual =
+                val coalesce =
                     queueMutex.withLock {
-                        if (currentClearEpoch(pluginId) != workerEpoch || currentActivePlugin(pluginId) == null) {
-                            val removed = pluginQueues.remove(pluginId)
-                            removed?.pendingManual?.values?.let { queued ->
-                                clearRefreshingForItems(pluginId, queued.map { it.input })
-                            }
-                            return
-                        }
                         val queue = pluginQueues[pluginId] ?: return
-                        if (queue.pendingManual.isNotEmpty()) {
-                            queue.pendingManual.values
-                                .toList()
-                                .also { queue.pendingManual.clear() }
-                        } else if (queue.pendingAuto.isEmpty()) {
-                            queue.workerJob = null
-                            return
-                        } else {
-                            null
-                        }
+                        queue.pendingManual.isEmpty() && queue.pendingAuto.isNotEmpty()
                     }
+                if (coalesce && coalesceDelayMillis > 0L) delay(coalesceDelayMillis)
 
-                if (immediateManual != null) {
-                    val active = currentActivePlugin(pluginId)
-                    if (active == null || currentClearEpoch(pluginId) != workerEpoch) {
-                        clearRefreshingForItems(pluginId, immediateManual.map { it.input })
-                        return
-                    }
-                    executeBatches(active, workerEpoch, TimelineProcessTriggerV1.ManualRefresh, immediateManual)
-                    continue
-                }
-
-                if (coalesceDelayMillis > 0L) {
-                    delay(coalesceDelayMillis)
-                }
-
-                val autoBatch: Triple<ActiveProcessorPlugin, List<StampedInput>, List<Pair<String, InFlightAutoEntry>>>? =
+                val batch =
                     queueMutex.withLock {
+                        val queue = pluginQueues[pluginId] ?: return
+                        if (queue.workerJob !== owner) return
                         val active = currentActivePlugin(pluginId)
                         if (active == null || currentClearEpoch(pluginId) != workerEpoch) {
-                            val removed = pluginQueues.remove(pluginId)
-                            removed?.pendingManual?.values?.let { queued ->
-                                clearRefreshingForItems(pluginId, queued.map { it.input })
-                            }
+                            pluginQueues.remove(pluginId)
+                            clearRefreshingForItems(pluginId, queue.pendingManual.values.map { it.input })
                             return
                         }
-                        val queue = pluginQueues[pluginId] ?: return
-                        if (queue.pendingManual.isNotEmpty()) {
-                            null
-                        } else if (queue.pendingAuto.isEmpty()) {
-                            queue.workerJob = null
-                            return
-                        } else {
-                            val drained = queue.pendingAuto.values.toList()
-                            queue.pendingAuto.clear()
-                            val inFlightEntries =
-                                drained.map { stamped ->
-                                    val entry =
-                                        InFlightAutoEntry(
-                                            cacheKey = active.cacheKey,
-                                            sourceHash = stamped.input.sourceHash,
-                                            stamp = stamped.stamp,
-                                        )
-                                    queue.inFlightAuto[stamped.input.postEntityKey] = entry
-                                    stamped.input.postEntityKey to entry
+                        val (trigger, pending) =
+                            when {
+                                queue.pendingManual.isNotEmpty() -> {
+                                    TimelineProcessTriggerV1.ManualRefresh to queue.pendingManual
                                 }
-                            Triple(active, drained, inFlightEntries)
+
+                                queue.pendingAuto.isNotEmpty() -> {
+                                    TimelineProcessTriggerV1.Auto to queue.pendingAuto
+                                }
+
+                                else -> {
+                                    queue.workerJob = null
+                                    return
+                                }
+                            }
+                        PluginBatch(active, trigger, pending.toMap()).also {
+                            pending.clear()
+                            queue.inFlight = it
                         }
                     }
 
-                if (autoBatch == null) {
-                    continue
-                }
-                val (active, drained, inFlightEntries) = autoBatch
                 try {
-                    executeBatches(active, workerEpoch, TimelineProcessTriggerV1.Auto, drained)
+                    executeBatches(batch.active, workerEpoch, batch.trigger, batch.items.values)
                 } finally {
                     queueMutex.withLock {
                         val queue = pluginQueues[pluginId]
-                        if (queue != null) {
-                            inFlightEntries.forEach { (postKey, entry) ->
-                                if (queue.inFlightAuto[postKey] === entry) {
-                                    queue.inFlightAuto.remove(postKey)
-                                }
-                            }
-                        }
+                        if (queue?.inFlight === batch) queue.inFlight = null
                     }
                 }
             }
         } finally {
             pluginWorkerJobs.update { current ->
-                if (current[pluginId] == kotlin.coroutines.coroutineContext[Job]) {
-                    current - pluginId
-                } else {
-                    current
-                }
+                if (current[pluginId] === owner) current - pluginId else current
             }
         }
     }
@@ -1147,7 +1106,7 @@ internal class PluginTimelineProcessorServiceV1(
         active: ActiveProcessorPlugin,
         expectedEpoch: Long,
         trigger: TimelineProcessTriggerV1,
-        items: List<StampedInput>,
+        items: Collection<StampedInput>,
     ) {
         val batchSize = active.maxBatchSize.coerceIn(1, WireTimelineProcessorLimitsV1.MAX_BATCH_SIZE)
         for (chunk in items.chunked(batchSize)) {
@@ -1174,9 +1133,10 @@ internal class PluginTimelineProcessorServiceV1(
             return
         }
         val currentClearAtStart = clearState.value
+        val snapshotAtStart = memoryState.value
         val (itemPairs, staleItems) =
             chunk.partition { (_, stamped) ->
-                stamped.stamp.isPostPluginStillValid(stamped.input.postEntityKey, pluginId, currentClearAtStart)
+                stamped.canApply(pluginId, expectedCacheKey, currentClearAtStart, snapshotAtStart)
             }
         if (staleItems.isNotEmpty()) {
             clearRefreshingForItems(pluginId, staleItems.map { it.second.input })
@@ -1240,6 +1200,7 @@ internal class PluginTimelineProcessorServiceV1(
                 val cachePolicy = itemResult?.cachePolicy ?: WidgetCachePolicyV1.Disk
                 val ttlSeconds = itemResult?.ttlSeconds
                 val cards = itemResult?.cards.orEmpty()
+                val previous = snapshotAtStart.posts[stamped.input.postEntityKey]?.entries?.get(pluginId)
                 val expiresAtMillis =
                     when {
                         ttlSeconds != null -> now + ttlSeconds * 1_000L
@@ -1252,6 +1213,7 @@ internal class PluginTimelineProcessorServiceV1(
                         CachedPluginPostEntry(
                             pluginCacheKey = expectedCacheKey,
                             sourceHash = stamped.input.sourceHash,
+                            inputOrder = maxOf(stamped.order, previous?.inputOrder ?: 0L),
                             cards = cards,
                             expiresAtMillis = expiresAtMillis,
                             cachePolicy = cachePolicy,
@@ -1262,9 +1224,10 @@ internal class PluginTimelineProcessorServiceV1(
         dbMutex.withLock {
             if (!isPluginInvocationStillValid(plugin, expectedCacheKey, expectedEpoch)) return@withLock
             val currentClear = clearState.value
+            val cached = memoryState.value
             val (diskItems, transientItems) =
                 resolvedItems
-                    .filter { it.stamped.stamp.isPostPluginStillValid(it.stamped.input.postEntityKey, pluginId, currentClear) }
+                    .filter { it.stamped.canApply(pluginId, expectedCacheKey, currentClear, cached) }
                     .partition { it.entry.cachePolicy == WidgetCachePolicyV1.Disk }
             withContext(ioDispatcher) {
                 if (transientItems.isNotEmpty()) {
@@ -1316,7 +1279,7 @@ internal class PluginTimelineProcessorServiceV1(
             var next = current
             for (resolved in resolvedItems) {
                 val postKey = resolved.stamped.input.postEntityKey
-                if (!resolved.stamped.stamp.isPostPluginStillValid(postKey, pluginId, currentClear)) {
+                if (!resolved.stamped.canApply(pluginId, expectedCacheKey, currentClear, next)) {
                     if (postKey in next.posts) {
                         next =
                             next.updatePost(postKey) { record ->
@@ -1464,11 +1427,6 @@ internal class PluginTimelineProcessorServiceV1(
         }
     }
 
-    private fun touchLruKeys(keys: List<String>) {
-        if (keys.isEmpty()) return
-        memoryState.update { current -> current.touchAll(keys) }
-    }
-
     private fun isSatisfiedOrCoolingDown(
         record: PostMemoryRecord?,
         active: ActiveProcessorPlugin,
@@ -1516,11 +1474,24 @@ internal class PluginTimelineProcessorServiceV1(
 
     private fun currentActivePlugins(grantMap: Map<String, Set<String>> = grants.current): List<ActiveProcessorPlugin> {
         val runningMap = subsystem.running.value.plugins
-        if (runningMap.isEmpty() || grantMap.isEmpty()) return emptyList()
+        if (runningMap.isEmpty() || grantMap.isEmpty()) {
+            activePluginCache.value = null
+            return emptyList()
+        }
         val locale = localeProvider()
-        return runningMap.values
-            .mapNotNull { running -> toActiveProcessorPluginOrNull(running, grantMap, locale) }
-            .sortedBy { it.pluginId }
+        val storageRevision = subsystem.storage.changes.value
+        val cached = activePluginCache.value
+        if (cached != null && cached.running === runningMap && cached.grants === grantMap &&
+            cached.storageRevision == storageRevision && cached.locale == locale
+        ) {
+            return cached.active
+        }
+        val active =
+            runningMap.values
+                .mapNotNull { running -> toActiveProcessorPluginOrNull(running, grantMap, locale) }
+                .sortedBy { it.pluginId }
+        activePluginCache.value = ActivePluginsSnapshot(runningMap, grantMap, storageRevision, locale, active)
+        return active
     }
 
     private fun toActiveProcessorPluginOrNull(
@@ -1575,9 +1546,9 @@ internal class PluginTimelineProcessorServiceV1(
         val namespaces = requireNotNull(manifest.timelineProcessor).cache.storageNamespaces
         val token =
             runCatching {
-                subsystem.storage.token(manifest.id, namespaces)
+                subsystem.storage.token(manifest.id, namespaces, forTimelineProcessor = true)
             }.getOrElse { "unavailable" }
-        return "plugin:${manifest.id}:${plugin.installed.packageHash}:${plugin.generation}:$token:$locale"
+        return "plugin:timeline:v2:${manifest.id}:${plugin.installed.packageHash}:${plugin.generation}:$token:$locale"
     }
 
     private fun resolvePluginDisplayName(
@@ -1627,6 +1598,14 @@ internal class PluginTimelineProcessorServiceV1(
         val allowMediaNetwork: Boolean,
     )
 
+    private class ActivePluginsSnapshot(
+        val running: Map<String, RunningPluginV1>,
+        val grants: Map<String, Set<String>>,
+        val storageRevision: Long,
+        val locale: String,
+        val active: List<ActiveProcessorPlugin>,
+    )
+
     private data class ActivePluginFingerprint(
         val cacheKey: String,
         val allowMediaNetwork: Boolean,
@@ -1671,23 +1650,39 @@ internal class PluginTimelineProcessorServiceV1(
     private data class StampedInput(
         val input: ExtractedPluginPostInput,
         val stamp: ClearEpochsSnapshot,
-    )
+        val order: Long,
+    ) {
+        // Manual refresh and page intake can reach the worker in a different order from their callers.
+        fun latest(other: StampedInput?): StampedInput = if (other != null && other.order > order) other else this
+
+        fun canApply(
+            pluginId: String,
+            cacheKey: String,
+            cleared: ClearEpochsSnapshot,
+            snapshot: MemorySnapshot,
+        ): Boolean =
+            stamp.isPostPluginStillValid(input.postEntityKey, pluginId, cleared) &&
+                snapshot.posts[input.postEntityKey]
+                    ?.entries
+                    ?.get(pluginId)
+                    ?.supersedes(cacheKey, this) != true
+    }
 
     private data class PendingSubmissionsState(
         val items: Map<String, StampedInput> = emptyMap(),
         val draining: Boolean = false,
     )
 
-    private class InFlightAutoEntry(
-        val cacheKey: String,
-        val sourceHash: String,
-        val stamp: ClearEpochsSnapshot,
+    private class PluginBatch(
+        val active: ActiveProcessorPlugin,
+        val trigger: TimelineProcessTriggerV1,
+        val items: Map<String, StampedInput>,
     )
 
     private class PluginQueueState {
         val pendingManual = LinkedHashMap<String, StampedInput>()
         val pendingAuto = LinkedHashMap<String, StampedInput>()
-        val inFlightAuto = LinkedHashMap<String, InFlightAutoEntry>()
+        var inFlight: PluginBatch? = null
         var workerJob: Job? = null
     }
 
@@ -1699,10 +1694,16 @@ internal class PluginTimelineProcessorServiceV1(
     private data class CachedPluginPostEntry(
         val pluginCacheKey: String,
         val sourceHash: String,
+        val inputOrder: Long,
         val cards: List<CachedWidgetCardPayloadV1>,
         val expiresAtMillis: Long?,
         val cachePolicy: WidgetCachePolicyV1,
     ) {
+        fun supersedes(
+            cacheKey: String,
+            submitted: StampedInput,
+        ): Boolean = pluginCacheKey == cacheKey && inputOrder > submitted.order && sourceHash != submitted.input.sourceHash
+
         fun isCurrent(
             cacheKey: String,
             currentSourceHash: String,
@@ -1733,55 +1734,34 @@ internal class PluginTimelineProcessorServiceV1(
     }
 
     private class MemorySnapshot(
-        val posts: Map<String, PostMemoryRecord> = emptyMap(),
+        val posts: PersistentMap<String, PostMemoryRecord> = persistentMapOf(),
+        private val mostRecentKey: String? = null,
     ) {
         fun updatePost(
             postEntityKey: String,
             transform: (PostMemoryRecord) -> PostMemoryRecord,
         ): MemorySnapshot {
-            val copy = LinkedHashMap<String, PostMemoryRecord>(posts.size + 1)
-            copy.putAll(posts)
-            val existing = copy.remove(postEntityKey) ?: PostMemoryRecord()
-            val updated = transform(existing)
+            val existing = posts[postEntityKey]
+            val updated = transform(existing ?: PostMemoryRecord())
             if (!updated.isEmpty) {
-                copy[postEntityKey] = updated
-                while (copy.size > MAX_MEMORY_POSTS) {
-                    val eldestKey =
-                        copy.entries
-                            .iterator()
-                            .next()
-                            .key
-                    copy.remove(eldestKey)
-                }
+                val ordered = if (existing == null || mostRecentKey == postEntityKey) posts else posts.removing(postEntityKey)
+                val next = ordered.putting(postEntityKey, updated)
+                return MemorySnapshot(if (next.size > MAX_MEMORY_POSTS) next.removing(next.keys.first()) else next, postEntityKey)
             }
-            return MemorySnapshot(copy)
+            if (existing == null) return this
+            return MemorySnapshot(posts.removing(postEntityKey), mostRecentKey.takeUnless { it == postEntityKey })
         }
 
-        fun touchAll(keys: List<String>): MemorySnapshot {
-            if (posts.isEmpty()) return this
-            var anyPresent = false
-            for (key in keys) {
-                if (key in posts) {
-                    anyPresent = true
-                    break
-                }
-            }
-            if (!anyPresent) return this
-            val copy = LinkedHashMap<String, PostMemoryRecord>(posts.size)
-            copy.putAll(posts)
-            for (key in keys) {
-                val existing = copy.remove(key)
-                if (existing != null) {
-                    copy[key] = existing
-                }
-            }
-            return MemorySnapshot(copy)
+        fun touch(key: String): MemorySnapshot {
+            if (key == mostRecentKey) return this
+            val record = posts[key] ?: return this
+            return MemorySnapshot(posts.removing(key).putting(key, record), key)
         }
 
         fun removePlugin(pluginId: String): MemorySnapshot {
             if (posts.isEmpty()) return this
             var changed = false
-            val copy = LinkedHashMap<String, PostMemoryRecord>(posts.size)
+            val copy = posts.builder()
             for ((postKey, record) in posts) {
                 val hasPlugin =
                     pluginId in record.hydratedPluginCacheKeys ||
@@ -1789,9 +1769,7 @@ internal class PluginTimelineProcessorServiceV1(
                         pluginId in record.refreshingPlugins ||
                         pluginId in record.cooldowns ||
                         record.toggledCollapsibles.keys.any { it.first == pluginId }
-                if (!hasPlugin) {
-                    copy[postKey] = record
-                } else {
+                if (hasPlugin) {
                     changed = true
                     val stripped =
                         PostMemoryRecord(
@@ -1803,51 +1781,51 @@ internal class PluginTimelineProcessorServiceV1(
                         )
                     if (!stripped.isEmpty) {
                         copy[postKey] = stripped
+                    } else {
+                        copy.remove(postKey)
                     }
                 }
             }
-            return if (changed) MemorySnapshot(copy) else this
+            return if (changed) MemorySnapshot(copy.build()) else this
         }
 
         fun removeAccountPrefix(prefix: String): Pair<MemorySnapshot, Boolean> {
             if (posts.isEmpty()) return this to false
             var changed = false
             var hadVisible = false
-            val copy = LinkedHashMap<String, PostMemoryRecord>(posts.size)
+            val copy = posts.builder()
             for ((postKey, record) in posts) {
                 if (postKey.startsWith(prefix)) {
                     changed = true
+                    copy.remove(postKey)
                     if (record.entries.values.any { it.cards.isNotEmpty() } || record.refreshingPlugins.isNotEmpty()) {
                         hadVisible = true
                     }
-                } else {
-                    copy[postKey] = record
                 }
             }
-            return if (changed) MemorySnapshot(copy) to hadVisible else this to false
+            return if (changed) MemorySnapshot(copy.build()) to hadVisible else this to false
         }
 
         fun clearCooldowns(): MemorySnapshot {
             if (posts.isEmpty()) return this
             var changed = false
-            val copy = LinkedHashMap<String, PostMemoryRecord>(posts.size)
+            val copy = posts.builder()
             for ((postKey, record) in posts) {
-                if (record.cooldowns.isEmpty()) {
-                    copy[postKey] = record
-                } else {
+                if (record.cooldowns.isNotEmpty()) {
                     changed = true
                     val cleared = record.copy(cooldowns = emptyMap())
                     if (!cleared.isEmpty) {
                         copy[postKey] = cleared
+                    } else {
+                        copy.remove(postKey)
                     }
                 }
             }
-            return if (changed) MemorySnapshot(copy) else this
+            return if (changed) MemorySnapshot(copy.build()) else this
         }
     }
 
     private companion object {
-        const val METHOD_PROCESS_BATCH = "timelineProcessor.processBatch"
         const val DEFAULT_LOCALE = "en"
         const val MAX_LOCALE_LENGTH = 128
         const val MAX_MEMORY_POSTS = 1_024

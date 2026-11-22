@@ -297,16 +297,15 @@ public fun parseAndValidateTimelineProcessBatchResponse(
         "Too many results in timeline processor response"
     }
 
-    val seenItemIds = HashSet<String>(resultsArray.size)
     val validatedByItemId = LinkedHashMap<String, ValidatedPluginItemCardsV1>()
 
     for (resultElement in resultsArray) {
         val resultObj = resultElement.requireJsonObject("TimelineProcessItemResultV1")
         val itemId = resultObj.requireNonBlankString("itemId", WireLimitsV1.MAX_ID_LENGTH)
-        require(seenItemIds.add(itemId)) { "Duplicate itemId in timeline processor results: $itemId" }
         if (itemId !in validItemIds) {
             continue
         }
+        require(itemId !in validatedByItemId) { "Duplicate itemId in timeline processor results: $itemId" }
 
         val (cachePolicy, ttlSeconds) = parseCacheOptions(resultObj["cache"])
         val cardsArray = resultObj.requireArrayField("cards")

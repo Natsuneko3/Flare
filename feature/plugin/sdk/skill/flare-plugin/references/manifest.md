@@ -350,9 +350,14 @@ in `plugin.js`. See [timeline post processing](../ABI.md#timeline-post-processin
 | `maxBatchSize` | `20` | Integer `1..50` controlling maximum posts sent per `processBatch` call |
 | `filter` | Omitted or `null` | Optional native pre-filter; when omitted, all posts are eligible |
 | `filter.containsAny` | `[]` | `0..32` non-blank case-insensitive substrings, each at most 256 UTF-8 bytes |
-| `filter.regex` | Omitted or `null` | Non-blank pattern up to 512 characters. Use portable literals, character classes, anchors, alternation and repetition. Android and Desktop use RE2/J. Apple stops long-running matches after a 10 ms budget. |
+| `filter.regex` | Omitted or `null` | Non-blank pattern up to 512 characters. Use portable literals, character classes, anchors, alternation and repetition. Shorthand classes and word boundaries use the ASCII rules below. Apple limits each match to 10 ms. |
 | `filter.linkHosts` | `[]` | `0..32` canonical lowercase hostnames (no scheme, port, or leading/trailing dot); matches exact host or subdomains |
 | `filter.requireLinks` | `false` | When `true`, requires at least one HTTPS link on the post or preview card |
-| `cache.storageNamespaces` | `null` | `0..16` distinct storage namespace names watched for cache invalidation (`null` watches all namespaces) |
+| `cache.storageNamespaces` | `null` | Watch changes to `0..16` distinct storage namespaces, or all namespaces when `null`. Writes made by this plugin’s `processBatch` preserve its timeline cache. Settings and other invocation methods invalidate it when they change a watched namespace. |
 
 All non-empty fields inside `filter` combine with logical AND.
+
+`\d` matches `[0-9]`, `\w` matches `[A-Za-z0-9_]`, and `\s` matches space, tab, line feed, form feed or carriage return.
+`\D`, `\W` and `\S` match their complements. Word boundaries (`\b` and `\B`) use that same ASCII word alphabet.
+POSIX classes such as `[[:digit:]]` also use ASCII ranges. To match decimal digits in all scripts, use `\p{Nd}`.
+For example, `^\d+$` matches `42` and `^\p{Nd}+$` matches both `42` and `٤٢`.

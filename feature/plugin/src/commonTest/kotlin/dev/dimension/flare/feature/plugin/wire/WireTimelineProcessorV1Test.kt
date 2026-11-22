@@ -443,6 +443,7 @@ class WireTimelineProcessorV1Test {
                       "itemId": "unrequested-item",
                       "cards": []
                     },
+                    { "itemId": "unrequested-item" },
                     {
                       "itemId": "i1",
                       "cards": [{

@@ -75,6 +75,20 @@ public enum class UiWidgetSparklineHeight {
     Md,
 }
 
+public enum class UiWidgetSparklineTrend {
+    Rising,
+    Falling,
+    Flat,
+    Fluctuating,
+}
+
+@Immutable
+public data class UiWidgetSparklineSummary public constructor(
+    public val trend: UiWidgetSparklineTrend,
+    public val minimum: Double,
+    public val maximum: Double,
+)
+
 @Serializable
 @Immutable
 public sealed interface UiWidgetAction {
@@ -187,6 +201,21 @@ public sealed class UiWidgetNode {
         public val height: UiWidgetSparklineHeight = UiWidgetSparklineHeight.Sm,
         override val weight: Float? = null,
     ) : UiWidgetNode() {
+        public val summary: UiWidgetSparklineSummary? by lazy {
+            val finite = points.filter { it.isFinite() }
+            if (finite.isEmpty()) return@lazy null
+            val minimum = finite.min()
+            val maximum = finite.max()
+            val trend =
+                when {
+                    minimum == maximum -> UiWidgetSparklineTrend.Flat
+                    finite.last() > finite.first() -> UiWidgetSparklineTrend.Rising
+                    finite.last() < finite.first() -> UiWidgetSparklineTrend.Falling
+                    else -> UiWidgetSparklineTrend.Fluctuating
+                }
+            UiWidgetSparklineSummary(trend, minimum, maximum)
+        }
+
         public val normalizedPoints: ImmutableList<Float> by lazy {
             if (points.isEmpty()) {
                 persistentListOf()
@@ -337,7 +366,9 @@ public data class ExtractedPluginPostInput public constructor(
 
 public fun UiTimelineV2.Post.pluginPostEntityKey(): String = "${accountType}_$statusKey"
 
-public fun UiTimelineV2.Post.extractPluginPostInput(): ExtractedPluginPostInput {
+public fun UiTimelineV2.Post.extractPluginPostInput(): ExtractedPluginPostInput = pluginPostInput
+
+internal fun UiTimelineV2.Post.buildPluginPostInput(): ExtractedPluginPostInput {
     val contentPlain = content.original.extractParagraphPlainText()
     val contentWarningPlain = contentWarning?.original?.extractParagraphPlainText()?.takeIf { it.isNotEmpty() }
     val safeCardUrl = card?.url?.normalizeSafePluginHttpsUrlOrNull()

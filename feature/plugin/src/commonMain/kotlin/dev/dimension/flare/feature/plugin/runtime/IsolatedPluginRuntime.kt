@@ -10,6 +10,7 @@ import dev.dimension.flare.feature.plugin.host.PluginInvocationMetadataV1
 import dev.dimension.flare.feature.plugin.host.platformUuid
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
+import dev.dimension.flare.feature.plugin.manifest.TIMELINE_PROCESS_BATCH_METHOD
 import dev.dimension.flare.feature.plugin.manifest.requiredMethods
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.storage.PluginStorageAccessV1
@@ -99,7 +100,15 @@ internal class IsolatedPluginRuntime(
                     val result =
                         withTimeout(timeout.millis) {
                             coroutineScope {
-                                val invocation = Invocation(platformUuid(), context, timeout.millis, this)
+                                val storage =
+                                    if (method ==
+                                        TIMELINE_PROCESS_BATCH_METHOD
+                                    ) {
+                                        storageAccess?.forTimelineProcessor()
+                                    } else {
+                                        storageAccess
+                                    }
+                                val invocation = Invocation(platformUuid(), context, timeout.millis, this, storage)
                                 activeInvocation.value = invocation
                                 runtime.evaluate(
                                     "globalThis.__flareInvokeV1(${JsonPrimitive(invocation.id)}," +
@@ -163,7 +172,7 @@ internal class IsolatedPluginRuntime(
                                 invocation.context,
                                 invocation.timeoutMillis,
                                 plugin.installed.manifest.apiVersion,
-                                storageAccess,
+                                invocation.storage,
                             )
                         }
                     }.await()
@@ -198,6 +207,7 @@ internal class IsolatedPluginRuntime(
         val context: PluginInvocationContextV1,
         val timeoutMillis: Long,
         val scope: CoroutineScope,
+        val storage: PluginStorageAccessV1?,
     ) {
         val httpCalls = MutableStateFlow(0)
     }

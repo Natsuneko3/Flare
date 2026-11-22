@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,9 +22,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -35,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,13 +61,17 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,6 +80,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastForEach
@@ -87,6 +97,11 @@ import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.plugin_widget_copy
 import dev.dimension.flare.compose.ui.plugin_widget_page_indicator
 import dev.dimension.flare.compose.ui.plugin_widget_refresh
+import dev.dimension.flare.compose.ui.plugin_widget_trend_falling
+import dev.dimension.flare.compose.ui.plugin_widget_trend_flat
+import dev.dimension.flare.compose.ui.plugin_widget_trend_fluctuating
+import dev.dimension.flare.compose.ui.plugin_widget_trend_range
+import dev.dimension.flare.compose.ui.plugin_widget_trend_rising
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareDividerDefaults
@@ -105,6 +120,7 @@ import dev.dimension.flare.ui.model.UiWidgetCornerStyle
 import dev.dimension.flare.ui.model.UiWidgetGap
 import dev.dimension.flare.ui.model.UiWidgetNode
 import dev.dimension.flare.ui.model.UiWidgetSparklineHeight
+import dev.dimension.flare.ui.model.UiWidgetSparklineTrend
 import dev.dimension.flare.ui.model.UiWidgetTextStyle
 import dev.dimension.flare.ui.model.UiWidgetTone
 import dev.dimension.flare.ui.model.normalizeSafePluginHttpsUrlOrNull
@@ -117,6 +133,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
 import org.jetbrains.compose.resources.stringResource
+import kotlin.math.roundToInt
 
 private const val COPY_FEEDBACK_DURATION_MILLIS = 1_500L
 
@@ -125,6 +142,7 @@ private val WidgetCodeShape = RoundedCornerShape(8.dp)
 private val WidgetImageRoundedShape = RoundedCornerShape(8.dp)
 private val WidgetButtonShape = RoundedCornerShape(8.dp)
 private val WidgetIconShape = RoundedCornerShape(4.dp)
+private val LocalWidgetSizingPass = staticCompositionLocalOf { false }
 
 @Composable
 internal fun PluginWidgetStackComponent(
@@ -163,12 +181,14 @@ internal fun uniquePluginWidgetCardIdentities(cards: List<UiPluginWidgetCard>): 
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>) {
     val cardIdentities = remember(cards) { uniquePluginWidgetCardIdentities(cards) }
     val latestCards by rememberUpdatedState(cards)
     val latestIdentities by rememberUpdatedState(cardIdentities)
     val pagerState = rememberPagerState(pageCount = { latestCards.size })
+    val scope = rememberCoroutineScope()
     var selectedCardId by remember { mutableStateOf(cardIdentities.firstOrNull()) }
     var previousIdentities by remember { mutableStateOf(cardIdentities) }
 
@@ -234,15 +254,10 @@ private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>)
                 cards.fastForEachIndexed { index, card ->
                     val measurables =
                         subcompose("measure_${card.pluginId}_${card.id}_$index") {
-                            Box(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clearAndSetSemantics {},
-                            ) {
+                            CompositionLocalProvider(LocalWidgetSizingPass provides true) {
                                 PluginWidgetCardSurface(
                                     card = card,
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth().clearAndSetSemantics {},
                                 )
                             }
                         }
@@ -262,7 +277,6 @@ private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>)
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     val activeCards = latestCards
                     val activeIdentities = latestIdentities
@@ -289,37 +303,31 @@ private fun PluginWidgetMultiCardPager(cards: ImmutableList<UiPluginWidgetCard>)
                             )
                         }
                     }
-                    val pageCount = activeCards.size.coerceAtLeast(1)
-                    val pageIndicatorLabel =
-                        stringResource(
-                            Res.string.plugin_widget_page_indicator,
-                            (pagerState.currentPage + 1).coerceIn(1, pageCount),
-                            pageCount,
-                        )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier =
-                            Modifier
-                                .semantics {
-                                    contentDescription = pageIndicatorLabel
-                                }.testTag("plugin_widget_dots"),
+                    FlowRow(
+                        modifier = Modifier.selectableGroup().testTag("plugin_widget_dots"),
+                        horizontalArrangement = Arrangement.Center,
                     ) {
                         repeat(activeCards.size) { index ->
                             val selected = pagerState.currentPage == index
+                            val label = stringResource(Res.string.plugin_widget_page_indicator, index + 1, activeCards.size)
                             Box(
                                 modifier =
                                     Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (selected) {
-                                                PlatformTheme.colorScheme.primary
-                                            } else {
-                                                StatusComponentDefaults.secondaryColor.copy(alpha = 0.35f)
-                                            },
-                                        ),
-                            )
+                                        .size(48.dp)
+                                        .pointerHoverIcon(PointerIcon.Hand)
+                                        .selectable(selected, role = Role.Tab) {
+                                            scope.launch { pagerState.animateScrollToPage(index) }
+                                        }.semantics { contentDescription = label },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                val color =
+                                    if (selected) {
+                                        PlatformTheme.colorScheme.primary
+                                    } else {
+                                        StatusComponentDefaults.secondaryColor.copy(alpha = 0.35f)
+                                    }
+                                Spacer(Modifier.size(6.dp).background(color, CircleShape))
+                            }
                         }
                     }
                 }
@@ -525,19 +533,14 @@ private fun PluginWidgetCardHeader(card: UiPluginWidgetCard) {
         ) {
             val iconPath = card.pluginIconPath?.takeIf { it.isNotBlank() }
             if (iconPath != null) {
-                val iconModel =
-                    remember(iconPath) {
-                        if ("://" in iconPath) iconPath else iconPath.toPath()
-                    }
-                AsyncImage(
-                    model = iconModel,
-                    contentDescription = card.pluginName,
-                    contentScale = ContentScale.Fit,
-                    modifier =
-                        Modifier
-                            .size(16.dp)
-                            .clip(WidgetIconShape),
-                )
+                WidgetImageSlot(Modifier.size(16.dp).clip(WidgetIconShape)) { modifier ->
+                    AsyncImage(
+                        model = remember(iconPath) { if ("://" in iconPath) iconPath else iconPath.toPath() },
+                        contentDescription = card.pluginName,
+                        contentScale = ContentScale.Fit,
+                        modifier = modifier,
+                    )
+                }
             }
             PlatformText(
                 text = card.title.ifBlank { card.pluginName },
@@ -1052,15 +1055,7 @@ private fun MatchupSideContent(
         }
         val iconUrl = side.iconUrl?.takeIf { it.isNotBlank() }
         if (!alignEnd && iconUrl != null) {
-            NetworkImage(
-                model = remember(iconUrl) { iconUrl.toUiImage(proxy = ProxyRef.Global) },
-                contentDescription = side.name,
-                contentScale = ContentScale.Fit,
-                modifier =
-                    Modifier
-                        .size(20.dp)
-                        .clip(CircleShape),
-            )
+            WidgetMatchupIcon(iconUrl, side.name)
         }
         Column(
             modifier = Modifier.weight(1f, fill = false),
@@ -1085,15 +1080,7 @@ private fun MatchupSideContent(
             }
         }
         if (alignEnd && iconUrl != null) {
-            NetworkImage(
-                model = remember(iconUrl) { iconUrl.toUiImage(proxy = ProxyRef.Global) },
-                contentDescription = side.name,
-                contentScale = ContentScale.Fit,
-                modifier =
-                    Modifier
-                        .size(20.dp)
-                        .clip(CircleShape),
-            )
+            WidgetMatchupIcon(iconUrl, side.name)
         }
         if (!alignEnd) {
             side.score?.takeIf { it.isNotBlank() }?.let { score ->
@@ -1107,6 +1094,33 @@ private fun MatchupSideContent(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun WidgetMatchupIcon(
+    url: String,
+    name: String,
+) {
+    WidgetImageSlot(Modifier.size(20.dp).clip(CircleShape)) { modifier ->
+        NetworkImage(
+            model = remember(url) { url.toUiImage(proxy = ProxyRef.Global) },
+            contentDescription = name,
+            contentScale = ContentScale.Fit,
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun WidgetImageSlot(
+    modifier: Modifier,
+    image: @Composable (Modifier) -> Unit,
+) {
+    if (LocalWidgetSizingPass.current) {
+        Spacer(modifier)
+    } else {
+        image(modifier)
     }
 }
 
@@ -1130,7 +1144,10 @@ private fun WidgetSparklineNode(
         }
 
     Column(
-        modifier = modifier.let { if (fillWidth) it.fillMaxWidth() else it.width(88.dp) },
+        modifier =
+            modifier
+                .let { if (fillWidth) it.fillMaxWidth() else it.width(88.dp) }
+                .sparklineSemantics(node),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Canvas(
@@ -1223,6 +1240,37 @@ private fun WidgetSparklineNode(
         }
     }
 }
+
+@Composable
+private fun Modifier.sparklineSemantics(node: UiWidgetNode.Sparkline): Modifier {
+    if (LocalWidgetSizingPass.current) return this
+    val summary = node.summary ?: return this
+    val trend =
+        stringResource(
+            when (summary.trend) {
+                UiWidgetSparklineTrend.Rising -> Res.string.plugin_widget_trend_rising
+                UiWidgetSparklineTrend.Falling -> Res.string.plugin_widget_trend_falling
+                UiWidgetSparklineTrend.Flat -> Res.string.plugin_widget_trend_flat
+                UiWidgetSparklineTrend.Fluctuating -> Res.string.plugin_widget_trend_fluctuating
+            },
+        )
+    val languageTag = LocalLocale.current.toLanguageTag()
+    val formatNumber = remember(languageTag) { widgetChartNumberFormatter(languageTag) }
+    val range =
+        stringResource(
+            Res.string.plugin_widget_trend_range,
+            node.minLabel?.takeIf { it.isNotBlank() } ?: formatNumber(summary.minimum),
+            node.maxLabel?.takeIf { it.isNotBlank() } ?: formatNumber(summary.maximum),
+        )
+    return semantics(mergeDescendants = true) {}
+        .clearAndSetSemantics {
+            role = Role.Image
+            contentDescription = trend
+            stateDescription = range
+        }
+}
+
+internal expect fun widgetChartNumberFormatter(languageTag: String): (Double) -> String
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1451,22 +1499,27 @@ private fun WidgetImageNode(
     val safeRatio = node.aspectRatio?.takeIf { it.isFinite() && it > 0f } ?: defaultRatio
     val sizeModifier =
         if (fillWidth) {
-            modifier
-                .fillMaxWidth()
-                .heightIn(max = 200.dp)
-                .aspectRatio(safeRatio)
+            modifier.layout { measurable, constraints ->
+                val cap = 200.dp.roundToPx()
+                val width = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.constrainWidth(cap)
+                val height = constraints.constrainHeight((width / safeRatio).roundToInt().coerceAtMost(cap))
+                val placeable = measurable.measure(Constraints.fixed(width, height))
+                layout(width, height) { placeable.place(0, 0) }
+            }
         } else {
             val compactHeight = if (node.cornerStyle == UiWidgetCornerStyle.Circle) 40.dp else 56.dp
             modifier
                 .height(compactHeight)
                 .aspectRatio(safeRatio)
         }
-    NetworkImage(
-        model = remember(node.url) { node.url.toUiImage(proxy = ProxyRef.Global) },
-        contentDescription = node.alt,
-        contentScale = ContentScale.Crop,
-        modifier = sizeModifier.clip(shape),
-    )
+    WidgetImageSlot(sizeModifier.clip(shape)) { imageModifier ->
+        NetworkImage(
+            model = remember(node.url) { node.url.toUiImage(proxy = ProxyRef.Global) },
+            contentDescription = node.alt,
+            contentScale = ContentScale.Crop,
+            modifier = imageModifier,
+        )
+    }
 }
 
 @Composable

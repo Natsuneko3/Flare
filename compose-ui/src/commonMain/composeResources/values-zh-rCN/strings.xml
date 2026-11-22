@@ -514,4 +514,9 @@
     <string name="plugin_widget_refresh">刷新</string>
     <string name="plugin_widget_copy">复制</string>
     <string name="plugin_widget_page_indicator">第 %1$d 页，共 %2$d 页</string>
+    <string name="plugin_widget_trend_rising">上升趋势</string>
+    <string name="plugin_widget_trend_falling">下降趋势</string>
+    <string name="plugin_widget_trend_flat">平稳趋势</string>
+    <string name="plugin_widget_trend_fluctuating">波动趋势</string>
+    <string name="plugin_widget_trend_range">最低 %1$s，最高 %2$s</string>
 </resources>

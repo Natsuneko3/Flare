@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
@@ -63,6 +64,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -1031,7 +1033,16 @@ internal fun PluginItem(
             }
             if (plugin.hasTimelineProcessor) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .toggleable(
+                                value = plugin.timelineProcessorEnabled,
+                                enabled = !busy,
+                                role = Role.Switch,
+                                onValueChange = { enabled -> onToggleTimelineProcessor(plugin.pluginId, enabled) },
+                            ).heightIn(min = 48.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
@@ -1043,7 +1054,7 @@ internal fun PluginItem(
                     Switch(
                         checked = plugin.timelineProcessorEnabled,
                         enabled = !busy,
-                        onCheckedChange = { enabled -> onToggleTimelineProcessor(plugin.pluginId, enabled) },
+                        onCheckedChange = null,
                     )
                 }
             }

@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
@@ -20,14 +21,19 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.text.TextLayoutResult
@@ -70,6 +76,7 @@ import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.awt.image.BufferedImage
 import java.nio.file.Files
+import java.util.Locale
 import javax.imageio.ImageIO
 import kotlin.math.abs
 import kotlin.test.Test
@@ -79,6 +86,31 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 class PluginWidgetStackComponentTest {
+    @Test
+    fun unlabeledSparklineAnnouncesItsDirectionAndFractionalRangeInChinese() {
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.SIMPLIFIED_CHINESE)
+            runComposeUiTest {
+                val card =
+                    UiPluginWidgetCard(
+                        pluginId = "market",
+                        pluginName = "Market",
+                        pluginIconPath = null,
+                        id = "price",
+                        title = "Price",
+                        body = persistentListOf(UiWidgetNode.Sparkline(persistentListOf(2.5, 1.75, 1.25))),
+                        cardAction = UiWidgetAction.OpenUrl("https://example.com/market"),
+                    )
+                setContent { PluginWidgetStackComponent(persistentListOf(card)) }
+                val chart = onNodeWithContentDescription("下降趋势").fetchSemanticsNode()
+                assertEquals("最低 1.25，最高 2.5", chart.config[SemanticsProperties.StateDescription])
+            }
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+    }
+
     @Test
     fun multiCardPagerEqualizesHeightToTallestCardAndRendersFlatSparklineSafely() =
         runComposeUiTest {
@@ -113,12 +145,16 @@ class PluginWidgetStackComponentTest {
             onNodeWithTag("plugin_widget_pager").performTouchInput { swipeLeft() }
             waitForIdle()
             onNodeWithText("AAPL").assertIsDisplayed()
+            assertEquals(
+                "Low 100, high 100",
+                onNodeWithContentDescription("Flat trend").fetchSemanticsNode().config[SemanticsProperties.StateDescription],
+            )
             val heightAfter = onNodeWithTag("plugin_widget_stack").fetchSemanticsNode().boundsInRoot.height
             assertTrue(abs(heightBefore - heightAfter) <= 1f)
         }
 
     @Test
-    fun shortFirstCardPreEqualizesToTallestLaterCardBeforeSwiping() =
+    fun shortFirstCardHasTallestHeightBeforeMouseAndKeyboardPageSelection() =
         runComposeUiTest {
             val shortCard =
                 UiPluginWidgetCard(
@@ -151,11 +187,23 @@ class PluginWidgetStackComponentTest {
             }
             onNodeWithText("Short First").assertIsDisplayed()
             val initialHeight = onNodeWithTag("plugin_widget_stack").fetchSemanticsNode().boundsInRoot.height
-            onNodeWithTag("plugin_widget_pager").performTouchInput { swipeLeft() }
+            val second = onNodeWithContentDescription("Page 2 of 2")
+            second.performClick()
             waitForIdle()
             onNodeWithText("Tall Second").assertIsDisplayed()
+            second.assertIsSelected()
             val swipedHeight = onNodeWithTag("plugin_widget_stack").fetchSemanticsNode().boundsInRoot.height
             assertTrue(abs(initialHeight - swipedHeight) <= 1f)
+            second.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            second.performKeyInput {
+                keyDown(Key.ShiftLeft)
+                pressKey(Key.Tab)
+                keyUp(Key.ShiftLeft)
+            }
+            val first = onNodeWithContentDescription("Page 1 of 2")
+            first.assertIsFocused().performKeyInput { pressKey(Key.Enter) }
+            onNodeWithText("Short First").assertIsDisplayed()
+            first.assertIsSelected()
         }
 
     @Test
@@ -383,6 +431,7 @@ class PluginWidgetStackComponentTest {
                     LocalUriHandler provides uriHandler,
                     LocalClipboard provides clipboard,
                     LocalNetworkImageAllowHardware provides false,
+                    LocalDensity provides Density(1f, fontScale = 1.15f),
                 ) {
                     Box(Modifier.width(400.dp)) {
                         PluginWidgetStackComponent(cards = persistentListOf(card))
@@ -399,6 +448,12 @@ class PluginWidgetStackComponentTest {
             onNodeWithText("Yes · 68%").assertIsDisplayed()
             onNodeWithText("Trending").assertIsDisplayed()
             onNodeWithContentDescription("Market chart").assertIsDisplayed()
+            assertEquals(
+                "Low 94k, high 99k",
+                onNodeWithContentDescription("Rising trend")
+                    .fetchSemanticsNode()
+                    .config[SemanticsProperties.StateDescription],
+            )
             onNodeWithText("Hidden breakdown line").assertDoesNotExist()
 
             // Header refresh button invokes onRefresh without triggering whole-card OpenUrl
@@ -443,7 +498,7 @@ class PluginWidgetStackComponentTest {
             assertEquals(2, refreshCount)
 
             // Tapping non-interactive card title invokes whole-card cardAction
-            onNodeWithText("Omni Card").performClick()
+            onNodeWithText("Omni Card", useUnmergedTree = true).performClick()
             waitForIdle()
             assertEquals(listOf("https://example.com/market", "https://example.com/card"), openedUrls)
 
@@ -943,31 +998,31 @@ class PluginWidgetStackComponentTest {
             }
 
             onNodeWithText("Card B").assertIsDisplayed()
-            onNodeWithContentDescription("Page 1 of 2").assertIsDisplayed()
+            onNodeWithContentDescription("Page 1 of 2").assertIsSelected()
 
             // Swipe to Card C (page 2 of 2)
             onNodeWithTag("plugin_widget_pager").performTouchInput { swipeLeft() }
             waitForIdle()
             onNodeWithText("Card C").assertIsDisplayed()
-            onNodeWithContentDescription("Page 2 of 2").assertIsDisplayed()
+            onNodeWithContentDescription("Page 2 of 2").assertIsSelected()
 
             // Prepending an earlier plugin's card preserves Card C as selected (now page 3 of 3)
             currentCards = persistentListOf(cardA, cardB, cardC)
             waitForIdle()
             onNodeWithText("Card C").assertIsDisplayed()
-            onNodeWithContentDescription("Page 3 of 3").assertIsDisplayed()
+            onNodeWithContentDescription("Page 3 of 3").assertIsSelected()
 
             // Removing the earlier plugin's card still preserves Card C (now page 2 of 2)
             currentCards = persistentListOf(cardB, cardC)
             waitForIdle()
             onNodeWithText("Card C").assertIsDisplayed()
-            onNodeWithContentDescription("Page 2 of 2").assertIsDisplayed()
+            onNodeWithContentDescription("Page 2 of 2").assertIsSelected()
 
             // Removing the selected Card C resets to page 0 (Card A, page 1 of 2)
             currentCards = persistentListOf(cardA, cardB)
             waitForIdle()
             onNodeWithText("Card A").assertIsDisplayed()
-            onNodeWithContentDescription("Page 1 of 2").assertIsDisplayed()
+            onNodeWithContentDescription("Page 1 of 2").assertIsSelected()
         }
 
     @Test
