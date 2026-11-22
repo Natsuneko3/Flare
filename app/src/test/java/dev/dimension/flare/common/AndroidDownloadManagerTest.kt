@@ -5,10 +5,13 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.ProviderInfo
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.database.sqlite.SQLiteConstraintException
 import android.net.Uri
+import android.os.Bundle
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import dev.dimension.flare.ui.component.Media3VideoCacheManager
 import kotlinx.coroutines.CancellationException
@@ -33,6 +36,7 @@ import java.io.IOException
 @Config(sdk = [35], manifest = Config.NONE)
 class AndroidDownloadManagerTest {
     private lateinit var provider: SaveProvider
+    private lateinit var location: AndroidMediaSaveLocationRepository
     private lateinit var manager: AndroidDownloadManager
     private val bytes = byteArrayOf(1, 2, 3)
 
@@ -42,11 +46,12 @@ class AndroidDownloadManagerTest {
         provider = SaveProvider(context)
         provider.attachInfo(context, ProviderInfo().apply { authority = MediaStore.AUTHORITY })
         ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, provider)
+        location = AndroidMediaSaveLocationRepository(context)
         manager =
             AndroidDownloadManager(
                 context = context,
                 media3VideoCacheManager = Media3VideoCacheManager(context),
-                mediaSaveLocationRepository = AndroidMediaSaveLocationRepository(context),
+                mediaSaveLocationRepository = location,
                 mediaSavePicker = AndroidMediaSavePicker(),
             )
     }
@@ -78,6 +83,17 @@ class AndroidDownloadManagerTest {
                     .filter { it.name.startsWith("manga_chapter_p1") }
                     .forEach(File::delete)
             }
+        }
+
+    @Test
+    fun customFolderCreatesANewDocumentWithoutReplacingAMatchingPage() =
+        runBlocking {
+            val tree = DocumentsContract.buildTreeDocumentUri(MediaStore.AUTHORITY, "folder")
+            location.setCustomDirectory(tree)
+
+            assertTrue(manager.saveByteArray(bytes, "page.png", "image/png", keepExisting = true))
+            assertEquals(listOf("create", "write"), provider.operations)
+            assertArrayEquals(bytes, provider.file.readBytes())
         }
 
     @Test
@@ -218,13 +234,28 @@ class AndroidDownloadManagerTest {
             return 1
         }
 
+        override fun call(
+            method: String,
+            arg: String?,
+            extras: Bundle?,
+        ): Bundle? {
+            if (method != "android:createDocument") return super.call(method, arg, extras)
+            assertEquals("page.png", extras?.getString(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+            operations += "create"
+            return Bundle().apply { putParcelable("uri", outputUri) }
+        }
+
         override fun query(
             uri: Uri,
             projection: Array<out String>?,
             selection: String?,
             selectionArgs: Array<out String>?,
             sortOrder: String?,
-        ): Cursor? = null
+        ): Cursor? {
+            if (uri.lastPathSegment != "children") return null
+            operations += "list"
+            return MatrixCursor(projection!!).apply { addRow(arrayOf("existing", "page.png")) }
+        }
 
         override fun getType(uri: Uri): String = "image/png"
     }
