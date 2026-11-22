@@ -2,6 +2,7 @@ package dev.dimension.flare.ui.component.manga
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -9,7 +10,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.doubleClick
@@ -18,11 +21,14 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import coil3.ColorImage
 import coil3.ImageLoader
@@ -96,6 +102,98 @@ class MangaReaderCanvasTest {
     @After
     fun tearDown() {
         SingletonImageLoader.reset()
+    }
+
+    private fun showReader(
+        state: FakeMangaReaderState,
+        layoutDirection: LayoutDirection = LayoutDirection.Ltr,
+    ) {
+        composeRule.setContent {
+            FluentTheme {
+                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                    Box(Modifier.size(200.dp, 400.dp)) {
+                        MangaReaderCanvas(
+                            state = state,
+                            hudVisible = false,
+                            onToggleHud = {},
+                            modifier = Modifier.testTag("reader_canvas"),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun bookDirectionControlsPhysicalSwipesInRtlLayout() {
+        val state =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Ltr,
+                initialPages = samplePages(3),
+                initialSlots = (0..2).map(ReaderSlot::Single).toImmutableList(),
+            )
+        showReader(state, LayoutDirection.Rtl)
+        val canvas = composeRule.onNodeWithTag("reader_canvas")
+        canvas.performTouchInput { swipeLeft() }
+        composeRule.runOnIdle {
+            assertEquals(1, state.currentPageIndex)
+            state.setDirection(MangaReadingDirection.Rtl)
+        }
+        canvas.performTouchInput { swipeRight() }
+        composeRule.runOnIdle { assertEquals(2, state.currentPageIndex) }
+    }
+
+    @Test
+    fun webtoonUsesFullPageHeightWithinLayoutLimits() {
+        val page = samplePages(1).single()
+        val state =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Webtoon,
+                initialPages = persistentListOf(page.copy(aspectRatio = 1f / 30f)),
+                initialSlots = persistentListOf(ReaderSlot.Single(0)),
+            )
+        showReader(state)
+        val cell = composeRule.onNodeWithTag("manga_reader_page_0")
+        val size = cell.fetchSemanticsNode().size
+        assertEquals(size.width * 30, size.height)
+
+        composeRule.runOnIdle { state.pages = persistentListOf(page.copy(aspectRatio = Float.MIN_VALUE)) }
+        val oversize = cell.fetchSemanticsNode().size
+        assertEquals(size.width, oversize.width)
+        assertTrue(oversize.height > size.height)
+    }
+
+    @Test
+    fun webtoonTracksCenterAndSelectsShortPagesAtScrollLimits() {
+        val ratios = listOf(4f, 0.4f, 2f / 3f, 4f)
+        val pages = samplePages(ratios.size).mapIndexed { index, page -> page.copy(aspectRatio = ratios[index]) }
+        val previousChapter = UiMangaChapter("previous", "Previous", null, null, locked = false, url = null)
+        val state =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Webtoon,
+                initialPages = pages.toImmutableList(),
+                initialSlots = pages.indices.map(ReaderSlot::Single).toImmutableList(),
+                previousBoundary = ChapterBoundary.Unlocked(previousChapter, startFromEnd = true),
+            )
+        showReader(state)
+        val list = composeRule.onNodeWithTag("manga_webtoon_list")
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scroll -> scroll(0f, viewport.width * 1.65f) }
+        val tallPage = composeRule.onNodeWithTag("manga_reader_page_1").fetchSemanticsNode().boundsInRoot
+        assertTrue(tallPage.contains(viewport.center))
+        composeRule.runOnIdle { assertEquals(1, state.currentPageIndex) }
+
+        list.performScrollToIndex(pages.size)
+        val lastPage = composeRule.onNodeWithTag("manga_reader_page_3").fetchSemanticsNode().boundsInRoot
+        assertEquals(viewport.bottom, lastPage.bottom)
+        composeRule.runOnIdle {
+            assertEquals(pages.lastIndex, state.currentPageIndex)
+            state.goToPage(2)
+        }
+        composeRule.runOnIdle { assertEquals(2, state.currentPageIndex) }
+
+        list.performScrollToIndex(0)
+        composeRule.runOnIdle { assertEquals(0, state.currentPageIndex) }
     }
 
     @Test
@@ -232,6 +330,7 @@ class MangaReaderCanvasTest {
             swipeUp()
         }
         composeRule.onNodeWithText("Chapter 2").assertExists()
+        composeRule.runOnIdle { assertEquals(1, fakeState.currentPageIndex) }
         composeRule.onNodeWithTag("manga_boundary_next_action").performClick()
         composeRule.runOnIdle {
             assertEquals("ch-2", fakeState.openedBoundaryChapterId)

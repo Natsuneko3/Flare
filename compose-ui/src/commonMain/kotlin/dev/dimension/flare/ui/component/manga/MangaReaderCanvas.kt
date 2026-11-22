@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -65,12 +63,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -129,7 +129,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
-import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private const val WIDE_VIEWPORT_BREAKPOINT_DP = 720
 private const val LEFT_TAP_ZONE_FRACTION = 0.3f
@@ -729,9 +729,10 @@ private fun MangaPagedCanvas(
             }
     }
 
+    val bookLayoutDirection = if (state.direction == MangaReadingDirection.Rtl) LayoutDirection.Rtl else LayoutDirection.Ltr
     HorizontalPager(
         state = pagerState,
-        reverseLayout = state.direction == MangaReadingDirection.Rtl,
+        reverseLayout = LocalLayoutDirection.current != bookLayoutDirection,
         userScrollEnabled = !isCurrentPageZoomed,
         modifier = Modifier.fillMaxSize(),
     ) { pagerPage ->
@@ -1047,9 +1048,8 @@ private fun MangaWebtoonStrip(
     LaunchedEffect(listState) {
         var lastObservedPos: Pair<Int, Int>? = null
         snapshotFlow {
-            val info = listState.layoutInfo
             val pos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-            val visiblePage = info.centerPageIndex(latestHeaderCount, latestPageCount)
+            val visiblePage = listState.visiblePageIndex(latestHeaderCount, latestPageCount)
             pos to visiblePage
         }.collect { (pos, visiblePage) ->
             if (lastObservedPos == null) {
@@ -1198,16 +1198,14 @@ private fun MangaWebtoonStrip(
                 items = state.pages,
                 key = { it.id },
             ) { page ->
-                val ratio = (page.aspectRatio ?: DEFAULT_WEBTOON_ASPECT_RATIO).coerceIn(0.05f, 10f)
                 ReaderPageCell(
                     page = page,
                     state = state,
-                    contentScale = ContentScale.FillWidth,
+                    contentScale = ContentScale.Fit,
                     contentAlignment = Alignment.TopCenter,
                     modifier =
                         Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(ratio)
+                            .webtoonPageSize(page.aspectRatio ?: DEFAULT_WEBTOON_ASPECT_RATIO)
                             .testTag("manga_reader_page_${page.index}"),
                 )
             }
@@ -1410,17 +1408,25 @@ private fun ReaderPageErrorContent(
     }
 }
 
-private fun LazyListLayoutInfo.centerPageIndex(
+private fun Modifier.webtoonPageSize(aspectRatio: Float): Modifier =
+    layout { measurable, constraints ->
+        val width = constraints.maxWidth
+        val height = (width / aspectRatio).roundToInt().coerceIn(1, Constraints.Infinity - 1)
+        val page = measurable.measure(Constraints.fitPrioritizingWidth(width, width, height, height))
+        layout(page.width, page.height) { page.place(0, 0) }
+    }
+
+private fun LazyListState.visiblePageIndex(
     headerCount: Int,
     pageCount: Int,
 ): Int? {
-    if (pageCount <= 0) return null
-    val viewportCenter = (viewportStartOffset + viewportEndOffset) / 2
-    val pageItem =
-        visibleItemsInfo
-            .filter { (it.index - headerCount) in 0 until pageCount }
-            .minByOrNull { item -> abs((item.offset + item.size / 2) - viewportCenter) }
-    return pageItem?.let { it.index - headerCount }
+    val info = layoutInfo
+    if (pageCount == 0 || info.visibleItemsInfo.isEmpty()) return null
+    if (!canScrollBackward) return 0
+    if (!canScrollForward) return pageCount - 1
+    val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
+    val item = info.visibleItemsInfo.firstOrNull { center in it.offset until it.offset + it.size } ?: return null
+    return (item.index - headerCount).coerceIn(0, pageCount - 1)
 }
 
 @Composable
