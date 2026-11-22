@@ -19,6 +19,7 @@ import dev.dimension.flare.data.database.cache.model.DbListPaging
 import dev.dimension.flare.data.database.cache.model.DbMessageItem
 import dev.dimension.flare.data.database.cache.model.DbMessageRoom
 import dev.dimension.flare.data.database.cache.model.DbMessageRoomReference
+import dev.dimension.flare.data.database.cache.model.DbPagingKey
 import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.database.cache.model.DbStatus
@@ -26,6 +27,8 @@ import dev.dimension.flare.data.database.cache.model.DbStatusReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationType
 import dev.dimension.flare.data.database.cache.model.DbTranslation
+import dev.dimension.flare.data.database.cache.model.DbUser
+import dev.dimension.flare.data.database.cache.model.DbUserHistory
 import dev.dimension.flare.data.database.cache.model.DbUserRelation
 import dev.dimension.flare.data.database.cache.model.TranslationEntityType
 import dev.dimension.flare.data.database.cache.model.TranslationStatus
@@ -1747,6 +1750,167 @@ class AccountRepositoryTest : RobolectricTest() {
                     }
                 },
             )
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginInvalidateUninstallAndDeactivationPurgeGuestCacheTables() =
+        runTest {
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+
+            fun guestPlatform(
+                id: String,
+                host: String?,
+            ) = object : PlatformSpec by registry.defaultGuest {
+                override val platformId = id
+                override val isDefaultGuest = false
+                override val standaloneGuestHost = host
+            }
+
+            registry.replaceExternal("MangaPlugin", guestPlatform("MangaPlugin", "api.manga.example"))
+            registry.replaceExternal("SurvivorPlugin", guestPlatform("SurvivorPlugin", "survivor.manga.example"))
+
+            val repository = createRepository(backgroundScope, registry = registry)
+            val progressRepository = MangaProgressRepository(cacheDatabase) { 12_000L }
+            repository.addAccount(UiAccount(accountKey, "Mastodon"), "specific")
+
+            val targetGuest = AccountType.GuestPlugin("MangaPlugin", "api.manga.example")
+            val survivorGuest = AccountType.GuestPlugin("SurvivorPlugin", "survivor.manga.example")
+            val specificAccount = AccountType.Specific(accountKey)
+
+            val guestAuthorKey = MicroBlogKey("author-1", "api.manga.example")
+            val survivorAuthorKey = MicroBlogKey("author-2", "survivor.manga.example")
+            val sampleUser = createSampleUser()
+            val samplePost = createSampleStatus(sampleUser)
+
+            suspend fun seedGuestCache(
+                owner: AccountType.GuestPlugin,
+                authorKey: MicroBlogKey,
+                timelinePagingKey: String,
+            ): DbStatus {
+                val author =
+                    DbUser(
+                        userKey = authorKey,
+                        name = "Author ${authorKey.id}",
+                        canonicalHandle = authorKey.id,
+                        host = owner.host,
+                        content = sampleUser.copy(key = authorKey),
+                    )
+                cacheDatabase.userDao().insert(author)
+                cacheDatabase.userDao().insertHistory(DbUserHistory(userKey = authorKey, accountType = owner, lastVisit = 100L))
+                cacheDatabase.userDao().insertUserRelation(DbUserRelation(owner, authorKey, UiRelation(following = true)))
+                cacheDatabase.userDao().insertProfileTabs(DbProfileTabs(owner, authorKey, """["works"]"""))
+
+                val statusKey = MicroBlogKey("manga-item-${owner.platformId}", owner.host)
+                val status = DbStatus(statusKey, owner, samplePost.copy(statusKey = statusKey, accountType = owner), 0, "guest manga")
+                cacheDatabase.statusDao().insertAll(listOf(status))
+                cacheDatabase.statusReferenceDao().insertAll(listOf(DbStatusReference(ReferenceType.Quote, status.id, status.id)))
+                cacheDatabase.translationDao().insert(
+                    DbTranslation(TranslationEntityType.Status, status.id, "en", "hash", TranslationStatus.Completed, updatedAt = 1L),
+                )
+
+                val historyRow = DbPagingTimeline(STATUS_HISTORY_PAGING_KEY, status.id, 100L)
+                val feedRow = DbPagingTimeline(timelinePagingKey, status.id, 200L)
+                cacheDatabase.pagingTimelineDao().insertAll(listOf(historyRow, feedRow))
+                cacheDatabase.pagingTimelineDao().insertPagingKey(DbPagingKey(pagingKey = timelinePagingKey, nextKey = "cursor-next"))
+                cacheDatabase.pagingTimelineDao().insertPresentationReferences(
+                    listOf(
+                        DbTimelineItemPresentationReference(
+                            pagingKey = timelinePagingKey,
+                            timelineId = feedRow._id,
+                            referenceStatusId = status.id,
+                            presentationType = DbTimelineItemPresentationType.Quote,
+                        ),
+                    ),
+                )
+                progressRepository.recordPage(
+                    accountType = owner,
+                    mangaKey = MicroBlogKey("series-1", owner.host),
+                    chapterId = "ch-1",
+                    pageIndex = 4,
+                    pageCount = 10,
+                    isCompleted = false,
+                )
+                return status
+            }
+
+            val specificStatus =
+                DbStatus(samplePost.statusKey, specificAccount, samplePost.copy(accountType = specificAccount), 0, "specific post")
+            cacheDatabase.statusDao().insertAll(listOf(specificStatus))
+            cacheDatabase.pagingTimelineDao().insertAll(listOf(DbPagingTimeline(STATUS_HISTORY_PAGING_KEY, specificStatus.id, 300L)))
+
+            val targetStatus1 = seedGuestCache(targetGuest, guestAuthorKey, "plugin:MangaPlugin:popular")
+            val survivorStatus = seedGuestCache(survivorGuest, survivorAuthorKey, "plugin:SurvivorPlugin:popular")
+
+            // 1. invalidatePlatform(platformId) clears timelines, statuses, history, profile tabs, references & translations,
+            //    while preserving DbMangaState/DbMangaChapterProgress and other platforms' rows!
+            repository.invalidatePlatform("MangaPlugin")
+
+            assertTrue(cacheDatabase.statusDao().getVersions(listOf(targetStatus1.id)).isEmpty())
+            assertFalse(cacheDatabase.pagingTimelineDao().existsPaging(targetGuest, STATUS_HISTORY_PAGING_KEY))
+            assertFalse(cacheDatabase.pagingTimelineDao().anyPaging("plugin:MangaPlugin:popular"))
+            assertNull(cacheDatabase.pagingTimelineDao().getPagingKey("plugin:MangaPlugin:popular"))
+            assertTrue(cacheDatabase.statusReferenceDao().getByStatusId(targetStatus1.id).isEmpty())
+            assertNull(cacheDatabase.translationDao().get(TranslationEntityType.Status, targetStatus1.id, "en"))
+            assertNull(cacheDatabase.userDao().getProfileTabsSync(targetGuest, guestAuthorKey))
+            assertEquals(
+                4,
+                progressRepository.observe(targetGuest, MicroBlogKey("series-1", targetGuest.host)).first().lastPageIndex,
+                "invalidatePlatform must preserve guest manga reading progress across plugin updates",
+            )
+            assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(survivorGuest, STATUS_HISTORY_PAGING_KEY))
+            assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(specificAccount, STATUS_HISTORY_PAGING_KEY))
+
+            // 2. Re-seed MangaPlugin cache rows, then uninstall via deleteAccounts -> purges EVERYTHING for MangaPlugin
+            //    including manga progress and orphaned DbUser rows on api.manga.example!
+            val targetStatus2 = seedGuestCache(targetGuest, guestAuthorKey, "plugin:MangaPlugin:popular")
+            repository.deleteAccounts(
+                platformId = "MangaPlugin",
+                ownsCredential = { true },
+                beforeDelete = { registry.replaceExternal("MangaPlugin", null) },
+            )
+
+            assertTrue(cacheDatabase.statusDao().getVersions(listOf(targetStatus2.id)).isEmpty())
+            assertFalse(cacheDatabase.pagingTimelineDao().existsPaging(targetGuest, STATUS_HISTORY_PAGING_KEY))
+            assertFalse(cacheDatabase.pagingTimelineDao().anyPaging("plugin:MangaPlugin:popular"))
+            assertNull(cacheDatabase.pagingTimelineDao().getPagingKey("plugin:MangaPlugin:popular"))
+            assertTrue(cacheDatabase.statusReferenceDao().getByStatusId(targetStatus2.id).isEmpty())
+            assertNull(cacheDatabase.translationDao().get(TranslationEntityType.Status, targetStatus2.id, "en"))
+            assertNull(cacheDatabase.userDao().getProfileTabsSync(targetGuest, guestAuthorKey))
+            assertNull(cacheDatabase.userDao().getUserRelation(targetGuest, guestAuthorKey).first())
+            assertNull(cacheDatabase.userDao().findByKey(guestAuthorKey).first())
+            assertEquals(
+                MangaProgressSnapshot(),
+                progressRepository.observe(targetGuest, MicroBlogKey("series-1", targetGuest.host)).first(),
+            )
+            // SurvivorPlugin and Specific account remain intact!
+            assertEquals(1, cacheDatabase.statusDao().getVersions(listOf(survivorStatus.id)).size)
+            assertNotNull(cacheDatabase.userDao().findByKey(survivorAuthorKey).first())
+            assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(specificAccount, STATUS_HISTORY_PAGING_KEY))
+
+            // 3. Deactivating SurvivorPlugin's standaloneGuestHost while AccountTabSyncCoordinator is active also purges all its guest rows!
+            val resolver = TimelineResolver(runtimeData, RepositoryAccountService(repository))
+            val settings = SettingsRepository(fileStorage, appDataStore, resolver, cacheDatabase)
+            val coordinatorJob = SupervisorJob()
+            val coordinatorScope = CoroutineScope(backgroundScope.coroutineContext + coordinatorJob)
+            try {
+                AccountTabSyncCoordinator(repository, settings, coordinatorScope, resolver, progressRepository)
+                registry.replaceExternal("SurvivorPlugin", guestPlatform("SurvivorPlugin", null))
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) {
+                        progressRepository
+                            .observe(survivorGuest, MicroBlogKey("series-1", survivorGuest.host))
+                            .first { it == MangaProgressSnapshot() }
+                    }
+                }
+                assertTrue(cacheDatabase.statusDao().getVersions(listOf(survivorStatus.id)).isEmpty())
+                assertFalse(cacheDatabase.pagingTimelineDao().existsPaging(survivorGuest, STATUS_HISTORY_PAGING_KEY))
+                assertNull(cacheDatabase.userDao().findByKey(survivorAuthorKey).first())
+                assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(specificAccount, STATUS_HISTORY_PAGING_KEY))
+            } finally {
+                coordinatorJob.cancelAndJoin()
+            }
         }
 
     private class ControlledProxyStore(

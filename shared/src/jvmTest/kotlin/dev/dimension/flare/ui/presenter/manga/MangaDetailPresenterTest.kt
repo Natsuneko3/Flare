@@ -752,6 +752,216 @@ class MangaDetailPresenterTest {
             }
         }
 
+    @Test
+    fun canonicalMangaKeyAlignsProgressHistoryCommentsAndRecommendations() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-detail-canonical-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            var now = 10_000L
+            val progressRepository = MangaProgressRepository(cacheDatabase) { now++ }
+            val slugKey = MicroBlogKey("slug-solo-1", "manga.example")
+            val canonicalKey = MicroBlogKey("canonical-solo-1", "manga.example")
+            val detail =
+                sampleDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-a",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = "https://manga.example/ch-1"),
+                                        UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = "https://manga.example/ch-2"),
+                                    ),
+                            ),
+                        ),
+                ).copy(mangaKey = canonicalKey)
+
+            val requestedDetailKeys = mutableListOf<MicroBlogKey>()
+            val requestedCommentKeys = mutableListOf<MicroBlogKey>()
+            val requestedRecommendationKeys = mutableListOf<MicroBlogKey>()
+            val detailCache = MutableStateFlow<UiMangaDetail?>(null)
+            val mangaDataSource =
+                object : MangaDataSource {
+                    override val supportsComments: Boolean = true
+                    override val supportsRecommendations: Boolean = true
+
+                    override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> {
+                        requestedDetailKeys += mangaKey
+                        return Cacheable(
+                            fetchSource = { detailCache.value = detail },
+                            cacheSource = { detailCache.filterNotNull() },
+                        )
+                    }
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ): ImmutableList<UiMangaPage> = error("Unused")
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ): UiMedia = error("Unused")
+
+                    override fun mangaComments(mangaKey: MicroBlogKey): RemoteLoader<UiTimelineV2> {
+                        requestedCommentKeys += mangaKey
+                        return object : RemoteLoader<UiTimelineV2> {
+                            override suspend fun load(
+                                pageSize: Int,
+                                request: PagingRequest,
+                            ): PagingResult<UiTimelineV2> =
+                                when (request) {
+                                    PagingRequest.Refresh -> {
+                                        PagingResult(
+                                            data = listOf(createPost(MicroBlogKey("c-1", "manga.example"))),
+                                            endOfPaginationReached = true,
+                                        )
+                                    }
+
+                                    else -> {
+                                        PagingResult(endOfPaginationReached = true)
+                                    }
+                                }
+                        }
+                    }
+
+                    override fun mangaRecommendations(mangaKey: MicroBlogKey): RemoteLoader<UiTimelineV2> {
+                        requestedRecommendationKeys += mangaKey
+                        return object : RemoteLoader<UiTimelineV2> {
+                            override suspend fun load(
+                                pageSize: Int,
+                                request: PagingRequest,
+                            ): PagingResult<UiTimelineV2> =
+                                when (request) {
+                                    PagingRequest.Refresh -> {
+                                        PagingResult(
+                                            data = listOf(createPost(MicroBlogKey("r-1", "manga.example"))),
+                                            endOfPaginationReached = true,
+                                        )
+                                    }
+
+                                    else -> {
+                                        PagingResult(endOfPaginationReached = true)
+                                    }
+                                }
+                        }
+                    }
+                }
+            val accountService = FakeMangaAccountService(accountKey, mangaDataSource)
+            val presenterJob = SupervisorJob()
+            val presenterScope = CoroutineScope(dispatcher + presenterJob)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                    },
+                )
+            }
+            // Seed progress under canonicalKey (as recorded by MangaReaderPresenter) BEFORE opening MangaDetailPresenter(slugKey).
+            progressRepository.recordPage(
+                accountType = accountType,
+                mangaKey = canonicalKey,
+                chapterId = "ch-1",
+                pageIndex = 6,
+                pageCount = 18,
+                isCompleted = false,
+            )
+            val presenter = MangaDetailPresenter(accountType = accountType, mangaKey = slugKey)
+            try {
+                val states = MutableStateFlow<MangaDetailPresenter.State?>(null)
+                presenterScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+
+                val loaded =
+                    awaitState(states) { state ->
+                        state.detail is UiState.Success &&
+                            state.primaryReadTarget?.initialPage == 6 &&
+                            state.comments is PagingState.Success &&
+                            state.recommendations is PagingState.Success
+                    }
+                assertEquals(listOf(slugKey), requestedDetailKeys)
+                assertEquals(listOf(canonicalKey), requestedCommentKeys)
+                assertEquals(listOf(canonicalKey), requestedRecommendationKeys)
+                assertEquals(
+                    PrimaryReadTarget(
+                        chapterId = "ch-1",
+                        chapterTitle = "Chapter 1",
+                        initialPage = 6,
+                        isContinue = true,
+                        isSingleChapterWork = false,
+                    ),
+                    loaded.primaryReadTarget,
+                )
+
+                // Writes from MangaDetailPresenter(slugKey) must target canonicalKey, leaving slugKey empty.
+                loaded.setChapterRead("ch-1", isRead = true)
+                loaded.toggleChapterSort()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+
+                val canonicalSnapshot =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            progressRepository.observe(accountType, canonicalKey).first {
+                                it.chapters["ch-1"]?.isCompleted == true && !it.chapterSortDescending
+                            }
+                        }
+                    }
+                assertTrue(canonicalSnapshot.chapters["ch-1"]?.isCompleted == true)
+                assertFalse(canonicalSnapshot.chapterSortDescending)
+                assertEquals(null, progressRepository.observe(accountType, slugKey).first().lastChapterId)
+
+                // History feed must record DeeplinkRoute.Manga.Detail with canonicalKey.
+                val historyRows =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            var rows = cacheDatabase.pagingTimelineDao().getStatusHistoryPage(STATUS_HISTORY_PAGING_KEY, limit = 10)
+                            while (rows.isEmpty()) {
+                                rows = cacheDatabase.pagingTimelineDao().getStatusHistoryPage(STATUS_HISTORY_PAGING_KEY, limit = 10)
+                            }
+                            rows
+                        }
+                    }
+                val historyFeedContent =
+                    historyRows
+                        .single()
+                        .status
+                        .status
+                        .data
+                        .content
+                val historyFeed = assertIs<UiTimelineV2.Feed>(historyFeedContent)
+                assertEquals(
+                    ClickEvent.Deeplink(DeeplinkRoute.Manga.Detail(mangaKey = canonicalKey, accountType = accountType)),
+                    historyFeed.clickEvent,
+                )
+            } finally {
+                presenterJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
     private fun sampleDetail(chapterGroups: ImmutableList<UiMangaChapterGroup>): UiMangaDetail =
         UiMangaDetail(
             pluginId = "dev.example.manga",

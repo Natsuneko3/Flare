@@ -137,6 +137,17 @@ internal interface UserDao {
     @Query("DELETE FROM DbProfileTabs WHERE accountType = :accountType")
     suspend fun deleteProfileTabsByAccountType(accountType: DbAccountType)
 
+    @Query(
+        "DELETE FROM DbUser WHERE host = :host " +
+            "AND userKey NOT IN (SELECT userKey FROM DbUserHistory) " +
+            "AND userKey NOT IN (SELECT userKey FROM DbUserRelation) " +
+            "AND userKey NOT IN (SELECT userKey FROM DbProfileTabs) " +
+            "AND userKey NOT IN (SELECT memberKey FROM DbListMember) " +
+            "AND userKey NOT IN (SELECT userKey FROM DbMessageRoomReference) " +
+            "AND NOT EXISTS (SELECT 1 FROM DbStatus WHERE statusKey LIKE '%@' || :host)",
+    )
+    suspend fun deleteOrphanedUsersByHost(host: String)
+
     @Query("DELETE FROM DbProfileTabs")
     suspend fun clearProfileTabs()
 }

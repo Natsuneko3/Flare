@@ -143,12 +143,13 @@ internal fun MangaReaderScreen(
             state = state,
             onBack = onBack,
             onSavePage = { original, displayed, pageIndex ->
+                val activeChapterId = state.activeChapterId
+                val appContext = context.applicationContext
                 val performSave = {
-                    val prepared = prepareImageTranslationExport(displayed, context.cacheDir)
                     val fileName =
                         buildAndroidMangaPageFileName(
                             mangaKey = mangaKey,
-                            chapterId = state.activeChapterId,
+                            chapterId = activeChapterId,
                             pageIndex = pageIndex,
                             original = original,
                             displayed = displayed,
@@ -156,8 +157,8 @@ internal fun MangaReaderScreen(
                     saveAndroidMangaPage(
                         scope = ioScope,
                         downloadManager = downloadManager,
-                        context = context.applicationContext,
-                        media = prepared,
+                        context = appContext,
+                        displayed = displayed,
                         fileName = fileName,
                     )
                 }
@@ -168,32 +169,37 @@ internal fun MangaReaderScreen(
                 }
             },
             onSharePage = { original, displayed, pageIndex ->
-                val prepared = prepareImageTranslationExport(displayed, context.cacheDir)
-                if (prepared is UiMedia.Image) {
-                    val fileName =
-                        buildAndroidMangaPageFileName(
-                            mangaKey = mangaKey,
-                            chapterId = state.activeChapterId,
-                            pageIndex = pageIndex,
-                            original = original,
-                            displayed = displayed,
-                        )
-                    ioScope.launch {
+                val activeChapterId = state.activeChapterId
+                val fallbackShareUrl = state.chapterUrl?.takeIf { it.isNotBlank() }
+                ioScope.launch {
+                    val prepared =
+                        withContext(Dispatchers.IO) {
+                            prepareImageTranslationExport(displayed, context.cacheDir)
+                        }
+                    if (prepared is UiMedia.Image || prepared is UiMedia.Gif) {
+                        val fileName =
+                            buildAndroidMangaPageFileName(
+                                mangaKey = mangaKey,
+                                chapterId = activeChapterId,
+                                pageIndex = pageIndex,
+                                original = original,
+                                displayed = displayed,
+                            )
                         shareImageMedia(
                             context = context,
                             media = prepared,
                             fileName = fileName,
                         )
-                    }
-                } else {
-                    state.chapterUrl?.takeIf { it.isNotBlank() }?.let { shareUrl ->
-                        navigate(
-                            Route.Status.ShareSheet(
-                                statusKey = mangaKey,
-                                accountType = accountType,
-                                shareUrl = shareUrl,
-                            ),
-                        )
+                    } else if (fallbackShareUrl != null) {
+                        withContext(Dispatchers.Main) {
+                            navigate(
+                                Route.Status.ShareSheet(
+                                    statusKey = mangaKey,
+                                    accountType = accountType,
+                                    shareUrl = fallbackShareUrl,
+                                ),
+                            )
+                        }
                     }
                 }
             },
@@ -330,9 +336,10 @@ internal fun MangaReaderContent(
                                 )
                             }
                         }
-                        if (onSharePage != null && ready.displayed is UiMedia.Image) {
+                        if (onSharePage != null && (ready.displayed is UiMedia.Image || ready.displayed is UiMedia.Gif)) {
                             FilledTonalIconButton(
                                 onClick = { onSharePage(ready.original, ready.displayed, state.currentPageIndex) },
+                                modifier = Modifier.testTag("manga_reader_share_page"),
                             ) {
                                 FAIcon(
                                     imageVector = FontAwesomeIcons.Solid.ShareNodes,
@@ -670,7 +677,7 @@ private fun formatAndroidReaderPageBadge(state: MangaReaderPresenter.State): Str
     return "${state.currentPageIndex + 1} / $total"
 }
 
-private fun buildAndroidMangaPageFileName(
+internal fun buildAndroidMangaPageFileName(
     mangaKey: MicroBlogKey,
     chapterId: String,
     pageIndex: Int,
@@ -678,7 +685,8 @@ private fun buildAndroidMangaPageFileName(
     displayed: UiMedia,
 ): String {
     val rawOriginalName = MediaFileNamePolicy.rawMediaFileName(original)
-    val ext = rawOriginalName.substringAfterLast('.', "jpg")
+    val defaultExt = if (original is UiMedia.Gif || displayed is UiMedia.Gif) "gif" else "jpg"
+    val ext = rawOriginalName.substringAfterLast('.', defaultExt)
     val safeManga = mangaKey.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
     val safeChapter = chapterId.replace(Regex("[^A-Za-z0-9._-]"), "_")
     val base = "${safeManga}_${safeChapter}_p${pageIndex + 1}.$ext"
@@ -694,15 +702,21 @@ private fun saveAndroidMangaPage(
     scope: CoroutineScope,
     downloadManager: AndroidDownloadManager,
     context: Context,
-    media: UiMedia,
+    displayed: UiMedia,
     fileName: String,
 ) {
     scope.launch {
-        if (media is UiMedia.Image) {
+        val media =
+            withContext(Dispatchers.IO) {
+                prepareImageTranslationExport(displayed, context.cacheDir)
+            }
+        if (media is UiMedia.Image || media is UiMedia.Gif) {
             val cachedSaved =
-                context.imageLoader.diskCache?.openSnapshot(media.cacheKey)?.use { snapshot ->
-                    val bytes = snapshot.data.toFile().readBytes()
-                    downloadManager.saveByteArray(byteArray = bytes, fileName = fileName)
+                withContext(Dispatchers.IO) {
+                    context.imageLoader.diskCache?.openSnapshot(media.cacheKey)?.use { snapshot ->
+                        val bytes = snapshot.data.toFile().readBytes()
+                        downloadManager.saveByteArray(byteArray = bytes, fileName = fileName)
+                    }
                 }
             if (cachedSaved != null) {
                 withContext(Dispatchers.Main) {

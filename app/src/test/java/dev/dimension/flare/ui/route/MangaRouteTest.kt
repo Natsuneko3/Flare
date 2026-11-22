@@ -2,6 +2,8 @@ package dev.dimension.flare.ui.route
 
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.model.UiMedia
+import dev.dimension.flare.ui.screen.manga.buildAndroidMangaPageFileName
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -46,5 +48,28 @@ class MangaRouteTest {
                 Route.parse(reader.toUri()),
             )
         }
+    }
+
+    @Test
+    fun buildsMangaPageFileNameWithGifAndImageExtensions() {
+        val mangaKey = MicroBlogKey("manga-99", "manga.example")
+        val gifMedia =
+            UiMedia.Gif(
+                url = "https://manga.example/cdn/page-anim",
+                previewUrl = "https://manga.example/cdn/page-anim-preview.jpg",
+                description = null,
+                height = 1200f,
+                width = 800f,
+            )
+        assertEquals(
+            "manga-99_ch-1_p3.gif",
+            buildAndroidMangaPageFileName(
+                mangaKey = mangaKey,
+                chapterId = "ch-1",
+                pageIndex = 2,
+                original = gifMedia,
+                displayed = gifMedia,
+            ),
+        )
     }
 }

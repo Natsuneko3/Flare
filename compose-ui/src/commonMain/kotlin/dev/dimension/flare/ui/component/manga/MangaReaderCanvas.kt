@@ -140,6 +140,11 @@ private const val ZOOM_EPSILON = 1.005f
 private const val DEFAULT_WEBTOON_ASPECT_RATIO = 0.7f
 private val readerRetryNonceExtra = Extras.Key(0)
 
+private enum class BoundaryResidency {
+    Previous,
+    Next,
+}
+
 private class PagedStepHandlers(
     val stepForward: () -> Unit,
     val stepBackward: () -> Unit,
@@ -175,23 +180,59 @@ public fun MangaReaderCanvas(
     var activePagedStepHandlers by remember { mutableStateOf<PagedStepHandlers?>(null) }
     var viewportHeightPx by remember { mutableFloatStateOf(0f) }
 
+    val webtoonStepForward: () -> Unit = {
+        val readerState = currentState
+        val listState = activeWebtoonListState
+        if (listState != null) {
+            if (listState.canScrollForward) {
+                val delta = (viewportHeightPx * 0.8f).coerceAtLeast(1f)
+                scope.launch { listState.animateScrollBy(delta) }
+            } else if (readerState.nextBoundary is ChapterBoundary.Unlocked) {
+                if (readerState.slots.isNotEmpty() && readerState.currentSlotIndex != readerState.slots.lastIndex) {
+                    readerState.goToSlot(readerState.slots.lastIndex)
+                }
+                readerState.stepForward()
+            }
+        } else {
+            readerState.stepForward()
+        }
+    }
+
+    val webtoonStepBackward: () -> Unit = {
+        val readerState = currentState
+        val listState = activeWebtoonListState
+        if (listState != null) {
+            if (listState.canScrollBackward) {
+                val delta = (viewportHeightPx * 0.8f).coerceAtLeast(1f)
+                scope.launch { listState.animateScrollBy(-delta) }
+            } else if (readerState.previousBoundary is ChapterBoundary.Unlocked) {
+                if (readerState.slots.isNotEmpty() && readerState.currentSlotIndex != 0) {
+                    readerState.goToSlot(0)
+                }
+                readerState.stepBackward()
+            }
+        } else {
+            readerState.stepBackward()
+        }
+    }
+
     val performStepForward: () -> Unit = {
         val readerState = currentState
         val pagedHandlers = activePagedStepHandlers
-        if (readerState.direction != MangaReadingDirection.Webtoon && pagedHandlers != null) {
-            pagedHandlers.stepForward()
-        } else {
-            readerState.stepForward()
+        when {
+            readerState.direction == MangaReadingDirection.Webtoon -> webtoonStepForward()
+            pagedHandlers != null -> pagedHandlers.stepForward()
+            else -> readerState.stepForward()
         }
     }
 
     val performStepBackward: () -> Unit = {
         val readerState = currentState
         val pagedHandlers = activePagedStepHandlers
-        if (readerState.direction != MangaReadingDirection.Webtoon && pagedHandlers != null) {
-            pagedHandlers.stepBackward()
-        } else {
-            readerState.stepBackward()
+        when {
+            readerState.direction == MangaReadingDirection.Webtoon -> webtoonStepBackward()
+            pagedHandlers != null -> pagedHandlers.stepBackward()
+            else -> readerState.stepBackward()
         }
     }
 
@@ -240,52 +281,20 @@ public fun MangaReaderCanvas(
                         }
 
                         Key.DirectionDown -> {
-                            val listState = activeWebtoonListState
-                            if (readerState.direction == MangaReadingDirection.Webtoon && listState != null) {
-                                if (listState.canScrollForward) {
-                                    val delta = (viewportHeightPx * 0.8f).coerceAtLeast(200f)
-                                    scope.launch { listState.animateScrollBy(delta) }
-                                } else {
-                                    readerState.stepForward()
-                                }
-                            } else {
-                                performStepForward()
-                            }
+                            performStepForward()
                             true
                         }
 
                         Key.DirectionUp -> {
-                            val listState = activeWebtoonListState
-                            if (readerState.direction == MangaReadingDirection.Webtoon && listState != null) {
-                                if (listState.canScrollBackward) {
-                                    val delta = (viewportHeightPx * 0.8f).coerceAtLeast(200f)
-                                    scope.launch { listState.animateScrollBy(-delta) }
-                                } else {
-                                    readerState.stepBackward()
-                                }
-                            } else {
-                                performStepBackward()
-                            }
+                            performStepBackward()
                             true
                         }
 
                         Key.Spacebar -> {
-                            val listState = activeWebtoonListState
-                            val isWebtoon = readerState.direction == MangaReadingDirection.Webtoon
                             if (event.isShiftPressed) {
-                                if (isWebtoon && listState != null && listState.canScrollBackward) {
-                                    val delta = (viewportHeightPx * 0.8f).coerceAtLeast(200f)
-                                    scope.launch { listState.animateScrollBy(-delta) }
-                                } else {
-                                    performStepBackward()
-                                }
+                                performStepBackward()
                             } else {
-                                if (isWebtoon && listState != null && listState.canScrollForward) {
-                                    val delta = (viewportHeightPx * 0.8f).coerceAtLeast(200f)
-                                    scope.launch { listState.animateScrollBy(delta) }
-                                } else {
-                                    performStepForward()
-                                }
+                                performStepForward()
                             }
                             true
                         }
@@ -518,6 +527,8 @@ private fun MangaPagedCanvas(
     var programmaticScrollsInFlight by remember { mutableIntStateOf(0) }
     var boundaryScrollJob by remember { mutableStateOf<Job?>(null) }
     var isCurrentPageZoomed by remember { mutableStateOf(false) }
+    var settledBoundary by remember { mutableStateOf<BoundaryResidency?>(null) }
+    var lastObservedPageIndex by remember { mutableIntStateOf(state.currentPageIndex) }
 
     val latestState by rememberUpdatedState(state)
     val latestSlots by rememberUpdatedState(state.slots)
@@ -550,8 +561,12 @@ private fun MangaPagedCanvas(
                     val nextBoundaryPage = if (latestHasNextBoundary) latestStartOffset + latestSlots.size else -1
                     when {
                         activePage == prevBoundaryPage -> {
+                            settledBoundary = null
                             if (latestSlots.isNotEmpty()) {
-                                latestState.goToSlot(0)
+                                if (!latestSlots[0].contains(latestState.currentPageIndex)) {
+                                    latestState.goToSlot(0)
+                                }
+                                lastObservedPageIndex = latestState.currentPageIndex
                                 animatePagerProgrammatically(latestStartOffset)
                             }
                         }
@@ -559,6 +574,7 @@ private fun MangaPagedCanvas(
                         activePage == nextBoundaryPage -> {
                             val next = latestState.nextBoundary
                             if (next is ChapterBoundary.Unlocked) {
+                                settledBoundary = null
                                 boundaryScrollJob?.cancel()
                                 latestState.openAdjacentChapter(next)
                             }
@@ -568,9 +584,27 @@ private fun MangaPagedCanvas(
                             val slotIndex = (activePage - latestStartOffset).coerceIn(0, latestSlots.lastIndex)
                             if (slotIndex != latestCurrentSlotIndex) {
                                 latestState.goToSlot(slotIndex)
+                                lastObservedPageIndex = latestState.currentPageIndex
                             }
-                            boundaryScrollJob?.cancel()
-                            latestState.stepForward()
+                            when {
+                                slotIndex + 1 < latestSlots.size -> {
+                                    settledBoundary = null
+                                    boundaryScrollJob?.cancel()
+                                    latestState.stepForward()
+                                }
+
+                                latestState.nextBoundary is ChapterBoundary.Unlocked -> {
+                                    settledBoundary = null
+                                    boundaryScrollJob?.cancel()
+                                    latestState.stepForward()
+                                }
+
+                                nextBoundaryPage >= 0 -> {
+                                    settledBoundary = BoundaryResidency.Next
+                                    lastObservedPageIndex = latestState.currentPageIndex
+                                    animatePagerProgrammatically(nextBoundaryPage)
+                                }
+                            }
                         }
                     }
                 },
@@ -580,15 +614,21 @@ private fun MangaPagedCanvas(
                     val nextBoundaryPage = if (latestHasNextBoundary) latestStartOffset + latestSlots.size else -1
                     when {
                         activePage == nextBoundaryPage -> {
+                            settledBoundary = null
                             if (latestSlots.isNotEmpty()) {
-                                latestState.goToSlot(latestSlots.lastIndex)
-                                animatePagerProgrammatically(latestStartOffset + latestSlots.lastIndex)
+                                val lastIdx = latestSlots.lastIndex
+                                if (!latestSlots[lastIdx].contains(latestState.currentPageIndex)) {
+                                    latestState.goToSlot(lastIdx)
+                                }
+                                lastObservedPageIndex = latestState.currentPageIndex
+                                animatePagerProgrammatically(latestStartOffset + lastIdx)
                             }
                         }
 
                         activePage == prevBoundaryPage -> {
                             val prev = latestState.previousBoundary
                             if (prev is ChapterBoundary.Unlocked) {
+                                settledBoundary = null
                                 boundaryScrollJob?.cancel()
                                 latestState.openAdjacentChapter(prev)
                             }
@@ -598,9 +638,27 @@ private fun MangaPagedCanvas(
                             val slotIndex = (activePage - latestStartOffset).coerceIn(0, latestSlots.lastIndex)
                             if (slotIndex != latestCurrentSlotIndex) {
                                 latestState.goToSlot(slotIndex)
+                                lastObservedPageIndex = latestState.currentPageIndex
                             }
-                            boundaryScrollJob?.cancel()
-                            latestState.stepBackward()
+                            when {
+                                slotIndex > 0 -> {
+                                    settledBoundary = null
+                                    boundaryScrollJob?.cancel()
+                                    latestState.stepBackward()
+                                }
+
+                                latestState.previousBoundary is ChapterBoundary.Unlocked -> {
+                                    settledBoundary = null
+                                    boundaryScrollJob?.cancel()
+                                    latestState.stepBackward()
+                                }
+
+                                prevBoundaryPage >= 0 -> {
+                                    settledBoundary = BoundaryResidency.Previous
+                                    lastObservedPageIndex = latestState.currentPageIndex
+                                    animatePagerProgrammatically(prevBoundaryPage)
+                                }
+                            }
                         }
                     }
                 },
@@ -611,8 +669,23 @@ private fun MangaPagedCanvas(
         onStepHandlersChanged(stepHandlers)
     }
 
-    LaunchedEffect(state.currentSlotIndex, startBoundaryOffset, totalPagerPages) {
-        val target = (state.currentSlotIndex + startBoundaryOffset).coerceIn(0, (totalPagerPages - 1).coerceAtLeast(0))
+    LaunchedEffect(state.currentPageIndex, state.currentSlotIndex, startBoundaryOffset, totalPagerPages) {
+        val pageChanged = state.currentPageIndex != lastObservedPageIndex
+        lastObservedPageIndex = state.currentPageIndex
+        if (pageChanged) {
+            settledBoundary = null
+        } else if (settledBoundary == BoundaryResidency.Previous && !hasPrevBoundary) {
+            settledBoundary = null
+        } else if (settledBoundary == BoundaryResidency.Next && !hasNextBoundary) {
+            settledBoundary = null
+        }
+        val maxPage = (totalPagerPages - 1).coerceAtLeast(0)
+        val target =
+            when (settledBoundary) {
+                BoundaryResidency.Previous -> 0
+                BoundaryResidency.Next -> (startBoundaryOffset + state.slots.size).coerceIn(0, maxPage)
+                null -> (state.currentSlotIndex + startBoundaryOffset).coerceIn(0, maxPage)
+            }
         if (pagerState.currentPage != target && (!pagerState.isScrollInProgress || programmaticScrollsInFlight > 0)) {
             boundaryScrollJob?.cancel()
             programmaticScrollsInFlight++
@@ -631,9 +704,27 @@ private fun MangaPagedCanvas(
                 if (settled == lastObservedSettled) return@collect
                 lastObservedSettled = settled
                 if (programmaticScrollsInFlight > 0) return@collect
-                val slotIndex = settled - latestStartOffset
-                if (slotIndex in latestSlots.indices && slotIndex != latestCurrentSlotIndex) {
-                    latestState.goToSlot(slotIndex)
+                val prevBoundaryPage = if (latestHasPrevBoundary) 0 else -1
+                val nextBoundaryPage = if (latestHasNextBoundary) latestStartOffset + latestSlots.size else -1
+                when (settled) {
+                    prevBoundaryPage -> {
+                        settledBoundary = BoundaryResidency.Previous
+                        lastObservedPageIndex = latestState.currentPageIndex
+                    }
+
+                    nextBoundaryPage -> {
+                        settledBoundary = BoundaryResidency.Next
+                        lastObservedPageIndex = latestState.currentPageIndex
+                    }
+
+                    else -> {
+                        settledBoundary = null
+                        val slotIndex = settled - latestStartOffset
+                        if (slotIndex in latestSlots.indices && slotIndex != latestCurrentSlotIndex) {
+                            latestState.goToSlot(slotIndex)
+                            lastObservedPageIndex = latestState.currentPageIndex
+                        }
+                    }
                 }
             }
     }
@@ -912,11 +1003,13 @@ private fun MangaWebtoonStrip(
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
     val resetZoom =
         remember {
             {
                 scale = 1f
                 offsetX = 0f
+                offsetY = 0f
             }
         }
     val isZoomed = scale > ZOOM_EPSILON
@@ -943,6 +1036,7 @@ private fun MangaWebtoonStrip(
         if (state.currentPageIndex != syncState.lastReportedPage || headerChanged) {
             val targetItemIndex = state.currentPageIndex + headerCount
             syncState.lastReportedPage = state.currentPageIndex
+            offsetY = 0f
             listState.scrollToItem(targetItemIndex)
             syncState.settledProgrammaticPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
         } else if (syncState.settledProgrammaticPos == null && !listState.isScrollInProgress) {
@@ -993,13 +1087,25 @@ private fun MangaWebtoonStrip(
                         if (scale > ZOOM_EPSILON) {
                             scale = 1f
                             offsetX = 0f
+                            offsetY = 0f
                         } else {
                             val targetScale = DOUBLE_TAP_ZOOM
                             val centerX = containerSize.width / 2f
+                            val centerY = containerSize.height / 2f
                             val rawOffsetX = (centerX - tapOffset.x) * (targetScale - 1f)
+                            val desiredScreenDeltaY = (centerY - tapOffset.y) * (targetScale - 1f)
                             val maxX = (containerSize.width * (targetScale - 1f)) / 2f
+                            val maxY = (containerSize.height * (targetScale - 1f)) / 2f
+                            val consumedByList =
+                                if (desiredScreenDeltaY != 0f) {
+                                    listState.dispatchRawDelta(-desiredScreenDeltaY / targetScale)
+                                } else {
+                                    0f
+                                }
+                            val unconsumedScreenY = desiredScreenDeltaY + consumedByList * targetScale
                             scale = targetScale
                             offsetX = rawOffsetX.coerceIn(-maxX, maxX)
+                            offsetY = unconsumedScreenY.coerceIn(-maxY, maxY)
                         }
                     },
                 ).pointerInput(listState) {
@@ -1015,13 +1121,32 @@ private fun MangaWebtoonStrip(
                                 if (newScale <= ZOOM_EPSILON) {
                                     scale = 1f
                                     offsetX = 0f
+                                    offsetY = 0f
                                 } else {
                                     val maxX = (size.width * (newScale - 1f)) / 2f
+                                    val maxY = (size.height * (newScale - 1f)) / 2f
                                     scale = newScale
                                     offsetX = (offsetX + panChange.x).coerceIn(-maxX, maxX)
+                                    var nextOffsetY = offsetY.coerceIn(-maxY, maxY)
                                     if (panChange.y != 0f) {
-                                        listState.dispatchRawDelta(-panChange.y / newScale)
+                                        var remY = panChange.y
+                                        if (nextOffsetY != 0f && nextOffsetY * remY < 0f) {
+                                            val drained =
+                                                if (nextOffsetY > 0f) {
+                                                    maxOf(remY, -nextOffsetY)
+                                                } else {
+                                                    minOf(remY, -nextOffsetY)
+                                                }
+                                            nextOffsetY += drained
+                                            remY -= drained
+                                        }
+                                        if (remY != 0f) {
+                                            val consumedByList = listState.dispatchRawDelta(-remY / newScale)
+                                            val unconsumedScreenY = remY + consumedByList * newScale
+                                            nextOffsetY = (nextOffsetY + unconsumedScreenY).coerceIn(-maxY, maxY)
+                                        }
                                     }
+                                    offsetY = nextOffsetY
                                 }
                                 if (pressed >= 2 || scale > ZOOM_EPSILON) {
                                     event.changes.forEach { change ->
@@ -1037,6 +1162,7 @@ private fun MangaWebtoonStrip(
                     scaleX = scale
                     scaleY = scale
                     translationX = offsetX
+                    translationY = offsetY
                 },
     ) {
         LazyColumn(

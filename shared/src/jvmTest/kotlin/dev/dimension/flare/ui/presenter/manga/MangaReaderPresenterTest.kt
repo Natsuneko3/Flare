@@ -1126,6 +1126,195 @@ class MangaReaderPresenterTest {
             }
         }
 
+    @Test
+    fun canonicalMangaKeyAlignsReaderProgressChapterPagesAndDeferredMediaWithEntityToken() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-reader-canonical-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val realStorage = OkioFileStorage(FileSystem.SYSTEM, tempDir.toString().toPath(), cacheRoot = tempDir.toString().toPath())
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            var now = 20_000L
+            val progressRepository = MangaProgressRepository(cacheDatabase) { now++ }
+            val mockClient = HttpClient(MockEngine { respond(ByteArray(0)) })
+            val imageTranslationRepository =
+                ImageTranslationRepository(
+                    storage = realStorage,
+                    client = mockClient,
+                    adapters = emptyList(),
+                    sourceClient = { mockClient },
+                    imageCompressor = JvmImageCompressor(),
+                )
+
+            val slugKey = MicroBlogKey("slug-solo-1", "manga.example")
+            val canonicalKey = MicroBlogKey("canonical-solo-1", "manga.example")
+            val detail =
+                readerDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-a",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = "https://manga.example/ch-1"),
+                                    ),
+                            ),
+                        ),
+                ).copy(mangaKey = canonicalKey)
+
+            val entityTokensByKey = ConcurrentHashMap<MicroBlogKey, String>()
+            val chapterTokensByKey = ConcurrentHashMap<Pair<MicroBlogKey, String>, String>()
+            val detailKeys = CopyOnWriteArrayList<MicroBlogKey>()
+            val chapterPagesKeys = CopyOnWriteArrayList<MicroBlogKey>()
+            val resolvePageKeys = CopyOnWriteArrayList<MicroBlogKey>()
+            val detailCache = MutableStateFlow<UiMangaDetail?>(null)
+
+            val mangaDataSource =
+                object : MangaDataSource {
+                    override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> {
+                        detailKeys += mangaKey
+                        return Cacheable(
+                            fetchSource = {
+                                listOf(mangaKey, canonicalKey).forEach { key ->
+                                    entityTokensByKey[key] = "entity-tok-canonical"
+                                    chapterTokensByKey[key to "ch-1"] = "chapter-tok-1"
+                                }
+                                detailCache.value = detail
+                            },
+                            cacheSource = { detailCache.filterNotNull() },
+                        )
+                    }
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ): ImmutableList<UiMangaPage> {
+                        chapterPagesKeys += mangaKey
+                        assertEquals("entity-tok-canonical", entityTokensByKey[mangaKey])
+                        assertEquals("chapter-tok-1", chapterTokensByKey[mangaKey to chapterId])
+                        return (0 until 5)
+                            .map { idx ->
+                                UiMangaPage.Deferred(
+                                    id = "cp-$idx",
+                                    pageToken = "pt-$idx",
+                                    previewUrl = null,
+                                    width = 800f,
+                                    height = 1200f,
+                                    customHeaders = null,
+                                    proxy = ProxyRef.Unbound,
+                                )
+                            }.toImmutableList()
+                    }
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ): UiMedia {
+                        resolvePageKeys += mangaKey
+                        assertEquals("entity-tok-canonical", entityTokensByKey[mangaKey])
+                        assertEquals("chapter-tok-1", chapterTokensByKey[mangaKey to chapterId])
+                        return UiMedia.Image("https://manga.example/canonical/$pageId.jpg")
+                    }
+                }
+
+            val accountService = FakeReaderAccountService(accountKey, mangaDataSource)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                        testSingle { imageTranslationRepository }
+                    },
+                )
+            }
+
+            // Seed existing progress under canonicalKey so cold entry via slugKey (initialPage = null) must resume page 2!
+            progressRepository.recordPage(
+                accountType = accountType,
+                mangaKey = canonicalKey,
+                chapterId = "ch-1",
+                pageIndex = 2,
+                pageCount = 5,
+                isCompleted = false,
+            )
+
+            val readerJob = SupervisorJob()
+            val readerScope = CoroutineScope(dispatcher + readerJob)
+            val detailJob = SupervisorJob()
+            val detailScope = CoroutineScope(dispatcher + detailJob)
+            val readerPresenter = MangaReaderPresenter(accountType, slugKey, initialChapterId = "ch-1", initialPage = null)
+            val detailPresenter = MangaDetailPresenter(accountType, slugKey)
+            try {
+                val detailStates = MutableStateFlow<MangaDetailPresenter.State?>(null)
+                detailScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { detailPresenter.body() }.collect { detailStates.value = it }
+                }
+
+                val readerStates = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                readerScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { readerPresenter.body() }.collect { readerStates.value = it }
+                }
+
+                val ready =
+                    awaitReaderState(readerStates) { state ->
+                        state.loadState is UiState.Success &&
+                            state.pages.size == 5 &&
+                            state.pages[2].status is PageMediaStatus.Ready
+                    }
+                assertEquals(2, ready.currentPageIndex, "Cold entry via slugKey must resume saved page from canonicalKey")
+                assertEquals(listOf(canonicalKey), chapterPagesKeys.toList())
+                assertTrue(resolvePageKeys.isNotEmpty() && resolvePageKeys.all { it == canonicalKey })
+
+                // Advance to page 3 and override direction -> MangaDetailPresenter(slugKey) must observe the updated canonical progress!
+                ready.goToPage(3)
+                ready.setDirection(MangaReadingDirection.Webtoon)
+                Snapshot.sendApplyNotifications()
+                advanceTimeBy(350)
+                runCurrent()
+
+                val canonicalProgress =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            progressRepository.observe(accountType, canonicalKey).first {
+                                it.lastPageIndex == 3 && it.readerModeOverride == MangaReadingDirection.Webtoon
+                            }
+                        }
+                    }
+                val updatedDetailState =
+                    awaitReaderState(detailStates) { state ->
+                        state.detail is UiState.Success && state.primaryReadTarget?.initialPage == 3
+                    }
+                assertEquals(3, updatedDetailState.primaryReadTarget?.initialPage)
+                assertEquals(3, canonicalProgress.lastPageIndex)
+                assertEquals(MangaReadingDirection.Webtoon, canonicalProgress.readerModeOverride)
+                assertEquals(null, progressRepository.observe(accountType, slugKey).first().lastChapterId)
+            } finally {
+                readerJob.cancelAndJoin()
+                detailJob.cancelAndJoin()
+                readerPresenter.awaitPendingWrites()
+                detailPresenter.awaitPendingWrites()
+                mockClient.close()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
     private fun readerDetail(
         readingDirection: MangaReadingDirection? = MangaReadingDirection.Rtl,
         chapterGroups: ImmutableList<UiMangaChapterGroup>,

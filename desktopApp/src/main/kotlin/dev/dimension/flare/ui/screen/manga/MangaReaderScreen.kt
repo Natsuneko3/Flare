@@ -96,7 +96,9 @@ import io.github.composefluent.component.Switcher
 import io.github.composefluent.component.Text
 import io.github.composefluent.surface.Card
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.tlaster.precompose.molecule.producePresenter
 import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.koinInject
@@ -139,21 +141,27 @@ internal fun MangaReaderScreen(
         },
         onSavePage = { original, displayed, pageIndex ->
             if (original is UiMedia.Ugoira) return@MangaReaderContent
-            val export =
-                prepareImageTranslationExport(
-                    displayed,
-                    FileSystemUtilsExt.flareCacheDirectory(),
-                )
+            val activeChapterId = state.activeChapterId
             val defaultName =
                 buildMangaPageFileName(
                     mangaKey = mangaKey,
-                    chapterId = state.activeChapterId,
+                    chapterId = activeChapterId,
                     pageIndex = pageIndex,
                     original = original,
                     displayed = displayed,
                 )
-            val targetFile = DesktopSaveDialog.chooseFile(window = window, defaultName = defaultName) ?: return@MangaReaderContent
             ioScope.launch {
+                val export =
+                    withContext(Dispatchers.IO) {
+                        prepareImageTranslationExport(
+                            displayed,
+                            FileSystemUtilsExt.flareCacheDirectory(),
+                        )
+                    }
+                val targetFile =
+                    withContext(Dispatchers.Main) {
+                        DesktopSaveDialog.chooseFile(window = window, defaultName = defaultName)
+                    } ?: return@launch
                 downloader.download(media = export, targetFile = targetFile)
             }
         },
@@ -584,7 +592,8 @@ private fun buildMangaPageFileName(
     displayed: UiMedia,
 ): String {
     val rawOriginalName = MediaFileNamePolicy.rawMediaFileName(original)
-    val ext = rawOriginalName.substringAfterLast('.', "jpg")
+    val defaultExt = if (original is UiMedia.Gif || displayed is UiMedia.Gif) "gif" else "jpg"
+    val ext = rawOriginalName.substringAfterLast('.', defaultExt)
     val safeManga = mangaKey.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
     val safeChapter = chapterId.replace(Regex("[^A-Za-z0-9._-]"), "_")
     val base = "${safeManga}_${safeChapter}_p${pageIndex + 1}.$ext"

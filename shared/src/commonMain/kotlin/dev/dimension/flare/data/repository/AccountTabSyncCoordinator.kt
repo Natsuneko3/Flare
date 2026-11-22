@@ -65,6 +65,7 @@ public class AccountTabSyncCoordinator internal constructor(
                         val removedGuestPlatformIds = previousGuestPlatformIds - activeGuestPlatformIds
                         previousGuestPlatformIds = activeGuestPlatformIds
                         removedGuestPlatformIds.forEach { platformId ->
+                            accountRepository.clearRemovedGuestPlatform(platformId)
                             mangaProgressRepository.deleteGuestByPlatformId(platformId)
                         }
                         removeTabsForInactiveGuestPlatforms()

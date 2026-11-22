@@ -14,8 +14,10 @@ import dev.dimension.flare.common.encodeJson
 import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.app.model.DbAccount
 import dev.dimension.flare.data.database.cache.CacheDatabase
+import dev.dimension.flare.data.database.cache.clearGuestPluginData
 import dev.dimension.flare.data.database.cache.clearHomeTimelinesForAccount
 import dev.dimension.flare.data.database.cache.connect
+import dev.dimension.flare.data.database.cache.invalidateGuestPluginCachedContent
 import dev.dimension.flare.data.datasource.microblog.ComposeData
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
@@ -396,6 +398,7 @@ internal class AccountRepository internal constructor(
         beforeDelete: suspend () -> Unit,
     ): Unit =
         withAccountChanges {
+            val guestHost = platformRegistry.get(platformId)?.standaloneGuestHost
             val platformAccounts =
                 appDatabase
                     .accountDao()
@@ -407,11 +410,34 @@ internal class AccountRepository internal constructor(
             accounts.forEach { proxyRepository.removeAccount(it.account_key) }
             accounts.forEach { deleteAccount(it.account_key) }
             if (accounts.size == platformAccounts.size) {
-                cacheDatabase.connect {
-                    cacheDatabase.mangaProgressDao().deleteGuestByPlatformId(platformId)
-                }
+                val preservedHosts =
+                    appDatabase
+                        .accountDao()
+                        .allAccounts()
+                        .first()
+                        .mapTo(hashSetOf()) { it.account_key.host }
+                cacheDatabase.clearGuestPluginData(
+                    platformId = platformId,
+                    additionalHosts = setOfNotNull(guestHost),
+                    preservedHosts = preservedHosts,
+                    nonCursorPagingKeys = setOf(STATUS_HISTORY_PAGING_KEY),
+                )
             }
         }
+
+    internal suspend fun clearRemovedGuestPlatform(platformId: String) {
+        val preservedHosts =
+            appDatabase
+                .accountDao()
+                .allAccounts()
+                .first()
+                .mapTo(hashSetOf()) { it.account_key.host }
+        cacheDatabase.clearGuestPluginData(
+            platformId = platformId,
+            preservedHosts = preservedHosts,
+            nonCursorPagingKeys = setOf(STATUS_HISTORY_PAGING_KEY),
+        )
+    }
 
     private suspend fun deleteAccount(accountKey: MicroBlogKey) {
         val previous = dataSourceCacheMutex.withLock { removeDataSource(accountKey, CompletableDeferred(false)) }
@@ -532,6 +558,10 @@ internal class AccountRepository internal constructor(
             if (previous is AutoCloseable) previous.close()
             invalidateCachedContent(account.account_key)
         }
+        cacheDatabase.invalidateGuestPluginCachedContent(
+            platformId = platformId,
+            nonCursorPagingKeys = setOf(STATUS_HISTORY_PAGING_KEY),
+        )
     }
 
     internal suspend fun publish(

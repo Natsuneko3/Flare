@@ -86,6 +86,80 @@ internal suspend fun CacheDatabase.clearHomeTimelinesForAccount(accountKey: dev.
     }
 }
 
+internal suspend fun CacheDatabase.invalidateGuestPluginCachedContent(
+    platformId: String,
+    nonCursorPagingKeys: Set<String> = emptySet(),
+) {
+    connect {
+        val guestTypes =
+            statusDao()
+                .getDistinctAccountTypesAcrossCache()
+                .filterIsInstance<dev.dimension.flare.model.AccountType.GuestPlugin>()
+                .filter { it.platformId == platformId }
+        guestTypes.forEach { guestType ->
+            purgeGuestPluginTimelineAndStatusesInTx(guestType, nonCursorPagingKeys)
+        }
+    }
+}
+
+internal suspend fun CacheDatabase.clearGuestPluginData(
+    platformId: String,
+    additionalHosts: Set<String> = emptySet(),
+    preservedHosts: Set<String> = emptySet(),
+    nonCursorPagingKeys: Set<String> = emptySet(),
+) {
+    connect {
+        val guestTypes =
+            statusDao()
+                .getDistinctAccountTypesAcrossCache()
+                .filterIsInstance<dev.dimension.flare.model.AccountType.GuestPlugin>()
+                .filter { it.platformId == platformId }
+        guestTypes.forEach { guestType ->
+            messageDao().exclusiveRoomKeys(guestType).forEach { roomKey ->
+                messageDao().deleteRoomMessages(roomKey)
+                messageDao().deleteRoomReference(roomKey)
+                messageDao().deleteRoom(roomKey)
+            }
+            listDao().deleteExclusiveMembersByAccountType(guestType)
+            listDao().deletePagingByAccountType(guestType)
+            listDao().deleteByAccountType(guestType)
+            userDao().deleteRelationsByAccountType(guestType)
+            purgeGuestPluginTimelineAndStatusesInTx(guestType, nonCursorPagingKeys)
+            mangaProgressDao().deleteByAccountType(guestType)
+        }
+        val candidateHosts = (guestTypes.mapTo(linkedSetOf()) { it.host } + additionalHosts) - preservedHosts
+        candidateHosts.forEach { host ->
+            userDao().deleteOrphanedUsersByHost(host)
+        }
+    }
+}
+
+private suspend fun CacheDatabase.purgeGuestPluginTimelineAndStatusesInTx(
+    guestType: dev.dimension.flare.model.AccountType.GuestPlugin,
+    nonCursorPagingKeys: Set<String>,
+) {
+    val pagingDao = pagingTimelineDao()
+    val affectedPagingKeys = pagingDao.getPagingKeysByAccountType(guestType)
+    translationDao().deleteByAccountType(guestType)
+    statusReferenceDao().deleteByAccountType(guestType)
+    pagingDao.deletePresentationReferencesByAccountType(guestType)
+    pagingDao.deleteByAccountType(guestType)
+    affectedPagingKeys
+        .filterNot { it in nonCursorPagingKeys }
+        .forEach { pagingKey ->
+            if (!pagingDao.anyNonGapPaging(pagingKey)) {
+                pagingDao.clearHomeTimeline(pagingKey)
+            } else {
+                pagingDao.deletePagingKey(pagingKey)
+            }
+        }
+    statusDao().deleteByAccountType(guestType)
+    userDao().deleteProfileTabsByAccountType(guestType)
+    userDao().deleteHistoryByAccountType(guestType)
+    emojiDao().clearHistoryByAccountType(guestType)
+    messageDao().clearMessageTimeline(guestType)
+}
+
 // The Room compiler generates the `actual` implementations.
 @Suppress("NO_ACTUAL_FOR_EXPECT")
 internal expect object CacheDatabaseConstructor : RoomDatabaseConstructor<CacheDatabase> {

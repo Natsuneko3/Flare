@@ -22,8 +22,14 @@ import java.io.File
 @OptIn(ExperimentalCoilApi::class)
 internal suspend fun shareImageMedia(
     context: Context,
-    media: UiMedia.Image,
+    media: UiMedia,
     fileName: String,
+    mimeType: String =
+        if (media is UiMedia.Gif || fileName.endsWith(".gif", ignoreCase = true)) {
+            "image/gif"
+        } else {
+            "image/*"
+        },
 ) {
     val targetFile =
         File(
@@ -69,7 +75,7 @@ internal suspend fun shareImageMedia(
             val intent =
                 Intent(Intent.ACTION_SEND).apply {
                     putExtra(Intent.EXTRA_STREAM, uri)
-                    setDataAndType(uri, "image/*")
+                    setDataAndType(uri, mimeType)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
             context.startActivity(
@@ -90,7 +96,7 @@ internal suspend fun shareImageMedia(
 }
 
 internal suspend fun downloadToFile(
-    media: UiMedia.Image,
+    media: UiMedia,
     targetFile: File,
     client: HttpClient = mediaHttpClient(media.proxy),
 ): Boolean =

@@ -1387,6 +1387,131 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertTrue(longSynopsisRendered.contains(showMoreLabel), "Multi-paragraph > 4 line synopsis must render expand toggle")
     }
 
+    func testWebtoonViewportSteppingZoomEdgesAndDoubleSlotBoundaryInwardGuard() async throws {
+        let nextChapter = UiMangaChapter(id: "ch-2", title: "Chapter 2", subtitle: nil, uploadedAt: nil, locked: false, url: nil)
+        let prevChapter = UiMangaChapter(id: "ch-0", title: "Chapter 0", subtitle: nil, uploadedAt: nil, locked: false, url: nil)
+        let tallSample = makeSamplePages(count: 1)[0]
+        let tallPages = [
+            ReaderPageState(
+                id: "tall-0",
+                index: 0,
+                status: tallSample.status,
+                aspectRatio: KotlinFloat(value: 0.2)
+            ),
+        ]
+        let webtoonState = FakeMangaReaderState(
+            direction: .webtoon,
+            pages: tallPages,
+            slots: [ReaderSlotSingle(pageIndex: 0)],
+            nextBoundary: ChapterBoundaryUnlocked(chapter: nextChapter, startFromEnd: false)
+        )
+        let controller = MangaReaderInteractionController()
+        let hostBox = ReaderTestHostModel(state: webtoonState, controller: controller, deferSnapshotDelivery: true)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 600, height: 800)
+        window.rootViewController = UIHostingController(rootView: ReaderTestHostView(model: hostBox))
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        try await eventually(window: window) {
+            controller.isBound && hostBox.pageFrames[0] != nil
+        }
+
+        // 1. Tall strip (aspectRatio 0.2 -> 600x3000 in 600x800 viewport): right tap scrolls ~80% viewport (640pt) without advancing chapter
+        controller.handleTap(at: CGPoint(x: 520, y: 400), in: CGSize(width: 600, height: 800))
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[0] else { return false }
+            return abs(frame.minY + 640) <= 10
+        }
+        XCTAssertNil(webtoonState.openedBoundaryChapterId)
+
+        // Left tap scrolls back up ~80% viewport to y == 0
+        controller.handleTap(at: CGPoint(x: 80, y: 400), in: CGSize(width: 600, height: 800))
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[0] else { return false }
+            return abs(frame.minY) <= 10
+        }
+
+        // 2. Webtoon double-tap zoom (1.0x -> 2.5x), top/bottom edge reachability, and Escape reset
+        controller.handleDoubleTap(at: CGPoint(x: 300, y: 400))
+        try await eventually(window: window) {
+            controller.zoomResetHandler != nil && abs(controller.activeZoomScale - 2.5) <= 0.05
+        }
+        // Pan downward to reach very top edge (offsetY == +maxY == +600 -> page 0 minY == 0)
+        controller.panWebtoonZoomForTesting(CGSize(width: 0, height: 900))
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[0] else { return false }
+            return abs(controller.activeZoomOffset.height - 600) <= 2.0 && abs(frame.minY) <= 4.0
+        }
+
+        // Pan upward all the way to the very bottom edge (offsetY == -maxY == -600)
+        for _ in 0..<12 {
+            controller.panWebtoonZoomForTesting(CGSize(width: 0, height: -900))
+        }
+        try await eventually(window: window) {
+            abs(controller.activeZoomOffset.height + 600) <= 2.0
+        }
+
+        // Escape resets Webtoon zoom back to 1.0x
+        XCTAssertTrue(controller.handleKey(.escape))
+        try await eventually(window: window) {
+            controller.zoomResetHandler == nil && abs(controller.activeZoomScale - 1.0) <= 0.01
+        }
+
+        // 3. Rewind to top via Shift+Space, then step forward via Space from top -> >= 4 ~80% steps before opening Chapter 2
+        var rewindSteps = 0
+        while (hostBox.pageFrames[0]?.minY ?? 0) < -5 && rewindSteps < 10 {
+            XCTAssertTrue(controller.handleKey(.space(shift: true)))
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(15))
+            rewindSteps += 1
+        }
+        XCTAssertNil(webtoonState.openedBoundaryChapterId)
+
+        var forwardSteps = 0
+        while webtoonState.openedBoundaryChapterId == nil && forwardSteps < 12 {
+            XCTAssertTrue(controller.handleKey(.space(shift: false)))
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(15))
+            forwardSteps += 1
+        }
+        XCTAssertGreaterThanOrEqual(forwardSteps, 4)
+        XCTAssertEqual(webtoonState.openedBoundaryChapterId, "ch-2")
+
+        // 4. Stepping inward from prevBoundary / nextBoundary onto a Double spread preserves secondary currentPageIndex
+        let spreadPages = makeSamplePages(count: 4)
+        let spreadSlots: [any ReaderSlot] = [
+            ReaderSlotDouble(leftPageIndex: 1, rightPageIndex: 0, primaryPageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 3, rightPageIndex: 2, primaryPageIndex: 2),
+        ]
+        let spreadState = FakeMangaReaderState(
+            direction: .ltr,
+            pages: spreadPages,
+            slots: spreadSlots,
+            previousBoundary: ChapterBoundaryUnlocked(chapter: prevChapter, startFromEnd: true),
+            nextBoundary: ChapterBoundaryUnlocked(chapter: nextChapter, startFromEnd: false)
+        )
+        spreadState.goToPage(pageIndex: 3) // Secondary page of last Double slot (2, 3)
+        hostBox.setState(spreadState)
+        try await eventually(window: window) {
+            controller.activePagerPage == 2 && hostBox.snapshot.currentPageIndex == 3
+        }
+        controller.scrollToBoundary(isNext: true)
+        XCTAssertTrue(controller.isOnNextBoundaryPage)
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        try await eventually(window: window) {
+            !controller.isOnNextBoundaryPage && controller.activePagerPage == 2
+        }
+        XCTAssertEqual(spreadState.currentPageIndex, 3, "Stepping inward onto Double slot must preserve secondary page index 3")
+    }
+
     private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -1686,7 +1811,18 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
     func goToSlot(slotIndex: Int32) {
         guard !slots.isEmpty else { return }
         let clamped = min(max(Int(slotIndex), 0), slots.count - 1)
-        currentPageIndex = slots[clamped].primaryPageIndex
+        let slot = slots[clamped]
+        let containsCurrent: Bool
+        if let single = slot as? ReaderSlotSingle {
+            containsCurrent = single.pageIndex == currentPageIndex
+        } else if let doubleSlot = slot as? ReaderSlotDouble {
+            containsCurrent = doubleSlot.leftPageIndex == currentPageIndex || doubleSlot.rightPageIndex == currentPageIndex
+        } else {
+            containsCurrent = slot.primaryPageIndex == currentPageIndex
+        }
+        if !containsCurrent {
+            currentPageIndex = slot.primaryPageIndex
+        }
         onStateMutated?()
     }
 

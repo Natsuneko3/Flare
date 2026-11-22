@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.paging.Pager
 import androidx.paging.cachedIn
@@ -161,18 +162,31 @@ public class MangaDetailPresenter(
         val rawDetail = detailState.takeSuccess()
         val currentDataSource by mangaDataSourceFlow.collectAsState(null)
 
+        var resolvedMangaKey by remember(accountType, mangaKey) { mutableStateOf(mangaKey) }
+        if (rawDetail != null && rawDetail.mangaKey != resolvedMangaKey) {
+            resolvedMangaKey = rawDetail.mangaKey
+        }
+        val effectiveMangaKey = rawDetail?.mangaKey ?: resolvedMangaKey
+        val latestEffectiveMangaKey by rememberUpdatedState(effectiveMangaKey)
+
         var hasLoadedDetail by remember(accountType, mangaKey) { mutableStateOf(false) }
         if (rawDetail != null) {
             hasLoadedDetail = true
         }
 
-        val observedProgress by remember(accountType, mangaKey) {
-            progressRepository.observe(accountType, mangaKey)
-        }.collectAsState(MangaProgressSnapshot())
-        var optimisticProgress by remember(accountType, mangaKey) { mutableStateOf<MangaProgressSnapshot?>(null) }
-        var pendingWriteCount by remember(accountType, mangaKey) { mutableIntStateOf(0) }
-        LaunchedEffect(observedProgress) {
-            if (pendingWriteCount == 0 || observedProgress.matchesIgnoringTimestamp(optimisticProgress)) {
+        val progressFlow =
+            remember(accountType, effectiveMangaKey) {
+                progressRepository.observe(accountType, effectiveMangaKey)
+            }
+        val taggedProgress by remember(progressFlow, effectiveMangaKey) {
+            progressFlow.map { effectiveMangaKey to it }
+        }.collectAsState(initial = null)
+        val hasObservedProgressForKey = taggedProgress?.first == effectiveMangaKey
+        val observedProgress = taggedProgress?.takeIf { it.first == effectiveMangaKey }?.second ?: MangaProgressSnapshot()
+        var optimisticProgress by remember(accountType, effectiveMangaKey) { mutableStateOf<MangaProgressSnapshot?>(null) }
+        var pendingWriteCount by remember(accountType, effectiveMangaKey) { mutableIntStateOf(0) }
+        LaunchedEffect(hasObservedProgressForKey, observedProgress) {
+            if (hasObservedProgressForKey && (pendingWriteCount == 0 || observedProgress.matchesIgnoringTimestamp(optimisticProgress))) {
                 optimisticProgress = null
             }
         }
@@ -229,11 +243,11 @@ public class MangaDetailPresenter(
                 rawDetail?.let { computePrimaryReadTarget(it, selectedGroupId, progress) }
             }
 
-        LaunchedEffect(accountType, mangaKey, rawDetail) {
+        LaunchedEffect(accountType, effectiveMangaKey, rawDetail) {
             rawDetail
                 ?.toHistoryFeed(
                     accountType = accountType,
-                    mangaKey = mangaKey,
+                    mangaKey = effectiveMangaKey,
                 )?.let { feed ->
                     saveToDatabase(
                         database = cacheDatabase,
@@ -268,9 +282,9 @@ public class MangaDetailPresenter(
         val comments =
             if (supportsComments && hasLoadedDetail && currentDataSource != null) {
                 val source = currentDataSource!!
-                remember(source, mangaKey, scope) {
+                remember(source, effectiveMangaKey, scope) {
                     Pager(config = pagingConfig) {
-                        source.mangaComments(mangaKey).toTimelinePagingSource()
+                        source.mangaComments(effectiveMangaKey).toTimelinePagingSource()
                     }.flow.cachedIn(scope)
                 }.collectAsLazyPagingItems().toPagingState()
             } else if (supportsComments && detailState is UiState.Loading) {
@@ -282,9 +296,9 @@ public class MangaDetailPresenter(
         val recommendations =
             if (supportsRecommendations && hasLoadedDetail && currentDataSource != null) {
                 val source = currentDataSource!!
-                remember(source, mangaKey, scope) {
+                remember(source, effectiveMangaKey, scope) {
                     Pager(config = pagingConfig) {
-                        source.mangaRecommendations(mangaKey).toTimelinePagingSource()
+                        source.mangaRecommendations(effectiveMangaKey).toTimelinePagingSource()
                     }.flow.cachedIn(scope)
                 }.collectAsLazyPagingItems().toPagingState()
             } else if (supportsRecommendations && detailState is UiState.Loading) {
@@ -310,6 +324,7 @@ public class MangaDetailPresenter(
             }
 
             override fun toggleChapterSort() {
+                val targetMangaKey = latestEffectiveMangaKey
                 val base = optimisticProgress ?: observedProgress
                 val nextDescending = !base.chapterSortDescending
                 optimisticProgress = base.copy(chapterSortDescending = nextDescending)
@@ -317,7 +332,7 @@ public class MangaDetailPresenter(
                 writeScope.launch {
                     try {
                         writeMutex.withLock {
-                            progressRepository.setChapterSortDescending(accountType, mangaKey, nextDescending)
+                            progressRepository.setChapterSortDescending(accountType, targetMangaKey, nextDescending)
                         }
                     } catch (error: CancellationException) {
                         throw error
@@ -325,7 +340,11 @@ public class MangaDetailPresenter(
                         optimisticProgress = null
                     } finally {
                         pendingWriteCount--
-                        if (pendingWriteCount == 0 && observedProgress.matchesIgnoringTimestamp(optimisticProgress)) {
+                        if (
+                            pendingWriteCount == 0 &&
+                            hasObservedProgressForKey &&
+                            observedProgress.matchesIgnoringTimestamp(optimisticProgress)
+                        ) {
                             optimisticProgress = null
                         }
                     }
@@ -336,13 +355,14 @@ public class MangaDetailPresenter(
                 chapterId: String,
                 isRead: Boolean,
             ) {
+                val targetMangaKey = latestEffectiveMangaKey
                 val base = optimisticProgress ?: observedProgress
                 optimisticProgress = base.optimisticSetChapterRead(chapterId = chapterId, isRead = isRead)
                 pendingWriteCount++
                 writeScope.launch {
                     try {
                         writeMutex.withLock {
-                            progressRepository.setChapterRead(accountType, mangaKey, chapterId, isRead)
+                            progressRepository.setChapterRead(accountType, targetMangaKey, chapterId, isRead)
                         }
                     } catch (error: CancellationException) {
                         throw error
@@ -350,7 +370,11 @@ public class MangaDetailPresenter(
                         optimisticProgress = null
                     } finally {
                         pendingWriteCount--
-                        if (pendingWriteCount == 0 && observedProgress.matchesIgnoringTimestamp(optimisticProgress)) {
+                        if (
+                            pendingWriteCount == 0 &&
+                            hasObservedProgressForKey &&
+                            observedProgress.matchesIgnoringTimestamp(optimisticProgress)
+                        ) {
                             optimisticProgress = null
                         }
                     }

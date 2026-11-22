@@ -672,6 +672,253 @@ class MangaReaderCanvasTest {
         }
         composeRule.onNodeWithTag("manga_page_retry_flaky-0").assertDoesNotExist()
     }
+
+    @Test
+    fun lockedBoundaryReachableByTapAndKeyboardAndPreservedAcrossSlotReflow() {
+        val prevLocked = UiMangaChapter("ch-0", "Locked Prologue", null, null, locked = true, url = "https://manga.test/paywall-0")
+        val nextLocked = UiMangaChapter("ch-2", "Locked Epilogue", null, null, locked = true, url = "https://manga.test/paywall-2")
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Rtl,
+                initialPages = samplePages(3),
+                initialSlots =
+                    persistentListOf(
+                        ReaderSlot.Double(leftPageIndex = 1, rightPageIndex = 0, primaryPageIndex = 0),
+                        ReaderSlot.Single(pageIndex = 2),
+                    ),
+                previousBoundary = ChapterBoundary.Locked(chapter = prevLocked, openUrl = "https://manga.test/paywall-0"),
+                nextBoundary = ChapterBoundary.Locked(chapter = nextLocked, openUrl = "https://manga.test/paywall-2"),
+            )
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.size(width = 800.dp, height = 600.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = false,
+                        onToggleHud = {},
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        val canvasBounds = composeRule.onNodeWithTag("reader_canvas").fetchSemanticsNode().boundsInRoot
+
+        // 1. Move to last slot (slot 1, page 2), then tap left 30% zone (forward in RTL) -> scrolls onto Locked nextBoundary card!
+        composeRule.runOnIdle {
+            fakeState.goToSlot(1)
+        }
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            click(Offset(canvasBounds.width * 0.15f, canvasBounds.height * 0.5f))
+        }
+        composeRule.onNodeWithTag("manga_boundary_next_action").assertExists()
+
+        // 2. While settled on nextBoundary card, split slot 0 so totalPagerPages grows 4 -> 5 (and currentSlotIndex shifts 1 -> 2
+        //    without currentPageIndex changing): user MUST remain on the Locked nextBoundary card without yanking back!
+        composeRule.runOnIdle {
+            fakeState.slots =
+                persistentListOf(
+                    ReaderSlot.Single(pageIndex = 0),
+                    ReaderSlot.Single(pageIndex = 1),
+                    ReaderSlot.Single(pageIndex = 2),
+                )
+        }
+        composeRule.runOnIdle {}
+        composeRule.onNodeWithTag("manga_boundary_next_action").assertExists()
+
+        // 3. Step inward from nextBoundary via right 30% tap in RTL -> returns to last content slot (page 2)
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            click(Offset(canvasBounds.width * 0.85f, canvasBounds.height * 0.5f))
+        }
+        composeRule.onNodeWithTag("manga_reader_page_2").assertExists()
+
+        // 4. Keyboard Key.DirectionLeft (forward in RTL) and Key.Spacebar also reach Locked nextBoundary card
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.DirectionLeft)
+        }
+        composeRule.onNodeWithTag("manga_boundary_next_action").assertExists()
+
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.DirectionRight)
+        }
+        composeRule.onNodeWithTag("manga_reader_page_2").assertExists()
+
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.Spacebar)
+        }
+        composeRule.onNodeWithTag("manga_boundary_next_action").assertExists()
+
+        // 5. From slot 0, backward key (Key.DirectionRight in RTL) reaches Locked previousBoundary card and steps back inward
+        composeRule.runOnIdle {
+            fakeState.goToSlot(0)
+        }
+        composeRule.onNodeWithTag("manga_reader_page_0").assertExists()
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.DirectionRight)
+        }
+        composeRule.onNodeWithTag("manga_boundary_prev_action").assertExists()
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.DirectionLeft)
+        }
+        composeRule.onNodeWithTag("manga_reader_page_0").assertExists()
+    }
+
+    @Test
+    fun webtoonZoomReachesTopAndBottomEdgesAndResetsOnEscape() {
+        val pages =
+            (0 until 3)
+                .map { idx ->
+                    val media = UiMedia.Image("local-zoom-webtoon-$idx", "local-zoom-webtoon-$idx", null, 400f, 400f, false)
+                    ReaderPageState(
+                        id = "zw-$idx",
+                        index = idx,
+                        status = PageMediaStatus.Ready(original = media, displayed = media),
+                        aspectRatio = 1f,
+                    )
+                }.toImmutableList()
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Webtoon,
+                initialPages = pages,
+                initialSlots = (0 until 3).map(ReaderSlot::Single).toImmutableList(),
+            )
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.size(width = 400.dp, height = 600.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = false,
+                        onToggleHud = {},
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        val canvasBounds = composeRule.onNodeWithTag("reader_canvas").fetchSemanticsNode().boundsInRoot
+
+        // Double-tap center -> 2.5x zoom
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            doubleClick(center)
+        }
+        composeRule.mainClock.advanceTimeBy(400)
+        val zoomedPage0Width = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().boundsInRoot.width
+        assertTrue(zoomedPage0Width >= canvasBounds.width - 1f)
+
+        // Drag downward to reach very top of item 0 (offsetY == +maxY -> positionInRoot.y == 0f)
+        repeat(3) {
+            composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+                down(Offset(canvasBounds.width * 0.5f, 80f))
+                moveTo(Offset(canvasBounds.width * 0.5f, 540f))
+                up()
+            }
+        }
+        val topEdgeY = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot.y
+        assertTrue(
+            abs(topEdgeY) <= 2f,
+            "Expected very top of zoomed Webtoon item 0 to be reachable at y=0, got y=$topEdgeY",
+        )
+
+        // Drag upward all the way to the very bottom of item 2 (offsetY == -maxY -> bottom == canvasBounds.bottom)
+        repeat(8) {
+            composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+                down(Offset(canvasBounds.width * 0.5f, 540f))
+                moveTo(Offset(canvasBounds.width * 0.5f, 60f))
+                up()
+            }
+        }
+        val lastNode = composeRule.onNodeWithTag("manga_reader_page_2").fetchSemanticsNode()
+        val lastBottomY = lastNode.positionInRoot.y + lastNode.size.height * 2.5f
+        val clippedLastBottom = lastNode.boundsInRoot.bottom
+        assertTrue(
+            abs(lastBottomY - canvasBounds.bottom) <= 4f && abs(clippedLastBottom - canvasBounds.bottom) <= 2f,
+            "Expected very bottom of zoomed Webtoon last item to reach canvas bottom ${canvasBounds.bottom}, got bottom=$lastBottomY",
+        )
+
+        // Escape resets zoom back to 1.0x
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.Escape)
+        }
+        composeRule.runOnIdle {}
+        val resetNode = composeRule.onNodeWithTag("manga_reader_page_2").fetchSemanticsNode()
+        assertTrue(
+            abs(resetNode.size.width.toFloat() - canvasBounds.width) <= 2f &&
+                abs((resetNode.positionInRoot.y + resetNode.size.height) - canvasBounds.bottom) <= 2f,
+            "Expected Escape to reset Webtoon zoom back to 1.0x",
+        )
+    }
+
+    @Test
+    fun webtoonTallStripStepsByEightyPercentViewportBeforeAdvancingChapter() {
+        val nextChapter = UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = null)
+        val tallMedia = UiMedia.Image("local-tall-strip", "local-tall-strip", null, 4000f, 800f, false)
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Webtoon,
+                initialPages =
+                    persistentListOf(
+                        ReaderPageState(
+                            id = "tall-0",
+                            index = 0,
+                            status = PageMediaStatus.Ready(original = tallMedia, displayed = tallMedia),
+                            aspectRatio = 0.2f,
+                        ),
+                    ),
+                initialSlots = persistentListOf(ReaderSlot.Single(0)),
+                nextBoundary = ChapterBoundary.Unlocked(chapter = nextChapter, startFromEnd = false),
+            )
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.size(width = 400.dp, height = 600.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = false,
+                        onToggleHud = {},
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        val canvasBounds = composeRule.onNodeWithTag("reader_canvas").fetchSemanticsNode().boundsInRoot
+        val expectedStepPx = canvasBounds.height * 0.8f
+
+        // 1. Right 30% tap scrolls down ~80% viewport height without advancing chapter
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            click(Offset(canvasBounds.width * 0.85f, canvasBounds.height * 0.5f))
+        }
+        composeRule.runOnIdle {
+            assertEquals(null, fakeState.openedBoundaryChapterId)
+        }
+        val posAfterTap = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot.y
+        assertTrue(
+            abs(posAfterTap + expectedStepPx) <= 6f,
+            "Expected right tap to scroll tall strip by -$expectedStepPx, got $posAfterTap",
+        )
+
+        // 2. Left 30% tap scrolls back up ~80% viewport height to top
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            click(Offset(canvasBounds.width * 0.15f, canvasBounds.height * 0.5f))
+        }
+        composeRule.runOnIdle {}
+        val posAfterBackTap = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot.y
+        assertTrue(abs(posAfterBackTap) <= 6f, "Expected left tap to scroll back to top=0, got $posAfterBackTap")
+
+        // 3. Repeated Spacebar presses scroll down in ~80% increments and only open nextChapter after reaching the bottom
+        var presses = 0
+        while (fakeState.openedBoundaryChapterId == null && presses < 10) {
+            composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+                pressKey(Key.Spacebar)
+            }
+            composeRule.runOnIdle {}
+            presses++
+        }
+        assertTrue(presses >= 4, "Expected multiple ~80% viewport steps before advancing chapter, took $presses")
+        assertEquals("ch-2", fakeState.openedBoundaryChapterId)
+    }
 }
 
 private fun samplePages(count: Int): ImmutableList<ReaderPageState> =
@@ -754,6 +1001,8 @@ private class FakeMangaReaderState(
         val nextSlot = currentSlotIndex + 1
         if (nextSlot <= slots.lastIndex) {
             currentPageIndex = slots[nextSlot].primaryPageIndex
+        } else if (nextBoundary is ChapterBoundary.Unlocked) {
+            openedBoundaryChapterId = nextBoundary.chapter.id
         }
     }
 
@@ -762,6 +1011,8 @@ private class FakeMangaReaderState(
         val prevSlot = currentSlotIndex - 1
         if (prevSlot >= 0) {
             currentPageIndex = slots[prevSlot].primaryPageIndex
+        } else if (previousBoundary is ChapterBoundary.Unlocked) {
+            openedBoundaryChapterId = previousBoundary.chapter.id
         }
     }
 

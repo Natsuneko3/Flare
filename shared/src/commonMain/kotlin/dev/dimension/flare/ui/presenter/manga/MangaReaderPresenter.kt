@@ -258,13 +258,23 @@ public class MangaReaderPresenter(
         val rawDetail = detailState.takeSuccess()
         val currentDataSource by mangaDataSourceFlow.collectAsState(null)
 
+        var resolvedMangaKey by remember(accountType, mangaKey) { mutableStateOf(mangaKey) }
+        if (rawDetail != null && rawDetail.mangaKey != resolvedMangaKey) {
+            resolvedMangaKey = rawDetail.mangaKey
+        }
+        val effectiveMangaKey = rawDetail?.mangaKey ?: resolvedMangaKey
+        val latestEffectiveMangaKey by rememberUpdatedState(effectiveMangaKey)
+
         val settings by appDataStore.appSettingsStore.data.collectAsState(AppSettings.default)
         val progressFlow =
-            remember(accountType, mangaKey) {
-                progressRepository.observe(accountType, mangaKey)
+            remember(accountType, effectiveMangaKey) {
+                progressRepository.observe(accountType, effectiveMangaKey)
             }
-        val loadedProgress by progressFlow.collectAsState(initial = null)
-        var seedProgress by remember(accountType, mangaKey) { mutableStateOf<MangaProgressSnapshot?>(null) }
+        val taggedProgress by remember(progressFlow, effectiveMangaKey) {
+            progressFlow.map { effectiveMangaKey to it }
+        }.collectAsState(initial = null)
+        val loadedProgress = taggedProgress?.takeIf { it.first == effectiveMangaKey }?.second
+        var seedProgress by remember(accountType, effectiveMangaKey) { mutableStateOf<MangaProgressSnapshot?>(null) }
         val effectiveObservedProgress = loadedProgress ?: seedProgress
         val latestLoadedProgress by rememberUpdatedState(effectiveObservedProgress)
 
@@ -308,8 +318,9 @@ public class MangaReaderPresenter(
         val activeSessionHolder = remember { ActiveSessionRef() }
         val session =
             if (rawDetail != null && !isChapterLocked && currentDataSource != null) {
-                remember(chapterTarget, currentDataSource) {
+                remember(chapterTarget, currentDataSource, effectiveMangaKey) {
                     ChapterPagesSession(
+                        mangaKey = effectiveMangaKey,
                         chapterId = chapterTarget.chapterId,
                         landing = chapterTarget.landing,
                         initialPageHint = (chapterTarget.landing as? ChapterLanding.Initial)?.initialPage ?: 0,
@@ -328,13 +339,13 @@ public class MangaReaderPresenter(
             }
         }
 
-        LaunchedEffect(session, currentDataSource) {
+        LaunchedEffect(session, currentDataSource, progressFlow) {
             val currentSession = session ?: return@LaunchedEffect
             val source = currentDataSource ?: return@LaunchedEffect
             if (!currentSession.hasStartedLoad) {
                 currentSession.hasStartedLoad = true
                 try {
-                    val fetchedPages = source.chapterPages(mangaKey, currentSession.chapterId)
+                    val fetchedPages = source.chapterPages(currentSession.mangaKey, currentSession.chapterId)
                     currentCoroutineContext().ensureActive()
                     val resolvedProgress = latestLoadedProgress ?: progressFlow.first()
                     currentCoroutineContext().ensureActive()
@@ -387,7 +398,7 @@ public class MangaReaderPresenter(
                 currentPageIndex = clampedPageIndex,
                 rawPages = loadedPages,
                 dataSource = source,
-                mangaKey = mangaKey,
+                mangaKey = currentSession.mangaKey,
             )
         }
 
@@ -598,6 +609,7 @@ public class MangaReaderPresenter(
             val slotIdx = MangaSpreadLayoutSolver.slotIndexForPage(liveSlots, pageIdx)
             val completed = liveSlots.getOrNull(slotIdx)?.contains(loaded.lastIndex) == true
             return PendingProgressRecord(
+                mangaKey = currentSession.mangaKey,
                 chapterId = currentSession.chapterId,
                 pageIndex = pageIdx,
                 pageCount = loaded.size,
@@ -612,7 +624,7 @@ public class MangaReaderPresenter(
                 writeMutex.withLock {
                     progressRepository.recordPage(
                         accountType = accountType,
-                        mangaKey = mangaKey,
+                        mangaKey = record.mangaKey,
                         chapterId = record.chapterId,
                         pageIndex = record.pageIndex,
                         pageCount = record.pageCount,
@@ -774,17 +786,18 @@ public class MangaReaderPresenter(
                 currentSession.retryPage(
                     page = deferred,
                     dataSource = source,
-                    mangaKey = mangaKey,
+                    mangaKey = currentSession.mangaKey,
                 )
             }
 
             override fun setDirection(direction: MangaReadingDirection) {
+                val targetMangaKey = latestEffectiveMangaKey
                 optimisticDirectionOverride = direction
                 pendingDirectionWrites++
                 writeScope.launch {
                     try {
                         writeMutex.withLock {
-                            progressRepository.setReaderModeOverride(accountType, mangaKey, direction)
+                            progressRepository.setReaderModeOverride(accountType, targetMangaKey, direction)
                         }
                     } catch (error: CancellationException) {
                         throw error
@@ -938,6 +951,7 @@ private class ProgressFlushTracker {
 }
 
 private data class PendingProgressRecord(
+    val mangaKey: MicroBlogKey,
     val chapterId: String,
     val pageIndex: Int,
     val pageCount: Int,
@@ -945,6 +959,7 @@ private data class PendingProgressRecord(
 )
 
 private class ChapterPagesSession(
+    val mangaKey: MicroBlogKey,
     val chapterId: String,
     val landing: ChapterLanding,
     initialPageHint: Int,
