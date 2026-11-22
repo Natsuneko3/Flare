@@ -172,6 +172,7 @@ import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.model.pluginPostEntityKey
 import dev.dimension.flare.ui.render.RenderContent
 import dev.dimension.flare.ui.render.RenderRun
 import dev.dimension.flare.ui.render.UiRichText
@@ -228,6 +229,10 @@ public fun CommonStatusComponent(
             remember(item.contentWarning, translationDisplayed, showOriginal) {
                 item.contentWarning?.visiblePostText(translationDisplayed, showOriginal).orEmpty()
             }
+        var expanded by key(item.accountType, item.statusKey, item.content.original, item.contentWarning?.original) {
+            rememberSaveable { mutableStateOf(false) }
+        }
+        val showsBody = expanded || appearanceSettings.expandContentWarning || visibleContentWarning.all { it.isEmpty }
         val showsDetailTranslation = isDetail && !item.content.original.isEmpty && appearanceSettings.showTranslateButton
         val hasTextContent = visibleContent.any { !it.isEmpty } || visibleContentWarning.any { !it.isEmpty }
         val hasBodyContent = hasTextContent || item.poll != null
@@ -243,7 +248,8 @@ public fun CommonStatusComponent(
         val showsCard = item.card != null && appearanceSettings.showLinkPreview && item.images.isEmpty() && quotes.isEmpty()
         val showsQuotes = quotes.isNotEmpty() && !isQuote
         val communityNote = item.communityNote
-        val showsAttachments = showsImages || showsCard || showsQuotes || communityNote != null
+        val showsPluginWidgets = showsBody && !isQuote && !isGalleryFallback && item.pluginWidgets.isNotEmpty()
+        val showsAttachments = showsImages || showsCard || showsQuotes || communityNote != null || showsPluginWidgets
         val hasVisibleEmojiReactions = appearanceSettings.showEmojiReactions && item.emojiReactions.isNotEmpty()
         val showsReactions = !isQuote && (hasVisibleEmojiReactions || item.sourceChannel != null)
         val showsActions = (appearanceSettings.postActionStyle != PostActionStyle.Hidden || isDetail) && !forceHideActions
@@ -481,6 +487,9 @@ public fun CommonStatusComponent(
                         StatusContentComponent(
                             visibleContent = visibleContent,
                             visibleContentWarning = visibleContentWarning,
+                            showsBody = showsBody,
+                            expanded = expanded,
+                            onExpandedChange = { expanded = it },
                             poll = item.poll,
                             maxLines = if (isDetail) Int.MAX_VALUE else maxLines,
                             showExpandButton = showExpandButton,
@@ -575,6 +584,19 @@ public fun CommonStatusComponent(
                 communityNote?.let { note ->
                     Spacer(modifier = Modifier.height(firstAttachmentSpacing))
                     StatusCommunityNoteComponent(note)
+                }
+
+                if (showsPluginWidgets) {
+                    val hasPrecedingAttachment = showsImages || showsCard || showsQuotes || communityNote != null
+                    Spacer(
+                        modifier = Modifier.height(if (hasPrecedingAttachment) 8.dp else firstAttachmentSpacing),
+                    )
+                    key(item.accountType, item.statusKey) {
+                        PluginWidgetStackComponent(
+                            cards = item.pluginWidgets,
+                            postIdentity = item.pluginPostEntityKey(),
+                        )
+                    }
                 }
 
                 if (showsReactions) {
@@ -1534,6 +1556,9 @@ private fun UiTranslatableText.visiblePostText(
 private fun StatusContentComponent(
     visibleContent: List<UiRichText>,
     visibleContentWarning: List<UiRichText>,
+    showsBody: Boolean,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     poll: UiPoll?,
     maxLines: Int?,
     showExpandButton: Boolean,
@@ -1543,9 +1568,6 @@ private fun StatusContentComponent(
     val appearanceSettings = LocalTimelineAppearance.current
     val effectiveMaxLines = (maxLines ?: appearanceSettings.lineLimit).coerceAtLeast(1)
     val collapseThresholdLines = maxLines?.coerceAtLeast(1) ?: 15
-    var expanded by rememberSaveable {
-        mutableStateOf(false)
-    }
     var overflowingTextIndexes by remember(visibleContent, effectiveMaxLines, expanded) {
         mutableStateOf(emptySet<Int>())
     }
@@ -1573,9 +1595,7 @@ private fun StatusContentComponent(
                         modifier =
                             Modifier
                                 .fillMaxWidth(),
-                        onClick = {
-                            expanded = !expanded
-                        },
+                        onClick = { onExpandedChange(!expanded) },
                     ) {
                         if (expanded) {
                             PlatformText(stringResource(Res.string.mastodon_item_show_less), style = PlatformTheme.typography.postBody)
@@ -1586,7 +1606,7 @@ private fun StatusContentComponent(
                 }
             }
         }
-        AnimatedVisibility(visible = expanded || expandContentWarning || visibleContentWarning.all { it.isEmpty }) {
+        AnimatedVisibility(visible = showsBody) {
             Column(
                 modifier =
                     Modifier.padding(
@@ -1628,9 +1648,7 @@ private fun StatusContentComponent(
                 if (visibleContent.any { !it.isEmpty }) {
                     if (overflowingTextIndexes.isNotEmpty() && showExpandButton) {
                         PlatformTextButton(
-                            onClick = {
-                                expanded = true
-                            },
+                            onClick = { onExpandedChange(true) },
                         ) {
                             PlatformText(
                                 stringResource(Res.string.post_show_full_text),

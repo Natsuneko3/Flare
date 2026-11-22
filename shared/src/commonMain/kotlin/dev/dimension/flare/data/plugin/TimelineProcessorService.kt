@@ -1,0 +1,75 @@
+package dev.dimension.flare.data.plugin
+
+import dev.dimension.flare.di.koinGet
+import dev.dimension.flare.model.AccountType
+import dev.dimension.flare.ui.model.UiPluginWidgetCard
+import dev.dimension.flare.ui.model.UiTimelineV2
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlin.native.HiddenFromObjC
+
+@HiddenFromObjC
+public interface TimelineProcessorService {
+    /** Loaded posts need processing again after a grant, plugin configuration, or retry changes. */
+    public val processingRevision: StateFlow<Long>
+    public val overlayRevision: StateFlow<Long>
+
+    public fun submitPosts(posts: List<UiTimelineV2.Post>)
+
+    public fun widgetsForPost(post: UiTimelineV2.Post): ImmutableList<UiPluginWidgetCard>
+
+    public fun refreshPostPlugin(
+        post: UiTimelineV2.Post,
+        pluginId: String,
+    )
+
+    public fun toggleCollapsible(
+        postEntityKey: String,
+        pluginId: String,
+        cardId: String,
+        collapsibleId: String,
+    )
+
+    public fun clearPlugin(pluginId: String)
+
+    public fun clearAccount(accountType: AccountType) {}
+
+    public fun clearAll() {}
+
+    public fun clearFailureCooldowns() {}
+}
+
+@HiddenFromObjC
+public object NoopTimelineProcessorService : TimelineProcessorService {
+    private val revision = MutableStateFlow(0L)
+    override val processingRevision: StateFlow<Long> = revision
+    override val overlayRevision: StateFlow<Long> = revision
+
+    override fun submitPosts(posts: List<UiTimelineV2.Post>) {}
+
+    override fun widgetsForPost(post: UiTimelineV2.Post): ImmutableList<UiPluginWidgetCard> = persistentListOf()
+
+    override fun refreshPostPlugin(
+        post: UiTimelineV2.Post,
+        pluginId: String,
+    ) {}
+
+    override fun toggleCollapsible(
+        postEntityKey: String,
+        pluginId: String,
+        cardId: String,
+        collapsibleId: String,
+    ) {}
+
+    override fun clearPlugin(pluginId: String) {}
+
+    override fun clearAccount(accountType: AccountType) {}
+
+    override fun clearAll() {}
+
+    override fun clearFailureCooldowns() {}
+}
+
+internal fun timelineProcessorServiceOrNull(): TimelineProcessorService? = runCatching { koinGet<TimelineProcessorService>() }.getOrNull()

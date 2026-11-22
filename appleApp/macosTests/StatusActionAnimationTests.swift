@@ -388,6 +388,69 @@ final class MacStatusActionAnimationTests: XCTestCase {
         assertPixels(try fixture.pixels(), expected, "Enabling Reduce Motion must cancel in-flight motion")
     }
 
+    func testWidgetUpdatesPreserveExpandedWarningAndFullText() async throws {
+        _ = Self.servicesReady
+        let source = previewPost("match", name: "Spoiler", text: Array(repeating: "Match details.", count: 20).joined(separator: "\n"))
+        let warning = UiTranslatableText(original: try XCTUnwrap(source.user).name, translation: nil)
+        let card = UiPluginWidgetCard(pluginId: "scores", pluginName: "Scores", pluginIconPath: nil,
+                                      id: "score", title: "Final score", badge: nil, accentTone: .neutral,
+                                      refreshable: false, isRefreshing: false, cardAction: nil, body: [], actions: [], onRefresh: nil)
+        func content(_ id: String, cards: [UiPluginWidgetCard] = []) -> some View {
+            let post = UiTimelineV2.Post(
+                platformId: source.platformId, images: [], sensitive: false, contentWarning: warning, user: nil,
+                platformIcon: source.platformIcon, sourceLanguages: [], translationDisplayState: .hidden,
+                content: source.content, actions: [], poll: nil, statusKey: MicroBlogKey(id: id, host: "example.invalid"),
+                card: nil, createdAt: source.createdAt, emojiReactions: [], sourceChannel: nil, visibility: nil,
+                replyToHandle: nil, references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
+                accountType: source.accountType, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil,
+                pluginWidgets: cards
+            )
+            return StatusView(data: post, isClickable: false, maxLine: 1, forceHideActions: true).frame(width: 320, alignment: .leading)
+        }
+        let host = NSHostingView(rootView: content("match"))
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: host.fittingSize), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        func measuredHeight() async throws -> CGFloat {
+            try await Task.sleep(for: .milliseconds(400))
+            window.setContentSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+        func pressShowMore() throws {
+            // With no header, actions, or attachments, the active Show more button is the last row.
+            let y = host.isFlipped ? host.bounds.maxY - 8 : host.bounds.minY + 8
+            let point = host.convert(CGPoint(x: 20, y: y), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let click = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                window.sendEvent(click)
+            }
+        }
+
+        let hiddenHeight = try await measuredHeight()
+        try pressShowMore()
+        let previewHeight = try await measuredHeight()
+        XCTAssertGreaterThan(previewHeight, hiddenHeight)
+        try pressShowMore()
+        let fullHeight = try await measuredHeight()
+        XCTAssertGreaterThan(fullHeight, previewHeight + 100)
+        host.rootView = content("match", cards: [card])
+        let widgetHeight = try await measuredHeight()
+        XCTAssertGreaterThan(widgetHeight, fullHeight + 20)
+        host.rootView = content("match")
+        let restoredHeight = try await measuredHeight()
+        XCTAssertEqual(restoredHeight, fullHeight, accuracy: 1)
+        host.rootView = content("other", cards: [card])
+        let reusedHeight = try await measuredHeight()
+        XCTAssertEqual(reusedHeight, hiddenHeight, accuracy: 1)
+    }
+
     private func actions(liked: Bool = false, count: Int64? = nil, grouped: Bool = false) -> [ActionMenu] {
         let item = ActionMenu.Item(updateKey: "like", icon: liked ? .unlike : .like, text: nil,
                                    count: UiNumber(value: count ?? (liked ? 10 : 9)),

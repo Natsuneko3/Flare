@@ -11,7 +11,7 @@ An API v1/v2 package is a ZIP with a `.fpp` extension containing these runtime f
 
 ```text
 manifest.json
-plugin.js             # required when platform, translation or platformExtension is declared
+plugin.js             # required when platform, translation, platformExtension or timelineProcessor is declared
 assets/icon.png
 locales/<bcp47>.json   # optional
 settings/             # optional packaged HTML, JS, CSS, JSON, fonts and raster images
@@ -22,10 +22,10 @@ The package must contain exactly one `assets/icon.<extension>`: `png`, `jpg`,
 The icon is kept unchanged, limited to 2 MiB and 1024×1024 pixels. SVG is not
 supported. PNG remains the default in the templates.
 
-Declare at least one of `platform`, `translation`, `platformExtension` or
-`settings`. Use `apiVersion: 2` for translation, platform extensions and
-settings. Settings-only packages can omit `plugin.js` and all social/login
-declarations. See [Host API requirements](references/manifest.md#host-api-versions).
+Declare at least one of `platform`, `translation`, `platformExtension`,
+`timelineProcessor` or `settings`. Use `apiVersion: 2` for translation, platform
+extensions, timeline processors and settings. Settings-only packages can omit
+`plugin.js` and all social/login declarations. See [Host API requirements](references/manifest.md#host-api-versions).
 
 When present, `plugin.js` is one self-contained classic background script. Static modules, dynamic
 imports, remote code, filesystem access, and native access are unavailable.
@@ -79,6 +79,7 @@ The background script registers each declared type once, synchronously.
 `defineFlareSocialPlugin` registers social detection, login and capabilities.
 `defineFlareTranslatePlugin` registers text translation. `defineFlarePlatformExtensionPlugin`
 registers [existing-account actions](references/platform-extensions.md).
+`defineFlareTimelineProcessorPlugin` registers [timeline post processing](#timeline-post-processing).
 A combined package calls each applicable entrypoint in any order. Registration
 freezes each definition and closes when script initialization finishes.
 
@@ -514,6 +515,30 @@ The Host binds plugin/package/account identity; target parameters live only in
 `page.parameters`. This capability does not register any home tab or catalog.
 Existing `detailType` hit handling, paging limits and validation still apply.
 See [the complete page contract](references/capabilities.md#api-v2-temporary-timeline-pages).
+
+## Timeline post processing
+
+Host API v2 `manifest.timelineProcessor` registers `defineFlareTimelineProcessorPlugin({ processBatch })`,
+mapped to the internal method path `timelineProcessor.processBatch`. The Host
+evaluates the optional static `filter` natively before batching matching posts
+(up to `maxBatchSize`, 1..50, default 20) into `TimelineProcessBatchRequestV1`.
+The host splits batches to keep each serialized request within 1 MiB of UTF-8 JSON.
+An item that exceeds the limit on its own is skipped, and the other items still run.
+Invocations run in `plugin` scope using `permissions.httpOrigins` and
+`flare.storage`, with no access to social credentials or `flare.account.http`.
+Users enable local AI timeline processors in Plugin Management. Adding an HTTP
+origin or remote media access requires the user to enable processing again.
+
+Each `TimelineProcessItemResultV1` returns 0..4 declarative `PluginWidgetCardV1`
+cards (`text`, `row`, `column`, `stat`, `matchup`, `sparkline`, `segmentedBar`,
+`keyValue`, `badgeRow`, `image`, `collapsible` and `divider`) with Host actions
+(`openUrl`, `copy` and `refresh`) and `cache` options (`policy`: `"disk"`,
+`"memoryOnly"` or `"none"`; optional `ttlSeconds` clamped to 15..604800).
+Remote `image` nodes and `matchup` icons are rendered only when the running
+package holds `permissions.mediaNetwork: true`. Unknown node, action and tone
+variants are omitted or defaulted additively; cards whose body becomes empty
+are dropped. See [flare-plugin.d.ts](flare-plugin.d.ts) and the
+[manifest reference](references/manifest.md#timeline-processor).
 
 ## Lifecycle and trust
 

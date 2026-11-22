@@ -11,6 +11,10 @@ internal expect object PlatformColorScheme {
 
     @get:Composable
     @get:ReadOnlyComposable
+    val onPrimary: Color
+
+    @get:Composable
+    @get:ReadOnlyComposable
     val retweetColor: Color
 
     @get:Composable
@@ -24,6 +28,10 @@ internal expect object PlatformColorScheme {
     @get:Composable
     @get:ReadOnlyComposable
     val error: Color
+
+    @get:Composable
+    @get:ReadOnlyComposable
+    val onError: Color
 
     @get:Composable
     @get:ReadOnlyComposable

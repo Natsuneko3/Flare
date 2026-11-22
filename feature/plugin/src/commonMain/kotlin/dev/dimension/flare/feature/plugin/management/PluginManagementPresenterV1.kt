@@ -106,6 +106,8 @@ public data class PluginManagementItemV1(
     val authoring: AuthoredPlugin? = null,
     val hasSettings: Boolean = false,
     val hasPlatformExtension: Boolean = false,
+    val hasTimelineProcessor: Boolean = false,
+    val timelineProcessorEnabled: Boolean = false,
     val updatedAt: String? = null,
     val sourceCommitSha: String? = null,
 ) {
@@ -151,11 +153,13 @@ public class PluginManagementPresenterV1(
     private val observation: Job =
         combine(
             subsystem.stateStore.desired,
+            subsystem.running,
             subsystem.sourceIssues,
             subsystem.runtimePool.issues,
             subsystem.developmentState,
-        ) { _, _, _, _ -> Unit }
+        ) { _, _, _, _, _ -> Unit }
             .combine(subsystem.authoring.plugins) { _, _ -> Unit }
+            .combine(subsystem.timelineGrants.observedGrants()) { _, _ -> Unit }
             .onEach { refreshState() }
             .launchIn(scope)
 
@@ -471,12 +475,60 @@ public class PluginManagementPresenterV1(
                 if (fromMarketplace) clearPreview()
                 throw error
             }
-            subsystem.installer.commit(prepared, confirmed = true, updatedAt = updatedAt, activate = switcher::install)
+            val existingManifest =
+                subsystem.stateStore.desired.value.plugins[prepared.pluginId]
+                    ?.manifest
+            val previousGrant = subsystem.timelineGrants.awaitCurrent()[prepared.pluginId]
+            subsystem.installer.commit(
+                prepared,
+                confirmed = true,
+                updatedAt = updatedAt,
+                activate = { record ->
+                    subsystem.applyConfirmedTimelineProcessorGrant(
+                        existingManifest = existingManifest,
+                        nextManifest = record.manifest,
+                    )
+                    try {
+                        switcher.install(record)
+                    } catch (error: Throwable) {
+                        subsystem.timelineGrants.updateSuspend { current ->
+                            if (previousGrant == null) {
+                                current - record.pluginId
+                            } else {
+                                current + (record.pluginId to previousGrant)
+                            }
+                        }
+                        throw error
+                    }
+                },
+            )
             updates.update { it - prepared.pluginId }
             updateIssues.update { it - prepared.pluginId }
             preview = null
             mutableState.update { snapshot(it).copy(gitHubInstall = null) }
         }
+    }
+
+    public fun setTimelineProcessorEnabled(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
+        if (closed.value) return
+        if (enabled) {
+            val manifest =
+                (
+                    subsystem.running.value.plugins[pluginId]
+                        ?.installed
+                        ?: subsystem.stateStore.desired.value.plugins[pluginId]
+                            ?.takeUnless { it.removing }
+                )?.manifest ?: return
+            if (manifest.timelineProcessor == null) return
+            subsystem.timelineGrants.setEnabledAsync(pluginId, manifest.permissions, scope)
+        } else {
+            subsystem.timelineGrants.setEnabledAsync(pluginId, null, scope)
+            subsystem.clearTimelineProcessor(pluginId)
+        }
+        refreshState()
     }
 
     public suspend fun cancelInstall() {
@@ -539,15 +591,22 @@ public class PluginManagementPresenterV1(
 
     private fun snapshot(current: PluginManagementStateV1 = PluginManagementStateV1()): PluginManagementStateV1 {
         val desired = subsystem.stateStore.desired.value
+        val running = subsystem.running.value.plugins
+        val grants = subsystem.timelineGrants.current
         return current.copy(
             plugins =
                 desired.plugins.values.sortedBy(InstalledPluginV1::pluginId).map { installed ->
+                    val effectiveManifest = running[installed.pluginId]?.installed?.manifest ?: installed.manifest
                     installed.toItem(
                         iconPath =
                             subsystem.stateStore.paths
                                 .iconPath(installed.packageHash, installed.iconExtension)
                                 .toString(),
                         availableUpdate = updates.value[installed.pluginId].takeUnless { installed.removing },
+                        hasTimelineProcessor = !installed.removing && effectiveManifest.timelineProcessor != null,
+                        timelineProcessorEnabled =
+                            !installed.removing &&
+                                subsystem.timelineGrants.isEnabled(installed.pluginId, effectiveManifest, grants),
                     )
                 },
             issues = subsystem.sourceIssues.value + updateIssues.value.values.filter { it.pluginId in desired.plugins },
@@ -664,6 +723,8 @@ public class PluginManagementPresenterV1(
 private fun InstalledPluginV1.toItem(
     iconPath: String,
     availableUpdate: GitHubPluginVersionV1?,
+    hasTimelineProcessor: Boolean = false,
+    timelineProcessorEnabled: Boolean = false,
 ): PluginManagementItemV1 =
     PluginManagementItemV1(
         pluginId = pluginId,
@@ -677,6 +738,8 @@ private fun InstalledPluginV1.toItem(
         sourceCommitSha = (source as? PluginInstallSourceV1.GitHub)?.commitSha,
         hasSettings = manifest.settings != null,
         hasPlatformExtension = manifest.platformExtension != null,
+        hasTimelineProcessor = hasTimelineProcessor,
+        timelineProcessorEnabled = timelineProcessorEnabled,
     )
 
 private fun PreparedPluginInstallV1.toReview(): PluginInstallReviewV1 =

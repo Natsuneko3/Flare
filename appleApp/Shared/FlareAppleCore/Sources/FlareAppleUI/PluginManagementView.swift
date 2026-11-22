@@ -551,81 +551,33 @@ public struct PluginManagementView: View {
         PluginMarketplaceCommunityNoticeView()
     }
 
-    private func pluginMenu(_ plugin: PluginManagementItemV1, name: String, onUninstall: @escaping () -> Void) -> some View {
-        Menu {
-            if let source = plugin.repositoryWebUrl, let url = URL(string: source) {
-                Link("plugin_marketplace_repository", destination: url)
-                    .environment(\.openURL, OpenURLAction { .systemAction($0) })
-            } else {
-                Text(verbatim: plugin.pluginId)
-            }
-            if plugin.hasPlatformExtension {
-                Button("plugin_extension_title") { extensionPluginId = plugin.pluginId }
-            }
-            if plugin.hasSettings {
-                Button("settings_title") { settingsPluginId = plugin.pluginId }
-            }
-            Button(role: .destructive, action: onUninstall) {
-                Label {
-                    Text("plugin_uninstall")
-                } icon: {
-                    Image(fontAwesome: .trash)
-                }
-            }
-        } label: {
-            pluginRowMoreLabel()
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .accessibilityLabel(Text(verbatim: "\(String(localized: "more")): \(name)"))
-        .help("more")
-        #if os(macOS)
-        .menuIndicator(.hidden)
-        #endif
-    }
-
     @ViewBuilder
     private func pluginRow(_ plugin: PluginManagementItemV1) -> some View {
         let name = plugin.nameText.text.isEmpty ? String(localized: "plugin_ai_untitled") : plugin.nameText.text
         let busy = presenter.state.busy || (plugin.authoring == nil && isDeveloping(plugin.pluginId))
-        pluginListRow(name: name, iconPath: plugin.iconPath) {
-            if let source = plugin.repositoryFullName ?? plugin.sourceUrl {
-                pluginRepositoryLink(name: source, address: plugin.repositoryWebUrl)
-            } else if plugin.authoring == nil {
-                Text("plugin_local_import").font(.caption).foregroundStyle(.secondary)
-            }
-            PluginReleaseMetadata(version: plugin.version, updatedAt: plugin.updatedAt)
-            if let authoring = plugin.authoring {
-                Text(String(format: String(localized: "plugin_ai_source_revision"), authoring.revision))
-                    .font(.caption).foregroundStyle(.secondary)
-                if authoring.phase != .idle && authoring.phase != .applied {
-                    Text(pluginAuthoringLabel(authoring.phase)).font(.caption).flareSecondaryText()
-                }
-                if let error = authoring.error {
-                    Text(verbatim: error).font(.caption).foregroundStyle(.red)
-                }
-            }
-        } actions: {
-            if plugin.availableUpdate != nil {
-                pluginRowButton("plugin_update") {
-                    Task { try? await facade.inspectGitHubUpdate(pluginId: plugin.pluginId) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy)
-            }
-            if plugin.authoring?.canCancelUpdate == true {
-                pluginRowButton("plugin_ai_stop") {
-                    Task { try? await facade.cancelPluginUpdate(pluginId: plugin.pluginId) }
-                }
-                .buttonStyle(.bordered)
-                .disabled(busy)
-            }
-            pluginMenu(plugin, name: name) {
+        PluginInstalledRow(
+            plugin: plugin,
+            busy: busy,
+            onUpdate: {
+                Task { try? await facade.inspectGitHubUpdate(pluginId: plugin.pluginId) }
+            },
+            onCancelAuthoringUpdate: {
+                Task { try? await facade.cancelPluginUpdate(pluginId: plugin.pluginId) }
+            },
+            onOpenExtension: {
+                extensionPluginId = plugin.pluginId
+            },
+            onOpenSettings: {
+                settingsPluginId = plugin.pluginId
+            },
+            onUninstall: {
                 pendingUninstallId = plugin.pluginId
                 pendingUninstallName = name
+            },
+            onToggleTimelineProcessor: { enabled in
+                facade.setTimelineProcessorEnabled(pluginId: plugin.pluginId, enabled: enabled)
             }
-            .disabled(busy)
-        }
+        )
     }
 
     private func isDeveloping(_ pluginId: String) -> Bool {
@@ -1026,6 +978,12 @@ func pluginPermissionText(_ permission: PluginPermission) -> String {
     if permission.type == .mediaNetwork {
         return String(localized: "plugin_permission_media_network")
     }
+    if permission.type == .timelinePostAccess {
+        return String(
+            localized: "plugin_permission_timeline_post_access",
+            defaultValue: "Read displayed timeline posts to attach widgets, which may send post content to permitted network origins"
+        )
+    }
     if permission.type == .accountHttpOrigin {
         let origin = permission.origin == "$accountOrigin"
             ? String(localized: "plugin_permission_account_origin_label") : permission.origin
@@ -1315,6 +1273,117 @@ struct PluginMarketplaceRow: View {
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
         .accessibilityLabel(Text(verbatim: "\(String(localized: "more")): \(entry.name)"))
+        #if os(macOS)
+        .menuIndicator(.hidden)
+        #endif
+    }
+}
+
+struct PluginInstalledRow: View {
+    let plugin: PluginManagementItemV1
+    let busy: Bool
+    let onUpdate: () -> Void
+    let onCancelAuthoringUpdate: () -> Void
+    let onOpenExtension: () -> Void
+    let onOpenSettings: () -> Void
+    let onUninstall: () -> Void
+    let onToggleTimelineProcessor: (Bool) -> Void
+
+    private var displayName: String {
+        plugin.nameText.text.isEmpty ? String(localized: "plugin_ai_untitled") : plugin.nameText.text
+    }
+
+    var body: some View {
+        pluginListRow(name: displayName, iconPath: plugin.iconPath) {
+            if let source = plugin.repositoryFullName ?? plugin.sourceUrl {
+                pluginRepositoryLink(name: source, address: plugin.repositoryWebUrl)
+            } else if plugin.authoring == nil {
+                Text("plugin_local_import").font(.caption).foregroundStyle(.secondary)
+            }
+            PluginReleaseMetadata(version: plugin.version, updatedAt: plugin.updatedAt)
+            if let authoring = plugin.authoring {
+                Text(String(format: String(localized: "plugin_ai_source_revision"), authoring.revision))
+                    .font(.caption).foregroundStyle(.secondary)
+                if authoring.phase != .idle && authoring.phase != .applied {
+                    Text(pluginAuthoringLabel(authoring.phase)).font(.caption).flareSecondaryText()
+                }
+                if let error = authoring.error {
+                    Text(verbatim: error).font(.caption).foregroundStyle(.red)
+                }
+            }
+            if plugin.hasTimelineProcessor {
+                let toggleLabel = String(
+                    localized: "plugin_timeline_processor_toggle",
+                    defaultValue: "Timeline post widgets"
+                )
+                let toggleBinding = Binding<Bool>(
+                    get: { plugin.timelineProcessorEnabled },
+                    set: { enabled in onToggleTimelineProcessor(enabled) }
+                )
+                #if os(macOS)
+                Toggle(isOn: toggleBinding) {
+                    Text(verbatim: toggleLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(busy)
+                .padding(.top, 4)
+                #else
+                Toggle(isOn: toggleBinding) {
+                    Text(verbatim: toggleLabel)
+                        .font(.subheadline)
+                }
+                .toggleStyle(.switch)
+                .disabled(busy)
+                .padding(.top, 4)
+                #endif
+            }
+        } actions: {
+            if plugin.availableUpdate != nil {
+                pluginRowButton("plugin_update", action: onUpdate)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(busy)
+            }
+            if plugin.authoring?.canCancelUpdate == true {
+                pluginRowButton("plugin_ai_stop", action: onCancelAuthoringUpdate)
+                    .buttonStyle(.bordered)
+                    .disabled(busy)
+            }
+            pluginMenu
+                .disabled(busy)
+        }
+    }
+
+    private var pluginMenu: some View {
+        Menu {
+            if let source = plugin.repositoryWebUrl, let url = URL(string: source) {
+                Link("plugin_marketplace_repository", destination: url)
+                    .environment(\.openURL, OpenURLAction { .systemAction($0) })
+            } else {
+                Text(verbatim: plugin.pluginId)
+            }
+            if plugin.hasPlatformExtension {
+                Button("plugin_extension_title", action: onOpenExtension)
+            }
+            if plugin.hasSettings {
+                Button("settings_title", action: onOpenSettings)
+            }
+            Button(role: .destructive, action: onUninstall) {
+                Label {
+                    Text("plugin_uninstall")
+                } icon: {
+                    Image(fontAwesome: .trash)
+                }
+            }
+        } label: {
+            pluginRowMoreLabel()
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .accessibilityLabel(Text(verbatim: "\(String(localized: "more")): \(displayName)"))
+        .help("more")
         #if os(macOS)
         .menuIndicator(.hidden)
         #endif

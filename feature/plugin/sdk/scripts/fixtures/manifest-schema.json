@@ -2322,6 +2322,113 @@
       },
       "schemaValid": false,
       "hostValid": false
+    },
+    {
+      "name": "timelineProcessor-only plugin",
+      "patch": {
+        "platform": null,
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "apiVersion": 1,
+          "maxBatchSize": 20,
+          "filter": {
+            "containsAny": [
+              "-----BEGIN PGP MESSAGE-----"
+            ],
+            "regex": "\\$[A-Z]{1,6}\\b",
+            "linkHosts": [
+              "polymarket.com"
+            ],
+            "requireLinks": false
+          },
+          "cache": {
+            "storageNamespaces": [
+              "options"
+            ]
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "timelineProcessor requires v2",
+      "patch": {
+        "apiVersion": 1,
+        "timelineProcessor": {}
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor rejects batch size out of range",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "maxBatchSize": 51
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor rejects non-canonical linkHost",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "filter": {
+            "linkHosts": [
+              "https://polymarket.com"
+            ]
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor regex syntax is Host validated",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "filter": {
+            "regex": "[unclosed"
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor storage dependencies cap at 16",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "cache": {
+            "storageNamespaces": [
+              "n0",
+              "n1",
+              "n2",
+              "n3",
+              "n4",
+              "n5",
+              "n6",
+              "n7",
+              "n8",
+              "n9",
+              "n10",
+              "n11",
+              "n12",
+              "n13",
+              "n14",
+              "n15",
+              "n16"
+            ]
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
     }
   ]
 }

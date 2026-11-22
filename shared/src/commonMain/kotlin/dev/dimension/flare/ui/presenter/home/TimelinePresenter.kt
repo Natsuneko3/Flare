@@ -52,6 +52,8 @@ import dev.dimension.flare.data.model.tab.TimelineFilterConfig
 import dev.dimension.flare.data.model.tab.TimelinePostContent
 import dev.dimension.flare.data.model.tab.TimelinePostKind
 import dev.dimension.flare.data.model.tab.TimelinePresenterFactory
+import dev.dimension.flare.data.plugin.TimelineProcessorService
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.data.repository.KeywordFilterPattern
 import dev.dimension.flare.data.repository.LocalFilterRepository
 import dev.dimension.flare.data.repository.LoginExpiredException
@@ -67,6 +69,8 @@ import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asTimelinePostItem
 import dev.dimension.flare.ui.presenter.PresenterBase
 import dev.dimension.flare.ui.presenter.TimelineReadingState
+import dev.dimension.flare.ui.presenter.bindPluginWidgets
+import dev.dimension.flare.ui.presenter.submitPluginPosts
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -117,6 +121,9 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
 
     private val localFilterRepository: LocalFilterRepository by koinInject()
     private val inAppNotification: InAppNotification by koinInject()
+    private val timelineProcessorService: TimelineProcessorService? by lazy {
+        timelineProcessorServiceOrNull()
+    }
 
     private val filterFlow: Flow<List<KeywordFilterPattern>> by lazy {
         localFilterRepository.getFlow(forTimeline = true)
@@ -251,7 +258,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                                             if (it is UiTimelineV2.Gap) it else transform(it)
                                         }
                                 }
-                            },
+                            }.bindPluginWidgets(timelineProcessorService, sourceScope),
                         )
                     }
                 }
@@ -487,7 +494,11 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                     if (!queued || items.loadState.source.hasError) items.retry()
                 }
             }
-        val listState = items.toPagingState(contextLoadStates, retry)
+        val onItemAccessed =
+            remember {
+                timelineProcessorService?.let { service -> { item: UiTimelineV2 -> item.submitPluginPosts(service) } }
+            }
+        val listState = items.toPagingState(contextLoadStates, retry, onItemAccessed)
         return object : TimelineState {
             override val listState = listState
             override val reading =
@@ -524,6 +535,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
             }
 
             override suspend fun refresh() {
+                timelineProcessorService?.clearFailureCooldowns()
                 listState
                     .onSuccess {
                         refreshSuspend()

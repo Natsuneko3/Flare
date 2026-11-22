@@ -13,6 +13,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
 
+/**
+ * Evaluates `plugin.js` with [PLUGIN_REGISTRATION_PRELUDE] and collects registered function paths,
+ * including social handlers, `translation.*`, `platformExtension.actions.*`, and `timelineProcessor.processBatch`.
+ */
 internal class PluginRegistrationInspector(
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val engineFactory: suspend (PluginHostCall) -> PluginJavaScriptEngine = { createPluginJavaScriptEngine(dispatcher, it) },

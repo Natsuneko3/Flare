@@ -121,6 +121,7 @@ public sealed class PagingState<T> {
             override val appendState: LoadState,
             override val sourceAppendState: LoadState,
             private val onRetry: () -> Unit = data::retry,
+            private val onItemAccessed: ((T) -> Unit)? = null,
         ) : Success<T>() {
             override val itemCount: Int
                 get() = items.size
@@ -132,7 +133,7 @@ public sealed class PagingState<T> {
                 // Only send load hints for the current snapshot. An older UI state must
                 // keep its count, keys, content types and items from the same snapshot.
                 if (items === data.itemSnapshotList) {
-                    data[index]
+                    data[index]?.let { onItemAccessed?.invoke(it) }
                 }
                 return items[index]
             }
@@ -270,6 +271,12 @@ public fun <T : Any> UiState<LazyPagingItems<T>>.toPagingState(): PagingState<T>
 public fun <T : Any> LazyPagingItems<T>.toPagingState(
     contextLoadStates: LoadStates? = null,
     onRetry: () -> Unit = this::retry,
+): PagingState<T> = toPagingState(contextLoadStates, onRetry, null)
+
+internal fun <T : Any> LazyPagingItems<T>.toPagingState(
+    contextLoadStates: LoadStates?,
+    onRetry: () -> Unit,
+    onItemAccessed: ((T) -> Unit)?,
 ): PagingState<T> {
     val snapshot = snapshot()
     if (itemCount > 0) {
@@ -282,6 +289,7 @@ public fun <T : Any> LazyPagingItems<T>.toPagingState(
             appendState = contextLoadStates?.contextFooterState() ?: loadState.append,
             sourceAppendState = snapshot.source.append,
             onRetry = onRetry,
+            onItemAccessed = onItemAccessed,
         )
     } else if (snapshot.initialErrorOrNull() != null) {
         return PagingState.Error(

@@ -81,7 +81,19 @@ class PluginManifestSchemaTest {
             "composeVisibility" to ComposeConfigV2.VisibilityConfigV1.serializer().descriptor,
             "composePoll" to ComposeConfigV2.PollConfigV1.serializer().descriptor,
             "composeLanguage" to ComposeConfigV2.LanguageConfigV1.serializer().descriptor,
+            "timelineProcessor" to PluginTimelineProcessorManifestV1.serializer().descriptor,
+            "timelineFilter" to PluginTimelineFilterManifestV1.serializer().descriptor,
         ).forEach { (name, descriptor) -> checkObject(definitions.getValue(name).jsonObject, descriptor) }
+        checkObject(
+            definitions
+                .getValue("timelineProcessor")
+                .jsonObject
+                .getValue("properties")
+                .jsonObject
+                .getValue("cache")
+                .jsonObject,
+            PluginTranslationCacheManifestV1.serializer().descriptor,
+        )
         val extension =
             definitions
                 .getValue("platformExtension")

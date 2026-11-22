@@ -192,4 +192,186 @@ final class PluginMarketplaceViewTests: XCTestCase {
             try png.write(to: URL(fileURLWithPath: outputPath))
         }
     }
+
+    func testMacPluginPermissionDescriptionAndTimelineProcessorToggle() async throws {
+        let permission = PluginPermission(
+            type: .timelinePostAccess,
+            origin: "",
+            cookieName: nil,
+            platformId: nil
+        )
+        let description = pluginPermissionText(permission)
+        let expectedLocalized = String(
+            localized: "plugin_permission_timeline_post_access",
+            defaultValue: "Read displayed timeline posts to attach widgets, which may send post content to permitted network origins"
+        )
+        XCTAssertEqual(description, expectedLocalized)
+        XCTAssertFalse(description.isEmpty)
+        XCTAssertNotEqual(description, "plugin_permission_timeline_post_access")
+
+        let plainItem = PluginManagementItemV1(
+            pluginId: "dev.example.plain",
+            platformId: "plain",
+            nameText: UiTextRaw(string: "Plain Reader"),
+            version: "0.1.0",
+            iconPath: "",
+            sourceUrl: nil,
+            availableUpdate: nil,
+            authoring: nil,
+            hasSettings: false,
+            hasPlatformExtension: false,
+            hasTimelineProcessor: false,
+            timelineProcessorEnabled: false,
+            updatedAt: nil,
+            sourceCommitSha: nil
+        )
+        let processorItem = PluginManagementItemV1(
+            pluginId: "dev.example.widgets",
+            platformId: "",
+            nameText: UiTextRaw(string: "Score Enricher"),
+            version: "0.2.0",
+            iconPath: "",
+            sourceUrl: nil,
+            availableUpdate: nil,
+            authoring: nil,
+            hasSettings: false,
+            hasPlatformExtension: false,
+            hasTimelineProcessor: true,
+            timelineProcessorEnabled: false,
+            updatedAt: nil,
+            sourceCommitSha: nil
+        )
+
+        var toggled: [(String, Bool)] = []
+        let view = NSHostingView(
+            rootView: VStack(alignment: .leading, spacing: 12) {
+                PluginInstalledRow(
+                    plugin: plainItem,
+                    busy: false,
+                    onUpdate: {},
+                    onCancelAuthoringUpdate: {},
+                    onOpenExtension: {},
+                    onOpenSettings: {},
+                    onUninstall: {},
+                    onToggleTimelineProcessor: { toggled.append((plainItem.pluginId, $0)) }
+                )
+                PluginInstalledRow(
+                    plugin: processorItem,
+                    busy: false,
+                    onUpdate: {},
+                    onCancelAuthoringUpdate: {},
+                    onOpenExtension: {},
+                    onOpenSettings: {},
+                    onUninstall: {},
+                    onToggleTimelineProcessor: { toggled.append((processorItem.pluginId, $0)) }
+                )
+            }
+            .frame(width: 560)
+        )
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 560, height: 280),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        for _ in 0..<20 {
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        func nsDescendants(_ root: NSView) -> [NSView] {
+            [root] + root.subviews.flatMap(nsDescendants)
+        }
+        let switches = nsDescendants(view).compactMap { $0 as? NSSwitch }
+        XCTAssertEqual(switches.count, 1, "Only hasTimelineProcessor plugins should render an NSSwitch on macOS")
+        let toggle = try XCTUnwrap(switches.first)
+        XCTAssertEqual(toggle.state, .off)
+        toggle.performClick(nil)
+        XCTAssertEqual(toggled.count, 1)
+        XCTAssertEqual(toggled.first?.0, "dev.example.widgets")
+        XCTAssertEqual(toggled.first?.1, true)
+    }
+
+    func testMacPluginWidgetStackEqualizesHeightAndExecutesPasteboardAndUrlActions() {
+        let shortCard = UiPluginWidgetCard(
+            pluginId: "dev.example.one",
+            pluginName: "One",
+            pluginIconPath: nil,
+            id: "c1",
+            title: "Compact",
+            badge: nil,
+            accentTone: .neutral,
+            refreshable: false,
+            isRefreshing: false,
+            cardAction: nil,
+            body: [
+                UiWidgetNode.Text(text: "Single line", style: .body, tone: .neutral, maxLines: 1, copyable: false),
+            ],
+            actions: [],
+            onRefresh: nil
+        )
+        let tallCard = UiPluginWidgetCard(
+            pluginId: "dev.example.two",
+            pluginName: "Two",
+            pluginIconPath: nil,
+            id: "c2",
+            title: "Expanded Stats",
+            badge: UiWidgetBadge(text: "LIVE", tone: .accent),
+            accentTone: .accent,
+            refreshable: true,
+            isRefreshing: true,
+            cardAction: nil,
+            body: [
+                UiWidgetNode.Stat(label: "Users", value: "8,420", delta: "+9%", deltaTone: .positive, subtext: "Online", weight: nil),
+                UiWidgetNode.Sparkline(points: [1.0, 4.0, 2.0, 8.0], tone: .accent, minLabel: "1", maxLabel: "8", height: .md, weight: nil),
+                UiWidgetNode.KeyValue(items: [
+                    UiWidgetNode.KeyValueItem(label: "Cluster", value: "ap-northeast-1", tone: .neutral, action: nil),
+                    UiWidgetNode.KeyValueItem(label: "Status", value: "Healthy", tone: .positive, action: nil),
+                ]),
+            ],
+            actions: [
+                UiWidgetButton(label: "Details", tone: .accent, style: .primary, action: UiWidgetActionOpenUrl(url: "https://example.com")),
+            ],
+            onRefresh: nil
+        )
+
+        func measureMac(_ cards: [UiPluginWidgetCard]) -> CGFloat {
+            let host = NSHostingView(rootView: PluginWidgetStackView(cards: cards).frame(width: 420))
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+
+        let shortH = measureMac([shortCard])
+        let tallH = measureMac([tallCard])
+        let multiH = measureMac([shortCard, tallCard])
+        XCTAssertGreaterThan(tallH, shortH + 60)
+        XCTAssertEqual(multiH, tallH + 14, accuracy: 2.0)
+
+        var refreshed = 0
+        var opened: [URL] = []
+        executePluginWidgetAction(
+            UiWidgetActionCopy(text: "mac-copied-value", label: nil),
+            openURL: { opened.append($0) },
+            onRefresh: { refreshed += 1 }
+        )
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "mac-copied-value")
+        executePluginWidgetAction(
+            UiWidgetActionOpenUrl(url: "https://example.com/mac"),
+            openURL: { opened.append($0) },
+            onRefresh: { refreshed += 1 }
+        )
+        executePluginWidgetAction(
+            UiWidgetActionOpenUrl(url: "http://insecure.example.com"),
+            openURL: { opened.append($0) },
+            onRefresh: { refreshed += 1 }
+        )
+        XCTAssertEqual(opened.map(\.absoluteString), ["https://example.com/mac"])
+        executePluginWidgetAction(
+            UiWidgetActionRefresh.shared,
+            openURL: { opened.append($0) },
+            onRefresh: { refreshed += 1 }
+        )
+        XCTAssertEqual(refreshed, 1)
+    }
 }

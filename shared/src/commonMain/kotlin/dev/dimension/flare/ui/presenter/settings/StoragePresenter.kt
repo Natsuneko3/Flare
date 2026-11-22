@@ -11,6 +11,7 @@ import androidx.room3.useWriterConnection
 import androidx.sqlite.async.step
 import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.cache.CacheDatabase
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.data.repository.UgoiraRepository
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.ui.presenter.PresenterBase
@@ -44,6 +45,7 @@ public class StoragePresenter : PresenterBase<StorageState>() {
     @Throws(Exception::class)
     public suspend fun clearCacheSuspend(): Boolean {
         cacheDatabase.clearAllTables()
+        timelineProcessorServiceOrNull()?.clearAll()
         cacheDatabase.timelineResets.value += 1
         appDataStore.homeTimelinePreferences.updateData {
             dev.dimension.flare.data.datastore.model

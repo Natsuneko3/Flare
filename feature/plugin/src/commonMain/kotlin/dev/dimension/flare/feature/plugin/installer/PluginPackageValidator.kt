@@ -158,7 +158,7 @@ private fun ByteArray.uint32BigEndian(offset: Int): Long =
         (this[offset + 3].toLong() and 0xff)
 
 internal fun PluginManifestV1.requireBackgroundScript(hasScript: Boolean) {
-    require(hasScript || (platform == null && translation == null && platformExtension == null)) {
+    require(hasScript || (platform == null && translation == null && platformExtension == null && timelineProcessor == null)) {
         "Background capabilities require plugin.js"
     }
 }

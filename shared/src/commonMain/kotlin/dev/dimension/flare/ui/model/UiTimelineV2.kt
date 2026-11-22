@@ -343,10 +343,71 @@ public sealed class UiTimelineV2 {
         val pluginId: String? = null,
         internal val authorSubtitleInternal: String? = null,
         @WebExport val communityNote: UiCommunityNote? = null,
+        @Transient
+        public val pluginWidgets: SerializableImmutableList<UiPluginWidgetCard> = persistentListOf(),
     ) : UiTimelineV2() {
+        public constructor(
+            platformId: String,
+            images: SerializableImmutableList<UiMedia>,
+            sensitive: Boolean,
+            contentWarning: UiTranslatableText?,
+            user: UiProfile?,
+            platformIcon: IconType,
+            sourceLanguages: SerializableImmutableList<String>,
+            translationDisplayState: TranslationDisplayState,
+            content: UiTranslatableText,
+            actions: SerializableImmutableList<ActionMenu>,
+            poll: UiPoll?,
+            statusKey: MicroBlogKey,
+            card: UiCard?,
+            createdAt: UiDateTime,
+            emojiReactions: SerializableImmutableList<EmojiReaction>,
+            sourceChannel: SourceChannel?,
+            visibility: Visibility?,
+            replyToHandle: String?,
+            references: SerializableImmutableList<Reference>,
+            clickEvent: ClickEvent,
+            mediaClickPolicy: MediaClickPolicy,
+            accountType: AccountType,
+            itemKey: String?,
+            pluginId: String?,
+            authorSubtitleInternal: String?,
+            communityNote: UiCommunityNote?,
+        ) : this(
+            platformId = platformId,
+            images = images,
+            sensitive = sensitive,
+            contentWarning = contentWarning,
+            user = user,
+            platformIcon = platformIcon,
+            sourceLanguages = sourceLanguages,
+            translationDisplayState = translationDisplayState,
+            content = content,
+            actions = actions,
+            poll = poll,
+            statusKey = statusKey,
+            card = card,
+            createdAt = createdAt,
+            emojiReactions = emojiReactions,
+            sourceChannel = sourceChannel,
+            visibility = visibility,
+            replyToHandle = replyToHandle,
+            references = references,
+            clickEvent = clickEvent,
+            mediaClickPolicy = mediaClickPolicy,
+            accountType = accountType,
+            itemKey = itemKey,
+            pluginId = pluginId,
+            authorSubtitleInternal = authorSubtitleInternal,
+            communityNote = communityNote,
+            pluginWidgets = persistentListOf(),
+        )
+
         @WebExport
         val authorSubtitle: String
             get() = authorSubtitleInternal ?: user?.handle?.display.orEmpty()
+
+        internal val pluginPostInput: ExtractedPluginPostInput by lazy { buildPluginPostInput() }
 
         @Transient
         override val stableItemKey: String = calculateStableItemKey()
@@ -386,6 +447,7 @@ public sealed class UiTimelineV2 {
                 .add(content.original.renderSummaryHash())
                 .add(content.translation?.renderSummaryHash())
                 .add(communityNote)
+                .add(pluginWidgets.renderSummaryHash { it.renderSummaryHash() })
                 .add(actions.renderSummaryHash { it.renderSummaryHash() })
                 .add(poll?.renderSummaryHash())
                 .add(statusKey)
@@ -589,6 +651,7 @@ private fun UiTimelineV2.Post.renderSummaryHash(): Int =
         .add(content.original.renderSummaryHash())
         .add(content.translation?.renderSummaryHash())
         .add(communityNote)
+        .add(pluginWidgets.renderSummaryHash { it.renderSummaryHash() })
         .add(images.renderSummaryHash { it.renderSummaryHash() })
         .add(sensitive)
         .add(poll?.renderSummaryHash())
