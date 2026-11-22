@@ -1162,7 +1162,7 @@ internal fun StatusActions(
             val reduction = if (isPost) StatusComponentDefaults.postActionTextSizeReduction else 2
             it.copy(fontSize = (it.fontSize.value - reduction).sp)
         },
-    PlatformContentColor provides StatusComponentDefaults.secondaryColor,
+    PlatformContentColor provides if (isPost) StatusComponentDefaults.secondaryColor else PlatformContentColor.current,
 ) {
     val appearanceSettings = LocalTimelineAppearance.current
     val displayItems =

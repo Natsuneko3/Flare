@@ -45,6 +45,48 @@ final class MacStatusActionAnimationTests: XCTestCase {
                      "Timeline and detail actions must use the same body size and secondary color")
     }
 
+    func testProfileToolbarMenuMatchesTheNativeMenuInLightAndDark() async throws {
+        let item = ActionMenu.Item(updateKey: "", icon: .moreVerticel, text: nil, count: nil, color: nil,
+                                   clickEvent: ClickEventNoop.shared, actionFamily: nil, enabled: true)
+        let group = ActionMenu.Group(displayItem: item, actions: [item])
+        for scheme in [ColorScheme.light, .dark] {
+            let content = NavigationStack {
+                Color.clear.frame(width: 400, height: 120).toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        Menu { Button("Action") {} } label: { UiIcon.moreVerticel.image }
+                        ProfileToolbarMenu(group: group)
+                    }
+                }
+            }.environment(\.colorScheme, scheme)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: content))
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+            window.orderBack(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(150))
+            let frame = try XCTUnwrap(window.contentView?.superview)
+            frame.layoutSubtreeIfNeeded()
+            let foregrounds = try XCTUnwrap(window.toolbar).items.compactMap(\.view).map { view in
+                let rect = view.convert(view.bounds, to: frame)
+                let bitmap = try XCTUnwrap(frame.bitmapImageRepForCachingDisplay(in: rect))
+                frame.cacheDisplay(in: rect, to: bitmap)
+                // Sample the label inside the button, excluding the border and trailing menu arrow.
+                let tones = (bitmap.pixelsHigh / 4 ..< bitmap.pixelsHigh * 3 / 4).flatMap { y in
+                    (bitmap.pixelsWide / 6 ..< bitmap.pixelsWide * 3 / 5).compactMap { x in
+                        bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)?.brightnessComponent
+                    }
+                }
+                let darkest = try XCTUnwrap(tones.min())
+                let lightest = try XCTUnwrap(tones.max())
+                XCTAssertGreaterThan(lightest - darkest, 0.15, "The toolbar glyph must be visible")
+                return scheme == .light ? darkest : lightest
+            }
+            XCTAssertEqual(foregrounds.count, 2)
+            XCTAssertEqual(try XCTUnwrap(foregrounds.last), try XCTUnwrap(foregrounds.first),
+                           accuracy: 2.0 / 255, "Profile toolbar menu, \(scheme)")
+        }
+    }
+
     func testPostTextColorsRespectSurfaceAndContrast() throws {
         _ = NSApplication.shared
         let postPrimary = Color(white: 217.0 / 255)

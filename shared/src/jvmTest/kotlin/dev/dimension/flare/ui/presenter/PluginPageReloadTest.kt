@@ -558,6 +558,8 @@ class PluginPageReloadTest {
                             polls.value += 1
                         }
 
+                        override fun cachedCanSendDirectMessage(userKey: MicroBlogKey) = null
+
                         override suspend fun canSendDirectMessage(userKey: MicroBlogKey) = false
                     },
                 article =

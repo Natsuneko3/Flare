@@ -377,6 +377,7 @@ internal fun ProfileScreen(
                         TopAppBarDefaults.topAppBarColors(
                             containerColor = Color.Transparent,
                             scrolledContainerColor = Color.Transparent,
+                            actionIconContentColor = MaterialTheme.colorScheme.onSurface,
                         ),
 //                    windowInsets = if (bigScreen) {
 //                        TopAppBarDefaults.windowInsets
