@@ -215,7 +215,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // Manual horizontal swipe after initial mount with previousBoundary (initial == 1 > 0) must advance slot 0 -> slot 1 without yanking back
         let boundaryScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        await simulateUserHorizontalScroll(boundaryScrollView, pageDelta: 1)
+        await simulateUserHorizontalScroll(boundaryScrollView, pageDelta: 1, controller: controller)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 1 && controller.activePagerPage == 2
         }
@@ -233,7 +233,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         window.layoutIfNeeded()
         XCTAssertTrue(controller.isOnNextBoundaryPage)
-        await simulateUserHorizontalScroll(boundaryScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(boundaryScrollView, pageDelta: -1, controller: controller)
         try await eventually(window: window) {
             controller.activePagerPage == 2 && !controller.isOnNextBoundaryPage
         }
@@ -293,6 +293,23 @@ final class MangaReaderAndDetailTests: XCTestCase {
             hostBox.retryPageIds.contains("flaky-p0")
         }
 
+        let original = try XCTUnwrap((makeSamplePages(count: 1)[0].status as? PageMediaStatusReady)?.original)
+        let translation = try XCTUnwrap(flakyState.imageTranslation as? NoopImageTranslationState)
+        translation.onImageFailure = { [weak flakyState] _, url in
+            XCTAssertEqual(url, brokenMedia.url)
+            flakyState?.replacePagesAndSlots(pages: [
+                ReaderPageState(id: "translated-p0", index: 0,
+                                status: PageMediaStatusReady(original: original, displayed: original), aspectRatio: nil),
+            ], slots: [ReaderSlotSingle(pageIndex: 0)], currentPageIndex: 0)
+        }
+        flakyState.replacePagesAndSlots(pages: [
+            ReaderPageState(id: "translated-p0", index: 0,
+                            status: PageMediaStatusReady(original: original, displayed: brokenMedia), aspectRatio: nil),
+        ], slots: [ReaderSlotSingle(pageIndex: 0)], currentPageIndex: 0)
+        try await eventually(window: window) {
+            flakyState.loadedPageIds.contains("translated-p0") && hostBox.retryPageIds.isEmpty
+        }
+
         // Webtoon mode: unscaled 1x strip width, full bottom reachability, and external scrubber jump without snapping back
         let webtoonPages = makeSamplePages(count: 6)
         let webtoonSlots = (0..<6).map { ReaderSlotSingle(pageIndex: Int32($0)) as any ReaderSlot }
@@ -349,7 +366,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // 1. Simulated manual horizontal user swipe after initial mount (slot 0 -> slot 1 in RTL) must NOT yank back
         let initialScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        await simulateUserHorizontalScroll(initialScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(initialScrollView, pageDelta: -1, controller: controller)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 1 && controller.activePagerPage == 1
         }
@@ -380,7 +397,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // 3. Simulated manual horizontal user swipe after RTL -> LTR switch (slot 2 -> slot 3 in LTR) must NOT yank back
         let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        await simulateUserHorizontalScroll(ltrScrollView, pageDelta: 1)
+        await simulateUserHorizontalScroll(ltrScrollView, pageDelta: 1, controller: controller)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 3 && controller.activePagerPage == 3
         }
@@ -408,7 +425,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // 5. Simulated manual horizontal user swipe after LTR -> RTL switch (slot 1 -> slot 2 in RTL) must NOT yank back
         let rtlScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        await simulateUserHorizontalScroll(rtlScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(rtlScrollView, pageDelta: -1, controller: controller)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
         }
@@ -505,7 +522,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         // Manual user swipe after RTL reflows must still advance cleanly without yanking back
         let postReflowScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
         XCTAssertEqual(ObjectIdentifier(postReflowScrollView), rtlScrollViewID)
-        await simulateUserHorizontalScroll(postReflowScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(postReflowScrollView, pageDelta: -1, controller: controller)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
         }
@@ -674,8 +691,10 @@ final class MangaReaderAndDetailTests: XCTestCase {
         controller.processPanGestureStateForTesting(.began)
         initialScrollView.delegate?.scrollViewWillBeginDragging?(initialScrollView)
         controller.processPanGestureStateForTesting(.changed)
-        initialScrollView.bounds.origin = CGPoint(x: 2000, y: 0) // halfway between slot 1 (2400) and slot 2 (1600) in RTL
-        initialScrollView.layoutIfNeeded()
+        let halfway = initialScrollView.contentOffset.x - initialScrollView.bounds.width / 2
+        initialScrollView.setContentOffset(CGPoint(x: halfway, y: 0), animated: false)
+        window.layoutIfNeeded()
+        XCTAssertEqual(initialScrollView.contentOffset.x, halfway, accuracy: 2)
         XCTAssertTrue(controller.hasUnconsumedUserScroll)
 
         // Trigger spread split mid-drag in RTL (slot 2 Double(4,3) -> Single(3), Single(4))
@@ -683,7 +702,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         window.layoutIfNeeded()
         XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
         XCTAssertEqual(initialScrollView.contentSize.width, 4800, accuracy: 2.0, "Displayed slots must stay frozen during active RTL swipe")
-        XCTAssertEqual(initialScrollView.contentOffset.x, 2000, accuracy: 2.0, "Mid-drag RTL spread split must not shift or yank active swipe")
+        XCTAssertEqual(initialScrollView.contentOffset.x, halfway, accuracy: 2.0, "Mid-drag RTL spread split must not shift or yank active swipe")
 
         // Cross 50% midpoint onto slot 2 (x == 1600 in frozen 6-page RTL) and emit additional pan .changed events before finger lift
         initialScrollView.bounds.origin = CGPoint(x: 1600, y: 0)
@@ -963,7 +982,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
     }
 
     func testReaderGifPageShowsShareButtonExportsGifAndSurfacesShareErrors() async throws {
-        let gifURL = "https://manga.example/ch-1/page-\(UUID().uuidString).gif"
+        let gifURL = "https://manga.example/ch-1/page-\(UUID().uuidString)?format=gif&signature=fixture"
         let gifMedia = UiMediaGif(
             url: gifURL,
             previewUrl: gifURL,
@@ -996,6 +1015,17 @@ final class MangaReaderAndDetailTests: XCTestCase {
             previousKeyWindow?.makeKey()
         }
 
+        let minimalGifBytes = Data([
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00,
+            0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x4C, 0x01, 0x00, 0x3B,
+        ])
+        try await KingfisherManager.shared.cache.storeToDisk(minimalGifBytes, forKey: gifMedia.cacheKey)
+        defer {
+            Task { try? await KingfisherManager.shared.cache.removeImage(forKey: gifMedia.cacheKey) }
+        }
+
         // 1. HUD shows Share button on UiMediaGif pages (and hides it on UiMediaUgoira)
         var shareVisibleForGif = false
         window.rootViewController = UIHostingController(
@@ -1008,7 +1038,11 @@ final class MangaReaderAndDetailTests: XCTestCase {
             .onPreferenceChange(IOSMangaReaderShareButtonVisiblePreferenceKey.self) { shareVisibleForGif = $0 }
         )
         window.makeKeyAndVisible()
-        try await eventually(window: window) { shareVisibleForGif }
+        try await eventually(window: window) {
+            shareVisibleForGif && descendants(window).contains {
+                ($0 as? AnimatedImageView)?.animator?.frame(at: 1) != nil
+            }
+        }
 
         let ugoiraAccount = MicroBlogKey(id: "u1", host: "pixiv.net")
         let ugoiraMedia = UiMediaUgoira(
@@ -1051,16 +1085,6 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertFalse(shareVisibleForUgoira)
 
         // 2. Cached UiMediaGif exports a .gif share file with no error alert
-        let minimalGifBytes = Data([
-            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B,
-        ])
-        try await KingfisherManager.shared.cache.storeToDisk(minimalGifBytes, forKey: gifMedia.cacheKey)
-        defer {
-            Task { try? await KingfisherManager.shared.cache.removeImage(forKey: gifMedia.cacheKey) }
-        }
-
         let coordinator = IOSMangaReaderShareCoordinator()
         var exportedShareURL: URL?
         await coordinator.sharePage(
@@ -1512,6 +1536,111 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertEqual(spreadState.currentPageIndex, 3, "Stepping inward onto Double slot must preserve secondary page index 3")
     }
 
+    func testWebtoonReportsThePageAtTheViewportCenterAndTheShortFinalPageAtTheEnd() async throws {
+        let sample = makeSamplePages(count: 1)[0]
+        let ratios: [Float] = [3, 0.02, 6]
+        let pages = ratios.enumerated().map { index, ratio in
+            ReaderPageState(id: "strip-\(index)", index: Int32(index), status: sample.status,
+                            aspectRatio: KotlinFloat(value: ratio))
+        }
+        let state = FakeMangaReaderState(direction: .webtoon, pages: pages,
+                                         slots: pages.map { ReaderSlotSingle(pageIndex: $0.index) })
+        let model = ReaderTestHostModel(state: state, controller: MangaReaderInteractionController())
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 600, height: 800)
+        window.rootViewController = UIHostingController(rootView: ReaderTestHostView(model: model))
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        try await eventually(window: window) { model.pageFrames[1] != nil }
+        let tall = try XCTUnwrap(model.pageFrames[1])
+        XCTAssertEqual(tall.height, tall.width / CGFloat(ratios[1]), accuracy: 2)
+        XCTAssertEqual(state.currentPageIndex, 0)
+        let scroll = try XCTUnwrap(descendants(window).compactMap { $0 as? UIScrollView }
+            .first { $0.contentSize.height > $0.bounds.height + 1 })
+        XCTAssertEqual(scroll.contentSize.height, ratios.reduce(0) { $0 + tall.width / CGFloat($1) }, accuracy: 2)
+        XCTAssertNil(model.pageFrames[2], "The distant final page should remain lazy")
+        scroll.setContentOffset(CGPoint(x: 0, y: 100), animated: false)
+        try await eventually(window: window) {
+            state.currentPageIndex == 1 && (model.pageFrames[0]?.maxY ?? 0) > 0
+        }
+        state.goToPage(pageIndex: 2)
+        try await eventually(window: window) {
+            guard let last = model.pageFrames[2] else { return false }
+            return abs(last.maxY - scroll.bounds.height) < 2 && state.currentPageIndex == 2
+        }
+        let end = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+        scroll.setContentOffset(CGPoint(x: 0, y: end - 40), animated: false)
+        try await eventually(window: window) {
+            state.currentPageIndex == 1 && (model.pageFrames[2]?.minY ?? .infinity) < scroll.bounds.height
+        }
+        scroll.setContentOffset(CGPoint(x: 0, y: end), animated: false)
+        try await eventually(window: window) { state.currentPageIndex == 2 }
+
+        let next = UiMangaChapter(id: "next", title: "Next", subtitle: nil, uploadedAt: nil, locked: false, url: nil)
+        state.nextBoundary = ChapterBoundaryUnlocked(chapter: next, startFromEnd: false)
+        state.onStateMutated?()
+        try await eventually(window: window) { scroll.contentSize.height - scroll.bounds.height > end + 40 }
+        scroll.setContentOffset(CGPoint(x: 0, y: end + 10), animated: false)
+        try await eventually(window: window) {
+            guard let last = model.pageFrames[2] else { return false }
+            return last.maxY < scroll.bounds.height && last.minY > scroll.bounds.height / 2 && state.currentPageIndex == 1
+        }
+        let chapterEnd = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+        scroll.setContentOffset(CGPoint(x: 0, y: chapterEnd), animated: false)
+        try await eventually(window: window) { state.currentPageIndex == 2 }
+
+        state.activeChapterId = "resumed"
+        state.previousBoundary = ChapterBoundaryUnlocked(chapter: next, startFromEnd: true)
+        state.goToPage(pageIndex: 1)
+        try await eventually(window: window) {
+            guard let tall = model.pageFrames[1] else { return false }
+            return abs(tall.minY) < 2 && state.currentPageIndex == 1
+        }
+    }
+
+    func testReaderReleasesChaptersAndUnbindsHandlersOnDisappear() async throws {
+        let controller = MangaReaderInteractionController()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: AnyView(EmptyView()))
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        func show(_ chapter: String, direction: MangaReadingDirection) -> FakeMangaReaderState {
+            let state = FakeMangaReaderState(direction: direction, pages: makeSamplePages(count: 2),
+                                             slots: [ReaderSlotSingle(pageIndex: 0), ReaderSlotSingle(pageIndex: 1)])
+            state.activeChapterId = chapter
+            host.rootView = AnyView(MangaReaderCanvas(state: state, hudVisible: false, onToggleHud: {}, controller: controller))
+            return state
+        }
+
+        weak let first = show("first", direction: .rtl)
+        try await eventually(window: window) { controller.isBound && controller.activePagerPage == 0 }
+        weak let second = show("second", direction: .ltr)
+        try await eventually(window: window) { first == nil && controller.activePagerPage == 0 }
+        XCTAssertTrue(controller.handleKey(.rightArrow))
+        XCTAssertEqual(second?.currentPageIndex, 1)
+        weak let strip = show("strip", direction: .webtoon)
+        try await eventually(window: window) { second == nil && controller.webtoonStepForward != nil }
+        weak let nextStrip = show("next-strip", direction: .webtoon)
+        try await eventually(window: window) { strip == nil && controller.doubleTapZoomHandler != nil }
+        controller.handleDoubleTap(at: CGPoint(x: 100, y: 100))
+        try await eventually(window: window) { controller.zoomResetHandler != nil }
+        host.rootView = AnyView(EmptyView())
+        try await eventually(window: window) { nextStrip == nil && !controller.isBound }
+        XCTAssertFalse(controller.handleKey(.space(shift: false)))
+        XCTAssertNil(controller.zoomResetHandler)
+        XCTAssertNil(controller.doubleTapZoomHandler)
+    }
+
     private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -1550,6 +1679,8 @@ final class MangaReaderAndDetailTests: XCTestCase {
         return own + root.subviews.reduce(0) { $0 + countSubviews(ofType: type, in: $1) }
     }
 
+    private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+
     private func findHorizontalPagingScrollView(in root: UIView) -> UIScrollView? {
         if let scrollView = root as? UIScrollView,
            scrollView.bounds.width >= 300,
@@ -1564,17 +1695,20 @@ final class MangaReaderAndDetailTests: XCTestCase {
         return nil
     }
 
-    private func simulateUserHorizontalScroll(_ scrollView: UIScrollView, pageDelta: Int) async {
+    private func simulateUserHorizontalScroll(_ scrollView: UIScrollView, pageDelta: Int, controller: MangaReaderInteractionController) async {
         let pageWidth = max(scrollView.bounds.width, 1)
         let maxX = max(scrollView.contentSize.width - pageWidth, 0)
         let nextX = min(max(scrollView.contentOffset.x + CGFloat(pageDelta) * pageWidth, 0), maxX)
+        controller.processPanGestureStateForTesting(.began)
         scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
-        scrollView.bounds.origin = CGPoint(x: nextX, y: 0)
-        scrollView.layoutIfNeeded()
+        controller.processPanGestureStateForTesting(.changed)
+        scrollView.setContentOffset(CGPoint(x: nextX, y: 0), animated: false)
+        scrollView.window?.layoutIfNeeded()
         try? await Task.sleep(for: .milliseconds(25))
         var target = CGPoint(x: nextX, y: 0)
         scrollView.delegate?.scrollViewWillEndDragging?(scrollView, withVelocity: .zero, targetContentOffset: &target)
         scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
+        controller.processPanGestureStateForTesting(.ended)
     }
 
     private func eventually(
@@ -1776,6 +1910,7 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
     var stepBackwardCount = 0
     var openedBoundaryChapterId: String?
     var retriedPageIds: [String] = []
+    var loadedPageIds: Set<String> = []
 
     init(
         direction: MangaReadingDirection,
@@ -1800,7 +1935,7 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
         lastWideViewport = isWide
     }
 
-    func onPageDimensionsLoaded(pageId: String, width: Float, height: Float) {}
+    func onPageDimensionsLoaded(pageId: String, width: Float, height: Float) { loadedPageIds.insert(pageId) }
 
     func goToPage(pageIndex: Int32) {
         guard !pages.isEmpty else { return }
@@ -1893,12 +2028,13 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
 @MainActor
 private final class NoopImageTranslationState: NSObject, ImageTranslationPresenterState {
     let configured = false
+    var onImageFailure: ((any UiMedia, String) -> Void)?
 
     func canRegenerate(media: any UiMedia) -> Bool { false }
     func canToggle(media: any UiMedia) -> Bool { false }
     func clearError(media: any UiMedia) {}
     func displayed(media: any UiMedia) -> any UiMedia { media }
-    func imageFailed(media: any UiMedia, url: String) {}
+    func imageFailed(media: any UiMedia, url: String) { onImageFailure?(media, url) }
     func item(media: any UiMedia) -> ImageTranslationItem {
         ImageTranslationItem(
             loading: false,
