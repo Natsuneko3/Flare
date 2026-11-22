@@ -1,7 +1,36 @@
-import KotlinSharedUI
+import Foundation
+@preconcurrency import KotlinSharedUI
 import SwiftUI
 import FlareAppleCore
 import FlareAppleUI
+
+nonisolated final class MacComposePrefill: Hashable, Sendable {
+    let id = UUID()
+    let text: String
+    let cursorPosition: Int
+    let imageData: Data
+    let fileName: String
+
+    init(
+        text: String,
+        cursorPosition: Int,
+        imageData: Data,
+        fileName: String
+    ) {
+        self.text = text
+        self.cursorPosition = cursorPosition
+        self.imageData = imageData
+        self.fileName = fileName
+    }
+
+    static func == (lhs: MacComposePrefill, rhs: MacComposePrefill) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
 
 enum Route: Hashable, Identifiable {
     case empty
@@ -27,6 +56,9 @@ enum Route: Hashable, Identifiable {
     case statusInsight(AccountType, MicroBlogKey)
     case galleryDetail(AccountType, MicroBlogKey)
     case galleryComments(AccountType, MicroBlogKey)
+    case mangaDetail(AccountType, MicroBlogKey)
+    case mangaReader(AccountType, MicroBlogKey, String, Int?)
+    case mangaComments(AccountType, MicroBlogKey)
     case profileUser(AccountType, MicroBlogKey)
     case profileUserNameWithHost(AccountType, String, String)
     case profileInsight(AccountType, MicroBlogKey)
@@ -79,6 +111,18 @@ enum Route: Hashable, Identifiable {
                 lhsPlatformId == rhsPlatformId
         case (.composeCrossPost(let lhs), .composeCrossPost(let rhs)):
             return lhs == rhs
+        case (.mangaDetail(let lAccount, let lKey), .mangaDetail(let rAccount, let rKey)):
+            return lAccount == rAccount && lKey == rKey
+        case (
+            .mangaReader(let lAccount, let lKey, let lChapter, let lPage),
+            .mangaReader(let rAccount, let rKey, let rChapter, let rPage)
+        ):
+            return lAccount == rAccount &&
+                lKey == rKey &&
+                lChapter == rChapter &&
+                lPage == rPage
+        case (.mangaComments(let lAccount, let lKey), .mangaComments(let rAccount, let rKey)):
+            return lAccount == rAccount && lKey == rKey
         default:
             return lhs.hashValue == rhs.hashValue
         }
@@ -107,11 +151,26 @@ enum Route: Hashable, Identifiable {
             hasher.combine(medias.map { $0.url })
             hasher.combine(selectedIndex)
             hasher.combine(preview)
+        case .mangaDetail(let accountType, let mangaKey):
+            hasher.combine("mangaDetail")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            hasher.combine("mangaReader")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
+            hasher.combine(chapterId)
+            hasher.combine(initialPage)
+        case .mangaComments(let accountType, let mangaKey):
+            hasher.combine("mangaComments")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
         default:
             hasher.combine(String(describing: self))
         }
     }
 
+    #if !FLARE_MAC_UNIT_TESTS
     @MainActor
     @ViewBuilder
     func view(
@@ -198,6 +257,19 @@ enum Route: Hashable, Identifiable {
             GalleryDetailScreen(accountType: accountType, statusKey: statusKey, onNavigate: onNavigate)
         case .galleryComments(let accountType, let statusKey):
             GalleryCommentsScreen(accountType: accountType, statusKey: statusKey)
+        case .mangaDetail(let accountType, let mangaKey):
+            MangaDetailScreen(accountType: accountType, mangaKey: mangaKey, onNavigate: onNavigate)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            MangaReaderScreen(
+                accountType: accountType,
+                mangaKey: mangaKey,
+                chapterId: chapterId,
+                initialPage: initialPage,
+                onNavigate: onNavigate,
+                goBack: goBack
+            )
+        case .mangaComments(let accountType, let mangaKey):
+            MangaCommentsScreen(accountType: accountType, mangaKey: mangaKey)
         case .profileUser(let accountType, let userKey):
             ProfileScreen(
                 accountType: accountType,
@@ -308,6 +380,7 @@ enum Route: Hashable, Identifiable {
             EmptyView()
         }
     }
+    #endif
 
     static func newGenericChatConversationId() -> String {
         "generic-chat:\(Int64(Date().timeIntervalSince1970 * 1000))"
@@ -357,6 +430,7 @@ enum Route: Hashable, Identifiable {
     }
 }
 
+#if !FLARE_MAC_UNIT_TESTS
 private struct MacArticleScreen: View {
     let accountType: AccountType
     let articleKey: MicroBlogKey
@@ -410,6 +484,7 @@ private struct MacArticleDownloadAlert: Identifiable {
     let id = UUID()
     let message: String
 }
+#endif
 
 extension Route {
     static func fromDeepLink(url: String) -> Route? {
@@ -436,8 +511,8 @@ extension Route {
             fromMedia(media)
         case .gallery(let gallery):
             fromGallery(gallery)
-        case .manga:
-            nil
+        case .manga(let manga):
+            fromManga(manga)
         case .profile(let profile):
             fromProfile(profile)
         case .rss(let rss):
@@ -534,6 +609,20 @@ extension Route {
         }
     }
 
+    private static func fromManga(_ manga: DeeplinkRoute.Manga) -> Route? {
+        switch onEnum(of: manga) {
+        case .detail(let data):
+            .mangaDetail(data.accountType, data.mangaKey)
+        case .reader(let data):
+            .mangaReader(
+                data.accountType,
+                data.mangaKey,
+                data.chapterId,
+                data.initialPage?.intValue
+            )
+        }
+    }
+
     private static func fromTimeline(_ timeline: DeeplinkRoute.Timeline) -> Route? {
         switch onEnum(of: timeline) {
         case .page(let data):
@@ -622,6 +711,7 @@ extension Route {
         }
     }
 
+    @MainActor
     @ViewBuilder
     func alertMessage() -> some View {
         switch self {
@@ -644,6 +734,7 @@ extension Route {
         }
     }
 
+    @MainActor
     @ViewBuilder
     func alertActions() -> some View {
         switch self {

@@ -470,3 +470,31 @@ public extension UiIcon {
         }
     }
 }
+
+public extension UiMangaStatus {
+    var localizedLabel: String {
+        switch self {
+        case .ongoing:
+            localizedPresentationString("manga_status_ongoing", fallback: "Ongoing")
+        case .completed:
+            localizedPresentationString("manga_status_completed", fallback: "Completed")
+        case .hiatus:
+            localizedPresentationString("manga_status_hiatus", fallback: "Hiatus")
+        case .cancelled:
+            localizedPresentationString("manga_status_cancelled", fallback: "Cancelled")
+        }
+    }
+}
+
+public extension MangaReadingDirection {
+    var localizedLabel: String {
+        switch self {
+        case .rtl:
+            localizedPresentationString("manga_reader_direction_rtl", fallback: "Right to Left")
+        case .ltr:
+            localizedPresentationString("manga_reader_direction_ltr", fallback: "Left to Right")
+        case .webtoon:
+            localizedPresentationString("manga_reader_direction_webtoon", fallback: "Webtoon")
+        }
+    }
+}

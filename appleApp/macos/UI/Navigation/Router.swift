@@ -224,6 +224,8 @@ struct Router: View {
     private func shouldForwardToMainWindow(_ route: Route) -> Bool {
         switch route {
         case .statusDetail,
+                .mangaDetail,
+                .mangaReader,
                 .profileUser,
                 .profileUserNameWithHost:
             true

@@ -1,9 +1,9 @@
 import Foundation
 
-enum FlareAppleUILocalization {
-    static let bundle = Bundle.main
+public enum FlareAppleUILocalization {
+    public static let bundle = Bundle.main
 
-    static func string(
+    public static func string(
         _ key: String,
         fallback: String? = nil,
         arguments: [CVarArg] = []
