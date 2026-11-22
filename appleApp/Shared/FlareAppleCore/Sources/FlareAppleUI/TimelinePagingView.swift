@@ -2,6 +2,16 @@ import SwiftUI
 import KotlinSharedUI
 import FlareAppleCore
 
+#if os(iOS)
+let timelinePostBottomPadding: CGFloat = 6
+#else
+let timelinePostBottomPadding: CGFloat = 8
+#endif
+
+extension EnvironmentValues {
+    @Entry var timelineGalleryFallback = false
+}
+
 public struct TimelinePagingContent: View {
     private let data: PagingState<UiTimelineV2>
     private let detailStatusKey: MicroBlogKey?
@@ -87,8 +97,9 @@ public struct TimelinePagingContent: View {
     private func loadingRow(index: Int, totalCount: Int) -> some View {
         AdaptiveTimelineCard(index: index, totalCount: totalCount) {
             TimelinePlaceholderView()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, TimelineHorizontalInsets.content)
+                .padding(.top, 12)
+                .padding(.bottom, timelinePostBottomPadding)
         }
     }
 
@@ -113,18 +124,15 @@ public struct TimelinePagingListContent: View {
     private let data: PagingState<UiTimelineV2>
     private let detailStatusKey: MicroBlogKey?
     private let loadingCount: Int
-    private let usesDefaultHorizontalPadding: Bool
 
     public init(
         data: PagingState<UiTimelineV2>,
         detailStatusKey: MicroBlogKey? = nil,
-        loadingCount: Int = 5,
-        usesDefaultHorizontalPadding: Bool = false
+        loadingCount: Int = 5
     ) {
         self.data = data
         self.detailStatusKey = detailStatusKey
         self.loadingCount = loadingCount
-        self.usesDefaultHorizontalPadding = usesDefaultHorizontalPadding
     }
 
     public var body: some View {
@@ -133,29 +141,10 @@ public struct TimelinePagingListContent: View {
             detailStatusKey: detailStatusKey,
             loadingCount: loadingCount
         )
-        .modifier(TimelinePagingListRowStyle(usesDefaultHorizontalPadding: usesDefaultHorizontalPadding))
-    }
-}
-
-private struct TimelinePagingListRowStyle: ViewModifier {
-    let usesDefaultHorizontalPadding: Bool
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if usesDefaultHorizontalPadding {
-            content
-                .listRowSeparator(.hidden)
-                .padding(.horizontal)
-                .listRowInsets(.init(top: 0, leading: 0, bottom: 0, trailing: 0))
-                .flareTextBackground(.flareSystemGroupedBackground)
-                .listRowBackground(Color.clear)
-        } else {
-            content
-                .listRowSeparator(.hidden)
-                .listRowInsets(.init(top: 0, leading: 0, bottom: 0, trailing: 0))
-                .flareTextBackground(.flareSystemGroupedBackground)
-                .listRowBackground(Color.clear)
-        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(.init(top: 0, leading: 0, bottom: 0, trailing: 0))
+        .flareTextBackground(.flareSystemGroupedBackground)
+        .listRowBackground(Color.clear)
     }
 }
 
@@ -176,14 +165,16 @@ private struct TimelinePagingRowView: View {
             if let item = row.item {
                 AdaptiveTimelineCard(index: row.index, totalCount: totalCount) {
                     TimelineView(data: item, detailStatusKey: detailStatusKey)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, TimelineHorizontalInsets.content)
+                        .padding(.top, item.timelineContentPost == nil ? 8 : 12)
+                        .padding(.bottom, item.timelineContentPost == nil ? 8 : timelinePostBottomPadding)
                 }
             } else {
                 AdaptiveTimelineCard(index: row.index, totalCount: totalCount) {
                     TimelinePlaceholderView()
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, TimelineHorizontalInsets.content)
+                        .padding(.top, 12)
+                        .padding(.bottom, timelinePostBottomPadding)
                 }
             }
         }
@@ -292,6 +283,7 @@ public struct TimelineGalleryItemView: View {
                         if !content.isEmpty {
                             RichText(text: content)
                                 .font(.subheadline)
+                                .lineSpacing(1)
                                 .lineLimit(5)
                         }
                     }
@@ -382,6 +374,7 @@ public struct TimelineGalleryItemView: View {
 
     private func fallbackTile(_ item: UiTimelineV2) -> some View {
         TimelineView(data: item, detailStatusKey: nil)
+            .environment(\.timelineGalleryFallback, true)
             .padding(8)
     }
 

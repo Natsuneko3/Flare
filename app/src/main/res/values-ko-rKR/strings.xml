@@ -812,7 +812,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">자동</string>
     <string name="image_translation_original_file">원본 파일</string>
-    <string name="image_translation_use_shared_description">서비스 URL, API 키 및 모델을 공유합니다. 서비스와 모델은 이미지 출력을 지원해야 합니다. 이미지 번역을 별도로 구성하려면 끄십시오.</string>
+    <string name="image_translation_use_shared_description">서비스 URL, API 키, 모델 및 사용자 지정 헤더를 공유합니다. 서비스와 모델은 이미지 출력을 지원해야 합니다. 이미지 번역을 별도로 구성하려면 끄십시오.</string>
     <string name="plugin_permission_cookie">%1$s에서 쿠키 %2$s 읽기</string>
     <string name="plugin_ai_create">Flare AI로 생성</string>
     <string name="plugin_ai_untitled">새 플러그인</string>
@@ -943,6 +943,8 @@
     <string name="plugin_install_github">GitHub에서 설치</string>
     <string name="plugin_github_repository">GitHub 저장소 URL</string>
     <string name="plugin_check_updates">업데이트 확인</string>
+    <string name="plugin_local_import">로컬에서 가져옴</string>
+    <string name="plugin_updated_at">%1$s 업데이트</string>
     <string name="plugin_update">업데이트</string>
     <string name="plugin_up_to_date">GitHub 플러그인이 최신 상태입니다</string>
     <string name="plugin_warning_source_changed">이 설치는 플러그인 소스를 변경합니다</string>

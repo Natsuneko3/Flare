@@ -36,3 +36,15 @@ internal data class DbUserRelation(
     @ColumnInfo(typeAffinity = ColumnInfo.BLOB)
     val relation: UiRelation,
 )
+
+@Entity(
+    primaryKeys = ["accountType", "userKey"],
+    indices = [
+        Index(value = ["accountType", "userKey"], unique = true),
+    ],
+)
+internal data class DbProfileTabs(
+    val accountType: DbAccountType,
+    val userKey: MicroBlogKey,
+    val tabsJson: String,
+)

@@ -70,11 +70,11 @@ import dev.dimension.flare.settings_ai_config_model_no_models
 import dev.dimension.flare.settings_ai_config_translate_provider_description
 import dev.dimension.flare.settings_ai_config_use_shared
 import dev.dimension.flare.settings_ai_config_value_empty_placeholder
+import dev.dimension.flare.ui.component.ExpanderItem
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.settings.ImageTranslationSettingsPresenter
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.DropDownButton
-import io.github.composefluent.component.ExpanderItem
 import io.github.composefluent.component.ExpanderItemSeparator
 import io.github.composefluent.component.FlyoutPlacement
 import io.github.composefluent.component.MenuFlyout
@@ -203,6 +203,10 @@ internal fun ImageTranslationSettingsContent(state: ImageTranslationSettingsPres
                             onConfirm = { state.setField(field.id, it.trim()) },
                         )
                     }
+                }
+                if (field.id == "apiKey" && state.config.provider == ImageTranslationProvider.OpenAIImages && !state.useSharedConfig) {
+                    ExpanderItemSeparator()
+                    AiConfigHeadersSetting(state.config.openAIHeaders, state::setIndependentOpenAIHeaders)
                 }
             }
         }

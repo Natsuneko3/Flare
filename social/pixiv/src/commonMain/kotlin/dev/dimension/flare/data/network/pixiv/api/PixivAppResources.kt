@@ -15,6 +15,7 @@ import dev.dimension.flare.data.network.pixiv.model.PixivTrendingTagsResponse
 import dev.dimension.flare.data.network.pixiv.model.PixivUgoiraMetadataResponse
 import dev.dimension.flare.data.network.pixiv.model.PixivUserDetailResponse
 import dev.dimension.flare.data.network.pixiv.model.PixivUserListResponse
+import io.ktor.client.statement.HttpResponse
 
 internal interface PixivAppResources {
     @GET("v1/illust/recommended")
@@ -96,7 +97,7 @@ internal interface PixivAppResources {
         @Query("user_id") userId: Long,
         @Query("restrict") restrict: String,
         @Query("tag") tag: String? = null,
-    ): PixivIllustListResponse
+    ): HttpResponse
 
     @GET("v1/user/detail")
     suspend fun userDetail(

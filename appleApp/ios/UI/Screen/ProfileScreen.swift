@@ -19,7 +19,7 @@ struct ProfileScreen: View {
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
     @State private var presenter: KotlinPresenter<ProfileState>
-    @State private var selectedTab: Int = 0
+    @State private var tabSelection = ProfileTabSelection()
     @State private var showToolbarTabPicker = false
     @State private var isProfileHeaderVisible = true
     @State private var isInlineTabPickerVisible = true
@@ -42,6 +42,9 @@ struct ProfileScreen: View {
             for: .navigationBar
         )
         .navigationBarTitleDisplayMode(.inline)
+        .onSuccessOf(of: presenter.state.tabs) { tabs in
+            tabSelection.update(availableIDs: tabs.cast(ProfileState.Tab.self).map(\.id))
+        }
         .onChange(of: isBlockedProfile) { _, isBlocked in
             if !isBlocked {
                 showBlockedProfileContent = false
@@ -61,17 +64,18 @@ struct ProfileScreen: View {
             if !shouldGateBlockedProfile && horizontalSizeClass == .regular, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
                 let tabs = tabState.data.cast(ProfileState.Tab.self)
                 if tabs.count > 1 {
+                    let tabIDs = tabs.map(\.id)
+                    let selectedIndex = tabSelection[indexIn: tabIDs]
                     ToolbarItemGroup {
-                        ForEach(0..<tabs.count, id: \.self) { index in
-                            let tab = tabs[index]
+                        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                             Button {
                                 withAnimation(.spring) {
-                                    selectedTab = index
+                                    tabSelection[indexIn: tabIDs] = index
                                 }
                             } label: {
                                 Text(profileTabTitle(for: tab))
-                                    .foregroundStyle(selectedTab == index ? Color.accentColor : .primary)
-                                    .fontWeight(selectedTab == index ? .bold : .regular)
+                                    .foregroundStyle(selectedIndex == index ? Color.accentColor : .primary)
+                                    .fontWeight(selectedIndex == index ? .bold : .regular)
                             }
                         }
                     }
@@ -83,7 +87,7 @@ struct ProfileScreen: View {
                 let tabs = tabState.data.cast(ProfileState.Tab.self)
                 if tabs.count > 1 && showToolbarTabPicker {
                     ToolbarItem(placement: .primaryAction) {
-                        profileTabPicker(tabs: tabs)
+                        ProfileTabPicker(tabs: tabs, selectedTab: $tabSelection[indexIn: tabs.map(\.id)])
                             .pickerStyle(.menu)
                             .fixedSize()
                     }
@@ -220,6 +224,7 @@ struct ProfileScreen: View {
                     onFansClick: onFansClick
                 )
                 .padding(.bottom)
+                .plainProfileAccessory()
                 BlockedProfileGate {
                     showBlockedProfileContent = true
                 }
@@ -258,8 +263,11 @@ struct ProfileScreen: View {
                             onFollowingClick: onFollowingClick,
                             onFansClick: onFansClick
                         )
+                        .plainProfileAccessory()
                         ProfileTabsLoadingPlaceholder()
+                            .plainProfileAccessory()
                         ProfileTimelineUIKitLoadingPlaceholder(columnCount: 1)
+                            .padding(.top, timelineDisplayMode == .plain ? 0 : 8)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -277,7 +285,7 @@ struct ProfileScreen: View {
             ProfileTimelineCollectionView(
                 profileState: presenter.state,
                 tabs: tabs,
-                selectedTab: $selectedTab,
+                selectedTab: $tabSelection[indexIn: tabs.map(\.id)],
                 showsProfileAccessories: showsProfileAccessories,
                 timelineColumnCount: TimelineColumnPolicy.adaptive.columnCount(for: proxy.size.width),
                 onFollowClick: { user, followButtonState in
@@ -305,11 +313,6 @@ struct ProfileScreen: View {
             .id(accountID)
         }
         .ignoresSafeArea(edges: .vertical)
-    }
-
-    @ViewBuilder
-    private func profileTabPicker(tabs: [ProfileState.Tab]) -> some View {
-        ProfileTabPicker(tabs: tabs, selectedTab: $selectedTab)
     }
 
     private func updateToolbarTabPickerVisibility() {
@@ -346,6 +349,16 @@ struct ProfileScreen: View {
 
     private var shouldGateBlockedProfile: Bool {
         isBlockedProfile && !showBlockedProfileContent
+    }
+}
+
+private extension View {
+    func plainProfileAccessory() -> some View {
+        self
+            .environment(\.profileUsesPlainStyle, true)
+            .frame(maxWidth: .infinity)
+            .flareTextBackground(.flareSystemBackground)
+            .background(Color.flareSystemBackground)
     }
 }
 
@@ -412,7 +425,7 @@ private struct ProfileTimelineUIKitLoadingPlaceholder: View {
                     isMultipleColumn: true
                 )
             }
-            .padding(.horizontal, TimelineUIKitLayoutMetrics.horizontalInset)
+            .padding(.horizontal, TimelineHorizontalInsets.multiColumnGrid)
         } else {
             LazyVStack(spacing: TimelineUIKitLayoutMetrics.rowSpacing) {
                 placeholderCards(
@@ -422,7 +435,7 @@ private struct ProfileTimelineUIKitLoadingPlaceholder: View {
             }
             .padding(
                 .horizontal,
-                isPlainTimelineDisplayMode ? 0 : TimelineUIKitLayoutMetrics.horizontalInset
+                isPlainTimelineDisplayMode ? 0 : TimelineHorizontalInsets.card
             )
         }
     }
@@ -570,19 +583,6 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
             selectedTabBinding.wrappedValue = index
         }
 
-        guard !tabs.isEmpty else {
-            controller.setPages([], selectedIndex: 0)
-            context.coordinator.prunePages(validIDs: [])
-            return
-        }
-
-        let clampedIndex = min(max(selectedTab, 0), tabs.count - 1)
-        if clampedIndex != selectedTab {
-            DispatchQueue.main.async {
-                selectedTab = clampedIndex
-            }
-        }
-        let validIDs = Set(tabs.map(profileTimelineID(for:)))
         let coordinator = context.coordinator
         let pageConfigurations = tabs.map { tab in
             ProfileTimelinePageConfiguration(
@@ -599,8 +599,8 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
                 }
             )
         }
-        controller.setPages(pageConfigurations, selectedIndex: clampedIndex)
-        context.coordinator.prunePages(validIDs: validIDs)
+        controller.setPages(pageConfigurations, selectedIndex: selectedTab)
+        coordinator.prunePages(validIDs: Set(pageConfigurations.map(\.id)))
     }
 
     final class Coordinator {
@@ -675,22 +675,30 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
             let newHeaderSignature = ProfileHeaderAccessorySignature(
                 profileState: profileState,
                 timelineAppearance: timelineAppearance,
-                horizontalSizeClass: horizontalSizeClass
+                horizontalSizeClass: horizontalSizeClass,
+                showsTimelineDivider: tabs.count == 1
             )
             if headerSignature != newHeaderSignature {
                 headerSignature = newHeaderSignature
                 headerView.update(
                     AnyView(
-                        ProfileHeader(
-                            user: profileState.userState,
-                            relation: profileState.relationState,
-                            followButtonState: profileState.followButtonState,
-                            isMe: profileState.isMe,
-                            onFollowClick: onFollowClick,
-                            onFollowingClick: onFollowingClick,
-                            onFansClick: onFansClick
-                        )
+                        VStack(spacing: 0) {
+                            ProfileHeader(
+                                user: profileState.userState,
+                                relation: profileState.relationState,
+                                followButtonState: profileState.followButtonState,
+                                isMe: profileState.isMe,
+                                onFollowClick: onFollowClick,
+                                onFollowingClick: onFollowingClick,
+                                onFansClick: onFansClick
+                            )
+                            if newHeaderSignature.showsTimelineDivider {
+                                Divider()
+                                    .padding(.top, 8)
+                            }
+                        }
                         .environment(\.timelineAppearance, timelineAppearance)
+                        .environment(\.profileUsesPlainStyle, true)
                         .environment(\.openURL, openURL)
                         .environment(\.horizontalSizeClass, horizontalSizeClass)
                     )
@@ -713,6 +721,7 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
                                 progress: tabSelectionProgress
                             )
                                 .environment(\.timelineAppearance, timelineAppearance)
+                                .environment(\.profileUsesPlainStyle, true)
                                 .environment(\.openURL, openURL)
                                 .environment(\.horizontalSizeClass, horizontalSizeClass)
                         )
@@ -740,6 +749,7 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
             controller.usesGroupedBackgroundOverride = appearance.usesCardBackground || timelineColumnCount > 1
             controller.networkKind = networkKind
             controller.extendsContentUnderTopBars = extendsContentUnderTopBars
+            controller.timelineCardTopSpacing = extendsContentUnderTopBars ? 8 : 0
             controller.topScrollIndicatorInset = 0
             controller.suppressInitialRefreshIndicator = true
             controller.restoresScrollAnchorOnSnapshotChanges = false
@@ -817,7 +827,7 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
     }
 }
 
-private struct ProfileTimelinePageConfiguration {
+struct ProfileTimelinePageConfiguration {
     let id: String
     let makeController: () -> UITimelineCollectionViewController
 }
@@ -908,7 +918,7 @@ private final class ProfileAccessoryScrollView: UIScrollView {
     }
 }
 
-private final class ProfileTimelinePagerViewController: UIViewController,
+final class ProfileTimelinePagerViewController: UIViewController,
     UIPageViewControllerDataSource,
     UIPageViewControllerDelegate,
     UIScrollViewDelegate {
@@ -1030,8 +1040,6 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         view.backgroundColor = color
         pageViewController.view.backgroundColor = color
         pages.forEach { $0.setBackgroundColor(color) }
-        setBaseBackgroundColor(color, for: headerView)
-        setBaseBackgroundColor(color, for: pickerView)
         updateAccessoryAppearance(navigationTitleVisible: lastHeaderVisibility == false)
     }
 
@@ -1058,7 +1066,10 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         guard !pages.isEmpty else {
             currentIndex = 0
             accessoryScrollView.isScrollEnabled = false
-            pageViewController.setViewControllers(nil, direction: .forward, animated: false)
+            if !previousIDs.isEmpty {
+                // UIPageViewController requires one controller when replacing its visible page.
+                pageViewController.setViewControllers([UIViewController()], direction: .forward, animated: false)
+            }
             finishPageTransition(at: 0)
             reportVisibility(effectiveOffsetY: 0)
             return
@@ -1068,7 +1079,7 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         let targetIndex = min(max(selectedIndex, 0), pages.count - 1)
         view.setNeedsLayout()
         let pagesChanged = previousIDs != pages.map(\.id)
-        selectPage(at: targetIndex, animated: !pagesChanged && view.window != nil)
+        selectPage(at: targetIndex, pagesChanged: pagesChanged)
     }
 
     func pageViewController(
@@ -1132,13 +1143,13 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         return pages[currentIndex].timelineController
     }
 
-    private func selectPage(at index: Int, animated: Bool) {
+    private func selectPage(at index: Int, pagesChanged: Bool) {
         guard pages.indices.contains(index) else { return }
         let target = pages[index]
         let targetTimeline = activate(target)
         let visiblePage = pageViewController.viewControllers?.first as? ProfileTimelinePageViewController
         let sourceIndex = visiblePage.flatMap(index(of:)) ?? currentIndex
-        if visiblePage === target {
+        if visiblePage === target && !pagesChanged {
             currentIndex = index
             updateAccessoryFrames(effectiveOffsetY: targetTimeline.effectiveContentOffsetY)
             if pageTransition == nil {
@@ -1146,9 +1157,10 @@ private final class ProfileTimelinePagerViewController: UIViewController,
             }
             return
         }
-        if let visiblePage {
+        if let visiblePage, visiblePage !== target {
             synchronizeInitialOffset(from: visiblePage, to: targetTimeline)
         }
+        let animated = !pagesChanged && view.window != nil
         let direction: UIPageViewController.NavigationDirection = index >= sourceIndex ? .forward : .reverse
         if animated {
             beginPageTransition(from: sourceIndex, to: index, isProgrammatic: true)
@@ -1535,14 +1547,6 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         }
     }
 
-    private func setBaseBackgroundColor(_ color: UIColor, for view: UIView?) {
-        if let accessory = view as? ProfileHostedAccessoryView {
-            accessory.setBaseBackgroundColor(color)
-        } else {
-            view?.backgroundColor = color
-        }
-    }
-
     private func updateAccessoryAppearance(navigationTitleVisible: Bool) {
         headerView?.alpha = navigationTitleVisible ? 0 : 1
         collapsedGlassView.isHidden = !navigationTitleVisible || headerView == nil
@@ -1559,11 +1563,13 @@ private struct ProfileHeaderAccessorySignature: Equatable {
     let isMeState: String
     let appearance: TimelineUIKitAppearance
     let horizontalSizeClass: UserInterfaceSizeClass?
+    let showsTimelineDivider: Bool
 
     init(
         profileState: ProfileState,
         timelineAppearance: TimelineAppearance,
-        horizontalSizeClass: UserInterfaceSizeClass?
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        showsTimelineDivider: Bool
     ) {
         userState = Self.userStateSignature(profileState.userState)
         relationState = Self.relationStateSignature(profileState.relationState)
@@ -1571,6 +1577,7 @@ private struct ProfileHeaderAccessorySignature: Equatable {
         isMeState = Self.isMeStateSignature(profileState.isMe)
         appearance = TimelineUIKitAppearance(timeline: timelineAppearance)
         self.horizontalSizeClass = horizontalSizeClass
+        self.showsTimelineDivider = showsTimelineDivider
     }
 
     private static func userStateSignature(_ state: UiState<UiProfile>) -> String {
@@ -1657,7 +1664,6 @@ private struct ProfilePickerAccessorySignature: Equatable {
 private final class ProfileHostedAccessoryView: UIView {
     private let host = UIHostingController(rootView: AnyView(EmptyView()))
     private let ignoresSafeArea: Bool
-    private var baseBackgroundColor = UIColor.clear
     private var hidesBaseBackground = false
 
     init(ignoresSafeArea: Bool) {
@@ -1685,17 +1691,10 @@ private final class ProfileHostedAccessoryView: UIView {
         setNeedsLayout()
     }
 
-    func setBaseBackgroundColor(_ color: UIColor) {
-        baseBackgroundColor = color
-        traitOverrides[FlareTextBackgroundTrait.self] = hidesBaseBackground ? nil : color
-        backgroundColor = hidesBaseBackground ? .clear : color
-    }
-
     func setBaseBackgroundHidden(_ hidden: Bool) {
         guard hidesBaseBackground != hidden else { return }
         hidesBaseBackground = hidden
-        traitOverrides[FlareTextBackgroundTrait.self] = hidden ? nil : baseBackgroundColor
-        backgroundColor = hidden ? .clear : baseBackgroundColor
+        updateBaseBackground()
     }
 
     override func didMoveToWindow() {
@@ -1710,7 +1709,7 @@ private final class ProfileHostedAccessoryView: UIView {
     }
 
     private func commonInit() {
-        backgroundColor = .clear
+        updateBaseBackground()
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
         if #available(iOS 16.0, *) {
@@ -1726,6 +1725,11 @@ private final class ProfileHostedAccessoryView: UIView {
             host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
             host.view.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    private func updateBaseBackground() {
+        traitOverrides[FlareTextBackgroundTrait.self] = hidesBaseBackground ? nil : .systemBackground
+        backgroundColor = hidesBaseBackground ? .clear : .systemBackground
     }
 
     private func findParentViewController() -> UIViewController? {

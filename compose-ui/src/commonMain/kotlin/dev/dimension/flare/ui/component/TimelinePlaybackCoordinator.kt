@@ -3,15 +3,10 @@ package dev.dimension.flare.ui.component
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
@@ -23,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 internal val LocalTimelinePlayback = compositionLocalOf<TimelinePlaybackCoordinator?> { null }
 internal val LocalTimelineCarouselItem = compositionLocalOf<TimelineCarouselItem?> { null }
@@ -40,7 +36,7 @@ internal class TimelinePlaybackCoordinator(
     private val memory: MediaPlaybackMemory = MediaPlaybackMemory.shared,
 ) {
     private val policy = TimelineAutoplayPolicy()
-    private val candidates = linkedMapOf<Any, TimelineAutoplayPolicy.Candidate>()
+    private val candidates = linkedMapOf<Any, TimelineAutoplayPolicy.CandidateSource>()
     private val players = mutableMapOf<Any, (Boolean) -> Unit>()
     private val scrollingSources = mutableSetOf<Any>()
     private var selectionJob: Job? = null
@@ -54,8 +50,25 @@ internal class TimelinePlaybackCoordinator(
     val mediaSelections = TimelineMediaSelections()
     private var viewerSelection: Pair<List<String>, Int>? = null
     private val cleanup = mutableMapOf<Any, () -> Unit>()
-    var viewport: Rect? by mutableStateOf(null)
-    var multipleColumns: Boolean by mutableStateOf(false)
+    var viewport: Rect? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            if (candidates.isNotEmpty()) {
+                // Check visibility after the children's position callbacks catch up to the viewport.
+                scope.launch {
+                    yield()
+                    reconcile(allowStart = false)
+                    scheduleSelection()
+                }
+            }
+        }
+    var multipleColumns: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            if (candidates.isNotEmpty()) scheduleSelection()
+        }
 
     init {
         arbiter.register(
@@ -125,10 +138,14 @@ internal class TimelinePlaybackCoordinator(
         players[id] = playback
     }
 
-    fun update(candidate: TimelineAutoplayPolicy.Candidate) {
+    fun update(candidate: TimelineAutoplayPolicy.CandidateSource) {
         if (candidates[candidate.id] == candidate) return
         candidates[candidate.id] = candidate
-        reconcile(allowStart = false)
+        candidateBoundsChanged(candidate.id)
+    }
+
+    fun candidateBoundsChanged(id: Any) {
+        if (id == playingId) reconcile(allowStart = false)
         scheduleSelection()
     }
 
@@ -181,8 +198,8 @@ internal class TimelinePlaybackCoordinator(
     }
 
     private fun scheduleSelection() {
-        selectionJob?.cancel()
         if (closed || suspended || scrollingSources.isNotEmpty()) return
+        selectionJob?.cancel()
         if (immediateReturn) {
             reconcile(allowStart = true)
             if (playingId != null) immediateReturn = false
@@ -206,7 +223,10 @@ internal class TimelinePlaybackCoordinator(
             return
         }
         val selectedUri = viewerSelection?.let { it.first[it.second] }.takeIf { isPresentation }
-        val eligible = if (selectedUri == null) candidates.values else candidates.values.filter { it.mediaUri == selectedUri }
+        val eligible =
+            candidates.values.mapNotNull { source ->
+                source.snapshot().takeIf { selectedUri == null || it.mediaUri == selectedUri }
+            }
         val next = policy.select(eligible, scrolling = false)
         if (next == null) arbiter.settledWithoutVideo(this)
         if (next == playingId) return
@@ -270,6 +290,8 @@ internal fun rememberTimelinePlayback(): TimelinePlaybackCoordinator {
 private class VideoGeometry {
     var bounds: Rect = Rect.Zero
     var visible: Rect = Rect.Zero
+
+    fun clippedTo(viewport: Rect?): Rect = viewport?.let { visible.intersect(it) } ?: visible
 }
 
 @Composable
@@ -283,31 +305,38 @@ internal fun Modifier.timelineVideoAutoplay(
     val geometry = remember(playback, id) { VideoGeometry() }
     val density = LocalDensity.current.density
 
-    fun update() {
-        val viewport = playback.viewport
-        val multipleColumns = playback.multipleColumns
-        val visible = viewport?.let { geometry.visible.intersect(it) } ?: geometry.visible
-        playback.update(
-            TimelineAutoplayPolicy.Candidate(
-                id = id,
-                groupId = item?.groupId,
-                visible = enabled && !visible.isEmpty,
-                selected = item?.selected ?: true,
-                canStart = enabled && (item?.isCarousel != true || visible.width >= geometry.bounds.width * 0.6f),
-                distance = TimelineAutoplayPolicy.centerDistance(geometry.bounds, viewport ?: geometry.bounds, multipleColumns, density),
-                mediaUri = mediaUri,
-                mediaIndex = item?.mediaIndex,
-            ),
-        )
-    }
-    SideEffect { update() }
-    LaunchedEffect(playback, id, item, enabled, mediaUri, density) {
-        // Viewport-only changes must update candidates without restarting the video UI.
-        snapshotFlow { playback.viewport to playback.multipleColumns }.collect { update() }
-    }
+    val candidate =
+        remember(playback, id, geometry, item, enabled, mediaUri, density) {
+            object : TimelineAutoplayPolicy.CandidateSource {
+                override val id: Any = id
+                override val visible: Boolean
+                    get() = enabled && !geometry.clippedTo(playback.viewport).isEmpty
+
+                override fun snapshot(): TimelineAutoplayPolicy.Candidate {
+                    val bounds = geometry.bounds
+                    val viewport = playback.viewport
+                    val visible = geometry.clippedTo(viewport)
+                    return TimelineAutoplayPolicy.Candidate(
+                        id = id,
+                        groupId = item?.groupId,
+                        visible = enabled && !visible.isEmpty,
+                        selected = item?.selected ?: true,
+                        canStart = enabled && (item?.isCarousel != true || visible.width >= bounds.width * 0.6f),
+                        distance = TimelineAutoplayPolicy.centerDistance(bounds, viewport ?: bounds, playback.multipleColumns, density),
+                        mediaUri = mediaUri,
+                        mediaIndex = item?.mediaIndex,
+                    )
+                }
+            }
+        }
+    SideEffect { playback.update(candidate) }
     return onGloballyPositioned {
-        geometry.bounds = Rect(it.positionInWindow(), it.size.toSize())
-        geometry.visible = it.boundsInWindow()
-        update()
+        val bounds = Rect(it.positionInWindow(), it.size.toSize())
+        val visible = it.boundsInWindow()
+        if (geometry.bounds != bounds || geometry.visible != visible) {
+            geometry.bounds = bounds
+            geometry.visible = visible
+            playback.candidateBoundsChanged(id)
+        }
     }
 }

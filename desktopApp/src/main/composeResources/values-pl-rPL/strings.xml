@@ -738,7 +738,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Klucz API</string>
     <string name="image_translation_original_file">Oryginalny plik</string>
-    <string name="image_translation_use_shared_description">Udostępnij adres URL usługi, klucz API i model. Usługa i model muszą obsługiwać wyjście obrazów. Wyłącz, aby skonfigurować tłumaczenie obrazów osobno.</string>
+    <string name="image_translation_use_shared_description">Udostępnij adres URL usługi, klucz API, model i niestandardowe nagłówki. Usługa i model muszą obsługiwać wyjście obrazów. Wyłącz, aby skonfigurować tłumaczenie obrazów osobno.</string>
     <string name="plugin_permission_cookie">Żądania konta dla %2$s: %1$s</string>
     <string name="plugin_ai_create">Utwórz z Flare AI</string>
     <string name="plugin_ai_untitled">Nowa wtyczka</string>
@@ -834,6 +834,8 @@
     <string name="plugin_warning_compatibility">Ostrzeżenie o kompatybilności</string>
     <string name="plugin_install_github">Zainstaluj z GitHub</string>
     <string name="plugin_check_updates">Sprawdź aktualizacje</string>
+    <string name="plugin_local_import">Import lokalny</string>
+    <string name="plugin_updated_at">Zaktualizowano %1$s</string>
     <string name="plugin_warning_source_changed">Ta instalacja zmienia źródło pluginu</string>
     <string name="plugin_warning_tag_moved">Ten tag wskazuje teraz inny commit</string>
     <string name="plugin_unverified_github_warning">Ten plugin GitHub nie został zweryfikowany. Instaluj go tylko, jeśli ufasz autorowi.</string>

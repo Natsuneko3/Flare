@@ -8,6 +8,7 @@
     import PostAvatar from "./post/PostAvatar.svelte";
     import PostBody from "./post/PostBody.svelte";
     import PostCard from "./post/PostCard.svelte";
+    import PostCommunityNote from "./post/PostCommunityNote.svelte";
     import PostHeader from "./post/PostHeader.svelte";
     import PostMediaGrid from "./post/PostMediaGrid.svelte";
     import PostPoll from "./post/PostPoll.svelte";
@@ -328,6 +329,10 @@
                             {/if}
                         {/each}
                     </div>
+                {/if}
+
+                {#if post.communityNote}
+                    <PostCommunityNote note={post.communityNote} />
                 {/if}
 
                 {#if post.sourceChannel && !isQuote}

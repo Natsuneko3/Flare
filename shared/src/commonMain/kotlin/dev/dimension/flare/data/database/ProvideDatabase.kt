@@ -1,5 +1,6 @@
 package dev.dimension.flare.data.database
 
+import androidx.room3.RoomDatabase
 import dev.dimension.flare.common.PlatformDispatchers
 import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.cache.CacheDatabase
@@ -24,8 +25,11 @@ internal const val CACHE_DATABASE_NAME = "cache.db"
 
 @Single
 internal fun provideCacheDatabase(driverFactory: DriverFactory): CacheDatabase =
-    driverFactory
-        .createBuilder<CacheDatabase>(CACHE_DATABASE_NAME, isCache = true)
+    buildCacheDatabase(driverFactory.createBuilder(CACHE_DATABASE_NAME, isCache = true))
+
+internal fun buildCacheDatabase(builder: RoomDatabase.Builder<CacheDatabase>): CacheDatabase =
+    builder
+        .addMigrations(CacheDatabase.MIGRATION_53_54)
         .fallbackToDestructiveMigration(dropAllTables = true)
         .addCallback(TimelineRevisionCallback)
         .setDriver(createDatabaseDriver())

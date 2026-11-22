@@ -745,7 +745,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automaticky</string>
     <string name="image_translation_original_file">Původní soubor</string>
-    <string name="image_translation_use_shared_description">Sdílejte URL služby, API klíč a model. Služba a model musí podporovat výstup obrázků. Vypněte pro samostatnou konfiguraci překladu obrázků.</string>
+    <string name="image_translation_use_shared_description">Sdílejte URL služby, API klíč, model a vlastní hlavičky. Služba a model musí podporovat výstup obrázků. Vypněte pro samostatnou konfiguraci překladu obrázků.</string>
     <string name="plugin_permission_cookie">Číst cookie %2$s z %1$s</string>
     <string name="plugin_ai_create">Vytvořit s Flare AI</string>
     <string name="plugin_ai_untitled">Nový plugin</string>
@@ -843,6 +843,8 @@
     <string name="plugin_install_github">Instalovat z GitHub</string>
     <string name="plugin_github_repository">URL úložiště GitHub</string>
     <string name="plugin_check_updates">Kontrolovat aktualizace</string>
+    <string name="plugin_local_import">Místní import</string>
+    <string name="plugin_updated_at">Aktualizováno %1$s</string>
     <string name="plugin_update">Aktualizovat</string>
     <string name="plugin_up_to_date">GitHub pluginy jsou aktuální</string>
     <string name="plugin_warning_source_changed">Toto nainstalování mění zdroj pluginu</string>

@@ -288,6 +288,7 @@ internal fun rememberTimelineWithLazyListState(
                         ?.key
             }.drop(1)
                 .collect { (index, key) ->
+                    if (newPostCount == 0) return@collect
                     // Consume posts on viewport changes, not paging updates whose
                     // new indices may arrive before the grid preserves its position.
                     // A measured item's key also excludes any leading header cards.

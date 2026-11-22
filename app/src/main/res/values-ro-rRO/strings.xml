@@ -814,7 +814,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automat</string>
     <string name="image_translation_original_file">Fișier original</string>
-    <string name="image_translation_use_shared_description">Distribuie URL-ul serviciului, cheia API și modelul. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat.</string>
+    <string name="image_translation_use_shared_description">Distribuie URL-ul serviciului, cheia API, modelul și anteturile personalizate. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat.</string>
     <string name="plugin_permission_cookie">Citește cookie-ul %2$s din %1$s</string>
     <string name="plugin_ai_create">Creează cu AI Flare</string>
     <string name="plugin_ai_untitled">Plugin nou</string>
@@ -919,6 +919,8 @@
     <string name="plugin_warning_compatibility">Avertisment de compatibilitate</string>
     <string name="plugin_install_github">Instalează din GitHub</string>
     <string name="plugin_check_updates">Verifică actualizări</string>
+    <string name="plugin_local_import">Import local</string>
+    <string name="plugin_updated_at">Actualizat la %1$s</string>
     <string name="plugin_add">Adaugă plugin</string>
     <string name="settings_ai_config_context_window_hint">Lăsați gol pentru a folosi limita cunoscută a modelului. Modelele necunoscute folosesc un buget estimat de 8192 tokeni. Introduceți cel puțin 1024 tokeni pentru a anula.</string>
     <string name="plugin_large_repository_title">Descărcare de depozitar mare?</string>

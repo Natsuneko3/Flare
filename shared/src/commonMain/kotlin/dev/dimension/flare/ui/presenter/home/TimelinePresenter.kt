@@ -194,6 +194,8 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
     internal open fun allowLongTextTranslationDisplay(loader: RemoteLoader<UiTimelineV2>): Boolean =
         options.allowLongTextTranslationDisplay(loader)
 
+    internal open fun keepContextAnchor(item: UiTimelineV2): Boolean = false
+
     @OptIn(ExperimentalCoroutinesApi::class)
     internal fun createPager(scope: CoroutineScope): Flow<PagingData<UiTimelineV2>> =
         loader
@@ -280,7 +282,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                             }.flatMapLatest { pager ->
                                 visibility.map { visible ->
                                     pager
-                                        .filter { visible.isVisible(it) && (enabled || it !is UiTimelineV2.Gap) }
+                                        .filter { (keepContextAnchor(it) || visible.isVisible(it)) && (enabled || it !is UiTimelineV2.Gap) }
                                         .map {
                                             if (it is UiTimelineV2.Gap) it else transform(it)
                                         }

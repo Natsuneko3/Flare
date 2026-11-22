@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNames
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -461,6 +462,8 @@ internal data class User(
     val coverImagePhone: String? = null,
     @SerialName("avatar_hd")
     val avatarHD: String? = null,
+    @SerialName("avatar_large")
+    val avatarLarge: String? = null,
     val like: Boolean? = null,
     @SerialName("like_me")
     val likeMe: Boolean? = null,
@@ -548,6 +551,7 @@ internal data class StatusDetailItem(
     val status: Status? = null,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 internal data class Comment(
     @SerialName("disable_reply")
@@ -568,10 +572,12 @@ internal data class Comment(
     val status: Status? = null,
     val clevel: Long? = null,
     @SerialName("like_count")
+    @JsonNames("like_counts")
     val likeCount: Long? = null,
     @SerialName("reply_count")
     val replyCount: Long? = null,
-    val liked: Boolean? = null,
+    @JsonNames("like")
+    val liked: JsonPrimitive? = null,
     val gid: Long? = null,
     @SerialName("match_ai_play_picture")
     val matchAIPlayPicture: Boolean? = null,

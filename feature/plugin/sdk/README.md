@@ -13,16 +13,17 @@ For an existing V1 plugin, follow the [migration steps](skill/flare-plugin/ABI.m
 
 ## Create a plugin
 
-With Node 22 or newer, create a social starter for a build with Host API v2.
+With Node 22 or newer, create a social starter for a Flare build with QR login
+or configurable post detail tabs.
 
 ```sh
-npx flare-plugin-sdk@0.1.0-beta.11 init my-plugin
+npx flare-plugin-sdk@0.1.0-beta.12 init my-plugin
 cd my-plugin
 npm install
 ```
 
-For Flare 1.8.0, use `flare-plugin-sdk@0.1.0-beta.10`. For features newer than the
-published SDK, [create the starter from the matching checkout](skill/flare-plugin/README.md#use-the-sdk-from-a-flare-checkout).
+For earlier Flare builds, choose the SDK in the [version guide](skill/flare-plugin/README.md#match-flare-and-the-sdk).
+For features newer than the published SDK, [create the starter from the matching checkout](skill/flare-plugin/README.md#use-the-sdk-from-a-flare-checkout).
 The initializer copies the GitHub template bundled with the selected SDK into
 `my-plugin`.
 
@@ -209,13 +210,15 @@ association in workspace settings instead. See the
 [manifest editor guide](skill/flare-plugin/references/manifest.md#json-schema-and-editor-support)
 and [VS Code schema settings](https://code.visualstudio.com/docs/languages/json#_json-schemas-and-settings).
 
-For an existing project targeting Host API v2, install the published SDK.
+For an existing project targeting a Flare build with QR login or configurable
+post detail tabs, install the published SDK.
 
 ```sh
-npm install --save-dev --save-exact flare-plugin-sdk@0.1.0-beta.11
+npm install --save-dev --save-exact flare-plugin-sdk@0.1.0-beta.12
 ```
 
-For Flare 1.8.0, pin `0.1.0-beta.10`. For features newer than the published SDK,
+For earlier Flare builds, choose the SDK in the [version guide](skill/flare-plugin/README.md#match-flare-and-the-sdk).
+For features newer than the published SDK,
 [install the source SDK tarball](skill/flare-plugin/README.md#use-the-sdk-from-a-flare-checkout).
 Add the package to your TypeScript project's compiler options.
 

@@ -5,17 +5,26 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 internal class TimelineAutoplayPolicy {
+    interface CandidateSource {
+        val id: Any
+        val visible: Boolean
+
+        fun snapshot(): Candidate
+    }
+
     data class Candidate(
-        val id: Any,
+        override val id: Any,
         val groupId: Any? = null,
-        val visible: Boolean,
+        override val visible: Boolean,
         val selected: Boolean = true,
         val canStart: Boolean,
         // Distance from the complete video bounds to the viewport center, in dp.
         val distance: Float,
         val mediaUri: String? = null,
         val mediaIndex: Int? = null,
-    )
+    ) : CandidateSource {
+        override fun snapshot(): Candidate = this
+    }
 
     var activeId: Any? = null
         private set
