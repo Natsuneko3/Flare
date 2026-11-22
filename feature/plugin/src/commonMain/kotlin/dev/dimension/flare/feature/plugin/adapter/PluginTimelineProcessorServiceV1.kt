@@ -519,7 +519,11 @@ internal class PluginTimelineProcessorServiceV1(
             }
             withContext(ioDispatcher) {
                 dbMutex.withLock {
-                    dao.deleteByPluginId(pluginId)
+                    try {
+                        dao.deleteByPluginId(pluginId)
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                    }
                 }
             }
         }
@@ -1116,10 +1120,14 @@ internal class PluginTimelineProcessorServiceV1(
     }
 
     private suspend fun runMaintenanceLocked(nowMillis: Long) {
-        dao.deleteExpiredBefore(nowMillis - EXPIRED_PRUNE_AGE_MILLIS)
-        dao.trimOldestKeeping(MAX_DB_ROWS)
-        lastMaintenanceMillis = nowMillis
-        writesSinceMaintenance = 0
+        try {
+            dao.deleteExpiredBefore(nowMillis - EXPIRED_PRUNE_AGE_MILLIS)
+            dao.trimOldestKeeping(MAX_DB_ROWS)
+            lastMaintenanceMillis = nowMillis
+            writesSinceMaintenance = 0
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+        }
     }
 
     private fun touchLruKeys(keys: List<String>) {
