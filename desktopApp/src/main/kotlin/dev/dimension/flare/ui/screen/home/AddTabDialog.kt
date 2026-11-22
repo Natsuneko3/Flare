@@ -41,8 +41,8 @@ import dev.dimension.flare.tab_settings_add
 import dev.dimension.flare.tab_settings_remove
 import dev.dimension.flare.ui.common.itemsIndexed
 import dev.dimension.flare.ui.component.AvatarComponent
-import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.CardExpanderItem
+import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
