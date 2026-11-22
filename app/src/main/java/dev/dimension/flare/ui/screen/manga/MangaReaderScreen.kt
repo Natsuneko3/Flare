@@ -126,6 +126,7 @@ internal fun MangaReaderScreen(
     accountType: AccountType,
     navigate: (Route) -> Unit,
     onBack: () -> Unit,
+    pendingSave: PendingMangaPageSave = viewModel { PendingMangaPageSave() },
 ) {
     val state by producePresenter("manga_reader_$accountType-$mangaKey-$chapterId-$initialPage") {
         remember(accountType, mangaKey, chapterId, initialPage) {
@@ -141,7 +142,6 @@ internal fun MangaReaderScreen(
     val ioScope = koinInject<CoroutineScope>()
     val downloadManager = koinInject<AndroidDownloadManager>()
     val saveLocation = koinInject<AndroidMediaSaveLocationRepository>()
-    val pendingSave = viewModel { PendingMangaPageSave() }
     val permissionState =
         rememberPermissionState(Manifest.permission.WRITE_EXTERNAL_STORAGE) { granted ->
             pendingSave.permissionResult(granted)
