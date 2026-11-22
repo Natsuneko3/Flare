@@ -523,7 +523,7 @@ public class PluginManagementPresenterV1(
                             ?.takeUnless { it.removing }
                 )?.manifest ?: return
             if (manifest.timelineProcessor == null) return
-            subsystem.timelineGrants.setEnabledAsync(pluginId, manifest.permissions.httpOrigins, scope)
+            subsystem.timelineGrants.setEnabledAsync(pluginId, manifest.permissions, scope)
         } else {
             subsystem.timelineGrants.setEnabledAsync(pluginId, null, scope)
             subsystem.clearTimelineProcessor(pluginId)

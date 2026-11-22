@@ -4,6 +4,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.testing.asPagingSourceFactory
 import androidx.paging.testing.asSnapshot
 import androidx.room3.Room
 import app.cash.molecule.RecompositionMode
@@ -131,8 +132,8 @@ class TimelinePluginWidgetPresenterTest {
                             ),
                     )
                 val fakeService = FakeDelayedTimelineProcessorService()
-                assertSame(repostItem, repostItem.bindPluginWidgetsNow(null))
-                val bound = repostItem.bindPluginWidgetsNow(fakeService) as UiTimelineV2.TimelinePostItem
+                repostItem.submitPluginPosts(fakeService)
+                val bound = repostItem.attachPluginWidgets(fakeService) as UiTimelineV2.TimelinePostItem
                 assertTrue(bound.displayPost.pluginWidgets.isEmpty())
                 assertEquals(listOf(original.statusKey), fakeService.submittedKeys)
 
@@ -149,7 +150,7 @@ class TimelinePluginWidgetPresenterTest {
                         )
                     },
                 )
-                val updated = repostItem.bindPluginWidgetsNow(fakeService) as UiTimelineV2.TimelinePostItem
+                val updated = repostItem.attachPluginWidgets(fakeService) as UiTimelineV2.TimelinePostItem
                 assertEquals(8, updated.displayPost.pluginWidgets.size)
                 assertTrue(updated.post.pluginWidgets.isEmpty())
                 assertTrue(
@@ -208,10 +209,10 @@ class TimelinePluginWidgetPresenterTest {
                         }.toTimelinePagingSource()
                     }.flow.cachedIn(backgroundScope)
 
-                assertSame(sourceFlow, sourceFlow.bindPluginWidgets(null))
+                assertSame(sourceFlow, sourceFlow.bindPluginWidgets(null, backgroundScope))
 
                 val fakeService = FakeDelayedTimelineProcessorService()
-                val boundFlow = sourceFlow.bindPluginWidgets(fakeService)
+                val boundFlow = sourceFlow.bindPluginWidgets(fakeService, backgroundScope)
 
                 val initialSnapshot = boundFlow.asSnapshot()
                 assertEquals(3, initialSnapshot.size)
@@ -235,6 +236,7 @@ class TimelinePluginWidgetPresenterTest {
                 fakeService.emitCards(replyPost, listOf(replyCard))
 
                 val updatedSnapshot = boundFlow.asSnapshot()
+                assertEquals(listOf(replyPost.statusKey, parentPost.statusKey, standalonePost.statusKey), fakeService.submittedKeys)
                 val updatedReply = updatedSnapshot[1] as UiTimelineV2.TimelinePostItem
                 assertEquals(listOf("reply-card"), updatedReply.displayPost.pluginWidgets.map { it.id })
                 assertEquals(
@@ -244,6 +246,33 @@ class TimelinePluginWidgetPresenterTest {
                         .displayPost.pluginWidgets
                         .map { it.id },
                 )
+            } finally {
+                stopKoin()
+            }
+        }
+
+    @Test
+    fun overlayUpdatesDoNotResubmitPagesLargerThanTheProcessorCache() =
+        runTest {
+            startKoin { modules(module { testSingle<PlatformFormatter> { TestFormatter() } }) }
+            try {
+                val posts = List(1_025) { index -> createSamplePost(id = "row-$index") }
+                val items: List<UiTimelineV2> = posts
+                val service = FakeDelayedTimelineProcessorService()
+                val timeline =
+                    Pager(PagingConfig(pageSize = posts.size), pagingSourceFactory = items.asPagingSourceFactory())
+                        .flow
+                        .cachedIn(backgroundScope)
+                        .bindPluginWidgets(service, backgroundScope)
+
+                assertEquals(posts.size, timeline.asSnapshot().size)
+                repeat(5) { index ->
+                    val card = sampleCard("card-$index", "Result $index")
+                    service.emitCards(posts[index], listOf(card))
+                    val post = timeline.asSnapshot()[index].contentPostOrNull()!!
+                    assertEquals(card.id, post.pluginWidgets.single().id)
+                }
+                assertEquals(posts.map { it.statusKey }, service.submittedKeys)
             } finally {
                 stopKoin()
             }
@@ -314,6 +343,10 @@ class TimelinePluginWidgetPresenterTest {
                     .title,
             )
             assertEquals(1, cacheLoads.get())
+
+            val submissionsBeforeRevisit = fakeService.submittedKeys.size
+            (enrichedCached.listState as PagingState.Success)[0]
+            assertEquals(listOf(cachedPost.statusKey), fakeService.submittedKeys.drop(submissionsBeforeRevisit))
 
             val networkPost = createSamplePost(id = "network-1", host = accountKey.host, text = "Search result")
             val networkLoader =
@@ -411,9 +444,8 @@ class TimelinePluginWidgetPresenterTest {
             assertTrue(fakeService.submittedKeys.contains(replyKey))
 
             // Simulate enabling a plugin / updating flare.storage while Post Detail is open:
-            // bumping overlayRevision re-triggers submitPosts for current and header!
             fakeService.submittedKeys.clear()
-            fakeService.bumpRevision()
+            fakeService.invalidateProcessing()
             nonContextState.await { fakeService.submittedKeys.contains(focalKey) }
             assertEquals(1, fakeService.submittedKeys.count { it == focalKey })
 
@@ -847,6 +879,8 @@ class TimelinePluginWidgetPresenterTest {
 private class FakeDelayedTimelineProcessorService : TimelineProcessorService {
     private val revision = MutableStateFlow(0L)
     override val overlayRevision: StateFlow<Long> = revision.asStateFlow()
+    private val processing = MutableStateFlow(0L)
+    override val processingRevision: StateFlow<Long> = processing.asStateFlow()
 
     private val cardsByEntityKey = MutableStateFlow<Map<String, ImmutableList<UiPluginWidgetCard>>>(emptyMap())
     private val coolingDownEntityKeys = MutableStateFlow<Set<String>>(emptySet())
@@ -873,7 +907,8 @@ private class FakeDelayedTimelineProcessorService : TimelineProcessorService {
         coolingDownEntityKeys.update { it + post.pluginPostEntityKey() }
     }
 
-    fun bumpRevision() {
+    fun invalidateProcessing() {
+        processing.update { it + 1L }
         revision.update { it + 1L }
     }
 
@@ -909,7 +944,7 @@ private class FakeDelayedTimelineProcessorService : TimelineProcessorService {
             emptySet()
         }
         if (clearedAny) {
-            revision.update { it + 1L }
+            invalidateProcessing()
         }
     }
 }

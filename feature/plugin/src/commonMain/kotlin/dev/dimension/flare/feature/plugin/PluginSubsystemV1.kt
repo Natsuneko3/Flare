@@ -24,6 +24,7 @@ import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingStoreV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.manifest.PluginManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginPermissionsV1
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplace
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimePool
 import dev.dimension.flare.feature.plugin.storage.PluginStorageV1
@@ -146,12 +147,12 @@ public class PluginSubsystemV1 internal constructor(
             timelineGrants.updateSuspend { it - pluginId }
             return
         }
-        val currentGrants = timelineGrants.awaitCurrent()
-        val explicitlyDisabled =
-            existingManifest?.timelineProcessor != null &&
-                pluginId !in currentGrants
-        if (!explicitlyDisabled) {
-            timelineGrants.updateSuspend { it + (pluginId to nextManifest.permissions.httpOrigins) }
+        timelineGrants.updateSuspend { grants ->
+            if (existingManifest?.timelineProcessor != null && pluginId !in grants) {
+                grants
+            } else {
+                grants + (pluginId to nextManifest.permissions.timelineProcessorGrant)
+            }
         }
     }
 
@@ -308,7 +309,7 @@ internal class PluginTimelineGrantStoreV1(
         grants: Map<String, Set<String>> = current,
     ): Boolean =
         manifest.timelineProcessor != null &&
-            grants[pluginId]?.containsAll(manifest.permissions.httpOrigins) == true
+            grants[pluginId]?.containsAll(manifest.permissions.timelineProcessorGrant) == true
 
     fun observedGrants(): Flow<Map<String, Set<String>>> =
         boundBacking
@@ -336,14 +337,14 @@ internal class PluginTimelineGrantStoreV1(
 
     fun setEnabledAsync(
         pluginId: String,
-        httpOrigins: Set<String>?,
+        permissions: PluginPermissionsV1?,
         fallbackScope: CoroutineScope? = null,
     ) {
         val transform: (Map<String, Set<String>>) -> Map<String, Set<String>> =
-            if (httpOrigins == null) {
+            if (permissions == null) {
                 { it - pluginId }
             } else {
-                { it + (pluginId to httpOrigins) }
+                { it + (pluginId to permissions.timelineProcessorGrant) }
             }
         val activeBacking = boundBacking.value ?: backing()
         val activeScope = boundScope.value ?: scope() ?: fallbackScope

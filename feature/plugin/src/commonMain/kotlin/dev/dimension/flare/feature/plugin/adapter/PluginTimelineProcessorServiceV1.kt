@@ -13,9 +13,11 @@ import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
 import dev.dimension.flare.feature.plugin.manifest.PluginTimelineFilterManifestV1
+import dev.dimension.flare.feature.plugin.manifest.compileTimelineFilterRegex
 import dev.dimension.flare.feature.plugin.manifest.fallbackText
 import dev.dimension.flare.feature.plugin.manifest.isValidLocaleTag
 import dev.dimension.flare.feature.plugin.manifest.toUiText
+import dev.dimension.flare.feature.plugin.runtime.MAX_INVOCATION_REQUEST_BYTES
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
 import dev.dimension.flare.feature.plugin.wire.CachedWidgetCardPayloadV1
 import dev.dimension.flare.feature.plugin.wire.CachedWidgetNodeV1
@@ -25,6 +27,7 @@ import dev.dimension.flare.feature.plugin.wire.WidgetCachePolicyV1
 import dev.dimension.flare.feature.plugin.wire.WireTimelineProcessorLimitsV1
 import dev.dimension.flare.feature.plugin.wire.encodeTimelineProcessBatchRequest
 import dev.dimension.flare.feature.plugin.wire.parseAndValidateTimelineProcessBatchResponse
+import dev.dimension.flare.feature.plugin.wire.splitTimelineProcessBatchRequest
 import dev.dimension.flare.feature.plugin.wire.toUiCard
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.ui.model.ExtractedPluginPostInput
@@ -82,7 +85,7 @@ internal fun PluginTimelineFilterManifestV1.matches(input: ExtractedPluginPostIn
 internal class CompiledTimelineFilter private constructor(
     private val containsAny: List<String>,
     private val regexPattern: String?,
-    private val compiledRegex: Regex?,
+    private val compiledRegex: ((String) -> Boolean)?,
     private val linkHosts: List<String>,
     private val requireLinks: Boolean,
 ) {
@@ -109,8 +112,7 @@ internal class CompiledTimelineFilter private constructor(
             val regex = compiledRegex ?: return false
             val cw = input.contentWarningPlain
             val matchedRegex =
-                regex.containsMatchIn(input.contentPlain) ||
-                    (cw != null && regex.containsMatchIn(cw))
+                regex(input.contentPlain) || (cw != null && regex(cw))
             if (!matchedRegex) {
                 return false
             }
@@ -135,7 +137,7 @@ internal class CompiledTimelineFilter private constructor(
                 manifest.linkHosts
                     .map { it.trim().trimEnd('.').lowercase() }
                     .filter { it.isNotEmpty() }
-            val compiled = manifest.regex?.let { pattern -> runCatching { Regex(pattern) }.getOrNull() }
+            val compiled = manifest.regex?.let(::compileTimelineFilterRegex)
             return CompiledTimelineFilter(
                 containsAny = manifest.containsAny,
                 regexPattern = manifest.regex,
@@ -221,6 +223,8 @@ internal class PluginTimelineProcessorServiceV1(
 
     private val mutableRevision = MutableStateFlow(0L)
     override val overlayRevision: StateFlow<Long> = mutableRevision.asStateFlow()
+    private val mutableProcessingRevision = MutableStateFlow(0L)
+    override val processingRevision: StateFlow<Long> = mutableProcessingRevision.asStateFlow()
 
     private val memoryState = MutableStateFlow(MemorySnapshot())
     private val compiledFilters = MutableStateFlow<Map<FilterCacheKey, CompiledTimelineFilter?>>(emptyMap())
@@ -270,6 +274,7 @@ internal class PluginTimelineProcessorServiceV1(
             removedIds.forEach(::clearPlugin)
             if (nextFingerprints != previousFingerprints) {
                 previousFingerprints = nextFingerprints
+                mutableProcessingRevision.update { it + 1L }
                 bumpRevision()
             }
         }.launchIn(serviceScope)
@@ -741,6 +746,7 @@ internal class PluginTimelineProcessorServiceV1(
             cleared
         }
         if (clearedAny) {
+            mutableProcessingRevision.update { it + 1L }
             bumpRevision()
         }
     }
@@ -913,12 +919,7 @@ internal class PluginTimelineProcessorServiceV1(
 
                             updatedHydrated = updatedHydrated + (pluginId to livePlugin.cacheKey)
                             val existing = updatedEntries[pluginId]
-                            if (
-                                existing != null &&
-                                existing.pluginCacheKey == livePlugin.cacheKey &&
-                                existing.sourceHash == input.sourceHash &&
-                                (existing.expiresAtMillis == null || existing.expiresAtMillis > now)
-                            ) {
+                            if (existing?.isCurrent(livePlugin.cacheKey, input.sourceHash, now) == true) {
                                 continue
                             }
 
@@ -1070,10 +1071,7 @@ internal class PluginTimelineProcessorServiceV1(
                         clearRefreshingForItems(pluginId, immediateManual.map { it.input })
                         return
                     }
-                    val batchSize = active.maxBatchSize.coerceIn(1, WireTimelineProcessorLimitsV1.MAX_BATCH_SIZE)
-                    immediateManual.chunked(batchSize).forEach { chunk ->
-                        executeChunk(pluginId, workerEpoch, TimelineProcessTriggerV1.ManualRefresh, chunk)
-                    }
+                    executeBatches(active, workerEpoch, TimelineProcessTriggerV1.ManualRefresh, immediateManual)
                     continue
                 }
 
@@ -1120,10 +1118,7 @@ internal class PluginTimelineProcessorServiceV1(
                 }
                 val (active, drained, inFlightEntries) = autoBatch
                 try {
-                    val batchSize = active.maxBatchSize.coerceIn(1, WireTimelineProcessorLimitsV1.MAX_BATCH_SIZE)
-                    drained.chunked(batchSize).forEach { chunk ->
-                        executeChunk(pluginId, workerEpoch, TimelineProcessTriggerV1.Auto, chunk)
-                    }
+                    executeBatches(active, workerEpoch, TimelineProcessTriggerV1.Auto, drained)
                 } finally {
                     queueMutex.withLock {
                         val queue = pluginQueues[pluginId]
@@ -1148,53 +1143,64 @@ internal class PluginTimelineProcessorServiceV1(
         }
     }
 
-    private suspend fun executeChunk(
-        pluginId: String,
+    private suspend fun executeBatches(
+        active: ActiveProcessorPlugin,
         expectedEpoch: Long,
         trigger: TimelineProcessTriggerV1,
-        chunk: List<StampedInput>,
+        items: List<StampedInput>,
     ) {
-        if (chunk.isEmpty()) return
-        val active = currentActivePlugin(pluginId)
-        if (active == null || currentClearEpoch(pluginId) != expectedEpoch) {
-            clearRefreshingForItems(pluginId, chunk.map { it.input })
-            return
-        }
-
-        val currentClearAtStart = clearState.value
-        val validChunk = ArrayList<StampedInput>(chunk.size)
-        val staleInputs = ArrayList<ExtractedPluginPostInput>()
-        chunk.forEach { stamped ->
-            if (stamped.stamp.isPostPluginStillValid(stamped.input.postEntityKey, pluginId, currentClearAtStart)) {
-                validChunk.add(stamped)
-            } else {
-                staleInputs.add(stamped.input)
+        val batchSize = active.maxBatchSize.coerceIn(1, WireTimelineProcessorLimitsV1.MAX_BATCH_SIZE)
+        for (chunk in items.chunked(batchSize)) {
+            val itemPairs = chunk.mapIndexed { index, stamped -> "item_$index" to stamped }
+            val request = encodeTimelineProcessBatchRequest(active.locale, trigger, itemPairs.map { (id, stamped) -> id to stamped.input })
+            for ((range, boundedRequest) in request.splitTimelineProcessBatchRequest(MAX_INVOCATION_REQUEST_BYTES)) {
+                executeChunk(active, expectedEpoch, trigger, itemPairs.subList(range.first, range.last + 1), boundedRequest)
             }
         }
-        if (staleInputs.isNotEmpty()) {
-            clearRefreshingForItems(pluginId, staleInputs)
-        }
-        if (validChunk.isEmpty()) return
+    }
 
+    private suspend fun executeChunk(
+        active: ActiveProcessorPlugin,
+        expectedEpoch: Long,
+        trigger: TimelineProcessTriggerV1,
+        chunk: List<Pair<String, StampedInput>>,
+        boundedRequest: JsonObject?,
+    ) {
+        val pluginId = active.pluginId
         val plugin = active.running
         val expectedCacheKey = active.cacheKey
-        val locale = sanitizeLocale(localeProvider())
-        val itemPairs = validChunk.mapIndexed { index, stamped -> "item_$index" to stamped }
-        val requestItems = itemPairs.map { (itemId, stamped) -> itemId to stamped.input }
+        if (!isPluginInvocationStillValid(plugin, expectedCacheKey, expectedEpoch)) {
+            clearRefreshingForItems(pluginId, chunk.map { it.second.input })
+            return
+        }
+        val currentClearAtStart = clearState.value
+        val (itemPairs, staleItems) =
+            chunk.partition { (_, stamped) ->
+                stamped.stamp.isPostPluginStillValid(stamped.input.postEntityKey, pluginId, currentClearAtStart)
+            }
+        if (staleItems.isNotEmpty()) {
+            clearRefreshingForItems(pluginId, staleItems.map { it.second.input })
+        }
+        if (itemPairs.isEmpty()) return
+        val validChunk = itemPairs.map { it.second }
+        if (boundedRequest == null) {
+            recordFailureCooldown(plugin, expectedCacheKey, expectedEpoch, validChunk)
+            return
+        }
         val validItemIds = itemPairs.mapTo(LinkedHashSet(itemPairs.size)) { it.first }
         val requestJson =
-            encodeTimelineProcessBatchRequest(
-                locale = locale,
-                trigger = trigger,
-                items = requestItems,
-            )
+            if (staleItems.isEmpty()) {
+                boundedRequest
+            } else {
+                encodeTimelineProcessBatchRequest(active.locale, trigger, itemPairs.map { (id, stamped) -> id to stamped.input })
+            }
         val runtimeKey = PluginRuntimeKeyV1.plugin(pluginId, plugin.installed.packageHash)
         val invocationContext =
             PluginInvocationContextV1.plugin(
                 pluginId = pluginId,
                 packageHash = plugin.installed.packageHash,
                 httpOrigins = plugin.installed.manifest.permissions.httpOrigins,
-                locale = locale,
+                locale = active.locale,
                 platformId =
                     plugin.installed.manifest.platform
                         ?.id
@@ -1253,55 +1259,46 @@ internal class PluginTimelineProcessorServiceV1(
                 )
             }
 
-        if (resolvedItems.any { it.entry.cachePolicy == WidgetCachePolicyV1.Disk }) {
-            val stillValid =
-                dbMutex.withLock {
-                    if (!isPluginInvocationStillValid(plugin, expectedCacheKey, expectedEpoch)) {
-                        false
-                    } else {
-                        val currentClear = clearState.value
-                        val diskRows =
-                            resolvedItems
-                                .filter { resolved ->
-                                    resolved.entry.cachePolicy == WidgetCachePolicyV1.Disk &&
-                                        resolved.stamped.stamp.isPostPluginStillValid(
-                                            resolved.stamped.input.postEntityKey,
-                                            pluginId,
-                                            currentClear,
-                                        )
-                                }.map { resolved ->
-                                    DbPluginPostWidget(
-                                        postEntityKey = resolved.stamped.input.postEntityKey,
-                                        pluginId = pluginId,
-                                        pluginCacheKey = expectedCacheKey,
-                                        sourceHash = resolved.stamped.input.sourceHash,
-                                        cardsJson = encodeCardsJson(resolved.entry.cards),
-                                        createdAtMillis = now,
-                                        expiresAtMillis = resolved.entry.expiresAtMillis,
-                                    )
-                                }
-                        if (diskRows.isNotEmpty()) {
-                            withContext(ioDispatcher) {
-                                try {
-                                    dao.upsertAll(diskRows)
-                                    writesSinceMaintenance += diskRows.size
-                                    if (
-                                        writesSinceMaintenance >= MAINTENANCE_WRITE_THRESHOLD ||
-                                        now - lastMaintenanceMillis >= MAINTENANCE_INTERVAL_MILLIS
-                                    ) {
-                                        runMaintenanceLocked(now)
-                                    }
-                                } catch (error: Exception) {
-                                    if (error is CancellationException) throw error
-                                }
-                            }
-                        }
-                        true
+        dbMutex.withLock {
+            if (!isPluginInvocationStillValid(plugin, expectedCacheKey, expectedEpoch)) return@withLock
+            val currentClear = clearState.value
+            val (diskItems, transientItems) =
+                resolvedItems
+                    .filter { it.stamped.stamp.isPostPluginStillValid(it.stamped.input.postEntityKey, pluginId, currentClear) }
+                    .partition { it.entry.cachePolicy == WidgetCachePolicyV1.Disk }
+            withContext(ioDispatcher) {
+                if (transientItems.isNotEmpty()) {
+                    try {
+                        dao.deleteByPluginAndPostKeys(pluginId, transientItems.map { it.stamped.input.postEntityKey })
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
                     }
                 }
-            if (!stillValid) {
-                clearRefreshingForItems(pluginId, validChunk.map { it.input })
-                return
+                if (diskItems.isEmpty()) return@withContext
+                try {
+                    dao.upsertAll(
+                        diskItems.map { resolved ->
+                            DbPluginPostWidget(
+                                postEntityKey = resolved.stamped.input.postEntityKey,
+                                pluginId = pluginId,
+                                pluginCacheKey = expectedCacheKey,
+                                sourceHash = resolved.entry.sourceHash,
+                                cardsJson = encodeCardsJson(resolved.entry.cards),
+                                createdAtMillis = now,
+                                expiresAtMillis = resolved.entry.expiresAtMillis,
+                            )
+                        },
+                    )
+                    writesSinceMaintenance += diskItems.size
+                    if (
+                        writesSinceMaintenance >= MAINTENANCE_WRITE_THRESHOLD ||
+                        now - lastMaintenanceMillis >= MAINTENANCE_INTERVAL_MILLIS
+                    ) {
+                        runMaintenanceLocked(now)
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                }
             }
         }
 
@@ -1336,22 +1333,24 @@ internal class PluginTimelineProcessorServiceV1(
                 next =
                     next.updatePost(postKey) { record ->
                         val previousEntry = record.entries[pluginId]
+                        val entry = resolved.entry
                         val wasRefreshing = pluginId in record.refreshingPlugins
                         if (
                             wasRefreshing ||
-                            previousEntry?.cards != resolved.entry.cards
+                            previousEntry?.cards != entry.cards ||
+                            (entry.cards.isNotEmpty() && !previousEntry.isCurrent(expectedCacheKey, entry.sourceHash, now))
                         ) {
                             visibleStateChanged = true
                         }
                         val nextCollapsibles =
-                            if (previousEntry != null && previousEntry.sourceHash != resolved.entry.sourceHash) {
+                            if (previousEntry != null && previousEntry.sourceHash != entry.sourceHash) {
                                 record.toggledCollapsibles.filterKeys { (ownerPluginId, _) -> ownerPluginId != pluginId }
                             } else {
                                 record.toggledCollapsibles
                             }
                         record.copy(
                             hydratedPluginCacheKeys = record.hydratedPluginCacheKeys + (pluginId to expectedCacheKey),
-                            entries = record.entries + (pluginId to resolved.entry),
+                            entries = record.entries + (pluginId to entry),
                             refreshingPlugins = record.refreshingPlugins - pluginId,
                             cooldowns = record.cooldowns - pluginId,
                             toggledCollapsibles = nextCollapsibles,
@@ -1478,12 +1477,7 @@ internal class PluginTimelineProcessorServiceV1(
     ): Boolean {
         if (record == null) return false
         val entry = record.entries[active.pluginId]
-        if (
-            entry != null &&
-            entry.pluginCacheKey == active.cacheKey &&
-            entry.sourceHash == sourceHash &&
-            (entry.expiresAtMillis == null || entry.expiresAtMillis > nowMillis)
-        ) {
+        if (entry?.isCurrent(active.cacheKey, sourceHash, nowMillis) == true) {
             return true
         }
         val cooldown = record.cooldowns[active.pluginId]
@@ -1510,7 +1504,7 @@ internal class PluginTimelineProcessorServiceV1(
         if (currentClearEpoch(pluginId) != expectedEpoch) return false
         if (subsystem.running.value.plugins[pluginId] !== plugin) return false
         if (!grants.isEnabled(pluginId, plugin.installed.manifest)) return false
-        return computePluginCacheKey(plugin) == expectedCacheKey
+        return computePluginCacheKey(plugin, sanitizeLocale(localeProvider())) == expectedCacheKey
     }
 
     private fun currentClearEpoch(pluginId: String): Long = clearState.value.pluginEpochs[pluginId] ?: 0L
@@ -1559,26 +1553,31 @@ internal class PluginTimelineProcessorServiceV1(
                 compiled
             }
 
+        val processorLocale = sanitizeLocale(locale)
         return ActiveProcessorPlugin(
             pluginId = pluginId,
             running = running,
-            cacheKey = computePluginCacheKey(running),
+            cacheKey = computePluginCacheKey(running, processorLocale),
+            locale = processorLocale,
             maxBatchSize = processor.maxBatchSize,
             compiledFilter = compiledFilter,
-            displayName = resolvePluginDisplayName(running, locale),
+            displayName = resolvePluginDisplayName(running, processorLocale),
             iconPath = running.iconPath.takeIf { it.isNotBlank() },
             allowMediaNetwork = manifest.permissions.mediaNetwork,
         )
     }
 
-    private fun computePluginCacheKey(plugin: RunningPluginV1): String {
+    private fun computePluginCacheKey(
+        plugin: RunningPluginV1,
+        locale: String,
+    ): String {
         val manifest = plugin.installed.manifest
         val namespaces = requireNotNull(manifest.timelineProcessor).cache.storageNamespaces
         val token =
             runCatching {
                 subsystem.storage.token(manifest.id, namespaces)
             }.getOrElse { "unavailable" }
-        return "plugin:${manifest.id}:${plugin.installed.packageHash}:${plugin.generation}:$token"
+        return "plugin:${manifest.id}:${plugin.installed.packageHash}:${plugin.generation}:$token:$locale"
     }
 
     private fun resolvePluginDisplayName(
@@ -1620,6 +1619,7 @@ internal class PluginTimelineProcessorServiceV1(
         val pluginId: String,
         val running: RunningPluginV1,
         val cacheKey: String,
+        val locale: String,
         val maxBatchSize: Int,
         val compiledFilter: CompiledTimelineFilter?,
         val displayName: String,
@@ -1702,7 +1702,13 @@ internal class PluginTimelineProcessorServiceV1(
         val cards: List<CachedWidgetCardPayloadV1>,
         val expiresAtMillis: Long?,
         val cachePolicy: WidgetCachePolicyV1,
-    )
+    ) {
+        fun isCurrent(
+            cacheKey: String,
+            currentSourceHash: String,
+            now: Long,
+        ): Boolean = pluginCacheKey == cacheKey && sourceHash == currentSourceHash && (expiresAtMillis == null || expiresAtMillis > now)
+    }
 
     private data class ErrorCooldownEntry(
         val pluginCacheKey: String,

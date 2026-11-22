@@ -314,8 +314,26 @@ public data class ExtractedPluginPostInput public constructor(
     public val cardTitle: String?,
     public val cardDescription: String?,
     public val sourceLanguages: List<String>,
-    public val sourceHash: String,
-)
+) {
+    public val sourceHash: String =
+        buildString {
+            appendFramed(platformId)
+            appendFramed(postKey.id)
+            appendFramed(postKey.host)
+            appendFramed(createdAtIso)
+            appendFramedNullable(authorHandle)
+            appendFramedNullable(authorDisplayName)
+            appendFramed(contentPlain)
+            appendFramedNullable(contentWarningPlain)
+            append(links.size).append(':')
+            links.forEach { appendFramed(it) }
+            appendFramedNullable(cardUrl)
+            appendFramedNullable(cardTitle)
+            appendFramedNullable(cardDescription)
+            append(sourceLanguages.size).append(':')
+            sourceLanguages.forEach { appendFramed(it) }
+        }.encodeUtf8().sha256().hex()
+}
 
 public fun UiTimelineV2.Post.pluginPostEntityKey(): String = "${accountType}_$statusKey"
 
@@ -332,18 +350,6 @@ public fun UiTimelineV2.Post.extractPluginPostInput(): ExtractedPluginPostInput 
     if (safeCardUrl != null) {
         collectedLinks.add(safeCardUrl)
     }
-    val links = collectedLinks.toList()
-    val languages = sourceLanguages.toList()
-    val sourceHash =
-        computePluginPostSourceHash(
-            contentPlain = contentPlain,
-            contentWarningPlain = contentWarningPlain,
-            links = links,
-            cardUrl = safeCardUrl,
-            cardTitle = safeCardTitle,
-            cardDescription = safeCardDescription,
-        )
-
     return ExtractedPluginPostInput(
         postEntityKey = pluginPostEntityKey(),
         platformId = platformId,
@@ -353,12 +359,11 @@ public fun UiTimelineV2.Post.extractPluginPostInput(): ExtractedPluginPostInput 
         authorDisplayName = user?.name?.innerText,
         contentPlain = contentPlain,
         contentWarningPlain = contentWarningPlain,
-        links = links,
+        links = collectedLinks.toList(),
         cardUrl = safeCardUrl,
         cardTitle = safeCardTitle,
         cardDescription = safeCardDescription,
-        sourceLanguages = languages,
-        sourceHash = sourceHash,
+        sourceLanguages = sourceLanguages.toList(),
     )
 }
 
@@ -597,24 +602,6 @@ public fun String.normalizeSafePluginHttpsUrlOrNull(): String? {
         }.getOrDefault(false)
     return if (isValid) normalized else null
 }
-
-private fun computePluginPostSourceHash(
-    contentPlain: String,
-    contentWarningPlain: String?,
-    links: List<String>,
-    cardUrl: String?,
-    cardTitle: String?,
-    cardDescription: String?,
-): String =
-    buildString {
-        appendFramed(contentPlain)
-        appendFramedNullable(contentWarningPlain)
-        append(links.size).append(':')
-        links.forEach { appendFramed(it) }
-        appendFramedNullable(cardUrl)
-        appendFramedNullable(cardTitle)
-        appendFramedNullable(cardDescription)
-    }.encodeUtf8().sha256().hex()
 
 private fun StringBuilder.appendFramed(value: String) {
     append(value.length).append(':').append(value).append('|')

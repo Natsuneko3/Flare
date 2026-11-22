@@ -110,7 +110,7 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
             }
             filter.regex?.let { pattern ->
                 check(
-                    pattern.isNotBlank() && pattern.length <= 512 && runCatching { Regex(pattern) }.isSuccess,
+                    pattern.isNotBlank() && pattern.length <= 512 && compileTimelineFilterRegex(pattern) != null,
                     "timelineProcessor.filter.regex",
                     "timelineProcessor.filter.regex",
                     "Filter regex must be a valid pattern of at most 512 characters",

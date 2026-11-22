@@ -26,6 +26,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
@@ -255,6 +256,34 @@ public fun encodeTimelineProcessBatchRequest(
                 },
             ),
         )
+    }
+}
+
+internal fun JsonObject.splitTimelineProcessBatchRequest(maxBytes: Int): List<Pair<IntRange, JsonObject?>> {
+    val items = getValue("items").jsonArray
+
+    fun withItems(slice: List<JsonElement>) = JsonObject(this + ("items" to JsonArray(slice)))
+
+    val available = maxBytes - withItems(emptyList()).toString().encodeToByteArray().size
+    val sizes = items.map { it.toString().encodeToByteArray().size }
+    return buildList {
+        var start = 0
+        while (start < items.size) {
+            var end = start
+            var remaining = available
+            while (end < items.size && sizes[end] <= remaining) {
+                remaining -= sizes[end] + 1 // Reserve the JSON comma before the next item.
+                end++
+            }
+            if (end == start) {
+                add(start..start to null)
+                start++
+            } else {
+                val request = if (end - start == items.size) this@splitTimelineProcessBatchRequest else withItems(items.subList(start, end))
+                add(start until end to request)
+                start = end
+            }
+        }
     }
 }
 

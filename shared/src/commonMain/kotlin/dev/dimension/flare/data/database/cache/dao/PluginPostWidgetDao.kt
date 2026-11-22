@@ -36,6 +36,12 @@ public interface PluginPostWidgetDao {
     @Query("DELETE FROM DbPluginPostWidget WHERE pluginId = :pluginId")
     public suspend fun deleteByPluginId(pluginId: String)
 
+    @Query("DELETE FROM DbPluginPostWidget WHERE pluginId = :pluginId AND postEntityKey IN (:postEntityKeys)")
+    public suspend fun deleteByPluginAndPostKeys(
+        pluginId: String,
+        postEntityKeys: List<String>,
+    )
+
     @Query("DELETE FROM DbPluginPostWidget WHERE postEntityKey >= :prefix AND postEntityKey < :upperBound")
     public suspend fun deleteByPostKeyRange(
         prefix: String,

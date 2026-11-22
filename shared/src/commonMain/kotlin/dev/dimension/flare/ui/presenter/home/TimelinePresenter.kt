@@ -70,6 +70,7 @@ import dev.dimension.flare.ui.model.asTimelinePostItem
 import dev.dimension.flare.ui.presenter.PresenterBase
 import dev.dimension.flare.ui.presenter.TimelineReadingState
 import dev.dimension.flare.ui.presenter.bindPluginWidgets
+import dev.dimension.flare.ui.presenter.submitPluginPosts
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -257,7 +258,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                                             if (it is UiTimelineV2.Gap) it else transform(it)
                                         }
                                 }
-                            }.bindPluginWidgets(timelineProcessorService),
+                            }.bindPluginWidgets(timelineProcessorService, sourceScope),
                         )
                     }
                 }
@@ -493,7 +494,11 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                     if (!queued || items.loadState.source.hasError) items.retry()
                 }
             }
-        val listState = items.toPagingState(contextLoadStates, retry)
+        val onItemAccessed =
+            remember {
+                timelineProcessorService?.let { service -> { item: UiTimelineV2 -> item.submitPluginPosts(service) } }
+            }
+        val listState = items.toPagingState(contextLoadStates, retry, onItemAccessed)
         return object : TimelineState {
             override val listState = listState
             override val reading =

@@ -166,6 +166,7 @@ class UiPluginWidgetTest {
         assertNull(extracted.cardUrl)
         assertNull(extracted.cardTitle)
         assertEquals(extracted.sourceHash, post.extractPluginPostInput().sourceHash)
+        assertNotEquals(extracted.sourceHash, extracted.copy(authorDisplayName = "Renamed").sourceHash)
 
         val edited = post.copy(contentWarning = UiTranslatableText(original = "Updated Spoiler".toUiPlainText()))
         assertNotEquals(extracted.sourceHash, edited.extractPluginPostInput().sourceHash)

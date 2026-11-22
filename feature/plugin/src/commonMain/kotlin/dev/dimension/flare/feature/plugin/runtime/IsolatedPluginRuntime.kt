@@ -250,7 +250,7 @@ private fun decodeResult(
 }
 
 private const val INITIALIZATION_TIMEOUT_MILLIS = 2_000L
-private const val MAX_INVOCATION_REQUEST_BYTES = 1024 * 1_024
+internal const val MAX_INVOCATION_REQUEST_BYTES = 1024 * 1_024
 private const val MAX_AUTHENTICATION_REQUEST_BYTES = 5 * 1_024 * 1_024
 private const val MAX_INVOCATION_RESPONSE_BYTES = 5 * 1_024 * 1_024
 private val METHOD_PATH = Regex("[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z][A-Za-z0-9_-]*)+")

@@ -7,6 +7,7 @@ import dev.dimension.flare.feature.plugin.wire.PageDirectionV1
 import dev.dimension.flare.feature.plugin.wire.TimelineDisplayV1
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 public data class PluginManifestV1(
@@ -33,7 +34,11 @@ public data class PluginPermissionsV1(
     val authOrigins: Set<String> = emptySet(),
     val mediaNetwork: Boolean = false,
     val httpOrigins: Set<String> = emptySet(),
-)
+) {
+    // A legacy grant contains only exact HTTPS origins, so it cannot approve remote media.
+    @Transient
+    internal val timelineProcessorGrant: Set<String> = if (mediaNetwork) httpOrigins + "mediaNetwork" else httpOrigins
+}
 
 @Serializable
 public data class PluginPlatformManifestV1(

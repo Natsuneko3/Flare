@@ -84,8 +84,8 @@ reassessing the change, never blindly replacing another update.
 
 Local AI plugins are enabled by default and approved automatically after validation,
 except `local.ai.*` `timelineProcessor` plugins, which start disabled until the user
-enables their toggle in Plugin Management (and automatically re-disable if a later
-update expands `permissions.httpOrigins`).
+enables their toggle in Plugin Management. The user must enable it again if a later
+update adds an unapproved HTTP origin or requests `permissions.mediaNetwork` for the first time.
 They do not need a GitHub tag, an FPP export or an app restart to apply an update.
 The [compatibility rules](references/compatibility.md#updates-and-compatibility)
 still govern stored credentials, timeline identities and account capabilities.

@@ -28,6 +28,21 @@ import kotlin.test.assertTrue
 
 class WireTimelineProcessorV1Test {
     @Test
+    fun byteBudgetIncludesTheEnvelopeSeparatorAndEscapedUtf8Text() {
+        val request =
+            PluginJsonV1
+                .parseToJsonElement(
+                    """{"locale":"en","trigger":"auto","items":[{"itemId":"a","contentPlain":"界\""},{"itemId":"b","contentPlain":"é"}]}""",
+                ).jsonObject
+        val exactSize = request.toString().encodeToByteArray().size
+        assertEquals(listOf(0..1 to request), request.splitTimelineProcessBatchRequest(exactSize))
+        val split = request.splitTimelineProcessBatchRequest(exactSize - 1)
+        assertEquals(listOf(0..0, 1..1), split.map { it.first })
+        assertTrue(split.all { (_, part) -> checkNotNull(part).toString().encodeToByteArray().size < exactSize })
+        assertEquals(listOf(0..0 to null, 1..1 to null), request.splitTimelineProcessBatchRequest(1))
+    }
+
+    @Test
     fun parsesAllSupportedNodesClampsTtlAndStripsImagesWithoutMediaPermission() {
         val raw =
             PluginJsonV1.parseToJsonElement(
@@ -112,7 +127,6 @@ class WireTimelineProcessorV1Test {
                 cardTitle = "Fed Rate Cut",
                 cardDescription = "Market odds",
                 sourceLanguages = listOf("en"),
-                sourceHash = "internal-hash-1",
             )
         val minimalInput =
             ExtractedPluginPostInput(
@@ -129,7 +143,6 @@ class WireTimelineProcessorV1Test {
                 cardTitle = null,
                 cardDescription = null,
                 sourceLanguages = emptyList(),
-                sourceHash = "internal-hash-2",
             )
 
         val encoded =

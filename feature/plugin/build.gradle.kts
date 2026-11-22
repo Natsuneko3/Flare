@@ -194,6 +194,7 @@ kotlin {
         }
         val androidJvmMain by getting {
             dependencies {
+                implementation(libs.re2j)
                 implementation(projects.composeUi)
                 implementation(dependencies.platform(libs.compose.bom))
                 implementation(libs.compose.runtime)

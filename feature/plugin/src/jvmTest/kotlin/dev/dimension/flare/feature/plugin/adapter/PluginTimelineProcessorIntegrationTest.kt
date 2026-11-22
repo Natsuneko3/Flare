@@ -1,5 +1,6 @@
 package dev.dimension.flare.feature.plugin.adapter
 
+import dev.dimension.flare.common.Locale
 import dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
 import dev.dimension.flare.data.database.cache.model.DbPluginPostWidget
 import dev.dimension.flare.data.datastore.model.AppSettings
@@ -20,11 +21,13 @@ import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingV1
 import dev.dimension.flare.feature.plugin.management.PluginManagementPresenterV1
 import dev.dimension.flare.feature.plugin.management.PluginTestAccounts
 import dev.dimension.flare.feature.plugin.management.testPluginRegistry
+import dev.dimension.flare.feature.plugin.manifest.PluginPermissionsV1
 import dev.dimension.flare.feature.plugin.manifest.PluginTimelineFilterManifestV1
 import dev.dimension.flare.feature.plugin.storage.PluginStorageChangesV1
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiCard
+import dev.dimension.flare.ui.model.UiHandle
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.UiWidgetNode
@@ -36,9 +39,11 @@ import dev.dimension.flare.ui.render.RenderContent
 import dev.dimension.flare.ui.render.RenderRun
 import dev.dimension.flare.ui.render.RenderTextStyle
 import dev.dimension.flare.ui.render.toUi
+import dev.dimension.flare.ui.render.toUiPlainText
 import dev.dimension.flare.ui.render.uiRichTextOf
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +60,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -69,6 +75,7 @@ import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -185,6 +192,38 @@ class PluginTimelineProcessorIntegrationTest {
                         .single { it.pluginId == created.id }
                         .timelineProcessorEnabled,
                 )
+            }
+        }
+
+    @Test
+    fun localAiProcessorRequiresManualApprovalAfterAddingOnlyRemoteMedia() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId = harness.authoring.create("timeline_processor_media_grant").id
+                harness.writeAiTimelineProcessor(pluginId, expectedRevision = 0L, httpOrigins = emptyList())
+                harness.presenter.setTimelineProcessorEnabled(pluginId, true)
+                val post = createSamplePost(text = "Timeline media permission")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+
+                harness.writeAiTimelineProcessor(pluginId, expectedRevision = 1L, httpOrigins = emptyList(), mediaNetwork = true)
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == pluginId }
+                        .timelineProcessorEnabled,
+                )
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+
+                harness.presenter.setTimelineProcessorEnabled(pluginId, true)
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(2, harness.invocationCount(pluginId))
+                val cards = harness.service.widgetsForPost(post)
+                assertEquals(pluginId, cards.single().pluginId)
             }
         }
 
@@ -466,6 +505,7 @@ class PluginTimelineProcessorIntegrationTest {
                     harness.writeTimelineProcessorFpp(
                         id = upgradeId,
                         version = "2.0.0",
+                        mediaNetwork = true,
                         script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
                     )
                 val upgradeReview = harness.presenter.inspect(upgradedFpp.toString())
@@ -762,7 +802,11 @@ class PluginTimelineProcessorIntegrationTest {
                     )
 
                     // Async toggle before hydration must fold onto persisted map rather than dropping other plugins.
-                    coldGrantStore.setEnabledAsync("org.example.early", setOf("https://early.example"), coldScope)
+                    coldGrantStore.setEnabledAsync(
+                        "org.example.early",
+                        PluginPermissionsV1(httpOrigins = setOf("https://early.example")),
+                        coldScope,
+                    )
 
                     // Initial viewport batch submitted BEFORE DataStore emits must NOT be dropped.
                     coldService.submitPosts(listOf(cachedPost, freshPost))
@@ -840,12 +884,13 @@ class PluginTimelineProcessorIntegrationTest {
                             id = stockId,
                             version = "1.1.0",
                             httpOrigins = listOf("https://api.stock.example", "https://api.v2.stock.example"),
+                            mediaNetwork = true,
                             script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
                         )
                     updatePresenter.inspect(upgradedFpp.toString())
                     updatePresenter.confirmInstall()
                     assertEquals(
-                        setOf("https://api.stock.example", "https://api.v2.stock.example"),
+                        setOf("https://api.stock.example", "https://api.v2.stock.example", "mediaNetwork"),
                         updateGrantsState.value[stockId],
                     )
                 } finally {
@@ -898,13 +943,24 @@ class PluginTimelineProcessorIntegrationTest {
                         timelineGrants = devGrantStore,
                     ).also { devSubsystemRef = it }
                 try {
-                    val devDir = harness.writeDevelopmentDirectory(id = stockId, httpOrigins = listOf("https://dev.temp.example"))
+                    val installedManifest =
+                        devSubsystem.running.value.plugins
+                            .getValue(stockId)
+                            .installed.manifest
+                    assertTrue(installedManifest.permissions.mediaNetwork)
+                    val devDir =
+                        harness.writeDevelopmentDirectory(
+                            id = stockId,
+                            httpOrigins = listOf("https://dev.temp.example"),
+                            mediaNetwork = true,
+                        )
                     devSubsystem.development.open(devDir.toString())
                     devSubsystem.development.reload(confirmed = false)
                     devSubsystem.development.reload(confirmed = true)
-                    assertEquals(setOf("https://dev.temp.example"), devGrantsState.value[stockId])
+                    assertEquals(setOf("https://dev.temp.example", "mediaNetwork"), devGrantsState.value[stockId])
                     devSubsystem.development.stop()
                     assertEquals(baselineOrigins, devGrantsState.value[stockId])
+                    assertFalse(devGrantStore.isEnabled(stockId, installedManifest))
                 } finally {
                     devSubsystem.runtimePool.close()
                     devScope.cancel()
@@ -951,7 +1007,7 @@ class PluginTimelineProcessorIntegrationTest {
                 val store = PluginTimelineGrantStoreV1(backing = { backing }, scope = { scope })
                 withContext(Dispatchers.Default) {
                     repeat(15) {
-                        store.setEnabledAsync(pluginId, origins, scope)
+                        store.setEnabledAsync(pluginId, PluginPermissionsV1(httpOrigins = origins), scope)
                         store.setEnabledAsync(pluginId, null, scope)
                         assertFalse(pluginId in store.current)
                     }
@@ -1099,6 +1155,211 @@ class PluginTimelineProcessorIntegrationTest {
         }
 
     @Test
+    fun autoAndManualBatchesRespectEncodedBytesAndCountWhileSkippingOnlyOversizedPosts() =
+        runTest {
+            withTimelineProcessorTestHarness(workDispatcher = StandardTestDispatcher(testScheduler)) { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.batchbytes",
+                        maxBatchSize = 4,
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({
+                                  itemId: i.itemId,
+                                  cards: [{
+                                    id: "c", title: req.trigger + "/" + req.items.length, body: [{ type: "text", text: i.postKey.id }]
+                                  }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val largeText = "界\"".repeat(118_000)
+                val posts =
+                    listOf(
+                        createSamplePost(text = largeText),
+                        createSamplePost(text = largeText),
+                        createSamplePost(text = "\u0001".repeat(175_000)),
+                    ) + (1..5).map { createSamplePost(text = "small $it") }
+
+                fun assertBatches(trigger: String) {
+                    assertEquals(
+                        listOf("$trigger/1", "$trigger/1", null, "$trigger/1") + List(4) { "$trigger/4" },
+                        posts.map { service.widgetsForPost(it).singleOrNull()?.title },
+                    )
+                }
+                service.submitPosts(posts)
+                harness.awaitIdle()
+                assertBatches("auto")
+                assertEquals(4, harness.invocationCount(pluginId))
+
+                posts.forEach { service.refreshPostPlugin(it, pluginId) }
+                harness.awaitIdle()
+                assertBatches("manualRefresh")
+                assertEquals(8, harness.invocationCount(pluginId))
+            }
+        }
+
+    @Test
+    fun postMetadataAndNormalizedRequestLocaleControlMemoryAndColdCacheHits() =
+        runTest {
+            val locale = AtomicReference(" en_US ")
+            withTimelineProcessorTestHarness(localeProvider = locale::get) { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.cacheinput",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({
+                                  itemId: i.itemId, cards: [{ id: "c", title: req.locale, body: [{ type: "text", text: i.postKey.id }] }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val author = createSampleUser().copy(nameInternal = "First name".toUiPlainText())
+                var post = createSamplePost(text = "same text").copy(user = author)
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                val edits: List<(UiTimelineV2.Post) -> UiTimelineV2.Post> =
+                    listOf(
+                        { it.copy(user = checkNotNull(it.user).copy(handle = UiHandle("renamed", "example.org"))) },
+                        { it.copy(user = checkNotNull(it.user).copy(nameInternal = "New name".toUiPlainText())) },
+                        { it.copy(sourceLanguages = persistentListOf("ja", "en")) },
+                        { it.copy(sourceLanguages = persistentListOf("en", "ja")) },
+                        { it.copy(createdAt = Instant.fromEpochSeconds(1_700_000_001L).toUi()) },
+                        { it.copy(platformId = "another-platform") },
+                    )
+                for ((index, edit) in edits.withIndex()) {
+                    post = edit(post)
+                    assertTrue(service.widgetsForPost(post).isEmpty())
+                    service.submitPosts(listOf(post))
+                    harness.awaitIdle()
+                    assertEquals(index + 2, harness.invocationCount(pluginId))
+                    assertEquals("en-US", service.widgetsForPost(post).single().title)
+                }
+                for ((hostLocale, expectedLocale) in listOf("en-US" to "en-US", "fr_CA" to "fr-CA")) {
+                    locale.set(hostLocale)
+                    val cold = harness.createColdService()
+                    try {
+                        cold.submitPosts(listOf(post))
+                        cold.awaitIdleForTesting()
+                        assertEquals(expectedLocale, cold.widgetsForPost(post).single().title)
+                        val expectedCalls = edits.size + if (hostLocale == "en-US") 1 else 2
+                        assertEquals(expectedCalls, harness.invocationCount(pluginId))
+                    } finally {
+                        cold.close()
+                    }
+                }
+                assertTrue(service.widgetsForPost(post).isEmpty())
+            }
+        }
+
+    @Test
+    fun identicalCardsNotifyOverlayAfterPostEditsExpiryAndLocaleChanges() =
+        runTest {
+            val locale = AtomicReference("en")
+            withTimelineProcessorTestHarness(localeProvider = locale::get) { harness ->
+                val service = harness.service
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.samecards",
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return { results: req.items.map(i => ({
+                              itemId: i.itemId, cache: { ttlSeconds: 15 }, cards: [{ id: "c", body: [{ type: "text", text: "same" }] }]
+                            })) };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+                val post = createSamplePost(text = "original")
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                val edited = post.copy(sourceLanguages = persistentListOf("de"))
+
+                suspend fun assertRestored() {
+                    assertTrue(service.widgetsForPost(edited).isEmpty())
+                    val previousRevision = service.overlayRevision.value
+                    service.submitPosts(listOf(edited))
+                    harness.awaitIdle()
+                    assertTrue(service.overlayRevision.value > previousRevision)
+                    assertEquals("c", service.widgetsForPost(edited).single().id)
+                }
+                assertRestored()
+                harness.nowMillis.addAndGet(15_000L)
+                assertRestored()
+                locale.set("de")
+                assertRestored()
+            }
+        }
+
+    @Test
+    fun nonDiskResponsesDeletePriorRowsInMixedBatchesAndSingleManualRefreshes() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.cachepolicy",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => {
+                                  const policy = req.trigger === "manualRefresh" ? "none" : i.contentPlain.split(" ")[0];
+                                  return {
+                                    itemId: i.itemId, cache: { policy },
+                                    cards: [{ id: "c", title: policy, body: [{ type: "text", text: i.postKey.id }] }]
+                                  };
+                                }) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val original = (1..4).map { createSamplePost(id = "policy-$it", text = "disk") }
+                val keys = original.map { it.pluginPostEntityKey() }
+                val dao = harness.db.pluginPostWidgetDao()
+                service.submitPosts(original)
+                harness.awaitIdle()
+                assertEquals(4, dao.getByPostKeys(keys).size)
+
+                val policies = listOf("memoryOnly", "none", "disk")
+                val mixed =
+                    policies.mapIndexed { index, policy ->
+                        createSamplePost(id = original[index].statusKey.id, text = "$policy edited")
+                    }
+                service.submitPosts(mixed)
+                harness.awaitIdle()
+                assertEquals(2, harness.invocationCount(pluginId))
+                assertEquals(policies, mixed.map { service.widgetsForPost(it).single().title })
+                assertEquals(keys.takeLast(2).toSet(), dao.getByPostKeys(keys).map { it.postEntityKey }.toSet())
+
+                service.refreshPostPlugin(original.last(), pluginId)
+                harness.awaitIdle()
+                assertEquals("none", service.widgetsForPost(original.last()).single().title)
+                assertEquals(keys[2], dao.getByPostKeys(keys).single().postEntityKey)
+
+                val cold = harness.createColdService()
+                try {
+                    cold.submitPosts(listOf(original.last()))
+                    cold.awaitIdleForTesting()
+                    assertEquals(4, harness.invocationCount(pluginId))
+                    assertEquals("disk", cold.widgetsForPost(original.last()).single().title)
+                } finally {
+                    cold.close()
+                }
+            }
+        }
+
+    @Test
     fun corruptSqliteDaoNeverThrowsUncaughtCoroutineExceptionAndPreservesInMemoryDeliveryAndRefreshReset() =
         runTest {
             withTimelineProcessorTestHarness { harness ->
@@ -1114,7 +1375,7 @@ class PluginTimelineProcessorIntegrationTest {
                                 return {
                                   results: req.items.map(i => ({
                                     itemId: i.itemId,
-                                    cache: { policy: "disk", ttlSeconds: 60 },
+                                    cache: { policy: req.trigger === "manualRefresh" ? "memoryOnly" : "disk", ttlSeconds: 60 },
                                     cards: [{ id: "c1", refreshable: true, body: [{ type: "text", text: "v" + n }] }]
                                   }))
                                 };
@@ -1140,6 +1401,11 @@ class PluginTimelineProcessorIntegrationTest {
 
                         override suspend fun deleteByPluginId(pluginId: String): Unit = throw IllegalStateException("SQLITE_CORRUPT")
 
+                        override suspend fun deleteByPluginAndPostKeys(
+                            pluginId: String,
+                            postEntityKeys: List<String>,
+                        ): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
                         override suspend fun deleteByPostKeyRange(
                             prefix: String,
                             upperBound: String,
@@ -1162,7 +1428,7 @@ class PluginTimelineProcessorIntegrationTest {
                     assertEquals("v1", (initialCard.body.single() as UiWidgetNode.Text).text)
                     assertFalse(initialCard.isRefreshing)
 
-                    // Gate refresh so we can verify isRefreshing turns true and then clears back to false despite upsertAll throwing.
+                    // The manual refresh still clears its spinner when deleting the old disk row fails.
                     harness.gateNextRuntimeCall(pluginId)
                     resilientService.refreshPostPlugin(post, pluginId)
                     assertTrue(resilientService.widgetsForPost(post).single().isRefreshing)
@@ -1385,6 +1651,15 @@ private class InMemoryPluginPostWidgetDao(
         }
     }
 
+    override suspend fun deleteByPluginAndPostKeys(
+        pluginId: String,
+        postEntityKeys: List<String>,
+    ) {
+        mutex.withLock {
+            postEntityKeys.forEach { rows.remove(it to pluginId) }
+        }
+    }
+
     override suspend fun deleteByPostKeyRange(
         prefix: String,
         upperBound: String,
@@ -1484,6 +1759,7 @@ private class TimelineProcessorTestHarness(
     fun writeDevelopmentDirectory(
         id: String,
         httpOrigins: List<String> = emptyList(),
+        mediaNetwork: Boolean = false,
         script: String =
             """
             defineFlareTimelineProcessorPlugin({
@@ -1494,7 +1770,7 @@ private class TimelineProcessorTestHarness(
         val dir = root / "dev-${packageCounter.getAndIncrement()}"
         val fs = subsystem.appFiles.fileSystem
         fs.createDirectories(dir / "assets")
-        val manifest = buildTimelineProcessorManifestJson(id = id, httpOrigins = httpOrigins)
+        val manifest = buildTimelineProcessorManifestJson(id = id, httpOrigins = httpOrigins, mediaNetwork = mediaNetwork)
         fs.write(dir / "manifest.json") { writeUtf8(manifest) }
         fs.write(dir / "plugin.js") { writeUtf8(script) }
         fs.write(dir / "assets" / "icon.png") { write(TestFppFactory.validPng) }
@@ -1633,6 +1909,7 @@ private class TimelineProcessorTestHarness(
         pluginId: String,
         expectedRevision: Long,
         httpOrigins: List<String>,
+        mediaNetwork: Boolean = false,
         script: String =
             """
             defineFlareTimelineProcessorPlugin({
@@ -1648,6 +1925,7 @@ private class TimelineProcessorTestHarness(
                 id = pluginId,
                 version = targetVersion,
                 httpOrigins = httpOrigins,
+                mediaNetwork = mediaNetwork,
             )
         authoring.write(
             pluginId = pluginId,
@@ -1731,6 +2009,8 @@ private fun buildTimelineProcessorManifestJson(
 
 private suspend fun withTimelineProcessorTestHarness(
     initialExpiredRowCount: Int = 0,
+    localeProvider: () -> String = { Locale.language },
+    workDispatcher: CoroutineDispatcher = Dispatchers.Default,
     block: suspend (TimelineProcessorTestHarness) -> Unit,
 ) {
     val files = FileSystem.SYSTEM
@@ -1845,8 +2125,9 @@ private suspend fun withTimelineProcessorTestHarness(
             grants = grantStore,
             scope = scopeOverride ?: serviceScope,
             ioDispatcher = Dispatchers.Default,
-            workDispatcher = Dispatchers.Default,
+            workDispatcher = workDispatcher,
             nowEpochMillis = nowMillis::get,
+            localeProvider = localeProvider,
             coalesceDelayMillis = 10L,
             runtimeInvoker = invoker,
         )

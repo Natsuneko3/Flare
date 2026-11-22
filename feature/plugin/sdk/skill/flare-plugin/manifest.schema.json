@@ -2592,7 +2592,7 @@
           "default": null,
           "pattern": "\\S",
           "maxLength": 512,
-          "description": "Regular expression matched against post text and content warning. Host validates regex syntax."
+          "description": "Regular expression matched against post text and content warning. Use portable literals, character classes, anchors, alternation and repetition. The Host validates the pattern and bounds matching work."
         },
         "linkHosts": {
           "type": "array",

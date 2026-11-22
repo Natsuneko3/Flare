@@ -522,8 +522,12 @@ Host API v2 `manifest.timelineProcessor` registers `defineFlareTimelineProcessor
 mapped to the internal method path `timelineProcessor.processBatch`. The Host
 evaluates the optional static `filter` natively before batching matching posts
 (up to `maxBatchSize`, 1..50, default 20) into `TimelineProcessBatchRequestV1`.
+The host splits batches to keep each serialized request within 1 MiB of UTF-8 JSON.
+An item that exceeds the limit on its own is skipped, and the other items still run.
 Invocations run in `plugin` scope using `permissions.httpOrigins` and
 `flare.storage`, with no access to social credentials or `flare.account.http`.
+Users enable local AI timeline processors in Plugin Management. Adding an HTTP
+origin or remote media access requires the user to enable processing again.
 
 Each `TimelineProcessItemResultV1` returns 0..4 declarative `PluginWidgetCardV1`
 cards (`text`, `row`, `column`, `stat`, `matchup`, `sparkline`, `segmentedBar`,

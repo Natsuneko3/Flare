@@ -17,6 +17,7 @@ public data class AppSettings(
     val rememberHomeTimelinePosition: Boolean = false,
     val imageTranslationConfig: ImageTranslationConfig = ImageTranslationConfig(),
     val videoPlaybackSpeed: Float = 1f,
+    /** Each enabled processor's approved HTTPS origins and optional `mediaNetwork` permission. */
     val enabledTimelineProcessorPlugins: Map<String, Set<String>> = emptyMap(),
 ) {
     public companion object {

@@ -34,8 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
+import kotlinx.serialization.protobuf.ProtoNumber
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -77,6 +79,20 @@ class PluginPostWidgetDaoTest {
                 assertEquals(listOf("p.score"), dao.getByPostKeys(listOf("acc_1")).map { it.pluginId })
                 dao.deleteByPluginId("p.score")
                 assertTrue(dao.getByPostKeys(listOf("acc_1")).isEmpty())
+            }
+        }
+
+    @Test
+    fun deletingPostKeysForOnePluginPreservesItsOtherPostsAndOtherPlugins() =
+        runTest {
+            withInMemoryCacheDatabase { db ->
+                val dao = db.pluginPostWidgetDao()
+                val row = DbPluginPostWidget("post_1", "p.first", "k", "h", "[]", 100L, null)
+                val sharedPost = row.copy(pluginId = "p.second")
+                val otherPost = row.copy(postEntityKey = "post_3")
+                dao.upsertAll(listOf(row, row.copy(postEntityKey = "post_2"), sharedPost, otherPost))
+                dao.deleteByPluginAndPostKeys("p.first", listOf("post_1", "post_2"))
+                assertEquals(setOf(sharedPost, otherPost), dao.getByPostKeys(listOf("post_1", "post_2", "post_3")).toSet())
             }
         }
 
@@ -311,12 +327,19 @@ class PluginPostWidgetDaoTest {
             Json.decodeFromString<AppSettings>("""{"version":"legacy"}""").enabledTimelineProcessorPlugins,
         )
 
-        val grants =
+        val legacyGrants =
             mapOf(
                 "org.example.gpg" to emptySet(),
                 "org.example.market" to setOf("https://api.one.example", "https://api.two.example"),
             )
-        val settings = AppSettings(version = "test", enabledTimelineProcessorPlugins = grants)
+        val oldBytes = ProtoBuf.encodeToByteArray(OriginOnlySettings.serializer(), OriginOnlySettings("test", legacyGrants))
+        val oldSettings = ProtoBuf.decodeFromByteArray(AppSettings.serializer(), oldBytes)
+        assertEquals(legacyGrants, oldSettings.enabledTimelineProcessorPlugins)
+
+        val settings =
+            oldSettings.copy(
+                enabledTimelineProcessorPlugins = legacyGrants + ("org.example.media" to setOf("https://api.example", "mediaNetwork")),
+            )
         val jsonRoundTrip = Json.decodeFromString<AppSettings>(Json.encodeToString(AppSettings.serializer(), settings))
         assertEquals(settings, jsonRoundTrip)
 
@@ -365,3 +388,11 @@ class PluginPostWidgetDaoTest {
         Files.deleteIfExists(databasePath.resolveSibling("${databasePath.fileName}-shm"))
     }
 }
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+private data class OriginOnlySettings(
+    val version: String,
+    @ProtoNumber(12)
+    val enabledTimelineProcessorPlugins: Map<String, Set<String>>,
+)

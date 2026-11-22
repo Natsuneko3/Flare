@@ -12,6 +12,13 @@ import kotlin.test.assertTrue
 
 class PluginTimelineProcessorManifestTest {
     @Test
+    fun portableRegexFindsMatchesWithinPostText() {
+        val matches = requireNotNull(compileTimelineFilterRegex("(?:score|quote) [0-9]{1,3}\\b"))
+        assertTrue(matches("Final score 42 today"))
+        assertFalse(matches("No score in this post"))
+    }
+
+    @Test
     fun standaloneTimelineProcessorRequiresApiV2ValidFilterAndProcessBatchMethod() {
         val base =
             PluginManifestV1(

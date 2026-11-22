@@ -350,7 +350,7 @@ in `plugin.js`. See [timeline post processing](../ABI.md#timeline-post-processin
 | `maxBatchSize` | `20` | Integer `1..50` controlling maximum posts sent per `processBatch` call |
 | `filter` | Omitted or `null` | Optional native pre-filter; when omitted, all posts are eligible |
 | `filter.containsAny` | `[]` | `0..32` non-blank case-insensitive substrings, each at most 256 UTF-8 bytes |
-| `filter.regex` | Omitted or `null` | Non-blank regular expression up to 512 characters, compiled at load time |
+| `filter.regex` | Omitted or `null` | Non-blank pattern up to 512 characters. Use portable literals, character classes, anchors, alternation and repetition. Android and Desktop use RE2/J. Apple stops long-running matches after a 10 ms budget. |
 | `filter.linkHosts` | `[]` | `0..32` canonical lowercase hostnames (no scheme, port, or leading/trailing dot); matches exact host or subdomains |
 | `filter.requireLinks` | `false` | When `true`, requires at least one HTTPS link on the post or preview card |
 | `cache.storageNamespaces` | `null` | `0..16` distinct storage namespace names watched for cache invalidation (`null` watches all namespaces) |

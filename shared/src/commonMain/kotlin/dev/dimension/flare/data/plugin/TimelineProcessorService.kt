@@ -12,6 +12,8 @@ import kotlin.native.HiddenFromObjC
 
 @HiddenFromObjC
 public interface TimelineProcessorService {
+    /** Loaded posts need processing again after a grant, plugin configuration, or retry changes. */
+    public val processingRevision: StateFlow<Long>
     public val overlayRevision: StateFlow<Long>
 
     public fun submitPosts(posts: List<UiTimelineV2.Post>)
@@ -42,6 +44,7 @@ public interface TimelineProcessorService {
 @HiddenFromObjC
 public object NoopTimelineProcessorService : TimelineProcessorService {
     private val revision = MutableStateFlow(0L)
+    override val processingRevision: StateFlow<Long> = revision
     override val overlayRevision: StateFlow<Long> = revision
 
     override fun submitPosts(posts: List<UiTimelineV2.Post>) {}
