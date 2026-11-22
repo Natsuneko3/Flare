@@ -58,6 +58,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -188,6 +189,11 @@ internal fun resolveActiveAndroidMangaTabIndex(
     if (tabCount <= 1) return 0
     return currentPage.coerceIn(0, tabCount - 1)
 }
+
+internal fun resolveAndroidMangaTabAfterCapabilityChange(
+    selectedTab: AndroidMangaTab,
+    availableTabs: List<AndroidMangaTab>,
+): Int = availableTabs.indexOf(selectedTab).takeIf { it >= 0 } ?: 0
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -624,8 +630,14 @@ private fun MangaAndroidTabsPager(
                 supportsRecommendations = state.supportsRecommendations,
             )
         }
+    var selectedTab by remember { mutableStateOf(AndroidMangaTab.Chapters) }
+    var previousTabs by remember { mutableStateOf(availableTabs) }
 
     if (availableTabs.size == 1) {
+        LaunchedEffect(availableTabs) {
+            selectedTab = AndroidMangaTab.Chapters
+            previousTabs = availableTabs
+        }
         MangaAndroidChaptersTab(
             detail = detail,
             state = state,
@@ -637,16 +649,40 @@ private fun MangaAndroidTabsPager(
         return
     }
 
-    val pagerState = rememberPagerState(pageCount = { availableTabs.size })
+    val targetIndex =
+        resolveAndroidMangaTabAfterCapabilityChange(
+            selectedTab = selectedTab,
+            availableTabs = availableTabs,
+        )
+    val pagerState = rememberPagerState(initialPage = targetIndex, pageCount = { availableTabs.size })
     val activePage =
         resolveActiveAndroidMangaTabIndex(
-            currentPage = pagerState.currentPage,
+            currentPage = targetIndex,
             tabCount = availableTabs.size,
         )
-    LaunchedEffect(availableTabs.size) {
-        if (pagerState.currentPage >= availableTabs.size) {
-            pagerState.scrollToPage(activePage)
+    LaunchedEffect(pagerState, availableTabs) {
+        if (availableTabs != previousTabs) {
+            val resolvedIndex =
+                resolveAndroidMangaTabAfterCapabilityChange(
+                    selectedTab = selectedTab,
+                    availableTabs = availableTabs,
+                )
+            selectedTab = availableTabs.getOrElse(resolvedIndex) { AndroidMangaTab.Chapters }
+            previousTabs = availableTabs
+            if (
+                pagerState.currentPage != resolvedIndex ||
+                pagerState.settledPage != resolvedIndex ||
+                pagerState.currentPageOffsetFraction != 0f
+            ) {
+                pagerState.scrollToPage(resolvedIndex)
+            }
         }
+        snapshotFlow { pagerState.settledPage to pagerState.isScrollInProgress }
+            .collect { (settledPage, isScrolling) ->
+                if (!isScrolling) {
+                    selectedTab = availableTabs.getOrElse(settledPage) { AndroidMangaTab.Chapters }
+                }
+            }
     }
     val scope = rememberCoroutineScope()
 
@@ -658,7 +694,10 @@ private fun MangaAndroidTabsPager(
             availableTabs.forEachIndexed { index, tab ->
                 Tab(
                     selected = activePage == index,
-                    onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                    onClick = {
+                        selectedTab = tab
+                        scope.launch { pagerState.animateScrollToPage(index) }
+                    },
                     text = {
                         Text(
                             text =
@@ -679,7 +718,7 @@ private fun MangaAndroidTabsPager(
 
         HorizontalPager(
             state = pagerState,
-            key = { page -> availableTabs.getOrNull(page)?.name ?: "manga_tab_$page" },
+            key = { page -> availableTabs[page] },
             modifier = Modifier.weight(1f),
         ) { page ->
             when (availableTabs.getOrElse(page) { AndroidMangaTab.Chapters }) {

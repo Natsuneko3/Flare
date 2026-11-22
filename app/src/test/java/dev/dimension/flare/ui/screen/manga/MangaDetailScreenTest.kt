@@ -39,4 +39,67 @@ class MangaDetailScreenTest {
         assertEquals(1, resolveActiveAndroidMangaTabIndex(currentPage = 1, tabCount = 2))
         assertEquals(1, resolveActiveAndroidMangaTabIndex(currentPage = 2, tabCount = 2))
     }
+
+    @Test
+    fun resolveAndroidMangaTabAfterCapabilityChangeResetsRemovedTabToChaptersAndPreservesSurvivingTab() {
+        val chaptersAndRecommendations = buildAndroidMangaTabs(supportsComments = false, supportsRecommendations = true)
+        val chaptersAndComments = buildAndroidMangaTabs(supportsComments = true, supportsRecommendations = false)
+        val chaptersOnly = buildAndroidMangaTabs(supportsComments = false, supportsRecommendations = false)
+        val allThreeTabs = buildAndroidMangaTabs(supportsComments = true, supportsRecommendations = true)
+
+        // 3-to-2 transitions when the removed tab was active -> must clamp back to Chapters (index 0)
+        assertEquals(
+            0,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Comments,
+                availableTabs = chaptersAndRecommendations,
+            ),
+        )
+        assertEquals(
+            0,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Recommendations,
+                availableTabs = chaptersAndComments,
+            ),
+        )
+
+        // 3-to-2 transitions when an unaffected tab was active -> must preserve that tab's new index
+        assertEquals(
+            1,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Recommendations,
+                availableTabs = chaptersAndRecommendations,
+            ),
+        )
+        assertEquals(
+            1,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Comments,
+                availableTabs = chaptersAndComments,
+            ),
+        )
+        assertEquals(
+            0,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Chapters,
+                availableTabs = chaptersAndRecommendations,
+            ),
+        )
+
+        // 3-to-1 and 2-to-3 transitions
+        assertEquals(
+            0,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Comments,
+                availableTabs = chaptersOnly,
+            ),
+        )
+        assertEquals(
+            2,
+            resolveAndroidMangaTabAfterCapabilityChange(
+                selectedTab = AndroidMangaTab.Recommendations,
+                availableTabs = allThreeTabs,
+            ),
+        )
+    }
 }
