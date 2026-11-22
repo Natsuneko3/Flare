@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Brands
@@ -252,6 +253,7 @@ internal fun MangaDetailContent(
                         CompactMangaDetailContent(
                             detail = detail,
                             state = state,
+                            viewportWidth = maxWidth,
                             navigate = navigate,
                             onLockedChapterClick = { lockedPromptChapter = it },
                         )
@@ -493,6 +495,7 @@ private fun WideMangaDetailContent(
 private fun CompactMangaDetailContent(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
+    viewportWidth: Dp,
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
 ) {
@@ -511,6 +514,25 @@ private fun CompactMangaDetailContent(
             selectedTab = DesktopMangaTab.Chapters
         }
     }
+    val itemSpacing =
+        when (activeTab) {
+            DesktopMangaTab.Chapters -> 2.dp
+            DesktopMangaTab.Comments -> 0.dp
+            DesktopMangaTab.Recommendations -> MangaGridSpacing
+        }
+    // LazyStatusVerticalStaggeredGrid enforces 2.dp vertical spacing whenever columnCount == 1.
+    val effectiveGridSpacing =
+        if (
+            activeTab == DesktopMangaTab.Recommendations &&
+            viewportWidth - screenHorizontalPadding * 2 >= 148.dp * 2 + MangaGridSpacing
+        ) {
+            MangaGridSpacing
+        } else {
+            2.dp
+        }
+    val sectionBottomPadding = (12.dp - effectiveGridSpacing).coerceAtLeast(0.dp)
+    val tabsBottomPadding = (10.dp - effectiveGridSpacing).coerceAtLeast(0.dp)
+    val chaptersHeaderBottomPadding = (8.dp - effectiveGridSpacing).coerceAtLeast(0.dp)
     val gridState = rememberLazyStaggeredGridState()
 
     FlareScrollBar(gridState) {
@@ -530,11 +552,11 @@ private fun CompactMangaDetailContent(
             forceCardMode = true,
             cardGridPadding = screenHorizontalPadding,
             horizontalArrangement = Arrangement.spacedBy(MangaGridSpacing),
-            verticalItemSpacing = MangaGridSpacing,
+            verticalItemSpacing = itemSpacing,
             modifier = Modifier.fillMaxSize(),
         ) {
             item(span = StaggeredGridItemSpan.FullLine, key = "hero") {
-                Box(modifier = Modifier.padding(bottom = 10.dp)) {
+                Box(modifier = Modifier.padding(bottom = sectionBottomPadding)) {
                     MangaHeroCard(
                         detail = detail,
                         translation = state.translation,
@@ -547,7 +569,7 @@ private fun CompactMangaDetailContent(
             }
             if (detail.content != null || detail.tagGroups.any { it.tags.isNotEmpty() }) {
                 item(span = StaggeredGridItemSpan.FullLine, key = "synopsis_tags") {
-                    Box(modifier = Modifier.padding(bottom = 10.dp)) {
+                    Box(modifier = Modifier.padding(bottom = sectionBottomPadding)) {
                         MangaSynopsisAndTagsCard(detail = detail)
                     }
                 }
@@ -561,14 +583,14 @@ private fun CompactMangaDetailContent(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp),
+                                .padding(bottom = tabsBottomPadding),
                     )
                 }
             }
             when (activeTab) {
                 DesktopMangaTab.Chapters -> {
                     item(span = StaggeredGridItemSpan.FullLine, key = "chapters_header") {
-                        Box(modifier = Modifier.padding(bottom = 6.dp)) {
+                        Box(modifier = Modifier.padding(bottom = chaptersHeaderBottomPadding)) {
                             MangaChaptersHeader(
                                 detail = detail,
                                 selectedGroupId = state.selectedGroupId,

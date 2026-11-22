@@ -678,14 +678,19 @@ class MangaScreenTest {
             }
         }
 
-        // 1. Single-tab mode: "Chapters (2)" header shown, no PillButton tab bar
+        // 1. Single-tab mode: "Chapters (2)" header shown, no PillButton tab bar, 2.dp gap between .listCard chapter rows
         compose.onNodeWithText("Chapters (2)").assertIsDisplayed()
         compose.onNodeWithText("Chapters").assertDoesNotExist()
         compose.onNodeWithText("Comments").assertDoesNotExist()
         compose.onNodeWithText("Recommendations").assertDoesNotExist()
         compose.onNodeWithTag("manga_chapter_row_ch-1").assertIsDisplayed()
+        compose.onNodeWithTag("manga_chapter_row_ch-2").assertIsDisplayed()
+        val expectedChapterGapPx = with(compose.density) { 2.dp.toPx() }
+        val compactRow1 = compose.onNodeWithTag("manga_chapter_row_ch-1").fetchSemanticsNode().boundsInRoot
+        val compactRow2 = compose.onNodeWithTag("manga_chapter_row_ch-2").fetchSemanticsNode().boundsInRoot
+        assertEquals(expectedChapterGapPx, compactRow2.top - compactRow1.bottom, 0.5f)
 
-        // 2. Multi-tab mode: tabs appear; selecting Comments hides chapter rows; losing Comments falls back to Chapters
+        // 2. Multi-tab mode: tabs appear; header spacing stays consistent across tabs; losing Comments falls back to Chapters
         compose.runOnIdle {
             fakeState.supportsComments = true
             fakeState.supportsRecommendations = true
@@ -693,8 +698,30 @@ class MangaScreenTest {
         compose.onNodeWithText("Chapters").assertIsDisplayed()
         compose.onNodeWithText("Comments").assertIsDisplayed()
         compose.onNodeWithText("Recommendations").assertIsDisplayed()
+        val chaptersSynopsisTop =
+            compose
+                .onNodeWithText("Compact synopsis.")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+
+        compose.onNodeWithText("Recommendations").performClick()
+        val recommendationsSynopsisTop =
+            compose
+                .onNodeWithText("Compact synopsis.")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+        assertEquals(chaptersSynopsisTop, recommendationsSynopsisTop, 0.5f)
 
         compose.onNodeWithText("Comments").performClick()
+        val commentsSynopsisTop =
+            compose
+                .onNodeWithText("Compact synopsis.")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+        assertEquals(chaptersSynopsisTop, commentsSynopsisTop, 0.5f)
         compose.onNodeWithTag("manga_chapter_row_ch-1").assertDoesNotExist()
 
         compose.runOnIdle {
