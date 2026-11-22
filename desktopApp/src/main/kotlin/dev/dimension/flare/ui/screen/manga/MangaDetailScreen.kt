@@ -55,12 +55,15 @@ import compose.icons.fontawesomeicons.solid.ArrowDownWideShort
 import compose.icons.fontawesomeicons.solid.ArrowUpWideShort
 import compose.icons.fontawesomeicons.solid.BookOpen
 import compose.icons.fontawesomeicons.solid.Check
+import compose.icons.fontawesomeicons.solid.ChevronDown
+import compose.icons.fontawesomeicons.solid.ChevronUp
 import compose.icons.fontawesomeicons.solid.EllipsisVertical
 import compose.icons.fontawesomeicons.solid.Lock
 import compose.icons.fontawesomeicons.solid.ShareNodes
 import dev.dimension.flare.LocalWindowPadding
 import dev.dimension.flare.Res
 import dev.dimension.flare.cancel
+import dev.dimension.flare.collapsed
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.isRefreshing
 import dev.dimension.flare.common.onEmpty
@@ -68,6 +71,7 @@ import dev.dimension.flare.common.onError
 import dev.dimension.flare.common.onLoading
 import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.data.model.TimelineDisplayMode
+import dev.dimension.flare.expanded
 import dev.dimension.flare.manga_detail_chapters_title
 import dev.dimension.flare.manga_detail_continue_chapter
 import dev.dimension.flare.manga_detail_empty_chapters
@@ -117,6 +121,7 @@ import dev.dimension.flare.ui.component.status.appendStateUI
 import dev.dimension.flare.ui.component.status.status
 import dev.dimension.flare.ui.component.toImageVector
 import dev.dimension.flare.ui.model.ClickContext
+import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiMangaChapter
 import dev.dimension.flare.ui.model.UiMangaDetail
@@ -130,6 +135,8 @@ import dev.dimension.flare.ui.presenter.manga.MangaDetailPresenter
 import dev.dimension.flare.ui.presenter.manga.MangaTranslatePresenter
 import dev.dimension.flare.ui.presenter.manga.PrimaryReadTarget
 import dev.dimension.flare.ui.presenter.manga.UiMangaChapterItem
+import dev.dimension.flare.ui.render.UiRichText
+import dev.dimension.flare.ui.render.uiRichTextOf
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.toUri
@@ -768,24 +775,28 @@ private fun MangaHeroCard(
                     )
                 }
 
-                StatusActionButton(
-                    icon =
-                        if (detail.isBookmarked) {
-                            UiIcon.Unlike.toImageVector()
-                        } else {
-                            UiIcon.Like.toImageVector()
+                if (detail.actions.isEmpty() && (detail.bookmarkAction != ClickEvent.Noop || detail.isBookmarked)) {
+                    StatusActionButton(
+                        icon =
+                            if (detail.isBookmarked) {
+                                UiIcon.Unlike.toImageVector()
+                            } else {
+                                UiIcon.Like.toImageVector()
+                            },
+                        number = null,
+                        enabled = detail.bookmarkAction != ClickEvent.Noop,
+                        color =
+                            if (detail.isBookmarked) {
+                                FluentTheme.colors.system.critical
+                            } else {
+                                FluentTheme.colors.text.text.secondary
+                            },
+                        onClicked = {
+                            detail.onBookmark.invoke(ClickContext(uriHandler::openUri))
                         },
-                    number = null,
-                    color =
-                        if (detail.isBookmarked) {
-                            FluentTheme.colors.system.critical
-                        } else {
-                            FluentTheme.colors.text.text.secondary
-                        },
-                    onClicked = {
-                        detail.onBookmark.invoke(ClickContext(uriHandler::openUri))
-                    },
-                )
+                        modifier = Modifier.testTag("manga_cta_bookmark_fallback"),
+                    )
+                }
 
                 detail.url?.takeIf { it.isNotBlank() }?.let { shareUrl ->
                     SubtleButton(
@@ -866,17 +877,65 @@ private fun MangaSynopsisAndTagsCard(detail: UiMangaDetail) {
                     .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            detail.content?.let { content ->
-                RichText(
-                    text = content,
-                    textStyle = FluentTheme.typography.body,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            detail.content?.takeIf { !it.isEmpty }?.let { content ->
+                MangaDesktopCollapsibleSynopsis(content = content)
             }
             MangaTagGroupsSection(
                 tagGroups = detail.tagGroups,
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+@Composable
+private fun MangaDesktopCollapsibleSynopsis(content: UiRichText) {
+    var expanded by remember(content.raw) { mutableStateOf(false) }
+    val multiBlockOverflow = content.renderRuns.size > 4 || content.innerText.count { it == '\n' } >= 4
+    var hasOverflow by remember(content.raw) { mutableStateOf(multiBlockOverflow) }
+    val displayedText =
+        remember(content, expanded) {
+            if (!expanded && content.renderRuns.size > 4) {
+                uiRichTextOf(renderRuns = content.renderRuns.take(4), raw = content.raw)
+            } else {
+                content
+            }
+        }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        RichText(
+            text = displayedText,
+            textStyle = FluentTheme.typography.body,
+            maxLines = if (expanded) Int.MAX_VALUE else 4,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result ->
+                if (!expanded && (result.hasVisualOverflow || multiBlockOverflow)) {
+                    hasOverflow = true
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (hasOverflow || expanded) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { expanded = !expanded }
+                        .padding(vertical = 4.dp)
+                        .testTag("manga_synopsis_toggle"),
+                contentAlignment = Alignment.Center,
+            ) {
+                FAIcon(
+                    imageVector = if (expanded) FontAwesomeIcons.Solid.ChevronUp else FontAwesomeIcons.Solid.ChevronDown,
+                    contentDescription = stringResource(if (expanded) Res.string.expanded else Res.string.collapsed),
+                    tint = FluentTheme.colors.text.text.secondary,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
         }
     }
 }

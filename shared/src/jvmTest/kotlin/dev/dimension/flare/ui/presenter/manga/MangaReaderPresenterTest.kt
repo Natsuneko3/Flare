@@ -13,8 +13,8 @@ import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datasource.microblog.DataSourceCapabilityProvider
 import dev.dimension.flare.data.datasource.microblog.DataSourceCapabilitySet
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
-import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
@@ -91,6 +91,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -182,14 +183,22 @@ class MangaReaderPresenterTest {
                         chapterId: String,
                     ): ImmutableList<UiMangaPage> {
                         chapterPageCalls += chapterId
-                        assertEquals("entity-token-series-1", discoveredEntityToken, "mangaDetail must populate entityToken before chapterPages")
+                        assertEquals(
+                            "entity-token-series-1",
+                            discoveredEntityToken,
+                            "mangaDetail must populate entityToken before chapterPages",
+                        )
                         val expectedChapterToken =
                             when (chapterId) {
                                 "ch-2" -> "chapter-token-2"
                                 "ch-3" -> "chapter-token-3-unlocked"
                                 else -> error("Unexpected chapterId $chapterId")
                             }
-                        assertEquals(expectedChapterToken, discoveredChapterTokens[chapterId], "mangaDetail must populate chapterToken before chapterPages")
+                        assertEquals(
+                            expectedChapterToken,
+                            discoveredChapterTokens[chapterId],
+                            "mangaDetail must populate chapterToken before chapterPages",
+                        )
                         if (chapterId == "ch-3") {
                             return readyPages(count = 2, prefix = "ch3")
                         }
@@ -880,7 +889,10 @@ class MangaReaderPresenterTest {
                 val loaded = awaitReaderState(states) { it.loadState is UiState.Success && it.pages.size == 8 }
                 assertEquals(5, loaded.currentPageIndex)
                 assertEquals(MangaReadingDirection.Webtoon, loaded.direction)
-                assertTrue(successPageIndices.all { it == 5 }, "Success state must never emit page 0 when resuming saved page 5: $successPageIndices")
+                assertTrue(
+                    successPageIndices.all { it == 5 },
+                    "Success state must never emit page 0 when resuming saved page 5: $successPageIndices",
+                )
 
                 // Dispose reader immediately and verify saved progress in SQLite remains at pageIndex = 5 (never overwritten with 0).
                 readerJob.cancelAndJoin()
@@ -897,6 +909,212 @@ class MangaReaderPresenterTest {
                 assertEquals(5, persisted.chapters["ch-2"]?.lastPageIndex)
                 assertEquals(MangaReadingDirection.Webtoon, persisted.readerModeOverride)
             } finally {
+                readerJob.cancelAndJoin()
+                activePresenter?.awaitPendingWrites()
+                mockClient.close()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun retryDeferredReadyPageMintsFreshUrlAndBackgroundDetailRefreshPreservesActiveSession() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-reader-test-5")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val realStorage = OkioFileStorage(FileSystem.SYSTEM, tempDir.toString().toPath(), cacheRoot = tempDir.toString().toPath())
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            val progressRepository = MangaProgressRepository(cacheDatabase) { 75_000L }
+            val mockClient = HttpClient(MockEngine { respond(ByteArray(0)) })
+            val imageTranslationRepository =
+                ImageTranslationRepository(
+                    storage = realStorage,
+                    client = mockClient,
+                    adapters = emptyList(),
+                    sourceClient = { mockClient },
+                    imageCompressor = JvmImageCompressor(),
+                )
+
+            val detail =
+                readerDetail(
+                    readingDirection = MangaReadingDirection.Rtl,
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-a",
+                                title = null,
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = null),
+                                    ),
+                            ),
+                        ),
+                )
+
+            var failInitialDetailOnce = true
+            val detailFetchCount = AtomicInteger(0)
+            val chapterPagesCallCount = AtomicInteger(0)
+            val deferredResolveCount = AtomicInteger(0)
+            var backgroundRefreshEntered: CompletableDeferred<Unit>? = null
+            var releaseBackgroundRefresh: CompletableDeferred<Unit>? = null
+            var latestDetailCacheable: Cacheable<UiMangaDetail>? = null
+            val detailCache = MutableStateFlow<UiMangaDetail?>(null)
+
+            val mangaDataSource =
+                object : MangaDataSource {
+                    override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> =
+                        Cacheable(
+                            fetchSource = {
+                                val call = detailFetchCount.incrementAndGet()
+                                if (failInitialDetailOnce) {
+                                    failInitialDetailOnce = false
+                                    error("Initial detail network failure")
+                                }
+                                if (call >= 3) {
+                                    backgroundRefreshEntered?.complete(Unit)
+                                    releaseBackgroundRefresh?.await()
+                                }
+                                detailCache.value = detail
+                            },
+                            cacheSource = { detailCache.filterNotNull() },
+                        ).also { latestDetailCacheable = it }
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ): ImmutableList<UiMangaPage> {
+                        chapterPagesCallCount.incrementAndGet()
+                        return persistentListOf(
+                            UiMangaPage.Deferred(
+                                id = "def-0",
+                                pageToken = "signed-tok",
+                                previewUrl = null,
+                                width = 800f,
+                                height = 1200f,
+                                customHeaders = null,
+                                proxy = ProxyRef.Global,
+                            ),
+                            UiMangaPage.Ready("p-1", UiMedia.Image("https://manga.example/p-1.jpg")),
+                            UiMangaPage.Ready("p-2", UiMedia.Image("https://manga.example/p-2.jpg")),
+                        )
+                    }
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ): UiMedia {
+                        val attempt = deferredResolveCount.incrementAndGet()
+                        return UiMedia.Image("https://manga.example/cdn-v$attempt/$pageId.jpg")
+                    }
+                }
+
+            val accountService = FakeReaderAccountService(accountKey, mangaDataSource)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                        testSingle { imageTranslationRepository }
+                    },
+                )
+            }
+
+            val readerJob = SupervisorJob()
+            val readerScope = CoroutineScope(dispatcher + readerJob)
+            var activePresenter: MangaReaderPresenter? = null
+            try {
+                val presenter = MangaReaderPresenter(accountType, mangaKey, initialChapterId = "ch-1", initialPage = 0)
+                activePresenter = presenter
+                val states = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                val observedLoadStates = CopyOnWriteArrayList<UiState<Unit>>()
+                readerScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { state ->
+                        observedLoadStates += state.loadState
+                        states.value = state
+                    }
+                }
+
+                // 1. Initial detail fetch fails -> retryChapter() sets detailAttempt = 1 (forceRefresh = true) and recovers!
+                val initialError = awaitReaderState(states) { it.loadState is UiState.Error }
+                initialError.retryChapter()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+
+                val firstReady =
+                    awaitReaderState(states) { state ->
+                        state.loadState is UiState.Success &&
+                            state.pages.firstOrNull()?.status is PageMediaStatus.Ready
+                    }
+                val v1Media = assertIs<PageMediaStatus.Ready>(firstReady.pages[0].status).original as UiMedia.Image
+                assertEquals("https://manga.example/cdn-v1/def-0.jpg", v1Media.url)
+                assertEquals(1, deferredResolveCount.get())
+                assertEquals(1, chapterPagesCallCount.get())
+
+                // 2. retryPage("def-0") on an already-Ready Deferred page evicts resolvedMedia and mints a fresh v2 URL!
+                firstReady.retryPage("def-0")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+
+                val secondReady =
+                    awaitReaderState(states) { state ->
+                        val ready = state.pages.firstOrNull()?.status as? PageMediaStatus.Ready
+                        (ready?.original as? UiMedia.Image)?.url == "https://manga.example/cdn-v2/def-0.jpg"
+                    }
+                assertEquals(2, deferredResolveCount.get())
+
+                // 3. Advance to page 2, then trigger a background detail refresh (refreshState = LoadState.Loading) while detailAttempt > 0:
+                //    active ChapterPagesSession and currentPageIndex must stay mounted without resetting!
+                secondReady.goToPage(2)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val onPage2 = awaitReaderState(states) { it.currentPageIndex == 2 }
+                observedLoadStates.clear()
+
+                val refreshEntered = CompletableDeferred<Unit>()
+                val releaseRefresh = CompletableDeferred<Unit>()
+                backgroundRefreshEntered = refreshEntered
+                releaseBackgroundRefresh = releaseRefresh
+                val activeCacheable = assertNotNull(latestDetailCacheable)
+                activeCacheable.refresh()
+
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) { refreshEntered.await() }
+                }
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+
+                val duringBackgroundRefresh = assertNotNull(states.value)
+                assertIs<UiState.Success<Unit>>(duringBackgroundRefresh.loadState)
+                assertEquals(2, duringBackgroundRefresh.currentPageIndex)
+                assertEquals(1, chapterPagesCallCount.get(), "Background detail refresh must not tear down ChapterPagesSession")
+                assertTrue(
+                    observedLoadStates.all { it is UiState.Success },
+                    "loadState must remain Success across background detail refresh, saw $observedLoadStates",
+                )
+
+                releaseRefresh.complete(Unit)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                assertEquals(2, states.value!!.currentPageIndex)
+                assertEquals(1, chapterPagesCallCount.get())
+            } finally {
+                releaseBackgroundRefresh?.complete(Unit)
                 readerJob.cancelAndJoin()
                 activePresenter?.awaitPendingWrites()
                 mockClient.close()

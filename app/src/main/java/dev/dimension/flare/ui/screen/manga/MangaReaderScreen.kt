@@ -502,7 +502,7 @@ private fun AndroidMangaPageSlider(
         remember(pageCount) {
             SliderState(
                 value = currentPageIndex.coerceIn(0, maxPage).toFloat(),
-                steps = (pageCount - 2).coerceAtLeast(0),
+                steps = if (pageCount <= 30) (pageCount - 2).coerceAtLeast(0) else 0,
                 trackRange = 0f..maxPage.coerceAtLeast(1).toFloat(),
             )
         }

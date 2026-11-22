@@ -12,8 +12,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -28,6 +30,8 @@ import coil3.fetch.Fetcher
 import coil3.fetch.ImageFetchResult
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.toPagingState
+import dev.dimension.flare.data.datasource.microblog.ActionMenu
+import dev.dimension.flare.data.datasource.microblog.PostActionFamily
 import dev.dimension.flare.data.model.appearance.GlobalAppearance
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
 import dev.dimension.flare.model.AccountType
@@ -36,6 +40,7 @@ import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.MangaReadingDirection
+import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiMangaChapter
 import dev.dimension.flare.ui.model.UiMangaChapterGroup
 import dev.dimension.flare.ui.model.UiMangaDetail
@@ -222,6 +227,9 @@ class MangaScreenTest {
         }
 
         // Tag group headers and tags
+        compose.onNodeWithText("A journey across star seas.").assertIsDisplayed()
+        compose.onNodeWithTag("manga_synopsis_toggle").assertDoesNotExist()
+        compose.onNodeWithTag("manga_cta_bookmark_fallback").assertDoesNotExist()
         compose.onNodeWithText("Genre").assertIsDisplayed()
         compose.onNodeWithText("Action").assertIsDisplayed()
         compose.onNodeWithText("Theme").assertIsDisplayed()
@@ -386,6 +394,110 @@ class MangaScreenTest {
             viewportWidth = 900.dp
         }
         compose.onNodeWithText("Double-page spread").assertIsDisplayed()
+    }
+
+    @Test
+    fun guestModeRendersSingleDisabledBookmarkAndCollapsesLongSynopsis() {
+        val mangaKey = MicroBlogKey("manga-guest-1", "manga.example")
+        val guestAccount = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
+        val longSynopsis =
+            (1..8).joinToString(separator = "\n") { idx ->
+                "Synopsis paragraph line $idx describing the long saga across distant star systems."
+            }
+        val guestBookmarkItem =
+            ActionMenu.Item(
+                updateKey = "bookmark",
+                icon = UiIcon.Bookmark,
+                text = ActionMenu.Item.Text.Localized(ActionMenu.Item.Text.Localized.Type.Bookmark),
+                clickEvent = ClickEvent.Noop,
+                actionFamily = PostActionFamily.Bookmark,
+                enabled = false,
+            )
+        val detail =
+            UiMangaDetail(
+                pluginId = "plugin.manga",
+                platformId = "manga-plat",
+                mangaKey = mangaKey,
+                accountType = guestAccount,
+                title = "Guest Starlight",
+                altTitles = persistentListOf(),
+                cover = null,
+                author = null,
+                authors = persistentListOf("Hana Sato"),
+                artists = persistentListOf(),
+                status = UiMangaStatus.Ongoing,
+                content = longSynopsis.toUiPlainText(),
+                url = "https://manga.example/series/guest-1",
+                updatedAt = null,
+                readingDirection = MangaReadingDirection.Rtl,
+                tagGroups = persistentListOf(),
+                chapterGroups =
+                    persistentListOf(
+                        UiMangaChapterGroup(
+                            id = "main",
+                            title = null,
+                            chapters =
+                                persistentListOf(
+                                    UiMangaChapter("ch-1", "Chapter 1: Dawn", null, null, locked = false, url = null),
+                                ),
+                        ),
+                    ),
+                isBookmarked = false,
+                bookmarkAction = ClickEvent.Noop,
+                actions = persistentListOf(guestBookmarkItem),
+                sourceLanguages = persistentListOf("en"),
+            )
+
+        val fakeState = FakeMangaDetailState(detail)
+
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalTimelineAppearance provides TimelineAppearance(),
+                LocalGlobalAppearance provides GlobalAppearance(),
+            ) {
+                FlareTheme(isDarkTheme = false) {
+                    Box(Modifier.size(1100.dp, 850.dp)) {
+                        MangaDetailContent(
+                            state = fakeState,
+                            navigate = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        // No duplicate standalone CTA heart button when detail.actions is non-empty,
+        // and the single Bookmark action in MangaActionsMenu is disabled in guest mode.
+        compose.onNodeWithTag("manga_cta_bookmark_fallback").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Add bookmark").assertIsDisplayed().assertIsNotEnabled()
+
+        // Multi-line synopsis (> 4 lines) shows expand/collapse toggle and expands/collapses height on click.
+        compose.onNodeWithTag("manga_synopsis_toggle").assertIsDisplayed()
+        val collapsedToggleTop =
+            compose
+                .onNodeWithTag("manga_synopsis_toggle")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+        compose.onNodeWithTag("manga_synopsis_toggle").performClick()
+        val expandedToggleTop =
+            compose
+                .onNodeWithTag("manga_synopsis_toggle")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+        assertTrue(
+            "Expected expanding > 4 line synopsis to push toggle downward ($collapsedToggleTop -> $expandedToggleTop)",
+            expandedToggleTop > collapsedToggleTop + 20f,
+        )
+        compose.onNodeWithTag("manga_synopsis_toggle").performClick()
+        val recollapsedToggleTop =
+            compose
+                .onNodeWithTag("manga_synopsis_toggle")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+        assertEquals(collapsedToggleTop, recollapsedToggleTop, 2f)
     }
 }
 

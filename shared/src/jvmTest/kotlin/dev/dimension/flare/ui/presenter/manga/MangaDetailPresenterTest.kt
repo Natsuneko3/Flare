@@ -1,7 +1,6 @@
 package dev.dimension.flare.ui.presenter.manga
 
 import androidx.compose.runtime.snapshots.Snapshot
-import androidx.paging.PagingState as AndroidxPagingState
 import androidx.room3.Room
 import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
@@ -97,6 +96,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
+import androidx.paging.PagingState as AndroidxPagingState
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MangaDetailPresenterTest {
@@ -383,7 +383,12 @@ class MangaDetailPresenterTest {
                 assertIs<PagingState.Empty<UiTimelineV2>>(loaded.recommendations)
                 assertEquals(0, commentCalls)
                 assertEquals(0, recommendationCalls)
-                assertEquals(ProxyRef.Account(accountKey), loaded.detail.takeSuccess()?.cover?.proxy)
+                val loadedCoverProxy =
+                    loaded.detail
+                        .takeSuccess()
+                        ?.cover
+                        ?.proxy
+                assertEquals(ProxyRef.Account(accountKey), loadedCoverProxy)
 
                 // Toggle sort order and verify persistence.
                 loaded.toggleChapterSort()
@@ -420,7 +425,14 @@ class MangaDetailPresenterTest {
                             snapshot
                         }
                     }
-                val savedFeed = assertIs<UiTimelineV2.Feed>(historyItems.single().status.status.data.content)
+                val savedFeedContent =
+                    historyItems
+                        .single()
+                        .status
+                        .status
+                        .data
+                        .content
+                val savedFeed = assertIs<UiTimelineV2.Feed>(savedFeedContent)
                 assertEquals(
                     ClickEvent.Deeplink(DeeplinkRoute.Manga.Detail(mangaKey = mangaKey, accountType = accountType)),
                     savedFeed.clickEvent,
@@ -624,7 +636,11 @@ class MangaDetailPresenterTest {
                 }
                 val bilingualState = awaitState(states) { !it.isTranslating && it.detail.title.contains("译文") }
                 assertEquals("Original Hero\n\n译文 勇者", bilingualState.detail.title)
-                assertEquals(4, bilingualState.detail.content?.renderRuns?.size)
+                val translatedRunCount =
+                    bilingualState.detail.content
+                        ?.renderRuns
+                        ?.size
+                assertEquals(4, translatedRunCount)
 
                 // 2. Null content: translates title cleanly while keeping content == null.
                 val nullContentSource = richSource.copy(title = "Original Standalone", content = null)

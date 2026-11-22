@@ -1722,10 +1722,14 @@ class PluginDetailCapabilityTest {
                   capabilities: {
                     manga: {
                       detail(request) {
+                        const canonicalKey =
+                          request.key.id === "slug-solo-1"
+                            ? { id: "canonical-solo-1", host: request.key.host }
+                            : request.key;
                         return {
-                          key: request.key,
+                          key: canonicalKey,
                           title: "Solo Manga",
-                          url: "https://plugin.example/manga/" + request.key.id,
+                          url: "https://plugin.example/manga/" + canonicalKey.id,
                           chapters: [{ id: "ch-1", title: "Chapter 1" }],
                           actions: [{ action: bookmarked ? "Unbookmark" : "Bookmark", active: bookmarked, actionToken: bookmarked ? "unbm" : "bm" }]
                         };
@@ -1775,7 +1779,8 @@ class PluginDetailCapabilityTest {
             // while PostV1 comments remain ClickEvent.Noop because post.detail is not declared.
             assertTrue(source.capabilitySet.post != null)
 
-            val mangaKey = MicroBlogKey("solo-1", "plugin.example")
+            val mangaKey = MicroBlogKey("slug-solo-1", "plugin.example")
+            val canonicalMangaKey = MicroBlogKey("canonical-solo-1", "plugin.example")
             val comment =
                 assertIs<UiTimelineV2.TimelinePostItem>(
                     manga
@@ -1801,9 +1806,11 @@ class PluginDetailCapabilityTest {
                     }
 
                 val initial = awaitDetail(false)
+                assertEquals(canonicalMangaKey, initial.mangaKey)
                 // Empty DbStatus cache (current = null)
                 val emptyDbStatusUpdater = RecordingDatabaseUpdater(current = null)
                 val bookmarkEvent = assertIs<PostEvent.Semantic>(requireNotNull(initial.bookmarkAction.postEventOrNull()).postEvent)
+                assertEquals(canonicalMangaKey, bookmarkEvent.postKey)
                 assertEquals("bm", bookmarkEvent.actionToken)
 
                 source.postMutationHandler.handle(bookmarkEvent, emptyDbStatusUpdater)

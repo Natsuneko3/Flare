@@ -461,6 +461,9 @@ private struct MangaPagedCanvas: View {
     @State private var isCurrentPageZoomed = false
     @State private var needsPostLayoutReanchor = false
     @State private var lastObservedPageIndex: Int32
+    @State private var pendingCommittedChapterId: String?
+    @State private var pendingCommittedSlotIndex: Int?
+    @State private var pendingCommittedPages: [Int32] = []
     @State private var frozenLayout: FrozenPagerLayout?
     @State private var interactionTracker = PagerScrollInteractionTracker()
 
@@ -536,6 +539,59 @@ private struct MangaPagedCanvas: View {
         state.direction == .rtl
     }
 
+    private var hasActivePendingCommit: Bool {
+        pendingCommittedSlotIndex != nil &&
+            !pendingCommittedPages.isEmpty &&
+            pendingCommittedChapterId == state.activeChapterId
+    }
+
+    private var effectiveCurrentPageIndex: Int32 {
+        if hasActivePendingCommit, let pendingPage = pendingCommittedPages.last {
+            return pendingPage
+        }
+        return state.currentPageIndex
+    }
+
+    private var effectiveCurrentSlotIndex: Int {
+        if hasActivePendingCommit {
+            if let pendingPage = pendingCommittedPages.last, !state.slots.isEmpty {
+                return Int(
+                    MangaSpreadLayoutSolver.shared.slotIndexForPage(
+                        slots: state.slots,
+                        pageIndex: pendingPage
+                    )
+                )
+            }
+            if let pendingSlot = pendingCommittedSlotIndex {
+                return min(max(pendingSlot, 0), max(state.slots.count - 1, 0))
+            }
+        }
+        return Int(state.currentSlotIndex)
+    }
+
+    private func recordPendingSlotCommit(_ liveSlotIdx: Int) {
+        guard state.slots.indices.contains(liveSlotIdx) else { return }
+        let primaryPage = state.slots[liveSlotIdx].primaryPageIndex
+        if pendingCommittedChapterId != state.activeChapterId {
+            pendingCommittedPages.removeAll()
+        }
+        pendingCommittedChapterId = state.activeChapterId
+        pendingCommittedSlotIndex = liveSlotIdx
+        if pendingCommittedPages.last != primaryPage {
+            pendingCommittedPages.append(primaryPage)
+            if pendingCommittedPages.count > 8 {
+                pendingCommittedPages.removeFirst(pendingCommittedPages.count - 8)
+            }
+        }
+        lastObservedPageIndex = primaryPage
+    }
+
+    private func clearPendingSlotCommit() {
+        pendingCommittedChapterId = nil
+        pendingCommittedSlotIndex = nil
+        pendingCommittedPages.removeAll()
+    }
+
     private var effectiveActivePagerPage: Int {
         if let target = programmaticScrollTarget {
             return clampedPagerPage(target)
@@ -560,12 +616,12 @@ private struct MangaPagedCanvas: View {
             let slotIdx = Int(
                 MangaSpreadLayoutSolver.shared.slotIndexForPage(
                     slots: displayedSlots,
-                    pageIndex: state.currentPageIndex
+                    pageIndex: effectiveCurrentPageIndex
                 )
             )
             return clampedPagerPage(slotIdx + startBoundaryOffset)
         }
-        return clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
+        return clampedPagerPage(effectiveCurrentSlotIndex + startBoundaryOffset)
     }
 
     var body: some View {
@@ -625,10 +681,12 @@ private struct MangaPagedCanvas: View {
                         controller.webtoonScrollByPage = nil
                         isCurrentPageZoomed = false
                         controller.zoomResetHandler = nil
-                        controller.doubleTapZoomHandler = nil
                         lastObservedPageIndex = state.currentPageIndex
                         mountScrollGeneration = programmaticScrollGeneration
                         let initial = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
+                        if initial == prevBoundaryPage || initial == nextBoundaryPage {
+                            controller.doubleTapZoomHandler = nil
+                        }
                         if activePagerPage == initial {
                             programmaticScrollTarget = nil
                         } else if initial > 0 || activePagerPage != nil {
@@ -672,6 +730,18 @@ private struct MangaPagedCanvas: View {
                         )
                     }
                     .onChange(of: state.currentPageIndex) { _, newPageIdx in
+                        if hasActivePendingCommit {
+                            if newPageIdx == pendingCommittedPages.last {
+                                clearPendingSlotCommit()
+                                lastObservedPageIndex = newPageIdx
+                                return
+                            }
+                            if let matchedIdx = pendingCommittedPages.firstIndex(of: newPageIdx) {
+                                pendingCommittedPages.removeFirst(matchedIdx + 1)
+                                return
+                            }
+                            clearPendingSlotCommit()
+                        }
                         let previousObserved = lastObservedPageIndex
                         lastObservedPageIndex = newPageIdx
                         guard !controller.isPerformingProgrammaticScroll,
@@ -685,6 +755,17 @@ private struct MangaPagedCanvas: View {
                     .onChange(of: state.currentSlotIndex) { _, newSlot in
                         guard !controller.isPerformingProgrammaticScroll,
                               !interactionTracker.isUserInteracting else { return }
+                        if hasActivePendingCommit {
+                            let target = clampedPagerPage(effectiveCurrentSlotIndex + startBoundaryOffset)
+                            if Int(newSlot) == effectiveCurrentSlotIndex,
+                               state.currentPageIndex == pendingCommittedPages.last {
+                                clearPendingSlotCommit()
+                            }
+                            if activePagerPage != target {
+                                scrollProgrammatically(to: target, animated: false, scrollProxy: scrollProxy)
+                            }
+                            return
+                        }
                         if (controller.isOnPreviousBoundaryPage || controller.isOnNextBoundaryPage),
                            state.currentPageIndex == lastObservedPageIndex {
                             return
@@ -760,9 +841,9 @@ private struct MangaPagedCanvas: View {
             }
         }
         .onDisappear {
-            controller.zoomResetHandler = nil
-            controller.doubleTapZoomHandler = nil
             if controller.activeInteractionTracker === interactionTracker {
+                controller.zoomResetHandler = nil
+                controller.doubleTapZoomHandler = nil
                 controller.activeInteractionTracker = nil
             }
         }
@@ -898,56 +979,75 @@ private struct MangaPagedCanvas: View {
 
         controller.pagedStepForward = {
             guard totalPagerPages > 0 else { return }
-            let current = effectiveActivePagerPage
-            if current == prevBoundaryPage {
+            let current = resolveLivePagerPageReleasingFrozenLayout()
+            guard totalPagerPages > 0 else { return }
+            if prevBoundaryPage >= 0, current == prevBoundaryPage {
                 guard !state.slots.isEmpty else { return }
+                recordPendingSlotCommit(0)
                 state.goToSlot(slotIndex: 0)
                 scrollProgrammatically(to: startBoundaryOffset, animated: true, scrollProxy: scrollProxy)
-            } else if current == nextBoundaryPage {
+            } else if nextBoundaryPage >= 0, current == nextBoundaryPage {
                 if let nextUnlocked = state.nextBoundary as? ChapterBoundaryUnlocked {
+                    clearPendingSlotCommit()
                     state.openAdjacentChapter(boundary: nextUnlocked)
                 }
             } else if !state.slots.isEmpty {
                 let slotIdx = min(max(current - startBoundaryOffset, 0), state.slots.count - 1)
-                if slotIdx != Int(state.currentSlotIndex) {
+                if slotIdx != effectiveCurrentSlotIndex {
                     state.goToSlot(slotIndex: Int32(slotIdx))
                 }
-                let beforeSlot = Int(state.currentSlotIndex)
-                state.stepForward()
-                let afterSlot = Int(state.currentSlotIndex)
-                if afterSlot != beforeSlot {
-                    scrollProgrammatically(to: startBoundaryOffset + afterSlot, animated: true, scrollProxy: scrollProxy)
+                if slotIdx + 1 < state.slots.count {
+                    let nextSlot = slotIdx + 1
+                    recordPendingSlotCommit(nextSlot)
+                    state.stepForward()
+                    scrollProgrammatically(to: startBoundaryOffset + nextSlot, animated: true, scrollProxy: scrollProxy)
+                } else if state.nextBoundary is ChapterBoundaryUnlocked {
+                    clearPendingSlotCommit()
+                    state.stepForward()
+                } else if nextBoundaryPage >= 0 {
+                    scrollProgrammatically(to: nextBoundaryPage, animated: true, scrollProxy: scrollProxy)
                 }
             }
         }
 
         controller.pagedStepBackward = {
             guard totalPagerPages > 0 else { return }
-            let current = effectiveActivePagerPage
-            if current == nextBoundaryPage {
+            let current = resolveLivePagerPageReleasingFrozenLayout()
+            guard totalPagerPages > 0 else { return }
+            if nextBoundaryPage >= 0, current == nextBoundaryPage {
                 guard !state.slots.isEmpty else { return }
                 let lastIdx = state.slots.count - 1
+                recordPendingSlotCommit(lastIdx)
                 state.goToSlot(slotIndex: Int32(lastIdx))
                 scrollProgrammatically(to: startBoundaryOffset + lastIdx, animated: true, scrollProxy: scrollProxy)
-            } else if current == prevBoundaryPage {
+            } else if prevBoundaryPage >= 0, current == prevBoundaryPage {
                 if let prevUnlocked = state.previousBoundary as? ChapterBoundaryUnlocked {
+                    clearPendingSlotCommit()
                     state.openAdjacentChapter(boundary: prevUnlocked)
                 }
             } else if !state.slots.isEmpty {
                 let slotIdx = min(max(current - startBoundaryOffset, 0), state.slots.count - 1)
-                if slotIdx != Int(state.currentSlotIndex) {
+                if slotIdx != effectiveCurrentSlotIndex {
                     state.goToSlot(slotIndex: Int32(slotIdx))
                 }
-                let beforeSlot = Int(state.currentSlotIndex)
-                state.stepBackward()
-                let afterSlot = Int(state.currentSlotIndex)
-                if afterSlot != beforeSlot {
-                    scrollProgrammatically(to: startBoundaryOffset + afterSlot, animated: true, scrollProxy: scrollProxy)
+                if slotIdx > 0 {
+                    let prevSlot = slotIdx - 1
+                    recordPendingSlotCommit(prevSlot)
+                    state.stepBackward()
+                    scrollProgrammatically(to: startBoundaryOffset + prevSlot, animated: true, scrollProxy: scrollProxy)
+                } else if state.previousBoundary is ChapterBoundaryUnlocked {
+                    clearPendingSlotCommit()
+                    state.stepBackward()
+                } else if prevBoundaryPage >= 0 {
+                    scrollProgrammatically(to: prevBoundaryPage, animated: true, scrollProxy: scrollProxy)
                 }
             }
         }
 
         controller.pagedScrollToBoundary = { isNext in
+            if activeFrozenLayout != nil {
+                frozenLayout = nil
+            }
             if isNext, nextBoundaryPage >= 0 {
                 scrollProgrammatically(to: nextBoundaryPage, animated: false, scrollProxy: scrollProxy)
             } else if !isNext, prevBoundaryPage >= 0 {
@@ -956,11 +1056,38 @@ private struct MangaPagedCanvas: View {
         }
     }
 
+    private func resolveLivePagerPageReleasingFrozenLayout() -> Int {
+        guard activeFrozenLayout != nil else { return effectiveActivePagerPage }
+        let currentFrozen = effectiveActivePagerPage
+        let wasOnPrev = prevBoundaryPage >= 0 && currentFrozen == prevBoundaryPage
+        let wasOnNext = nextBoundaryPage >= 0 && currentFrozen == nextBoundaryPage
+        let displayedIdx = currentFrozen - startBoundaryOffset
+        let displayedPrimaryPage: Int32 =
+            displayedSlots.indices.contains(displayedIdx)
+                ? displayedSlots[displayedIdx].primaryPageIndex
+                : effectiveCurrentPageIndex
+        frozenLayout = nil
+        if wasOnPrev, prevBoundaryPage >= 0 {
+            return prevBoundaryPage
+        }
+        if wasOnNext, nextBoundaryPage >= 0 {
+            return nextBoundaryPage
+        }
+        guard !state.slots.isEmpty else { return 0 }
+        let liveSlotIdx = Int(
+            MangaSpreadLayoutSolver.shared.slotIndexForPage(
+                slots: state.slots,
+                pageIndex: displayedPrimaryPage
+            )
+        )
+        return clampedPagerPage(startBoundaryOffset + liveSlotIdx)
+    }
+
     private func scrollProgrammatically(to target: Int, animated: Bool, scrollProxy: ScrollViewProxy?) {
         let clamped = clampedPagerPage(target)
         programmaticScrollGeneration += 1
         let generation = programmaticScrollGeneration
-        lastObservedPageIndex = state.currentPageIndex
+        lastObservedPageIndex = effectiveCurrentPageIndex
         controller.isPerformingProgrammaticScroll = true
         defer { controller.isPerformingProgrammaticScroll = false }
 
@@ -1099,7 +1226,7 @@ private struct MangaPagedCanvas: View {
         guard displayedSlots.indices.contains(displayedSlotIdx) else { return }
         if activeFrozenLayout != nil {
             let displayedSlot = displayedSlots[displayedSlotIdx]
-            if !readerSlot(displayedSlot, containsPage: state.currentPageIndex) {
+            if !readerSlot(displayedSlot, containsPage: effectiveCurrentPageIndex) {
                 let liveSlotIdx = Int(
                     MangaSpreadLayoutSolver.shared.slotIndexForPage(
                         slots: state.slots,
@@ -1107,14 +1234,14 @@ private struct MangaPagedCanvas: View {
                     )
                 )
                 if state.slots.indices.contains(liveSlotIdx) {
+                    recordPendingSlotCommit(liveSlotIdx)
                     state.goToSlot(slotIndex: Int32(liveSlotIdx))
-                    lastObservedPageIndex = state.currentPageIndex
                 }
             }
         } else if state.slots.indices.contains(displayedSlotIdx),
-                  displayedSlotIdx != Int(state.currentSlotIndex) {
+                  displayedSlotIdx != effectiveCurrentSlotIndex {
+            recordPendingSlotCommit(displayedSlotIdx)
             state.goToSlot(slotIndex: Int32(displayedSlotIdx))
-            lastObservedPageIndex = state.currentPageIndex
         }
     }
 

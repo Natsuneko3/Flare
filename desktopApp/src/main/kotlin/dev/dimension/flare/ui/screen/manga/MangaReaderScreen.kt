@@ -449,7 +449,7 @@ private fun DesktopMangaPageSlider(
                         }
                     },
                     valueRange = 0f..maxPage.toFloat(),
-                    steps = (pageCount - 2).coerceAtLeast(0),
+                    steps = if (pageCount <= 30) (pageCount - 2).coerceAtLeast(0) else 0,
                     modifier =
                         Modifier
                             .weight(1f)

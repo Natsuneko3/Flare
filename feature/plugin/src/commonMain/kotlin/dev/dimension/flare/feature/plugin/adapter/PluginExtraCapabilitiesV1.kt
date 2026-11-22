@@ -798,7 +798,9 @@ internal class PluginExtraCapabilitiesV1(
                     cacheSource = {
                         channelFlow {
                             launch(start = CoroutineStart.UNDISPATCHED) {
-                                mangaChanges.collect { key -> if (key == mangaKey) detail.refresh() }
+                                mangaChanges.collect { key ->
+                                    if (key == mangaKey || key == cache.value?.mangaKey) detail.refresh()
+                                }
                             }
                             cache.filterNotNull().collect { send(it) }
                         }

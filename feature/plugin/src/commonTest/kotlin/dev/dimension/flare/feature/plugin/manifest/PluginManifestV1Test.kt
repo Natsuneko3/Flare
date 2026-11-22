@@ -461,6 +461,52 @@ class PluginManifestV1Test {
         assertEquals("https://manga.example", GuestManifestV1(enabled = true, origin = "https://manga.example").origin)
     }
 
+    @Test
+    fun postMutateOnlyAllowsForwardCompatibleUnknownOperationsOnApiV2() {
+        val base = PluginJsonV1.decodeFromString<PluginManifestV1>(VALID_MANIFEST)
+        val postWithFutureOp =
+            CapabilityManifestV1(
+                operations =
+                    mapOf(
+                        "mutate" to CapabilityOperationManifestV1(),
+                        "futureReactionSummary" to CapabilityOperationManifestV1(),
+                    ),
+            )
+        val v2MutatePlusUnknown =
+            base.copy(
+                apiVersion = 2,
+                platform =
+                    base.socialPlatform.copy(
+                        capabilities = base.socialPlatform.capabilities + (PluginAbiV1.Capabilities.POST to postWithFutureOp),
+                    ),
+            )
+        assertTrue(v2MutatePlusUnknown.validate().isValid)
+
+        val v1MutatePlusUnknown = v2MutatePlusUnknown.copy(apiVersion = 1)
+        assertTrue(v1MutatePlusUnknown.validate().errors.any { it.code == "capability.incomplete" })
+
+        val v2MutatePlusKnownContextWithoutDetail =
+            base.copy(
+                apiVersion = 2,
+                platform =
+                    base.socialPlatform.copy(
+                        capabilities =
+                            base.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.POST to
+                                        CapabilityManifestV1(
+                                            operations =
+                                                mapOf(
+                                                    "mutate" to CapabilityOperationManifestV1(),
+                                                    "context" to CapabilityOperationManifestV1(),
+                                                ),
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(v2MutatePlusKnownContextWithoutDetail.validate().errors.any { it.code == "capability.incomplete" })
+    }
+
     private fun validateManifest(
         apiVersion: Int,
         loginMethods: String = """[{"id":"oauth","interaction":"OAuth","title":"OAuth"}]""",

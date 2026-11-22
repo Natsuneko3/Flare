@@ -73,6 +73,8 @@ import compose.icons.fontawesomeicons.solid.ArrowDownWideShort
 import compose.icons.fontawesomeicons.solid.ArrowUpWideShort
 import compose.icons.fontawesomeicons.solid.BookOpen
 import compose.icons.fontawesomeicons.solid.Check
+import compose.icons.fontawesomeicons.solid.ChevronDown
+import compose.icons.fontawesomeicons.solid.ChevronUp
 import compose.icons.fontawesomeicons.solid.EllipsisVertical
 import compose.icons.fontawesomeicons.solid.Images
 import compose.icons.fontawesomeicons.solid.Lock
@@ -114,6 +116,7 @@ import dev.dimension.flare.ui.component.status.StatusItem
 import dev.dimension.flare.ui.component.status.status
 import dev.dimension.flare.ui.component.toImageVector
 import dev.dimension.flare.ui.model.ClickContext
+import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiMangaChapter
 import dev.dimension.flare.ui.model.UiMangaDetail
@@ -128,6 +131,8 @@ import dev.dimension.flare.ui.presenter.manga.MangaDetailPresenter
 import dev.dimension.flare.ui.presenter.manga.MangaTranslatePresenter
 import dev.dimension.flare.ui.presenter.manga.PrimaryReadTarget
 import dev.dimension.flare.ui.presenter.manga.UiMangaChapterItem
+import dev.dimension.flare.ui.render.UiRichText
+import dev.dimension.flare.ui.render.uiRichTextOf
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.toUri
@@ -817,24 +822,28 @@ private fun MangaAndroidHeroCard(
                     }
                 } ?: Spacer(Modifier.weight(1f))
 
-                StatusActionButton(
-                    icon =
-                        if (detail.isBookmarked) {
-                            UiIcon.Unlike.toImageVector()
-                        } else {
-                            UiIcon.Like.toImageVector()
+                if (detail.actions.isEmpty() && (detail.bookmarkAction != ClickEvent.Noop || detail.isBookmarked)) {
+                    StatusActionButton(
+                        icon =
+                            if (detail.isBookmarked) {
+                                UiIcon.Unlike.toImageVector()
+                            } else {
+                                UiIcon.Like.toImageVector()
+                            },
+                        number = null,
+                        enabled = detail.bookmarkAction != ClickEvent.Noop,
+                        color =
+                            if (detail.isBookmarked) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        onClicked = {
+                            detail.onBookmark.invoke(ClickContext(uriHandler::openUri))
                         },
-                    number = null,
-                    color =
-                        if (detail.isBookmarked) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    onClicked = {
-                        detail.onBookmark.invoke(ClickContext(uriHandler::openUri))
-                    },
-                )
+                        modifier = Modifier.testTag("manga_cta_bookmark_fallback"),
+                    )
+                }
             }
 
             if (detail.actions.isNotEmpty()) {
@@ -887,16 +896,64 @@ private fun MangaAndroidSynopsisAndTagsCard(detail: UiMangaDetail) {
                     .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            detail.content?.let { content ->
-                RichText(
-                    text = content,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            detail.content?.takeIf { !it.isEmpty }?.let { content ->
+                MangaAndroidCollapsibleSynopsis(content = content)
             }
             MangaTagGroupsSection(
                 tagGroups = detail.tagGroups,
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
+
+@Composable
+private fun MangaAndroidCollapsibleSynopsis(content: UiRichText) {
+    var expanded by remember(content.raw) { mutableStateOf(false) }
+    val multiBlockOverflow = content.renderRuns.size > 4 || content.innerText.count { it == '\n' } >= 4
+    var hasOverflow by remember(content.raw) { mutableStateOf(multiBlockOverflow) }
+    val displayedText =
+        remember(content, expanded) {
+            if (!expanded && content.renderRuns.size > 4) {
+                uiRichTextOf(renderRuns = content.renderRuns.take(4), raw = content.raw)
+            } else {
+                content
+            }
+        }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        RichText(
+            text = displayedText,
+            maxLines = if (expanded) Int.MAX_VALUE else 4,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result ->
+                if (!expanded && (result.hasVisualOverflow || multiBlockOverflow)) {
+                    hasOverflow = true
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (hasOverflow || expanded) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { expanded = !expanded }
+                        .padding(vertical = 4.dp)
+                        .testTag("manga_synopsis_toggle"),
+                contentAlignment = Alignment.Center,
+            ) {
+                FAIcon(
+                    imageVector = if (expanded) FontAwesomeIcons.Solid.ChevronUp else FontAwesomeIcons.Solid.ChevronDown,
+                    contentDescription = stringResource(if (expanded) R.string.expanded else R.string.collapsed),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
         }
     }
 }

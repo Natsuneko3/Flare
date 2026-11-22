@@ -359,6 +359,25 @@ class MangaProgressRepositoryTest {
                 } finally {
                     migratedDb.close()
                 }
+
+                // Unknown persisted reading direction string decodes defensively to null without crashing Room queries.
+                BundledSQLiteDriver().open(path).use { connection ->
+                    connection.execSQL("UPDATE DbMangaState SET readerModeOverride = 'FutureScrollMode'")
+                }
+                val reopenedDb =
+                    Room
+                        .databaseBuilder<CacheDatabase>(name = path)
+                        .addMigrations(CacheDatabase.MIGRATION_55_56)
+                        .setDriver(createDatabaseDriver())
+                        .setQueryCoroutineContext(PlatformDispatchers.IO)
+                        .build()
+                try {
+                    val reopenedSnapshot = MangaProgressRepository(reopenedDb).observe(owner, mangaKey).first()
+                    assertEquals("ch-1", reopenedSnapshot.lastChapterId)
+                    assertEquals(null, reopenedSnapshot.readerModeOverride)
+                } finally {
+                    reopenedDb.close()
+                }
             } finally {
                 Files.deleteIfExists(dbPath)
                 Files.deleteIfExists(dbPath.resolveSibling("${dbPath.fileName}-wal"))

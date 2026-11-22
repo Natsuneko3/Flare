@@ -10,6 +10,20 @@ import XCTest
 
 @MainActor
 final class MangaScreenTests: XCTestCase {
+    private static let servicesReady: Void = {
+        AppleSharedHelper.shared.initialize(
+            inAppNotification: SilentMacNotification(),
+            swiftFormatter: Formatter.shared,
+            swiftPlatformTextRenderer: PlatformTextRenderer.shared,
+            swiftOnDeviceAI: FoundationModelOnDeviceAI.shared
+        )
+    }()
+
+    override func setUp() async throws {
+        try await super.setUp()
+        _ = Self.servicesReady
+    }
+
     func testMangaDeepLinkRoutesMapSpecificAndGuestPluginAccounts() {
         let mangaKey = MicroBlogKey(id: "manga-99", host: "manga.example")
         let accounts: [AccountType] = [
@@ -280,7 +294,7 @@ final class MangaScreenTests: XCTestCase {
             authors: ["Aria Lin"],
             artists: ["Kuro"],
             status: .ongoing,
-            content: nil,
+            content: makeMacRichSynopsis(["A journey across star seas."]),
             url: "https://manga.example/series/99",
             updatedAt: nil,
             readingDirection: .rtl,
@@ -384,7 +398,12 @@ final class MangaScreenTests: XCTestCase {
             )
         }
         let renderedText = try renderPDFText(detailStack, width: 640, height: 900)
+        let showMoreLabel = FlareAppleUILocalization.string("mastodon_item_show_more", fallback: "Show more")
+        let addBookmarkLabel = FlareAppleUILocalization.string("bookmark_add", fallback: "Add bookmark")
         XCTAssertTrue(renderedText.contains("Starlight Odyssey"), renderedText)
+        XCTAssertTrue(renderedText.contains("A journey across star seas."), renderedText)
+        XCTAssertFalse(renderedText.contains(showMoreLabel), "Short <= 4 line synopsis must not render expand toggle")
+        XCTAssertFalse(renderedText.contains(addBookmarkLabel), "Read-only/guest detail with Noop bookmarkAction must not render standalone bookmark")
         XCTAssertTrue(renderedText.contains("Genre"), renderedText)
         XCTAssertTrue(renderedText.contains("Sci-Fi"), renderedText)
         XCTAssertTrue(renderedText.contains("Adventure"), renderedText)
@@ -393,6 +412,63 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertTrue(renderedText.contains("Chapter 0: Prologue"), renderedText)
         XCTAssertTrue(renderedText.contains("Chapter 1: Dawn"), renderedText)
         XCTAssertTrue(renderedText.contains("Chapter 2: Locked Extra"), renderedText)
+
+        let guestDisabledBookmark = ActionMenu.Item(
+            updateKey: "guest-bm",
+            icon: .bookmark,
+            text: nil,
+            count: nil,
+            color: .contentColor,
+            clickEvent: ClickEventNoop.shared,
+            actionFamily: .bookmark,
+            enabled: false
+        )
+        let longSynopsisDetail = UiMangaDetail(
+            pluginId: detail.pluginId,
+            platformId: detail.platformId,
+            mangaKey: detail.mangaKey,
+            accountType: AccountType.GuestPlugin(platformId: "manga-plat", host: "manga.example"),
+            title: detail.title,
+            altTitles: detail.altTitles,
+            cover: nil,
+            author: nil,
+            authors: detail.authors,
+            artists: detail.artists,
+            status: detail.status,
+            content: makeMacRichSynopsis((1...7).map { "Paragraph \($0): Long star-sea chronicle across uncharted galaxies." }),
+            url: detail.url,
+            updatedAt: nil,
+            readingDirection: .rtl,
+            tagGroups: detail.tagGroups,
+            chapterGroups: detail.chapterGroups,
+            isBookmarked: false,
+            bookmarkAction: ClickEventNoop.shared,
+            actions: [guestDisabledBookmark],
+            sourceLanguages: ["en"]
+        )
+        let guestHeroNoReadTarget = NSHostingView(
+            rootView: MangaHeroCardView(
+                detail: detail,
+                translation: nil,
+                primaryReadTarget: nil,
+                onOpenCover: { _ in },
+                onOpenProfile: { _, _ in },
+                onOpenReader: { _, _ in }
+            )
+        )
+        guestHeroNoReadTarget.frame = CGRect(x: 0, y: 0, width: 480, height: 240)
+        guestHeroNoReadTarget.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            countMacSubviews(ofType: NSButton.self, in: guestHeroNoReadTarget),
+            0,
+            "Read-only/guest hero card with empty actions and ClickEventNoop bookmarkAction must render zero NSButtons when primaryReadTarget is nil"
+        )
+        let longSynopsisRendered = try renderPDFText(
+            MangaSynopsisAndTagsCardView(detail: longSynopsisDetail),
+            width: 480,
+            height: 500
+        )
+        XCTAssertTrue(longSynopsisRendered.contains(showMoreLabel), "Multi-paragraph > 4 line synopsis must render expand toggle")
     }
 
     func testMacMidChapterRtlLtrSwitchOnFourSlotsAndWebtoonReachability() async throws {
@@ -454,6 +530,7 @@ final class MangaScreenTests: XCTestCase {
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 2, "Switching RTL -> LTR mid-chapter must preserve currentSlotIndex == 2")
         XCTAssertNil(controller.zoomResetHandler)
+        XCTAssertNotNil(controller.doubleTapZoomHandler, "Switching RTL -> LTR must preserve doubleTapZoomHandler on active slot")
 
         // 3. Simulated manual horizontal user scroll after RTL -> LTR switch (slot 2 -> slot 3 in LTR) must NOT yank back
         let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
@@ -481,6 +558,7 @@ final class MangaScreenTests: XCTestCase {
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Switching LTR -> RTL mid-chapter must preserve currentSlotIndex == 1")
         XCTAssertNil(controller.zoomResetHandler)
+        XCTAssertNotNil(controller.doubleTapZoomHandler, "Switching LTR -> RTL must preserve doubleTapZoomHandler on active slot")
 
         // 5. Simulated manual horizontal user scroll after LTR -> RTL switch (slot 1 -> slot 2 in RTL) must NOT yank back
         let rtlScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
@@ -787,6 +865,7 @@ final class MangaScreenTests: XCTestCase {
 
         // Split spread while standing on nextBoundaryPage (slots 4 -> 5, shifting currentSlotIndex on last page AND moving nextBoundaryPage 5 -> 6)
         fakeState.goToSlot(slotIndex: 3)
+        try await eventually(window: window) { controller.activePagerPage == 4 && !controller.isOnNextBoundaryPage }
         controller.scrollToBoundary(isNext: true)
         try await eventually(window: window) { controller.isOnNextBoundaryPage && controller.activePagerPage == 5 }
         fakeState.updateSlots(fiveSplitSlots)
@@ -945,6 +1024,169 @@ final class MangaScreenTests: XCTestCase {
         )
     }
 
+    func testMacAsyncSnapshotDeliveryMidScrollSplitStepNavigationAndLockedBoundary() async throws {
+        _ = NSApplication.shared
+        let prevLockedChapter = UiMangaChapter(
+            id: "ch-0-locked",
+            title: "Chapter 0 VIP",
+            subtitle: nil,
+            uploadedAt: nil,
+            locked: true,
+            url: "https://manga.example/paywall/ch-0"
+        )
+        let nextLockedChapter = UiMangaChapter(
+            id: "ch-2-locked",
+            title: "Chapter 2 VIP",
+            subtitle: nil,
+            uploadedAt: nil,
+            locked: true,
+            url: "https://manga.example/paywall/ch-2"
+        )
+        let sixPages = makeMacSamplePages(count: 6)
+        let fourSpreadSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 3, primaryPageIndex: 3),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        let fiveSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotSingle(pageIndex: 3),
+            ReaderSlotSingle(pageIndex: 4),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+
+        let fakeState = FakeMacMangaReaderState(
+            direction: .rtl,
+            pages: sixPages,
+            slots: fourSpreadSlots,
+            previousBoundary: ChapterBoundaryLocked(chapter: prevLockedChapter, openUrl: "https://manga.example/paywall/ch-0"),
+            nextBoundary: ChapterBoundaryLocked(chapter: nextLockedChapter, openUrl: "https://manga.example/paywall/ch-2")
+        )
+        fakeState.goToSlot(slotIndex: 1) // pagerPage == 2 (startBoundaryOffset == 1)
+
+        let controller = MangaReaderInteractionController()
+        let hostModel = MacReaderTestHostModel(state: fakeState, controller: controller, deferSnapshotDelivery: true)
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let hostingView = NSHostingView(rootView: MacReaderTestHostView(model: hostModel))
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        try await eventually(window: window) {
+            controller.isBound && controller.activePagerPage == 2 && hostModel.pageFrames[1] != nil
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let scrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
+        let startOriginX = scrollView.contentView.bounds.origin.x
+
+        // (a) .rtl mid-live-scroll spread split with deferred async snapshot publication must NOT yank back to pre-scroll slot 1
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
+        scrollView.contentView.scroll(to: CGPoint(x: startOriginX - 400, y: 0))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: scrollView)
+
+        fakeState.updateSlots(fiveSplitSlots)
+        try await Task.sleep(for: .milliseconds(25))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        scrollView.contentView.scroll(to: CGPoint(x: startOriginX - 800, y: 0))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: scrollView)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
+
+        XCTAssertEqual(controller.activePagerPage, 3, "Mid-scroll split must not yank back to pre-scroll pagerPage 2 while awaiting async snapshot")
+        try await eventually(window: window) {
+            guard let page3Frame = hostModel.pageFrames[3] else { return false }
+            return hostModel.snapshot.currentPageIndex == 3 &&
+                hostModel.snapshot.currentSlotIndex == 2 &&
+                controller.activePagerPage == 3 &&
+                page3Frame.minX >= -1.5 &&
+                page3Frame.maxX <= 801.5
+        }
+
+        // (b) pagedStepForward / pagedStepBackward advance & animate accurately under deferred async snapshot delivery
+        XCTAssertTrue(controller.handleKey(.leftArrow)) // RTL forward: slot 2 -> slot 3 (page 4, pagerPage 4)
+        XCTAssertEqual(controller.activePagerPage, 4)
+        try await eventually(window: window) {
+            hostModel.snapshot.currentSlotIndex == 3 &&
+                hostModel.snapshot.currentPageIndex == 4 &&
+                controller.activePagerPage == 4
+        }
+
+        XCTAssertTrue(controller.handleKey(.leftArrow)) // RTL forward: slot 3 -> slot 4 (last slot, page 5, pagerPage 5)
+        XCTAssertEqual(controller.activePagerPage, 5)
+        try await eventually(window: window) {
+            hostModel.snapshot.currentSlotIndex == 4 &&
+                hostModel.snapshot.currentPageIndex == 5 &&
+                controller.activePagerPage == 5
+        }
+
+        // (c) Stepping forward on the last slot when nextBoundary is ChapterBoundaryLocked scrolls onto nextBoundaryPage (pagerPage 6)
+        XCTAssertFalse(controller.isOnNextBoundaryPage)
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        try await eventually(window: window) {
+            controller.isOnNextBoundaryPage && controller.activePagerPage == 6
+        }
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertTrue(controller.isOnNextBoundaryPage)
+        XCTAssertEqual(controller.activePagerPage, 6)
+
+        // Stepping backward from nextBoundaryPage returns to last slot (slot 4 / pagerPage 5)
+        XCTAssertTrue(controller.handleKey(.rightArrow))
+        try await eventually(window: window) {
+            !controller.isOnNextBoundaryPage &&
+                controller.activePagerPage == 5 &&
+                hostModel.snapshot.currentSlotIndex == 4
+        }
+
+        // Stepping backward on slot 0 when previousBoundary is ChapterBoundaryLocked scrolls onto prevBoundaryPage (0)
+        fakeState.goToSlot(slotIndex: 0)
+        try await eventually(window: window) {
+            hostModel.snapshot.currentSlotIndex == 0 && controller.activePagerPage == 1
+        }
+        XCTAssertTrue(controller.handleKey(.rightArrow))
+        try await eventually(window: window) {
+            controller.isOnPreviousBoundaryPage && controller.activePagerPage == 0
+        }
+    }
+
+    private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {
+        let style = RenderTextStyle(
+            link: nil,
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            monospace: false,
+            code: false,
+            underline: false,
+            small: false,
+            time: false,
+            imageLink: nil
+        )
+        let blocks: [RenderContent] = paragraphs.map {
+            RenderContent.Text(runs: [RenderRun.Text(text: $0, style: style)], block: RenderBlockStyle())
+        }
+        let raw = paragraphs.joined(separator: "\n")
+        return UiRichText(renderRuns: blocks, isRtl: false, raw: raw, innerText: raw, imageUrls: [])
+    }
+
+    private func countMacSubviews<T: NSView>(ofType type: T.Type, in root: NSView) -> Int {
+        let own = root is T ? 1 : 0
+        return own + root.subviews.reduce(0) { $0 + countMacSubviews(ofType: type, in: $1) }
+    }
+
     private func renderPDFText<V: View>(_ view: V, width: CGFloat, height: CGFloat) throws -> String {
         let content = view.frame(width: width, height: height)
         let data = NSMutableData()
@@ -1004,30 +1246,45 @@ final class MangaScreenTests: XCTestCase {
 private final class MacReaderTestHostModel {
     var snapshot: any MangaReaderPresenterState
     let controller: MangaReaderInteractionController
+    let deferSnapshotDelivery: Bool
     var hudVisible = true
     var pageFrames: [Int: CGRect] = [:]
     var retryPageIds: Set<String> = []
     var scrubberLeadingLabelFrame: CGRect?
     var scrubberTrailingLabelFrame: CGRect?
+    private var stateGeneration = 0
 
     init(
         state: FakeMacMangaReaderState,
-        controller: MangaReaderInteractionController
+        controller: MangaReaderInteractionController,
+        deferSnapshotDelivery: Bool = false
     ) {
         self.snapshot = MacMangaStateSnapshot(backing: state)
         self.controller = controller
-        state.onStateMutated = { [weak self, weak state] in
-            guard let self, let state else { return }
-            self.snapshot = MacMangaStateSnapshot(backing: state)
-        }
+        self.deferSnapshotDelivery = deferSnapshotDelivery
+        bindMutationCallback(to: state)
     }
 
     func setState(_ next: FakeMacMangaReaderState) {
+        stateGeneration += 1
         retryPageIds.removeAll()
         snapshot = MacMangaStateSnapshot(backing: next)
-        next.onStateMutated = { [weak self, weak next] in
-            guard let self, let next else { return }
-            self.snapshot = MacMangaStateSnapshot(backing: next)
+        bindMutationCallback(to: next)
+    }
+
+    private func bindMutationCallback(to state: FakeMacMangaReaderState) {
+        let boundGeneration = stateGeneration
+        state.onStateMutated = { [weak self, weak state] in
+            guard let self, let state else { return }
+            if self.deferSnapshotDelivery {
+                let captured = MacMangaStateSnapshot(backing: state)
+                Task { @MainActor [weak self] in
+                    guard let self, self.stateGeneration == boundGeneration else { return }
+                    self.snapshot = captured
+                }
+            } else {
+                self.snapshot = MacMangaStateSnapshot(backing: state)
+            }
         }
     }
 }
@@ -1035,28 +1292,44 @@ private final class MacReaderTestHostModel {
 @MainActor
 private final class MacMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     private let backing: FakeMacMangaReaderState
+    let mangaTitle: String
+    let chapterTitle: String
+    let chapterUrl: String?
+    let activeChapterId: String
+    let loadState: UiState<KotlinUnit>
+    let pages: [ReaderPageState]
+    let slots: [any ReaderSlot]
+    let currentPageIndex: Int32
+    let currentSlotIndex: Int32
+    let direction: MangaReadingDirection
+    let doublePageSpread: Bool
+    let spreadCoverSinglePage: Bool
+    let previousBoundary: any ChapterBoundary
+    let nextBoundary: any ChapterBoundary
+    let prefetchMedia: [UiMediaImage]
+    let imageTranslation: any ImageTranslationPresenterState
+    let lockedChapter: ChapterBoundaryLocked?
 
     init(backing: FakeMacMangaReaderState) {
         self.backing = backing
+        self.mangaTitle = backing.mangaTitle
+        self.chapterTitle = backing.chapterTitle
+        self.chapterUrl = backing.chapterUrl
+        self.activeChapterId = backing.activeChapterId
+        self.loadState = backing.loadState
+        self.pages = backing.pages
+        self.slots = backing.slots
+        self.currentPageIndex = backing.currentPageIndex
+        self.currentSlotIndex = backing.currentSlotIndex
+        self.direction = backing.direction
+        self.doublePageSpread = backing.doublePageSpread
+        self.spreadCoverSinglePage = backing.spreadCoverSinglePage
+        self.previousBoundary = backing.previousBoundary
+        self.nextBoundary = backing.nextBoundary
+        self.prefetchMedia = backing.prefetchMedia
+        self.imageTranslation = backing.imageTranslation
+        self.lockedChapter = backing.lockedChapter
     }
-
-    var mangaTitle: String { backing.mangaTitle }
-    var chapterTitle: String { backing.chapterTitle }
-    var chapterUrl: String? { backing.chapterUrl }
-    var activeChapterId: String { backing.activeChapterId }
-    var loadState: UiState<KotlinUnit> { backing.loadState }
-    var pages: [ReaderPageState] { backing.pages }
-    var slots: [any ReaderSlot] { backing.slots }
-    var currentPageIndex: Int32 { backing.currentPageIndex }
-    var currentSlotIndex: Int32 { backing.currentSlotIndex }
-    var direction: MangaReadingDirection { backing.direction }
-    var doublePageSpread: Bool { backing.doublePageSpread }
-    var spreadCoverSinglePage: Bool { backing.spreadCoverSinglePage }
-    var previousBoundary: any ChapterBoundary { backing.previousBoundary }
-    var nextBoundary: any ChapterBoundary { backing.nextBoundary }
-    var prefetchMedia: [UiMediaImage] { backing.prefetchMedia }
-    var imageTranslation: any ImageTranslationPresenterState { backing.imageTranslation }
-    var lockedChapter: ChapterBoundaryLocked? { backing.lockedChapter }
 
     func setWideViewport(isWide: Bool) { backing.setWideViewport(isWide: isWide) }
     func onPageDimensionsLoaded(pageId: String, width: Float, height: Float) {
@@ -1284,4 +1557,10 @@ private final class NoopMacImageTranslationState: NSObject, ImageTranslationPres
     func regenerate(media: any UiMedia) {}
     func setErrorDetailsVisible(media: any UiMedia, visible: Bool) {}
     func toggle(media: any UiMedia) {}
+}
+
+private final class SilentMacNotification: NSObject, InAppNotification {
+    nonisolated func onError(message: Message, throwable: KotlinThrowable) {}
+    nonisolated func onProgress(message: Message, progress: Int32, total: Int32) {}
+    nonisolated func onSuccess(message: Message) {}
 }

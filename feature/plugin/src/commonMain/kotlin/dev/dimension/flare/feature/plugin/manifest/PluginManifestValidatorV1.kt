@@ -288,7 +288,7 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
             val allowsPostMutateOnly =
                 apiVersion >= 2 &&
                     capabilityId == PluginAbiV1.Capabilities.POST &&
-                    operations == setOf("mutate")
+                    operations.intersect(knownOperations) == setOf("mutate")
             check(
                 allowsPostMutateOnly || operations.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
                 "capability.incomplete",

@@ -60,6 +60,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -160,13 +161,23 @@ public class MangaReaderPresenter(
                     .toUi()
                     .map { state -> state.map { it.bindMangaProxy(proxyRef) } }
             } else {
-                combine(cacheable.data, cacheable.refreshState) { data, refresh ->
-                    when {
-                        refresh is LoadState.Loading -> UiState.Loading()
-                        refresh is LoadState.Error -> UiState.Error(refresh.error)
-                        data is CacheState.Success -> UiState.Success(data.data.bindMangaProxy(proxyRef))
-                        else -> UiState.Loading()
-                    }
+                flow {
+                    var hasObservedSuccessInAttempt = false
+                    combine(cacheable.data, cacheable.refreshState) { data, refresh ->
+                        if (!hasObservedSuccessInAttempt && data is CacheState.Success && refresh is LoadState.NotLoading) {
+                            hasObservedSuccessInAttempt = true
+                        }
+                        if (hasObservedSuccessInAttempt && data is CacheState.Success) {
+                            UiState.Success(data.data.bindMangaProxy(proxyRef))
+                        } else {
+                            when {
+                                refresh is LoadState.Loading -> UiState.Loading()
+                                refresh is LoadState.Error -> UiState.Error(refresh.error)
+                                data is CacheState.Success -> UiState.Success(data.data.bindMangaProxy(proxyRef))
+                                else -> UiState.Loading()
+                            }
+                        }
+                    }.collect { emit(it) }
                 }
             }
         }
@@ -781,7 +792,7 @@ public class MangaReaderPresenter(
                         optimisticDirectionOverride = null
                     } finally {
                         pendingDirectionWrites--
-                        if (pendingDirectionWrites == 0 && effectiveObservedProgress?.readerModeOverride == optimisticDirectionOverride) {
+                        if (pendingDirectionWrites == 0 && latestLoadedProgress?.readerModeOverride == optimisticDirectionOverride) {
                             optimisticDirectionOverride = null
                         }
                     }
@@ -1001,14 +1012,13 @@ private class ChapterPagesSession(
     ) {
         if (!job.isActive) return
         inFlightJobs.remove(page.id)?.cancel()
+        resolvedMedia = resolvedMedia - page.id
         failedPages = failedPages - page.id
-        if (page.id !in resolvedMedia) {
-            launchResolvePage(
-                page = page,
-                dataSource = dataSource,
-                mangaKey = mangaKey,
-            )
-        }
+        launchResolvePage(
+            page = page,
+            dataSource = dataSource,
+            mangaKey = mangaKey,
+        )
     }
 
     private fun launchResolvePage(

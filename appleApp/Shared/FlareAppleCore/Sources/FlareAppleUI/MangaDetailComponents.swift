@@ -304,22 +304,28 @@ public struct MangaHeroCardView: View {
                     Spacer(minLength: 0)
                 }
 
-                Button {
-                    detail.onBookmark(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
-                } label: {
-                    Image(fontAwesome: detail.isBookmarked ? .heartFill : .heart)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(detail.isBookmarked ? Color.red : Color.secondary)
-                .accessibilityLabel(
-                    Text(
-                        verbatim: detail.isBookmarked
-                            ? FlareAppleUILocalization.string("bookmark_remove", fallback: "Remove bookmark")
-                            : FlareAppleUILocalization.string("bookmark_add", fallback: "Add bookmark")
+                if detail.actions.isEmpty && (!(detail.bookmarkAction is ClickEventNoop) || detail.isBookmarked) {
+                    let isBookmarkDisabled = detail.bookmarkAction is ClickEventNoop
+                    Button {
+                        detail.onBookmark(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
+                    } label: {
+                        Image(fontAwesome: detail.isBookmarked ? .heartFill : .heart)
+                            .frame(width: 34, height: 34)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isBookmarkDisabled)
+                    .opacity(isBookmarkDisabled ? 0.45 : 1.0)
+                    .foregroundStyle(detail.isBookmarked ? Color.red : Color.secondary)
+                    .accessibilityIdentifier("manga_cta_bookmark_fallback")
+                    .accessibilityLabel(
+                        Text(
+                            verbatim: detail.isBookmarked
+                                ? FlareAppleUILocalization.string("bookmark_remove", fallback: "Remove bookmark")
+                                : FlareAppleUILocalization.string("bookmark_add", fallback: "Add bookmark")
+                        )
                     )
-                )
+                }
             }
 
             if !detail.actions.isEmpty {
@@ -365,6 +371,9 @@ public struct MangaSynopsisAndTagsCardView: View {
     public let detail: UiMangaDetail
     public let onTagClick: ((UiMangaTag) -> Void)?
 
+    @State private var isSynopsisExpanded = false
+    @State private var measuredSynopsisOverflow: Bool?
+
     public init(
         detail: UiMangaDetail,
         onTagClick: ((UiMangaTag) -> Void)? = nil
@@ -375,11 +384,59 @@ public struct MangaSynopsisAndTagsCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let content = detail.content, !content.innerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                RichText(text: content)
-                    .lineSpacing(1.5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let content = detail.content {
+                let plainText = content.innerText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !plainText.isEmpty {
+                    let heuristicOverflow =
+                        content.renderRuns.count > 4 ||
+                        plainText.filter({ $0 == "\n" }).count >= 4 ||
+                        plainText.count > 220
+                    let canToggle = (measuredSynopsisOverflow ?? heuristicOverflow) || isSynopsisExpanded
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        CollapsibleRichText(
+                            text: content,
+                            lineLimit: 4,
+                            collapseThreshold: 4,
+                            isExpanded: isSynopsisExpanded,
+                            isTextSelectionEnabled: true
+                        ) { overflows in
+                            if !isSynopsisExpanded {
+                                measuredSynopsisOverflow = overflows
+                            }
+                        }
+                        .lineSpacing(1.5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if canToggle {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isSynopsisExpanded.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(
+                                        verbatim: isSynopsisExpanded
+                                            ? FlareAppleUILocalization.string("mastodon_item_show_less", fallback: "Show less")
+                                            : FlareAppleUILocalization.string("mastodon_item_show_more", fallback: "Show more")
+                                    )
+                                    Image(systemName: isSynopsisExpanded ? "chevron.up" : "chevron.down")
+                                        .font(.caption2.weight(.semibold))
+                                }
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.vertical, 2)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("manga_synopsis_toggle")
+                        }
+                    }
+                    .onChange(of: content.raw) { _, _ in
+                        isSynopsisExpanded = false
+                        measuredSynopsisOverflow = nil
+                    }
+                }
             }
 
             MangaTagGroupsView(

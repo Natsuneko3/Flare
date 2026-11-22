@@ -38,8 +38,9 @@ internal data class DbMangaChapterProgress(
 
 internal class MangaProgressConverters {
     @ColumnTypeConverter
-    fun fromReadingDirection(value: MangaReadingDirection): String = value.name
+    fun fromReadingDirection(value: MangaReadingDirection?): String? = value?.name
 
     @ColumnTypeConverter
-    fun toReadingDirection(value: String): MangaReadingDirection = MangaReadingDirection.valueOf(value)
+    fun toReadingDirection(value: String?): MangaReadingDirection? =
+        value?.let { raw -> MangaReadingDirection.entries.firstOrNull { entry -> entry.name == raw } }
 }

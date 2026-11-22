@@ -241,6 +241,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         // Move to last slot (slot 1), then settle on next boundary page:
         // stepping inward must return to slot 1 (NOT skip to slot 0), and stepping outward opens Chapter 2
         fakeState.goToSlot(slotIndex: 1)
+        try await eventually(window: window) { controller.activePagerPage == 2 && !controller.isOnNextBoundaryPage }
         controller.scrollToBoundary(isNext: true)
         XCTAssertTrue(controller.isOnNextBoundaryPage)
 
@@ -254,6 +255,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // Settle on previous boundary page: stepping inward returns to slot 0 without skipping to slot 1
         fakeState.goToSlot(slotIndex: 0)
+        try await eventually(window: window) { controller.activePagerPage == 1 && !controller.isOnNextBoundaryPage }
         controller.scrollToBoundary(isNext: false)
         XCTAssertTrue(controller.isOnPreviousBoundaryPage)
         XCTAssertTrue(controller.handleKey(.rightArrow))
@@ -374,6 +376,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 2, "Switching RTL -> LTR mid-chapter must preserve currentSlotIndex == 2")
         XCTAssertNil(controller.zoomResetHandler)
+        XCTAssertNotNil(controller.doubleTapZoomHandler, "Switching RTL -> LTR must preserve doubleTapZoomHandler on active slot")
 
         // 3. Simulated manual horizontal user swipe after RTL -> LTR switch (slot 2 -> slot 3 in LTR) must NOT yank back
         let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
@@ -401,6 +404,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         }
         XCTAssertEqual(fakeState.currentSlotIndex, 1, "Switching LTR -> RTL mid-chapter must preserve currentSlotIndex == 1")
         XCTAssertNil(controller.zoomResetHandler)
+        XCTAssertNotNil(controller.doubleTapZoomHandler, "Switching LTR -> RTL must preserve doubleTapZoomHandler on active slot")
 
         // 5. Simulated manual horizontal user swipe after LTR -> RTL switch (slot 1 -> slot 2 in RTL) must NOT yank back
         let rtlScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
@@ -624,6 +628,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // Split spread while standing on nextBoundaryPage (slots 4 -> 5, shifting currentSlotIndex on last page AND moving nextBoundaryPage 5 -> 6)
         fakeState.goToSlot(slotIndex: 3) // page 5 -> slotIndex shifts 3 -> 4 when fiveSplitSlots applies, while on nextBoundaryPage!
+        try await eventually(window: window) { controller.activePagerPage == 4 && !controller.isOnNextBoundaryPage }
         controller.scrollToBoundary(isNext: true)
         try await eventually(window: window) { controller.isOnNextBoundaryPage && controller.activePagerPage == 5 }
         fakeState.updateSlots(fiveSplitSlots)
@@ -813,6 +818,150 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), ltrScrollViewID)
     }
 
+    func testAsyncSnapshotDeliveryMidSwipeSplitStepNavigationAndLockedBoundary() async throws {
+        let prevLockedChapter = UiMangaChapter(
+            id: "ch-0-locked",
+            title: "Chapter 0 VIP",
+            subtitle: nil,
+            uploadedAt: nil,
+            locked: true,
+            url: "https://manga.example/paywall/ch-0"
+        )
+        let nextLockedChapter = UiMangaChapter(
+            id: "ch-2-locked",
+            title: "Chapter 2 VIP",
+            subtitle: nil,
+            uploadedAt: nil,
+            locked: true,
+            url: "https://manga.example/paywall/ch-2"
+        )
+        let sixPages = makeSamplePages(count: 6)
+        let fourSpreadSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 3, primaryPageIndex: 3),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        let fiveSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotSingle(pageIndex: 3),
+            ReaderSlotSingle(pageIndex: 4),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+
+        let fakeState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: sixPages,
+            slots: fourSpreadSlots,
+            previousBoundary: ChapterBoundaryLocked(chapter: prevLockedChapter, openUrl: "https://manga.example/paywall/ch-0"),
+            nextBoundary: ChapterBoundaryLocked(chapter: nextLockedChapter, openUrl: "https://manga.example/paywall/ch-2")
+        )
+        fakeState.goToSlot(slotIndex: 1) // pagerPage == 2 (startBoundaryOffset == 1)
+
+        let controller = MangaReaderInteractionController()
+        let hostBox = ReaderTestHostModel(state: fakeState, controller: controller, deferSnapshotDelivery: true)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        window.rootViewController = UIHostingController(rootView: ReaderTestHostView(model: hostBox))
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        try await eventually(window: window) {
+            controller.isBound && controller.activePagerPage == 2 && hostBox.pageFrames[1] != nil
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+
+        let scrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
+
+        // (a) .rtl mid-swipe spread split with deferred async snapshot publication must NOT yank back to pre-swipe slot 1
+        controller.processPanGestureStateForTesting(.began)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        controller.processPanGestureStateForTesting(.changed)
+        scrollView.bounds.origin = CGPoint(x: 2000, y: 0)
+        scrollView.layoutIfNeeded()
+
+        fakeState.updateSlots(fiveSplitSlots)
+        try await Task.sleep(for: .milliseconds(25))
+        window.layoutIfNeeded()
+
+        scrollView.bounds.origin = CGPoint(x: 1600, y: 0)
+        scrollView.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(25))
+        controller.processPanGestureStateForTesting(.changed)
+
+        var rtlTargetOffset = CGPoint(x: 1600, y: 0)
+        scrollView.delegate?.scrollViewWillEndDragging?(scrollView, withVelocity: .zero, targetContentOffset: &rtlTargetOffset)
+        scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
+        controller.processPanGestureStateForTesting(.ended)
+
+        // Immediately on finger lift (before async snapshot settles) AND after async snapshot settles, must stay on pagerPage 3 (page 3, slot 2)
+        XCTAssertEqual(controller.activePagerPage, 3, "Mid-swipe split must not yank back to pre-swipe pagerPage 2 while awaiting async snapshot")
+        try await eventually(window: window) {
+            guard let page3Frame = hostBox.pageFrames[3] else { return false }
+            return hostBox.snapshot.currentPageIndex == 3 &&
+                hostBox.snapshot.currentSlotIndex == 2 &&
+                controller.activePagerPage == 3 &&
+                abs(scrollView.contentOffset.x - 2400) <= 2.0 &&
+                page3Frame.minX >= -1.5 &&
+                page3Frame.maxX <= 801.5
+        }
+
+        // (b) pagedStepForward / pagedStepBackward advance & animate accurately under deferred async snapshot delivery
+        XCTAssertTrue(controller.handleKey(.leftArrow)) // RTL forward: slot 2 -> slot 3 (page 4, pagerPage 4)
+        XCTAssertEqual(controller.activePagerPage, 4)
+        try await eventually(window: window) {
+            hostBox.snapshot.currentSlotIndex == 3 &&
+                hostBox.snapshot.currentPageIndex == 4 &&
+                controller.activePagerPage == 4
+        }
+
+        XCTAssertTrue(controller.handleKey(.leftArrow)) // RTL forward: slot 3 -> slot 4 (last slot, page 5, pagerPage 5)
+        XCTAssertEqual(controller.activePagerPage, 5)
+        try await eventually(window: window) {
+            hostBox.snapshot.currentSlotIndex == 4 &&
+                hostBox.snapshot.currentPageIndex == 5 &&
+                controller.activePagerPage == 5
+        }
+
+        // (c) Stepping forward on the last slot when nextBoundary is ChapterBoundaryLocked scrolls onto nextBoundaryPage (pagerPage 6)
+        XCTAssertFalse(controller.isOnNextBoundaryPage)
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        try await eventually(window: window) {
+            controller.isOnNextBoundaryPage && controller.activePagerPage == 6
+        }
+        // Stepping forward again on locked nextBoundaryPage remains on nextBoundaryPage
+        XCTAssertTrue(controller.handleKey(.leftArrow))
+        XCTAssertTrue(controller.isOnNextBoundaryPage)
+        XCTAssertEqual(controller.activePagerPage, 6)
+
+        // Stepping backward from nextBoundaryPage returns to last slot (slot 4 / pagerPage 5)
+        XCTAssertTrue(controller.handleKey(.rightArrow))
+        try await eventually(window: window) {
+            !controller.isOnNextBoundaryPage &&
+                controller.activePagerPage == 5 &&
+                hostBox.snapshot.currentSlotIndex == 4
+        }
+
+        // Stepping backward on slot 0 when previousBoundary is ChapterBoundaryLocked scrolls onto prevBoundaryPage (0)
+        fakeState.goToSlot(slotIndex: 0)
+        try await eventually(window: window) {
+            hostBox.snapshot.currentSlotIndex == 0 && controller.activePagerPage == 1
+        }
+        XCTAssertTrue(controller.handleKey(.rightArrow)) // RTL backward on slot 0 -> prevBoundaryPage (0)
+        try await eventually(window: window) {
+            controller.isOnPreviousBoundaryPage && controller.activePagerPage == 0
+        }
+    }
+
     func testReaderGifPageShowsShareButtonExportsGifAndSurfacesShareErrors() async throws {
         let gifURL = "https://manga.example/ch-1/page-\(UUID().uuidString).gif"
         let gifMedia = UiMediaGif(
@@ -1000,7 +1149,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
             authors: ["Aria Lin"],
             artists: ["Kuro"],
             status: .ongoing,
-            content: nil,
+            content: makeRichSynopsis(["A journey across star seas."]),
             url: "https://manga.example/series/99",
             updatedAt: nil,
             readingDirection: .rtl,
@@ -1147,7 +1296,10 @@ final class MangaReaderAndDetailTests: XCTestCase {
             )
         }
         let renderedText = try renderPDFText(detailStack, width: 390, height: 900)
+        let showMoreLabel = FlareAppleUILocalization.string("mastodon_item_show_more", fallback: "Show more")
         XCTAssertTrue(renderedText.contains("Starlight Odyssey"), renderedText)
+        XCTAssertTrue(renderedText.contains("A journey across star seas."), renderedText)
+        XCTAssertFalse(renderedText.contains(showMoreLabel), "Short <= 4 line synopsis must not show expand toggle")
         XCTAssertTrue(renderedText.contains("Genre"), renderedText)
         XCTAssertTrue(renderedText.contains("Sci-Fi"), renderedText)
         XCTAssertTrue(renderedText.contains("Adventure"), renderedText)
@@ -1158,6 +1310,101 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertTrue(renderedText.contains("Chapter 0: Prologue"), renderedText)
         XCTAssertTrue(renderedText.contains("Chapter 1: Dawn"), renderedText)
         XCTAssertTrue(renderedText.contains("Chapter 2: VIP Epilogue"), renderedText)
+
+        // Verify guest mode does not render a dead/duplicate standalone bookmark button, and long synopses show expand toggle
+        let guestHeroHost = UIHostingController(
+            rootView: MangaHeroCardView(
+                detail: detail,
+                translation: nil,
+                primaryReadTarget: nil,
+                onOpenCover: { _ in },
+                onOpenProfile: { _, _ in },
+                onOpenReader: { _, _ in }
+            )
+        )
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 400)
+        window.rootViewController = guestHeroHost
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(30))
+        let addBookmarkLabel = FlareAppleUILocalization.string("bookmark_add", fallback: "Add bookmark")
+        let renderedEmptyGuestHero = try renderPDFText(
+            MangaHeroCardView(
+                detail: detail,
+                translation: nil,
+                primaryReadTarget: primaryTarget,
+                onOpenCover: { _ in },
+                onOpenProfile: { _, _ in },
+                onOpenReader: { _, _ in }
+            ),
+            width: 390,
+            height: 300
+        )
+        XCTAssertFalse(renderedEmptyGuestHero.contains(addBookmarkLabel))
+        XCTAssertEqual(
+            countSubviews(ofType: UIButton.self, in: guestHeroHost.view),
+            0,
+            "Guest detail with empty actions and ClickEventNoop bookmarkAction must render zero interactive buttons when primaryReadTarget is nil"
+        )
+
+        let guestDisabledBookmark = ActionMenu.Item(
+            updateKey: "guest-bm",
+            icon: .bookmark,
+            text: nil,
+            count: nil,
+            color: .contentColor,
+            clickEvent: ClickEventNoop.shared,
+            actionFamily: .bookmark,
+            enabled: false
+        )
+        let longSynopsisDetail = UiMangaDetail(
+            pluginId: detail.pluginId,
+            platformId: detail.platformId,
+            mangaKey: detail.mangaKey,
+            accountType: detail.accountType,
+            title: detail.title,
+            altTitles: detail.altTitles,
+            cover: nil,
+            author: nil,
+            authors: detail.authors,
+            artists: detail.artists,
+            status: detail.status,
+            content: makeRichSynopsis((1...7).map { "Paragraph \($0): Long star-sea chronicle across uncharted galaxies." }),
+            url: detail.url,
+            updatedAt: nil,
+            readingDirection: .rtl,
+            tagGroups: detail.tagGroups,
+            chapterGroups: detail.chapterGroups,
+            isBookmarked: false,
+            bookmarkAction: ClickEventNoop.shared,
+            actions: [guestDisabledBookmark],
+            sourceLanguages: ["en"]
+        )
+        let longSynopsisRendered = try renderPDFText(
+            MangaSynopsisAndTagsCardView(detail: longSynopsisDetail),
+            width: 390,
+            height: 500
+        )
+        XCTAssertTrue(longSynopsisRendered.contains(showMoreLabel), "Multi-paragraph > 4 line synopsis must render expand toggle")
+    }
+
+    private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
+        let style = RenderTextStyle(
+            link: nil,
+            bold: false,
+            italic: false,
+            strikethrough: false,
+            monospace: false,
+            code: false,
+            underline: false,
+            small: false,
+            time: false,
+            imageLink: nil
+        )
+        let blocks: [RenderContent] = paragraphs.map {
+            RenderContent.Text(runs: [RenderRun.Text(text: $0, style: style)], block: RenderBlockStyle())
+        }
+        let raw = paragraphs.joined(separator: "\n")
+        return UiRichText(renderRuns: blocks, isRtl: false, raw: raw, innerText: raw, imageUrls: [])
     }
 
     private func renderPDFText<V: View>(_ view: V, width: CGFloat, height: CGFloat) throws -> String {
@@ -1225,30 +1472,45 @@ final class MangaReaderAndDetailTests: XCTestCase {
 private final class ReaderTestHostModel {
     var snapshot: any MangaReaderPresenterState
     let controller: MangaReaderInteractionController
+    let deferSnapshotDelivery: Bool
     var hudVisible = true
     var pageFrames: [Int: CGRect] = [:]
     var retryPageIds: Set<String> = []
     var scrubberLeadingLabelFrame: CGRect?
     var scrubberTrailingLabelFrame: CGRect?
+    private var stateGeneration = 0
 
     init(
         state: FakeMangaReaderState,
-        controller: MangaReaderInteractionController
+        controller: MangaReaderInteractionController,
+        deferSnapshotDelivery: Bool = false
     ) {
         self.snapshot = IOSMangaStateSnapshot(backing: state)
         self.controller = controller
-        state.onStateMutated = { [weak self, weak state] in
-            guard let self, let state else { return }
-            self.snapshot = IOSMangaStateSnapshot(backing: state)
-        }
+        self.deferSnapshotDelivery = deferSnapshotDelivery
+        bindMutationCallback(to: state)
     }
 
     func setState(_ next: FakeMangaReaderState) {
+        stateGeneration += 1
         retryPageIds.removeAll()
         snapshot = IOSMangaStateSnapshot(backing: next)
-        next.onStateMutated = { [weak self, weak next] in
-            guard let self, let next else { return }
-            self.snapshot = IOSMangaStateSnapshot(backing: next)
+        bindMutationCallback(to: next)
+    }
+
+    private func bindMutationCallback(to state: FakeMangaReaderState) {
+        let boundGeneration = stateGeneration
+        state.onStateMutated = { [weak self, weak state] in
+            guard let self, let state else { return }
+            if self.deferSnapshotDelivery {
+                let captured = IOSMangaStateSnapshot(backing: state)
+                Task { @MainActor [weak self] in
+                    guard let self, self.stateGeneration == boundGeneration else { return }
+                    self.snapshot = captured
+                }
+            } else {
+                self.snapshot = IOSMangaStateSnapshot(backing: state)
+            }
         }
     }
 }
@@ -1256,28 +1518,44 @@ private final class ReaderTestHostModel {
 @MainActor
 private final class IOSMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     private let backing: FakeMangaReaderState
+    let mangaTitle: String
+    let chapterTitle: String
+    let chapterUrl: String?
+    let activeChapterId: String
+    let loadState: UiState<KotlinUnit>
+    let pages: [ReaderPageState]
+    let slots: [any ReaderSlot]
+    let currentPageIndex: Int32
+    let currentSlotIndex: Int32
+    let direction: MangaReadingDirection
+    let doublePageSpread: Bool
+    let spreadCoverSinglePage: Bool
+    let previousBoundary: any ChapterBoundary
+    let nextBoundary: any ChapterBoundary
+    let prefetchMedia: [UiMediaImage]
+    let imageTranslation: any ImageTranslationPresenterState
+    let lockedChapter: ChapterBoundaryLocked?
 
     init(backing: FakeMangaReaderState) {
         self.backing = backing
+        self.mangaTitle = backing.mangaTitle
+        self.chapterTitle = backing.chapterTitle
+        self.chapterUrl = backing.chapterUrl
+        self.activeChapterId = backing.activeChapterId
+        self.loadState = backing.loadState
+        self.pages = backing.pages
+        self.slots = backing.slots
+        self.currentPageIndex = backing.currentPageIndex
+        self.currentSlotIndex = backing.currentSlotIndex
+        self.direction = backing.direction
+        self.doublePageSpread = backing.doublePageSpread
+        self.spreadCoverSinglePage = backing.spreadCoverSinglePage
+        self.previousBoundary = backing.previousBoundary
+        self.nextBoundary = backing.nextBoundary
+        self.prefetchMedia = backing.prefetchMedia
+        self.imageTranslation = backing.imageTranslation
+        self.lockedChapter = backing.lockedChapter
     }
-
-    var mangaTitle: String { backing.mangaTitle }
-    var chapterTitle: String { backing.chapterTitle }
-    var chapterUrl: String? { backing.chapterUrl }
-    var activeChapterId: String { backing.activeChapterId }
-    var loadState: UiState<KotlinUnit> { backing.loadState }
-    var pages: [ReaderPageState] { backing.pages }
-    var slots: [any ReaderSlot] { backing.slots }
-    var currentPageIndex: Int32 { backing.currentPageIndex }
-    var currentSlotIndex: Int32 { backing.currentSlotIndex }
-    var direction: MangaReadingDirection { backing.direction }
-    var doublePageSpread: Bool { backing.doublePageSpread }
-    var spreadCoverSinglePage: Bool { backing.spreadCoverSinglePage }
-    var previousBoundary: any ChapterBoundary { backing.previousBoundary }
-    var nextBoundary: any ChapterBoundary { backing.nextBoundary }
-    var prefetchMedia: [UiMediaImage] { backing.prefetchMedia }
-    var imageTranslation: any ImageTranslationPresenterState { backing.imageTranslation }
-    var lockedChapter: ChapterBoundaryLocked? { backing.lockedChapter }
 
     func setWideViewport(isWide: Bool) { backing.setWideViewport(isWide: isWide) }
     func onPageDimensionsLoaded(pageId: String, width: Float, height: Float) {
