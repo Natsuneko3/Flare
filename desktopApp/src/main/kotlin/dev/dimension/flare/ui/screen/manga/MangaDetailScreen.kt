@@ -1,7 +1,12 @@
 package dev.dimension.flare.ui.screen.manga
 
+import androidx.compose.foundation.ContextMenuArea
+import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,38 +26,49 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridScope
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
-import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.paging.LoadState
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Brands
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.brands.Chrome
 import compose.icons.fontawesomeicons.solid.ArrowDownWideShort
 import compose.icons.fontawesomeicons.solid.ArrowUpWideShort
+import compose.icons.fontawesomeicons.solid.ArrowsRotate
 import compose.icons.fontawesomeicons.solid.BookOpen
 import compose.icons.fontawesomeicons.solid.Check
 import compose.icons.fontawesomeicons.solid.ChevronDown
@@ -85,7 +101,6 @@ import dev.dimension.flare.manga_detail_sort_descending
 import dev.dimension.flare.manga_detail_start_chapter
 import dev.dimension.flare.manga_detail_tab_comments
 import dev.dimension.flare.manga_detail_tab_recommendations
-import dev.dimension.flare.manga_detail_view_more
 import dev.dimension.flare.manga_locked_chapter_message
 import dev.dimension.flare.manga_locked_chapter_title
 import dev.dimension.flare.manga_open_in_browser
@@ -96,6 +111,7 @@ import dev.dimension.flare.manga_status_ongoing
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.more
+import dev.dimension.flare.refresh
 import dev.dimension.flare.rss_detail_open_in_browser
 import dev.dimension.flare.status_share
 import dev.dimension.flare.ui.component.AvatarComponent
@@ -108,15 +124,14 @@ import dev.dimension.flare.ui.component.NetworkImage
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TranslationButton
 import dev.dimension.flare.ui.component.TranslationRetryButton
+import dev.dimension.flare.ui.component.listCard
 import dev.dimension.flare.ui.component.manga.MangaActionsMenu
 import dev.dimension.flare.ui.component.manga.MangaTagGroupsSection
 import dev.dimension.flare.ui.component.placeholder
 import dev.dimension.flare.ui.component.resolveText
-import dev.dimension.flare.ui.component.status.AdaptiveCard
 import dev.dimension.flare.ui.component.status.GalleryTimelineItem
 import dev.dimension.flare.ui.component.status.LazyStatusVerticalStaggeredGrid
 import dev.dimension.flare.ui.component.status.StatusActionButton
-import dev.dimension.flare.ui.component.status.StatusItem
 import dev.dimension.flare.ui.component.status.appendStateUI
 import dev.dimension.flare.ui.component.status.status
 import dev.dimension.flare.ui.component.toImageVector
@@ -171,16 +186,15 @@ internal fun MangaDetailScreen(
     accountType: AccountType,
     navigate: (Route) -> Unit,
 ) {
-    var refreshKey by remember(accountType, mangaKey) { mutableIntStateOf(0) }
-    val state by producePresenter("desktop_manga_detail_$accountType-$mangaKey-$refreshKey") {
-        remember(accountType, mangaKey, refreshKey) {
+    val state by producePresenter("desktop_manga_detail_$accountType-$mangaKey") {
+        remember(accountType, mangaKey) {
             MangaDetailPresenter(accountType = accountType, mangaKey = mangaKey)
         }.invoke()
     }
     MangaDetailContent(
         state = state,
         navigate = navigate,
-        onRetry = { refreshKey++ },
+        onRetry = state::refresh,
     )
 }
 
@@ -225,7 +239,7 @@ internal fun MangaCommentsScreen(
 internal fun MangaDetailContent(
     state: MangaDetailPresenter.State,
     navigate: (Route) -> Unit,
-    onRetry: () -> Unit = {},
+    onRetry: () -> Unit = state::refresh,
 ) {
     val uriHandler = LocalUriHandler.current
     var lockedPromptChapter by remember { mutableStateOf<UiMangaChapter?>(null) }
@@ -318,6 +332,31 @@ private fun MangaCardTimeline(content: @Composable () -> Unit) {
 }
 
 @Composable
+private fun MangaDetailTabFilter(
+    availableTabs: List<DesktopMangaTab>,
+    activeTab: DesktopMangaTab,
+    onSelectTab: (DesktopMangaTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LiteFilter(modifier = modifier) {
+        availableTabs.forEach { tab ->
+            PillButton(
+                selected = activeTab == tab,
+                onSelectedChanged = { if (it) onSelectTab(tab) },
+            ) {
+                Text(
+                    when (tab) {
+                        DesktopMangaTab.Chapters -> stringResource(Res.string.manga_detail_chapters_title)
+                        DesktopMangaTab.Comments -> stringResource(Res.string.manga_detail_tab_comments)
+                        DesktopMangaTab.Recommendations -> stringResource(Res.string.manga_detail_tab_recommendations)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun WideMangaDetailContent(
     detail: UiMangaDetail,
     state: MangaDetailPresenter.State,
@@ -332,7 +371,13 @@ private fun WideMangaDetailContent(
                 if (state.supportsRecommendations) add(DesktopMangaTab.Recommendations)
             }
         }
-    var selectedTab by remember(availableTabs) { mutableStateOf(DesktopMangaTab.Chapters) }
+    var selectedTab by remember { mutableStateOf(DesktopMangaTab.Chapters) }
+    val activeTab = selectedTab.takeIf { it in availableTabs } ?: DesktopMangaTab.Chapters
+    LaunchedEffect(availableTabs) {
+        if (selectedTab !in availableTabs) {
+            selectedTab = DesktopMangaTab.Chapters
+        }
+    }
     val metaListState = rememberLazyListState()
 
     Row(Modifier.fillMaxSize()) {
@@ -361,6 +406,8 @@ private fun WideMangaDetailContent(
                             detail = detail,
                             translation = state.translation,
                             primaryReadTarget = state.primaryReadTarget,
+                            isRefreshing = state.isRefreshing,
+                            onRefresh = state::refresh,
                             navigate = navigate,
                         )
                     }
@@ -384,87 +431,26 @@ private fun WideMangaDetailContent(
                     ),
         ) {
             if (availableTabs.size > 1) {
-                LiteFilter(
+                MangaDetailTabFilter(
+                    availableTabs = availableTabs,
+                    activeTab = activeTab,
+                    onSelectTab = { selectedTab = it },
                     modifier =
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    availableTabs.forEach { tab ->
-                        PillButton(
-                            selected = selectedTab == tab,
-                            onSelectedChanged = { if (it) selectedTab = tab },
-                        ) {
-                            Text(
-                                when (tab) {
-                                    DesktopMangaTab.Chapters -> stringResource(Res.string.manga_detail_chapters_title)
-                                    DesktopMangaTab.Comments -> stringResource(Res.string.manga_detail_tab_comments)
-                                    DesktopMangaTab.Recommendations -> stringResource(Res.string.manga_detail_tab_recommendations)
-                                },
-                            )
-                        }
-                    }
-                }
+                )
             }
 
-            when (selectedTab) {
+            when (activeTab) {
                 DesktopMangaTab.Chapters -> {
-                    val chapterListState = rememberLazyListState()
-                    FlareScrollBar(chapterListState, modifier = Modifier.weight(1f)) {
-                        LazyColumn(
-                            state = chapterListState,
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            item(key = "chapters_header") {
-                                MangaChaptersHeader(
-                                    detail = detail,
-                                    selectedGroupId = state.selectedGroupId,
-                                    chapterSortDescending = state.chapterSortDescending,
-                                    chapterCount = state.chapters.size,
-                                    onSelectGroup = state::selectGroup,
-                                    onToggleSort = state::toggleChapterSort,
-                                )
-                            }
-                            if (state.chapters.isEmpty()) {
-                                item(key = "chapters_empty") {
-                                    Text(
-                                        text = stringResource(Res.string.manga_detail_empty_chapters),
-                                        style = FluentTheme.typography.body,
-                                        color = FluentTheme.colors.text.text.secondary,
-                                        modifier = Modifier.padding(vertical = 24.dp),
-                                    )
-                                }
-                            } else {
-                                items(
-                                    items = state.chapters,
-                                    key = { it.chapter.id },
-                                ) { item ->
-                                    MangaChapterRow(
-                                        item = item,
-                                        onClick = {
-                                            if (item.chapter.locked) {
-                                                onLockedChapterClick(item.chapter)
-                                            } else {
-                                                navigate(
-                                                    Route.Manga.Reader(
-                                                        mangaKey = detail.mangaKey,
-                                                        chapterId = item.chapter.id,
-                                                        initialPage = null,
-                                                        accountType = detail.accountType,
-                                                    ),
-                                                )
-                                            }
-                                        },
-                                        onSetRead = { isRead ->
-                                            state.setChapterRead(item.chapter.id, isRead)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    MangaChaptersSection(
+                        detail = detail,
+                        state = state,
+                        navigate = navigate,
+                        onLockedChapterClick = onLockedChapterClick,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
 
                 DesktopMangaTab.Comments -> {
@@ -510,101 +496,292 @@ private fun CompactMangaDetailContent(
     navigate: (Route) -> Unit,
     onLockedChapterClick: (UiMangaChapter) -> Unit,
 ) {
+    val availableTabs =
+        remember(state.supportsComments, state.supportsRecommendations) {
+            buildList {
+                add(DesktopMangaTab.Chapters)
+                if (state.supportsComments) add(DesktopMangaTab.Comments)
+                if (state.supportsRecommendations) add(DesktopMangaTab.Recommendations)
+            }
+        }
+    var selectedTab by remember { mutableStateOf(DesktopMangaTab.Chapters) }
+    val activeTab = selectedTab.takeIf { it in availableTabs } ?: DesktopMangaTab.Chapters
+    LaunchedEffect(availableTabs) {
+        if (selectedTab !in availableTabs) {
+            selectedTab = DesktopMangaTab.Chapters
+        }
+    }
     val gridState = rememberLazyStaggeredGridState()
+
     FlareScrollBar(gridState) {
-        LazyVerticalStaggeredGrid(
-            columns = StaggeredGridCells.Adaptive(164.dp),
+        LazyStatusVerticalStaggeredGrid(
+            columns =
+                if (activeTab == DesktopMangaTab.Recommendations) {
+                    StaggeredGridCells.Adaptive(148.dp)
+                } else {
+                    StaggeredGridCells.Fixed(1)
+                },
             state = gridState,
             contentPadding =
                 PaddingValues(
-                    start = screenHorizontalPadding,
                     top = LocalWindowPadding.current.calculateTopPadding() + 12.dp,
-                    end = screenHorizontalPadding,
                     bottom = LocalWindowPadding.current.calculateBottomPadding() + 24.dp,
                 ),
+            forceCardMode = true,
+            cardGridPadding = screenHorizontalPadding,
             horizontalArrangement = Arrangement.spacedBy(MangaGridSpacing),
-            verticalItemSpacing = 8.dp,
+            verticalItemSpacing = MangaGridSpacing,
             modifier = Modifier.fillMaxSize(),
         ) {
             item(span = StaggeredGridItemSpan.FullLine, key = "hero") {
-                MangaHeroCard(
-                    detail = detail,
-                    translation = state.translation,
-                    primaryReadTarget = state.primaryReadTarget,
-                    navigate = navigate,
-                )
+                Box(modifier = Modifier.padding(bottom = 10.dp)) {
+                    MangaHeroCard(
+                        detail = detail,
+                        translation = state.translation,
+                        primaryReadTarget = state.primaryReadTarget,
+                        isRefreshing = state.isRefreshing,
+                        onRefresh = state::refresh,
+                        navigate = navigate,
+                    )
+                }
             }
             if (detail.content != null || detail.tagGroups.any { it.tags.isNotEmpty() }) {
                 item(span = StaggeredGridItemSpan.FullLine, key = "synopsis_tags") {
-                    MangaSynopsisAndTagsCard(detail = detail)
+                    Box(modifier = Modifier.padding(bottom = 10.dp)) {
+                        MangaSynopsisAndTagsCard(detail = detail)
+                    }
                 }
             }
-            item(span = StaggeredGridItemSpan.FullLine, key = "chapters_header") {
-                MangaChaptersHeader(
-                    detail = detail,
-                    selectedGroupId = state.selectedGroupId,
-                    chapterSortDescending = state.chapterSortDescending,
-                    chapterCount = state.chapters.size,
-                    onSelectGroup = state::selectGroup,
-                    onToggleSort = state::toggleChapterSort,
-                )
-            }
-            if (state.chapters.isEmpty()) {
-                item(span = StaggeredGridItemSpan.FullLine, key = "chapters_empty") {
-                    Text(
-                        text = stringResource(Res.string.manga_detail_empty_chapters),
-                        style = FluentTheme.typography.body,
-                        color = FluentTheme.colors.text.text.secondary,
-                        modifier = Modifier.padding(vertical = 16.dp),
+            if (availableTabs.size > 1) {
+                item(span = StaggeredGridItemSpan.FullLine, key = "tabs") {
+                    MangaDetailTabFilter(
+                        availableTabs = availableTabs,
+                        activeTab = activeTab,
+                        onSelectTab = { selectedTab = it },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
                     )
                 }
-            } else {
-                items(
-                    items = state.chapters,
-                    key = { "chapter_${it.chapter.id}" },
-                    span = { StaggeredGridItemSpan.FullLine },
-                ) { item ->
-                    MangaChapterRow(
-                        item = item,
-                        onClick = {
-                            if (item.chapter.locked) {
-                                onLockedChapterClick(item.chapter)
-                            } else {
-                                navigate(
-                                    Route.Manga.Reader(
-                                        mangaKey = detail.mangaKey,
-                                        chapterId = item.chapter.id,
-                                        initialPage = null,
-                                        accountType = detail.accountType,
+            }
+            when (activeTab) {
+                DesktopMangaTab.Chapters -> {
+                    item(span = StaggeredGridItemSpan.FullLine, key = "chapters_header") {
+                        Box(modifier = Modifier.padding(bottom = 6.dp)) {
+                            MangaChaptersHeader(
+                                detail = detail,
+                                selectedGroupId = state.selectedGroupId,
+                                chapterSortDescending = state.chapterSortDescending,
+                                chapterCount = state.chapters.size,
+                                onSelectGroup = state::selectGroup,
+                                onToggleSort = state::toggleChapterSort,
+                            )
+                        }
+                    }
+                    if (state.chapters.isEmpty()) {
+                        item(span = StaggeredGridItemSpan.FullLine, key = "chapters_empty") {
+                            Text(
+                                text = stringResource(Res.string.manga_detail_empty_chapters),
+                                style = FluentTheme.typography.body,
+                                color = FluentTheme.colors.text.text.secondary,
+                                modifier = Modifier.padding(vertical = 16.dp),
+                            )
+                        }
+                    } else {
+                        items(
+                            count = state.chapters.size,
+                            key = { index -> "chapter_${state.chapters[index].chapter.id}" },
+                            span = { StaggeredGridItemSpan.FullLine },
+                        ) { index ->
+                            val item = state.chapters[index]
+                            MangaChapterRow(
+                                item = item,
+                                mangaUrl = detail.url,
+                                onClick = {
+                                    onChapterItemClick(
+                                        item = item,
+                                        detail = detail,
+                                        navigate = navigate,
+                                        onLockedChapterClick = onLockedChapterClick,
+                                    )
+                                },
+                                onSetRead = { isRead ->
+                                    state.setChapterRead(item.chapter.id, isRead)
+                                },
+                                modifier =
+                                    Modifier.listCard(
+                                        index = index,
+                                        totalCount = state.chapters.size,
                                     ),
-                                )
-                            }
-                        },
-                        onSetRead = { isRead ->
-                            state.setChapterRead(item.chapter.id, isRead)
-                        },
-                    )
+                            )
+                        }
+                    }
                 }
-            }
-            if (state.supportsComments) {
-                compactMangaCommentsItems(
-                    mangaKey = detail.mangaKey,
-                    accountType = detail.accountType,
-                    comments = state.comments,
-                    navigate = navigate,
-                )
-            }
-            if (state.supportsRecommendations) {
-                item(span = StaggeredGridItemSpan.FullLine, key = "recommendations_header") {
-                    Text(
-                        text = stringResource(Res.string.manga_detail_tab_recommendations),
-                        style = FluentTheme.typography.bodyStrong,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-                    )
+
+                DesktopMangaTab.Comments -> {
+                    status(state.comments)
                 }
-                mangaRecommendationItems(state.recommendations)
+
+                DesktopMangaTab.Recommendations -> {
+                    mangaRecommendationItems(state.recommendations)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun MangaChaptersSection(
+    detail: UiMangaDetail,
+    state: MangaDetailPresenter.State,
+    navigate: (Route) -> Unit,
+    onLockedChapterClick: (UiMangaChapter) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        if (maxWidth >= 520.dp) {
+            val gridState = rememberLazyGridState()
+            FlareScrollBar(gridState, modifier = Modifier.fillMaxSize()) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 240.dp),
+                    state = gridState,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    item(
+                        key = "chapters_header",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        MangaChaptersHeader(
+                            detail = detail,
+                            selectedGroupId = state.selectedGroupId,
+                            chapterSortDescending = state.chapterSortDescending,
+                            chapterCount = state.chapters.size,
+                            onSelectGroup = state::selectGroup,
+                            onToggleSort = state::toggleChapterSort,
+                        )
+                    }
+                    if (state.chapters.isEmpty()) {
+                        item(
+                            key = "chapters_empty",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            Text(
+                                text = stringResource(Res.string.manga_detail_empty_chapters),
+                                style = FluentTheme.typography.body,
+                                color = FluentTheme.colors.text.text.secondary,
+                                modifier = Modifier.padding(vertical = 24.dp),
+                            )
+                        }
+                    } else {
+                        items(
+                            items = state.chapters,
+                            key = { it.chapter.id },
+                        ) { item ->
+                            MangaChapterRow(
+                                item = item,
+                                mangaUrl = detail.url,
+                                onClick = {
+                                    onChapterItemClick(
+                                        item = item,
+                                        detail = detail,
+                                        navigate = navigate,
+                                        onLockedChapterClick = onLockedChapterClick,
+                                    )
+                                },
+                                onSetRead = { isRead ->
+                                    state.setChapterRead(item.chapter.id, isRead)
+                                },
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)),
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            val chapterListState = rememberLazyListState()
+            FlareScrollBar(chapterListState, modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = chapterListState,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    item(key = "chapters_header") {
+                        Box(modifier = Modifier.padding(bottom = 6.dp)) {
+                            MangaChaptersHeader(
+                                detail = detail,
+                                selectedGroupId = state.selectedGroupId,
+                                chapterSortDescending = state.chapterSortDescending,
+                                chapterCount = state.chapters.size,
+                                onSelectGroup = state::selectGroup,
+                                onToggleSort = state::toggleChapterSort,
+                            )
+                        }
+                    }
+                    if (state.chapters.isEmpty()) {
+                        item(key = "chapters_empty") {
+                            Text(
+                                text = stringResource(Res.string.manga_detail_empty_chapters),
+                                style = FluentTheme.typography.body,
+                                color = FluentTheme.colors.text.text.secondary,
+                                modifier = Modifier.padding(vertical = 24.dp),
+                            )
+                        }
+                    } else {
+                        items(
+                            count = state.chapters.size,
+                            key = { index -> state.chapters[index].chapter.id },
+                        ) { index ->
+                            val item = state.chapters[index]
+                            MangaChapterRow(
+                                item = item,
+                                mangaUrl = detail.url,
+                                onClick = {
+                                    onChapterItemClick(
+                                        item = item,
+                                        detail = detail,
+                                        navigate = navigate,
+                                        onLockedChapterClick = onLockedChapterClick,
+                                    )
+                                },
+                                onSetRead = { isRead ->
+                                    state.setChapterRead(item.chapter.id, isRead)
+                                },
+                                modifier =
+                                    Modifier.listCard(
+                                        index = index,
+                                        totalCount = state.chapters.size,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun onChapterItemClick(
+    item: UiMangaChapterItem,
+    detail: UiMangaDetail,
+    navigate: (Route) -> Unit,
+    onLockedChapterClick: (UiMangaChapter) -> Unit,
+) {
+    if (item.chapter.locked) {
+        onLockedChapterClick(item.chapter)
+    } else {
+        navigate(
+            Route.Manga.Reader(
+                mangaKey = detail.mangaKey,
+                chapterId = item.chapter.id,
+                initialPage = null,
+                accountType = detail.accountType,
+            ),
+        )
     }
 }
 
@@ -613,6 +790,8 @@ private fun MangaHeroCard(
     detail: UiMangaDetail,
     translation: MangaTranslatePresenter.State?,
     primaryReadTarget: PrimaryReadTarget?,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     navigate: (Route) -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -621,115 +800,150 @@ private fun MangaHeroCard(
         remember(detail.authors, detail.artists) {
             (detail.authors + detail.artists).distinct().joinToString(" · ")
         }
+    val cardBackground = FluentTheme.colors.background.card.default
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                detail.cover?.let { cover ->
+        Box(modifier = Modifier.fillMaxWidth()) {
+            detail.cover?.let { cover ->
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(148.dp)
+                            .clipToBounds(),
+                ) {
                     NetworkImage(
                         model = cover,
-                        contentDescription = detail.title,
+                        contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier =
                             Modifier
-                                .width(112.dp)
-                                .aspectRatio(2f / 3f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    navigate(
-                                        Route.RawImage(
-                                            rawImage = cover.url,
-                                            customHeaders = cover.customHeaders,
-                                            proxy = cover.proxy,
-                                        ),
-                                    )
-                                },
+                                .fillMaxSize()
+                                .alpha(0.28f)
+                                .blur(24.dp),
+                    )
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors =
+                                            listOf(
+                                                cardBackground.copy(alpha = 0.25f),
+                                                cardBackground,
+                                            ),
+                                    ),
+                                ),
                     )
                 }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+            }
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.Top,
                 ) {
-                    Text(
-                        text = detail.title,
-                        style = FluentTheme.typography.subtitle,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    detail.altTitles.firstOrNull { it.isNotBlank() }?.let { alt ->
-                        Text(
-                            text = alt,
-                            style = FluentTheme.typography.caption,
-                            color = FluentTheme.colors.text.text.secondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                    detail.cover?.let { cover ->
+                        NetworkImage(
+                            model = cover,
+                            contentDescription = detail.title,
+                            contentScale = ContentScale.Crop,
+                            modifier =
+                                Modifier
+                                    .width(120.dp)
+                                    .aspectRatio(2f / 3f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        navigate(
+                                            Route.RawImage(
+                                                rawImage = cover.url,
+                                                customHeaders = cover.customHeaders,
+                                                proxy = cover.proxy,
+                                            ),
+                                        )
+                                    },
                         )
                     }
-                    if (authorProfile != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier =
-                                Modifier.clickable {
-                                    navigate(Route.Profile(detail.accountType, authorProfile.key))
-                                },
-                        ) {
-                            AvatarComponent(data = authorProfile.avatar, size = 24.dp)
-                            RichText(
-                                text = authorProfile.name,
-                                textStyle = FluentTheme.typography.caption,
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        SelectionContainer {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = detail.title,
+                                    style = FluentTheme.typography.subtitle,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                detail.altTitles.firstOrNull { it.isNotBlank() }?.let { alt ->
+                                    Text(
+                                        text = alt,
+                                        style = FluentTheme.typography.caption,
+                                        color = FluentTheme.colors.text.text.secondary,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                        if (authorProfile != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier =
+                                    Modifier.clickable {
+                                        navigate(Route.Profile(detail.accountType, authorProfile.key))
+                                    },
+                            ) {
+                                AvatarComponent(data = authorProfile.avatar, size = 24.dp)
+                                RichText(
+                                    text = authorProfile.name,
+                                    textStyle = FluentTheme.typography.caption,
+                                    color = FluentTheme.colors.text.text.secondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        } else if (authorNames.isNotBlank()) {
+                            Text(
+                                text = authorNames,
+                                style = FluentTheme.typography.caption,
                                 color = FluentTheme.colors.text.text.secondary,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                    } else if (authorNames.isNotBlank()) {
-                        Text(
-                            text = authorNames,
-                            style = FluentTheme.typography.caption,
-                            color = FluentTheme.colors.text.text.secondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        detail.status?.let { status ->
-                            MangaStatusBadge(status = status)
-                        }
-                        detail.updatedAt?.let { updated ->
-                            DateTimeText(
-                                data = updated,
-                                style = FluentTheme.typography.caption,
-                                color = FluentTheme.colors.text.text.secondary,
-                            )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            detail.status?.let { status ->
+                                MangaStatusBadge(status = status)
+                            }
+                            detail.updatedAt?.let { updated ->
+                                DateTimeText(
+                                    data = updated,
+                                    style = FluentTheme.typography.caption,
+                                    color = FluentTheme.colors.text.text.secondary,
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            if (translation?.isTranslating == true) {
-                ProgressBar(modifier = Modifier.fillMaxWidth())
-            }
-            if (translation?.error != null) {
-                TranslationRetryButton(onClick = translation::retry)
-            }
+                if (translation?.isTranslating == true || isRefreshing) {
+                    ProgressBar(modifier = Modifier.fillMaxWidth())
+                }
+                if (translation?.error != null) {
+                    TranslationRetryButton(onClick = translation::retry)
+                }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
                 primaryReadTarget?.let { target ->
                     AccentButton(
                         onClick = {
@@ -744,7 +958,7 @@ private fun MangaHeroCard(
                         },
                         modifier =
                             Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .testTag("manga_primary_read_cta"),
                     ) {
                         FAIcon(
@@ -764,75 +978,96 @@ private fun MangaHeroCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                } ?: Spacer(Modifier.weight(1f))
-
-                translation?.let {
-                    TranslationButton(
-                        showTranslation = it.showTranslation,
-                        onClick = it::toggleTranslation,
-                    )
                 }
 
-                if (detail.actions.isEmpty() && (detail.bookmarkAction != ClickEvent.Noop || detail.isBookmarked)) {
-                    StatusActionButton(
-                        icon =
-                            if (detail.isBookmarked) {
-                                UiIcon.Unlike.toImageVector()
-                            } else {
-                                UiIcon.Like.toImageVector()
-                            },
-                        number = null,
-                        enabled = detail.bookmarkAction != ClickEvent.Noop,
-                        color =
-                            if (detail.isBookmarked) {
-                                FluentTheme.colors.system.critical
-                            } else {
-                                FluentTheme.colors.text.text.secondary
-                            },
-                        onClicked = {
-                            detail.onBookmark.invoke(ClickContext(uriHandler::openUri))
-                        },
-                        modifier = Modifier.testTag("manga_cta_bookmark_fallback"),
-                    )
-                }
-
-                detail.url?.takeIf { it.isNotBlank() }?.let { shareUrl ->
-                    SubtleButton(
-                        onClick = {
-                            uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(shareUrl).toUri())
-                        },
-                        iconOnly = true,
-                    ) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Brands.Chrome,
-                            contentDescription = stringResource(Res.string.rss_detail_open_in_browser),
-                        )
-                    }
-                    SubtleButton(
-                        onClick = {
-                            navigate(
-                                Route.StatusShareSheet(
-                                    accountType = detail.accountType,
-                                    statusKey = detail.mangaKey,
-                                    shareUrl = shareUrl,
-                                ),
-                            )
-                        },
-                        iconOnly = true,
-                    ) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.ShareNodes,
-                            contentDescription = stringResource(Res.string.status_share),
-                        )
-                    }
-                }
-            }
-
-            if (detail.actions.isNotEmpty()) {
-                MangaActionsMenu(
-                    actions = detail.actions,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                )
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    translation?.let {
+                        TranslationButton(
+                            showTranslation = it.showTranslation,
+                            onClick = it::toggleTranslation,
+                        )
+                    }
+
+                    SubtleButton(
+                        onClick = onRefresh,
+                        disabled = isRefreshing,
+                        iconOnly = true,
+                        modifier =
+                            Modifier
+                                .semantics {
+                                    if (isRefreshing) {
+                                        disabled()
+                                    }
+                                }.testTag("manga_detail_refresh"),
+                    ) {
+                        FAIcon(
+                            imageVector = FontAwesomeIcons.Solid.ArrowsRotate,
+                            contentDescription = stringResource(Res.string.refresh),
+                        )
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    if (detail.actions.isNotEmpty()) {
+                        MangaActionsMenu(actions = detail.actions)
+                    } else if (detail.bookmarkAction != ClickEvent.Noop || detail.isBookmarked) {
+                        StatusActionButton(
+                            icon =
+                                if (detail.isBookmarked) {
+                                    UiIcon.Unlike.toImageVector()
+                                } else {
+                                    UiIcon.Like.toImageVector()
+                                },
+                            number = null,
+                            enabled = detail.bookmarkAction != ClickEvent.Noop,
+                            color =
+                                if (detail.isBookmarked) {
+                                    FluentTheme.colors.system.critical
+                                } else {
+                                    FluentTheme.colors.text.text.secondary
+                                },
+                            onClicked = {
+                                detail.onBookmark.invoke(ClickContext(uriHandler::openUri))
+                            },
+                            modifier = Modifier.testTag("manga_cta_bookmark_fallback"),
+                        )
+                    }
+
+                    detail.url?.takeIf { it.isNotBlank() }?.let { shareUrl ->
+                        SubtleButton(
+                            onClick = {
+                                uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(shareUrl).toUri())
+                            },
+                            iconOnly = true,
+                        ) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Brands.Chrome,
+                                contentDescription = stringResource(Res.string.rss_detail_open_in_browser),
+                            )
+                        }
+                        SubtleButton(
+                            onClick = {
+                                navigate(
+                                    Route.StatusShareSheet(
+                                        accountType = detail.accountType,
+                                        statusKey = detail.mangaKey,
+                                        shareUrl = shareUrl,
+                                    ),
+                                )
+                            },
+                            iconOnly = true,
+                        ) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                                contentDescription = stringResource(Res.string.status_share),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1016,10 +1251,32 @@ private fun MangaChaptersHeader(
 @Composable
 private fun MangaChapterRow(
     item: UiMangaChapterItem,
+    mangaUrl: String?,
     onClick: () -> Unit,
     onSetRead: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val uriHandler = LocalUriHandler.current
     val chapter = item.chapter
+    val openUrl = chapter.openUrl(mangaUrl)
+    val markReadLabel =
+        stringResource(
+            if (item.isRead) {
+                Res.string.manga_detail_mark_unread
+            } else {
+                Res.string.manga_detail_mark_read
+            },
+        )
+    val openInBrowserLabel = stringResource(Res.string.manga_open_in_browser)
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val accentFill = FluentTheme.colors.fillAccent.default
+    val backgroundColor =
+        when {
+            isHovered -> FluentTheme.colors.subtleFill.secondary
+            item.isCurrent -> accentFill.copy(alpha = 0.12f)
+            else -> FluentTheme.colors.control.default
+        }
     val titleColor =
         when {
             item.isCurrent -> FluentTheme.colors.text.accent.primary
@@ -1027,16 +1284,35 @@ private fun MangaChapterRow(
             else -> FluentTheme.colors.text.text.primary
         }
 
-    Card(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .testTag("manga_chapter_row_${chapter.id}"),
+    ContextMenuArea(
+        items = {
+            buildList {
+                add(
+                    ContextMenuItem(
+                        label = markReadLabel,
+                        onClick = { onSetRead(!item.isRead) },
+                    ),
+                )
+                if (openUrl != null) {
+                    add(
+                        ContextMenuItem(
+                            label = openInBrowserLabel,
+                            onClick = {
+                                uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(openUrl).toUri())
+                            },
+                        ),
+                    )
+                }
+            }
+        },
     ) {
         Row(
             modifier =
-                Modifier
+                modifier
                     .fillMaxWidth()
+                    .hoverable(interactionSource)
+                    .background(backgroundColor)
+                    .testTag("manga_chapter_row_${chapter.id}")
                     .padding(end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1111,113 +1387,36 @@ private fun MangaChapterRow(
             MenuFlyoutContainer(
                 flyout = {
                     MenuFlyoutItem(
-                        text = {
-                            Text(
-                                stringResource(
-                                    if (item.isRead) {
-                                        Res.string.manga_detail_mark_unread
-                                    } else {
-                                        Res.string.manga_detail_mark_read
-                                    },
-                                ),
-                            )
-                        },
+                        text = { Text(markReadLabel) },
                         onClick = {
                             isFlyoutVisible = false
                             onSetRead(!item.isRead)
                         },
                     )
+                    if (openUrl != null) {
+                        MenuFlyoutItem(
+                            text = { Text(openInBrowserLabel) },
+                            onClick = {
+                                isFlyoutVisible = false
+                                uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(openUrl).toUri())
+                            },
+                        )
+                    }
                 },
             ) {
                 SubtleButton(
                     onClick = { isFlyoutVisible = true },
                     iconOnly = true,
-                    modifier = Modifier.testTag("manga_chapter_menu_${chapter.id}"),
+                    modifier =
+                        Modifier
+                            .graphicsLayer { alpha = if (isHovered || isFlyoutVisible) 1f else 0.45f }
+                            .testTag("manga_chapter_menu_${chapter.id}"),
                 ) {
                     FAIcon(
                         imageVector = FontAwesomeIcons.Solid.EllipsisVertical,
                         contentDescription = stringResource(Res.string.more),
                     )
                 }
-            }
-        }
-    }
-}
-
-private fun LazyStaggeredGridScope.compactMangaCommentsItems(
-    mangaKey: MicroBlogKey,
-    accountType: AccountType,
-    comments: PagingState<UiTimelineV2>,
-    navigate: (Route) -> Unit,
-) {
-    with(comments) {
-        onSuccess {
-            val visibleCount = minOf(itemCount, 3)
-            if (visibleCount > 0) {
-                item(span = StaggeredGridItemSpan.FullLine) {
-                    Text(
-                        text = stringResource(Res.string.manga_detail_tab_comments),
-                        style = FluentTheme.typography.bodyStrong,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-                    )
-                }
-                repeat(visibleCount) { index ->
-                    item(span = StaggeredGridItemSpan.FullLine) {
-                        AdaptiveCard(
-                            index = index,
-                            totalCount = visibleCount,
-                            respectTimelineMode = true,
-                        ) {
-                            StatusItem(get(index))
-                        }
-                    }
-                }
-            }
-            if (
-                visibleCount > 0 &&
-                (
-                    itemCount > 3 ||
-                        (
-                            appendState is LoadState.NotLoading &&
-                                !(appendState as LoadState.NotLoading).endOfPaginationReached
-                        )
-                )
-            ) {
-                item(span = StaggeredGridItemSpan.FullLine) {
-                    SubtleButton(
-                        onClick = {
-                            navigate(Route.Manga.Comments(mangaKey = mangaKey, accountType = accountType))
-                        },
-                    ) {
-                        Text(stringResource(Res.string.manga_detail_view_more))
-                    }
-                }
-            }
-        }
-        onLoading {
-            item(span = StaggeredGridItemSpan.FullLine) {
-                Text(
-                    text = stringResource(Res.string.manga_detail_tab_comments),
-                    style = FluentTheme.typography.bodyStrong,
-                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-                )
-            }
-            repeat(3) { index ->
-                item(span = StaggeredGridItemSpan.FullLine) {
-                    AdaptiveCard(
-                        index = index,
-                        totalCount = 3,
-                        respectTimelineMode = true,
-                    ) {
-                        StatusItem(null)
-                    }
-                }
-            }
-        }
-        onEmpty {}
-        onError { error ->
-            item(span = StaggeredGridItemSpan.FullLine) {
-                ErrorContent(error = error, onRetry = onRetry)
             }
         }
     }

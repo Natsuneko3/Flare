@@ -513,6 +513,198 @@ class MangaScreenTest {
                 .top
         assertEquals(collapsedToggleTop, recollapsedToggleTop, 2f)
     }
+
+    @Test
+    fun adaptiveChapterGridReflowsBetweenMultiColumnAndSingleColumn() {
+        val mangaKey = MicroBlogKey("manga-grid-1", "manga.example")
+        val accountType = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
+        val detail =
+            UiMangaDetail(
+                pluginId = "plugin.manga",
+                platformId = "manga-plat",
+                mangaKey = mangaKey,
+                accountType = accountType,
+                title = "Grid Reflow Saga",
+                altTitles = persistentListOf(),
+                cover = null,
+                author = null,
+                authors = persistentListOf("Hana Sato"),
+                artists = persistentListOf(),
+                status = UiMangaStatus.Ongoing,
+                content = "Short synopsis.".toUiPlainText(),
+                url = "https://manga.example/series/grid-1",
+                updatedAt = null,
+                readingDirection = MangaReadingDirection.Rtl,
+                tagGroups = persistentListOf(),
+                chapterGroups =
+                    persistentListOf(
+                        UiMangaChapterGroup(
+                            id = "main",
+                            title = null,
+                            chapters =
+                                persistentListOf(
+                                    UiMangaChapter(
+                                        id = "ch-1",
+                                        title = "Chapter 1: Dawn",
+                                        subtitle = "24p",
+                                        uploadedAt = null,
+                                        locked = false,
+                                        url = "https://manga.example/ch/1",
+                                    ),
+                                    UiMangaChapter(
+                                        id = "ch-2",
+                                        title = "Chapter 2: Horizon",
+                                        subtitle = "26p",
+                                        uploadedAt = null,
+                                        locked = false,
+                                        url = "https://manga.example/ch/2",
+                                    ),
+                                ),
+                        ),
+                    ),
+                isBookmarked = false,
+                bookmarkAction = ClickEvent.Noop,
+                actions = persistentListOf(),
+                sourceLanguages = persistentListOf("en"),
+            )
+
+        val fakeState = FakeMangaDetailState(detail)
+        var viewportWidth by mutableStateOf(1100.dp)
+
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalTimelineAppearance provides TimelineAppearance(),
+                LocalGlobalAppearance provides GlobalAppearance(),
+            ) {
+                FlareTheme(isDarkTheme = false) {
+                    Box(Modifier.size(viewportWidth, 850.dp)) {
+                        MangaDetailContent(
+                            state = fakeState,
+                            navigate = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        // 1. At viewportWidth = 1100.dp (chapters pane = 720.dp >= 520.dp): multi-column grid
+        val row1 = compose.onNodeWithTag("manga_chapter_row_ch-1").fetchSemanticsNode().boundsInRoot
+        val row2 = compose.onNodeWithTag("manga_chapter_row_ch-2").fetchSemanticsNode().boundsInRoot
+        assertEquals(row1.top, row2.top, 2f)
+        assertTrue(
+            "Expected ch-1 left (${row1.left}) < ch-2 left (${row2.left})",
+            row1.left < row2.left,
+        )
+
+        // 2. At viewportWidth = 820.dp (chapters pane = 440.dp < 520.dp): single-column stacked list
+        compose.runOnIdle {
+            viewportWidth = 820.dp
+        }
+        val stacked1 = compose.onNodeWithTag("manga_chapter_row_ch-1").fetchSemanticsNode().boundsInRoot
+        val stacked2 = compose.onNodeWithTag("manga_chapter_row_ch-2").fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "Expected stacked ch-1 bottom (${stacked1.bottom}) <= ch-2 top (${stacked2.top}) + 2f",
+            stacked1.bottom <= stacked2.top + 2f,
+        )
+
+        // 3. Clicking manga_detail_refresh invokes fakeState.refresh() and disables while refreshing
+        compose.onNodeWithTag("manga_detail_refresh").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(1, fakeState.refreshCount)
+            fakeState.isRefreshing = true
+        }
+        compose.onNodeWithTag("manga_detail_refresh").assertIsNotEnabled()
+        compose.onNodeWithTag("manga_detail_refresh").performTouchInput { click() }
+        compose.runOnIdle {
+            assertEquals(1, fakeState.refreshCount)
+        }
+    }
+
+    @Test
+    fun narrowViewportShowsTabSwitcherOnlyWhenMultiTabAndFallsBackSafely() {
+        val mangaKey = MicroBlogKey("manga-narrow-1", "manga.example")
+        val accountType = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
+        val detail =
+            UiMangaDetail(
+                pluginId = "plugin.manga",
+                platformId = "manga-plat",
+                mangaKey = mangaKey,
+                accountType = accountType,
+                title = "Narrow Viewport Saga",
+                altTitles = persistentListOf(),
+                cover = null,
+                author = null,
+                authors = persistentListOf("Hana Sato"),
+                artists = persistentListOf(),
+                status = UiMangaStatus.Ongoing,
+                content = "Compact synopsis.".toUiPlainText(),
+                url = "https://manga.example/series/narrow-1",
+                updatedAt = null,
+                readingDirection = MangaReadingDirection.Rtl,
+                tagGroups = persistentListOf(),
+                chapterGroups =
+                    persistentListOf(
+                        UiMangaChapterGroup(
+                            id = "main",
+                            title = null,
+                            chapters =
+                                persistentListOf(
+                                    UiMangaChapter("ch-1", "Chapter 1: Dawn", null, null, locked = false, url = null),
+                                    UiMangaChapter("ch-2", "Chapter 2: Horizon", null, null, locked = false, url = null),
+                                ),
+                        ),
+                    ),
+                isBookmarked = false,
+                bookmarkAction = ClickEvent.Noop,
+                actions = persistentListOf(),
+                sourceLanguages = persistentListOf("en"),
+            )
+
+        val fakeState = FakeMangaDetailState(detail)
+
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalTimelineAppearance provides TimelineAppearance(),
+                LocalGlobalAppearance provides GlobalAppearance(),
+            ) {
+                FlareTheme(isDarkTheme = false) {
+                    Box(Modifier.size(520.dp, 850.dp)) {
+                        MangaDetailContent(
+                            state = fakeState,
+                            navigate = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        // 1. Single-tab mode: "Chapters (2)" header shown, no PillButton tab bar
+        compose.onNodeWithText("Chapters (2)").assertIsDisplayed()
+        compose.onNodeWithText("Chapters").assertDoesNotExist()
+        compose.onNodeWithText("Comments").assertDoesNotExist()
+        compose.onNodeWithText("Recommendations").assertDoesNotExist()
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertIsDisplayed()
+
+        // 2. Multi-tab mode: tabs appear; selecting Comments hides chapter rows; losing Comments falls back to Chapters
+        compose.runOnIdle {
+            fakeState.supportsComments = true
+            fakeState.supportsRecommendations = true
+        }
+        compose.onNodeWithText("Chapters").assertIsDisplayed()
+        compose.onNodeWithText("Comments").assertIsDisplayed()
+        compose.onNodeWithText("Recommendations").assertIsDisplayed()
+
+        compose.onNodeWithText("Comments").performClick()
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertDoesNotExist()
+
+        compose.runOnIdle {
+            fakeState.supportsComments = false
+        }
+        compose.onNodeWithText("Comments").assertDoesNotExist()
+        compose.onNodeWithText("Recommendations").assertIsDisplayed()
+        compose.onNodeWithText("Chapters (2)").assertIsDisplayed()
+        compose.onNodeWithTag("manga_chapter_row_ch-1").assertIsDisplayed()
+    }
 }
 
 private class FakeMangaDetailState(
@@ -552,6 +744,12 @@ private class FakeMangaDetailState(
     override var supportsRecommendations: Boolean by mutableStateOf(false)
     override val comments: PagingState<UiTimelineV2> = UiState.Loading<LazyPagingItems<UiTimelineV2>>().toPagingState()
     override val recommendations: PagingState<UiTimelineV2> = UiState.Loading<LazyPagingItems<UiTimelineV2>>().toPagingState()
+    override var isRefreshing: Boolean by mutableStateOf(false)
+    var refreshCount: Int by mutableIntStateOf(0)
+
+    override fun refresh() {
+        refreshCount++
+    }
 
     override fun selectGroup(groupId: String) {
         selectedGroupId = groupId
