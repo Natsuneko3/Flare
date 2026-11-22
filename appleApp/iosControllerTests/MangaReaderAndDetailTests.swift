@@ -656,35 +656,160 @@ final class MangaReaderAndDetailTests: XCTestCase {
         }
         XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
 
-        // 3. Mid-swipe spread split does NOT destroy UIScrollView or yank an in-flight drag back to the starting slot
+        // 3. Mid-swipe spread split in .rtl freezes ForEach layout during active gesture and lands on exact next page (page 3, without skipping to page 4)
+        fakeState.goToSlot(slotIndex: 1) // slot 1 (pages 1 & 2) -> pagerPage == 2 in 6-page RTL (x == 2400)
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            !controller.isOnPreviousBoundaryPage &&
+                controller.activePagerPage == 2 &&
+                abs(initialScrollView.contentOffset.x - 2400) <= 2.0
+        }
+
+        controller.processPanGestureStateForTesting(.began)
+        initialScrollView.delegate?.scrollViewWillBeginDragging?(initialScrollView)
+        controller.processPanGestureStateForTesting(.changed)
+        initialScrollView.bounds.origin = CGPoint(x: 2000, y: 0) // halfway between slot 1 (2400) and slot 2 (1600) in RTL
+        initialScrollView.layoutIfNeeded()
+        XCTAssertTrue(controller.hasUnconsumedUserScroll)
+
+        // Trigger spread split mid-drag in RTL (slot 2 Double(4,3) -> Single(3), Single(4))
+        fakeState.updateSlots(fiveSplitSlots)
+        window.layoutIfNeeded()
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
+        XCTAssertEqual(initialScrollView.contentSize.width, 4800, accuracy: 2.0, "Displayed slots must stay frozen during active RTL swipe")
+        XCTAssertEqual(initialScrollView.contentOffset.x, 2000, accuracy: 2.0, "Mid-drag RTL spread split must not shift or yank active swipe")
+
+        // Cross 50% midpoint onto slot 2 (x == 1600 in frozen 6-page RTL) and emit additional pan .changed events before finger lift
+        initialScrollView.bounds.origin = CGPoint(x: 1600, y: 0)
+        initialScrollView.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(25))
+        controller.processPanGestureStateForTesting(.changed) // post-midpoint .changed sets hasUnconsumedUserScroll = true again
+        XCTAssertTrue(controller.hasUnconsumedUserScroll)
+
+        var rtlTargetOffset = CGPoint(x: 1600, y: 0)
+        initialScrollView.delegate?.scrollViewWillEndDragging?(initialScrollView, withVelocity: .zero, targetContentOffset: &rtlTargetOffset)
+        initialScrollView.delegate?.scrollViewDidEndDragging?(initialScrollView, willDecelerate: false)
+        controller.processPanGestureStateForTesting(.ended)
+
+        XCTAssertFalse(controller.hasUnconsumedUserScroll, "hasUnconsumedUserScroll must clear once pan interaction settles to idle")
+        try await eventually(window: window) {
+            guard let page3Frame = hostBox.pageFrames[3] else { return false }
+            return fakeState.currentPageIndex == 3 &&
+                fakeState.currentSlotIndex == 2 &&
+                controller.activePagerPage == 3 &&
+                abs(initialScrollView.contentOffset.x - 2400) <= 2.0 &&
+                page3Frame.minX >= -1.5 &&
+                page3Frame.maxX <= 801.5
+        }
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
+
+        // 4. Cancelled < 50% drag in .rtl clears hasUnconsumedUserScroll so subsequent .rtl slot splits & idle width resizes re-anchor cleanly
+        fakeState.updateSlots(fourSpreadSlots)
+        fakeState.goToSlot(slotIndex: 1) // page 1, slot 1, pagerPage == 2 at x == 2400
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            controller.activePagerPage == 2 && abs(initialScrollView.contentOffset.x - 2400) <= 2.0
+        }
+
+        controller.processPanGestureStateForTesting(.began)
+        initialScrollView.delegate?.scrollViewWillBeginDragging?(initialScrollView)
+        controller.processPanGestureStateForTesting(.changed)
+        initialScrollView.bounds.origin = CGPoint(x: 2250, y: 0) // < 50% drag in RTL (150pt of 800pt)
+        initialScrollView.layoutIfNeeded()
+        var cancelledTarget = CGPoint(x: 2400, y: 0)
+        initialScrollView.delegate?.scrollViewWillEndDragging?(initialScrollView, withVelocity: .zero, targetContentOffset: &cancelledTarget)
+        initialScrollView.bounds.origin = CGPoint(x: 2400, y: 0)
+        initialScrollView.layoutIfNeeded()
+        initialScrollView.delegate?.scrollViewDidEndDragging?(initialScrollView, willDecelerate: false)
+        controller.processPanGestureStateForTesting(.ended)
+
+        XCTAssertFalse(controller.hasUnconsumedUserScroll, "Cancelled < 50% drag must clear hasUnconsumedUserScroll on settle")
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+        XCTAssertEqual(fakeState.currentPageIndex, 1)
+
+        // Follow cancelled drag immediately with an .rtl slot split (6 -> 7 pages) and idle width resize (800 -> 540 -> 800)
+        fakeState.updateSlots(fiveSplitSlots)
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 &&
+                controller.activePagerPage == 2 &&
+                abs(initialScrollView.contentOffset.x - 3200) <= 2.0
+        }
+
+        window.frame = CGRect(x: 0, y: 0, width: 540, height: 600)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[1] else { return false }
+            return fakeState.currentSlotIndex == 1 &&
+                controller.activePagerPage == 2 &&
+                frame.minX >= -1.5 &&
+                frame.maxX <= 541.5
+        }
+        XCTAssertFalse(controller.hasUnconsumedUserScroll)
+
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 && controller.activePagerPage == 2
+        }
+        XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), initialScrollViewID)
+
+        // 5. Earlier-slot split mid-swipe in .ltr also freezes layout during drag and lands on exact destination page
+        let ltrPreSplitSlots: [any ReaderSlot] = [
+            ReaderSlotDouble(leftPageIndex: 0, rightPageIndex: 1, primaryPageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 3, primaryPageIndex: 2),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 5, primaryPageIndex: 4),
+        ]
+        let ltrEarlierSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotSingle(pageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 3, primaryPageIndex: 2),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 5, primaryPageIndex: 4),
+        ]
         fakeState.setDirection(direction: .ltr)
-        fakeState.goToSlot(slotIndex: 1) // pagerPage == 2 in LTR (x == 1600)
+        fakeState.updateSlots(ltrPreSplitSlots)
+        fakeState.goToSlot(slotIndex: 1) // pages [2, 3], pagerPage == 2 in 5-page LTR (x == 1600)
         try await Task.sleep(for: .milliseconds(80))
         window.layoutIfNeeded()
-        try await eventually(window: window) { controller.activePagerPage == 2 }
+        try await eventually(window: window) {
+            controller.activePagerPage == 2 && abs((findHorizontalPagingScrollView(in: window)?.contentOffset.x ?? 0) - 1600) <= 2.0
+        }
         let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
         let ltrScrollViewID = ObjectIdentifier(ltrScrollView)
 
+        controller.processPanGestureStateForTesting(.began)
         ltrScrollView.delegate?.scrollViewWillBeginDragging?(ltrScrollView)
-        ltrScrollView.bounds.origin = CGPoint(x: 2000, y: 0) // halfway between slot 1 (1600) and slot 2 (2400)
-        ltrScrollView.layoutIfNeeded()
-        // Trigger spread split mid-drag (as LazyHStack materializes slot 2 and decodes a landscape page)
-        fakeState.updateSlots(fiveSplitSlots)
+        controller.processPanGestureStateForTesting(.changed)
+        ltrScrollView.bounds.origin = CGPoint(x: 2000, y: 0) // halfway between [2,3] (1600) and [4,5] (2400)
+        window.layoutIfNeeded()
+        // Split earlier slot 0 while swiping forward from slot 1 to slot 2 in LTR
+        fakeState.updateSlots(ltrEarlierSplitSlots)
         window.layoutIfNeeded()
         XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), ltrScrollViewID)
-        XCTAssertEqual(ltrScrollView.contentOffset.x, 2000, accuracy: 2.0, "Mid-drag spread split must not yank active swipe back")
+        XCTAssertEqual(ltrScrollView.contentSize.width, 4000, accuracy: 2.0)
+        XCTAssertEqual(ltrScrollView.contentOffset.x, 2000, accuracy: 2.0)
 
-        // Complete the swipe onto slot 2 (pagerPage == 3 at x == 2400)
         ltrScrollView.bounds.origin = CGPoint(x: 2400, y: 0)
         ltrScrollView.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(25))
-        var targetOffset = CGPoint(x: 2400, y: 0)
-        ltrScrollView.delegate?.scrollViewWillEndDragging?(ltrScrollView, withVelocity: .zero, targetContentOffset: &targetOffset)
+        var ltrTargetOffset = CGPoint(x: 2400, y: 0)
+        ltrScrollView.delegate?.scrollViewWillEndDragging?(ltrScrollView, withVelocity: .zero, targetContentOffset: &ltrTargetOffset)
         ltrScrollView.delegate?.scrollViewDidEndDragging?(ltrScrollView, willDecelerate: false)
+        controller.processPanGestureStateForTesting(.ended)
 
         try await eventually(window: window) {
-            fakeState.currentSlotIndex == 2 && controller.activePagerPage == 3
+            fakeState.currentPageIndex == 4 &&
+                fakeState.currentSlotIndex == 3 &&
+                controller.activePagerPage == 4 &&
+                abs(ltrScrollView.contentOffset.x - 3200) <= 2.0
         }
+        XCTAssertFalse(controller.hasUnconsumedUserScroll)
         XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: window))), ltrScrollViewID)
     }
 

@@ -76,8 +76,19 @@ public final class MangaReaderInteractionController {
     @ObservationIgnored var zoomResetHandler: (() -> Void)?
     @ObservationIgnored var doubleTapZoomHandler: ((CGPoint) -> Void)?
     @ObservationIgnored fileprivate var isPerformingProgrammaticScroll = false
+    @ObservationIgnored fileprivate weak var activeInteractionTracker: PagerScrollInteractionTracker?
 
     public init() {}
+
+    var hasUnconsumedUserScroll: Bool {
+        activeInteractionTracker?.hasUnconsumedUserScroll ?? false
+    }
+
+    #if os(iOS)
+    func processPanGestureStateForTesting(_ state: UIGestureRecognizer.State) {
+        activeInteractionTracker?.processPanGestureState(state)
+    }
+    #endif
 
     func handleDoubleTap(at point: CGPoint) {
         doubleTapZoomHandler?(point)
@@ -225,6 +236,7 @@ public final class MangaReaderInteractionController {
         pagedStepForward = nil
         pagedStepBackward = nil
         pagedScrollToBoundary = nil
+        activeInteractionTracker = nil
     }
 
     private func performStepForward(_ readerState: any MangaReaderPresenterState) {
@@ -429,6 +441,13 @@ private extension View {
 
 // MARK: - Paged Reader
 
+private struct FrozenPagerLayout {
+    let chapterId: String
+    let slots: [any ReaderSlot]
+    let previousBoundary: any ChapterBoundary
+    let nextBoundary: any ChapterBoundary
+}
+
 private struct MangaPagedCanvas: View {
     let state: any MangaReaderPresenterState
     let viewportSize: CGSize
@@ -442,6 +461,7 @@ private struct MangaPagedCanvas: View {
     @State private var isCurrentPageZoomed = false
     @State private var needsPostLayoutReanchor = false
     @State private var lastObservedPageIndex: Int32
+    @State private var frozenLayout: FrozenPagerLayout?
     @State private var interactionTracker = PagerScrollInteractionTracker()
 
     init(
@@ -470,12 +490,29 @@ private struct MangaPagedCanvas: View {
         }
     }
 
+    private var activeFrozenLayout: FrozenPagerLayout? {
+        guard let frozenLayout, frozenLayout.chapterId == state.activeChapterId else { return nil }
+        return frozenLayout
+    }
+
+    private var displayedSlots: [any ReaderSlot] {
+        activeFrozenLayout?.slots ?? state.slots
+    }
+
+    private var displayedPreviousBoundary: any ChapterBoundary {
+        activeFrozenLayout?.previousBoundary ?? state.previousBoundary
+    }
+
+    private var displayedNextBoundary: any ChapterBoundary {
+        activeFrozenLayout?.nextBoundary ?? state.nextBoundary
+    }
+
     private var hasPrevBoundary: Bool {
-        !(state.previousBoundary is ChapterBoundaryNone)
+        !(displayedPreviousBoundary is ChapterBoundaryNone)
     }
 
     private var hasNextBoundary: Bool {
-        !(state.nextBoundary is ChapterBoundaryNone)
+        !(displayedNextBoundary is ChapterBoundaryNone)
     }
 
     private var startBoundaryOffset: Int {
@@ -483,8 +520,8 @@ private struct MangaPagedCanvas: View {
     }
 
     private var totalPagerPages: Int {
-        guard !state.slots.isEmpty else { return 0 }
-        return state.slots.count + startBoundaryOffset + (hasNextBoundary ? 1 : 0)
+        guard !displayedSlots.isEmpty else { return 0 }
+        return displayedSlots.count + startBoundaryOffset + (hasNextBoundary ? 1 : 0)
     }
 
     private var prevBoundaryPage: Int {
@@ -492,7 +529,7 @@ private struct MangaPagedCanvas: View {
     }
 
     private var nextBoundaryPage: Int {
-        hasNextBoundary && !state.slots.isEmpty ? (startBoundaryOffset + state.slots.count) : -1
+        hasNextBoundary && !displayedSlots.isEmpty ? (startBoundaryOffset + displayedSlots.count) : -1
     }
 
     private var isRtl: Bool {
@@ -518,6 +555,15 @@ private struct MangaPagedCanvas: View {
             if controller.isOnNextBoundaryPage, nextBoundaryPage >= 0 {
                 return nextBoundaryPage
             }
+        }
+        if activeFrozenLayout != nil {
+            let slotIdx = Int(
+                MangaSpreadLayoutSolver.shared.slotIndexForPage(
+                    slots: displayedSlots,
+                    pageIndex: state.currentPageIndex
+                )
+            )
+            return clampedPagerPage(slotIdx + startBoundaryOffset)
         }
         return clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
     }
@@ -708,22 +754,7 @@ private struct MangaPagedCanvas: View {
                             reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
                             return
                         }
-                        controller.updatePagerStatus(
-                            activePage: newPage,
-                            prevBoundaryPage: prevBoundaryPage,
-                            nextBoundaryPage: nextBoundaryPage,
-                            chapterId: state.activeChapterId
-                        )
-                        if newPage == prevBoundaryPage || newPage == nextBoundaryPage {
-                            isCurrentPageZoomed = false
-                            controller.zoomResetHandler = nil
-                            controller.doubleTapZoomHandler = nil
-                            return
-                        }
-                        let slotIdx = newPage - startBoundaryOffset
-                        if state.slots.indices.contains(slotIdx), slotIdx != Int(state.currentSlotIndex) {
-                            state.goToSlot(slotIndex: Int32(slotIdx))
-                        }
+                        commitDisplayedPagerPage(newPage)
                     }
                 }
             }
@@ -731,6 +762,9 @@ private struct MangaPagedCanvas: View {
         .onDisappear {
             controller.zoomResetHandler = nil
             controller.doubleTapZoomHandler = nil
+            if controller.activeInteractionTracker === interactionTracker {
+                controller.activeInteractionTracker = nil
+            }
         }
     }
 
@@ -740,7 +774,7 @@ private struct MangaPagedCanvas: View {
             ZStack {
                 Color.black
                 MangaBoundaryCardView(
-                    boundary: state.previousBoundary,
+                    boundary: displayedPreviousBoundary,
                     isPrevious: true,
                     isStandaloneLocked: false,
                     onOpenUnlocked: { state.openAdjacentChapter(boundary: $0) },
@@ -758,11 +792,11 @@ private struct MangaPagedCanvas: View {
                     controller.doubleTapZoomHandler = nil
                 }
             }
-        } else if hasNextBoundary && pagerPage == startBoundaryOffset + state.slots.count {
+        } else if hasNextBoundary && pagerPage == startBoundaryOffset + displayedSlots.count {
             ZStack {
                 Color.black
                 MangaBoundaryCardView(
-                    boundary: state.nextBoundary,
+                    boundary: displayedNextBoundary,
                     isPrevious: false,
                     isStandaloneLocked: false,
                     onOpenUnlocked: { state.openAdjacentChapter(boundary: $0) },
@@ -781,8 +815,8 @@ private struct MangaPagedCanvas: View {
                 }
             }
         } else {
-            let slotIndex = min(max(pagerPage - startBoundaryOffset, 0), max(state.slots.count - 1, 0))
-            let slot = state.slots[slotIndex]
+            let slotIndex = min(max(pagerPage - startBoundaryOffset, 0), max(displayedSlots.count - 1, 0))
+            let slot = displayedSlots[slotIndex]
             let isActive = effectiveActivePagerPage == pagerPage
             ZoomablePagedSlot(
                 slot: slot,
@@ -809,6 +843,7 @@ private struct MangaPagedCanvas: View {
     }
 
     private func installStepHandlers(scrollProxy: ScrollViewProxy?) {
+        controller.activeInteractionTracker = interactionTracker
         interactionTracker.onUserInteractionBegan = {
             needsPostLayoutReanchor = false
             if let pendingTarget = programmaticScrollTarget {
@@ -818,10 +853,37 @@ private struct MangaPagedCanvas: View {
                     activePagerPage = pendingTarget
                 }
             }
+            if frozenLayout == nil || frozenLayout?.chapterId != state.activeChapterId {
+                frozenLayout = FrozenPagerLayout(
+                    chapterId: state.activeChapterId,
+                    slots: state.slots,
+                    previousBoundary: state.previousBoundary,
+                    nextBoundary: state.nextBoundary
+                )
+            }
         }
         interactionTracker.onUserInteractionEnded = {
-            if interactionTracker.needsReanchorWhenIdle {
-                interactionTracker.needsReanchorWhenIdle = false
+            let pendingResizeReanchor = interactionTracker.needsReanchorWhenIdle
+            interactionTracker.needsReanchorWhenIdle = false
+
+            if let frozen = activeFrozenLayout {
+                let layoutChangedWhileFrozen = !pagerLayoutMatchesCurrentState(frozen)
+                if layoutChangedWhileFrozen || pendingResizeReanchor {
+                    if let settledFrozenPage = interactionTracker.settledPagerPage(
+                        totalPages: totalPagerPages,
+                        expectedWidth: viewportSize.width,
+                        isRtl: isRtl
+                    ) ?? activePagerPage {
+                        commitDisplayedPagerPage(clampedPagerPage(settledFrozenPage))
+                    }
+                    frozenLayout = nil
+                    needsPostLayoutReanchor = true
+                    reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
+                    return
+                }
+                frozenLayout = nil
+            } else if pendingResizeReanchor {
+                needsPostLayoutReanchor = true
                 reanchorScrollPosition(to: expectedPagerPage(), scrollProxy: scrollProxy)
             }
         }
@@ -1019,6 +1081,90 @@ private struct MangaPagedCanvas: View {
         guard totalPagerPages > 0 else { return 0 }
         return min(max(value, 0), totalPagerPages - 1)
     }
+
+    private func commitDisplayedPagerPage(_ page: Int) {
+        controller.updatePagerStatus(
+            activePage: page,
+            prevBoundaryPage: prevBoundaryPage,
+            nextBoundaryPage: nextBoundaryPage,
+            chapterId: state.activeChapterId
+        )
+        if page == prevBoundaryPage || page == nextBoundaryPage {
+            isCurrentPageZoomed = false
+            controller.zoomResetHandler = nil
+            controller.doubleTapZoomHandler = nil
+            return
+        }
+        let displayedSlotIdx = page - startBoundaryOffset
+        guard displayedSlots.indices.contains(displayedSlotIdx) else { return }
+        if activeFrozenLayout != nil {
+            let displayedSlot = displayedSlots[displayedSlotIdx]
+            if !readerSlot(displayedSlot, containsPage: state.currentPageIndex) {
+                let liveSlotIdx = Int(
+                    MangaSpreadLayoutSolver.shared.slotIndexForPage(
+                        slots: state.slots,
+                        pageIndex: displayedSlot.primaryPageIndex
+                    )
+                )
+                if state.slots.indices.contains(liveSlotIdx) {
+                    state.goToSlot(slotIndex: Int32(liveSlotIdx))
+                    lastObservedPageIndex = state.currentPageIndex
+                }
+            }
+        } else if state.slots.indices.contains(displayedSlotIdx),
+                  displayedSlotIdx != Int(state.currentSlotIndex) {
+            state.goToSlot(slotIndex: Int32(displayedSlotIdx))
+            lastObservedPageIndex = state.currentPageIndex
+        }
+    }
+
+    private func pagerLayoutMatchesCurrentState(_ frozen: FrozenPagerLayout) -> Bool {
+        frozen.chapterId == state.activeChapterId &&
+            readerSlotsEqual(frozen.slots, state.slots) &&
+            chapterBoundaryMatches(frozen.previousBoundary, state.previousBoundary) &&
+            chapterBoundaryMatches(frozen.nextBoundary, state.nextBoundary)
+    }
+
+    private func readerSlot(_ slot: any ReaderSlot, containsPage pageIndex: Int32) -> Bool {
+        if let single = slot as? ReaderSlotSingle {
+            return single.pageIndex == pageIndex
+        }
+        if let doubleSlot = slot as? ReaderSlotDouble {
+            return doubleSlot.leftPageIndex == pageIndex || doubleSlot.rightPageIndex == pageIndex
+        }
+        return slot.primaryPageIndex == pageIndex
+    }
+
+    private func readerSlotsEqual(_ lhs: [any ReaderSlot], _ rhs: [any ReaderSlot]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        for (a, b) in zip(lhs, rhs) {
+            if let sa = a as? ReaderSlotSingle, let sb = b as? ReaderSlotSingle {
+                if sa.pageIndex != sb.pageIndex { return false }
+            } else if let da = a as? ReaderSlotDouble, let db = b as? ReaderSlotDouble {
+                if da.leftPageIndex != db.leftPageIndex ||
+                    da.rightPageIndex != db.rightPageIndex ||
+                    da.primaryPageIndex != db.primaryPageIndex {
+                    return false
+                }
+            } else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func chapterBoundaryMatches(_ lhs: any ChapterBoundary, _ rhs: any ChapterBoundary) -> Bool {
+        if lhs is ChapterBoundaryNone, rhs is ChapterBoundaryNone {
+            return true
+        }
+        if let ul = lhs as? ChapterBoundaryUnlocked, let ur = rhs as? ChapterBoundaryUnlocked {
+            return ul.chapter.id == ur.chapter.id && ul.startFromEnd == ur.startFromEnd
+        }
+        if let ll = lhs as? ChapterBoundaryLocked, let lr = rhs as? ChapterBoundaryLocked {
+            return ll.chapter.id == lr.chapter.id
+        }
+        return false
+    }
 }
 
 @MainActor
@@ -1026,6 +1172,8 @@ private final class PagerScrollInteractionTracker: NSObject {
     #if os(iOS)
     private(set) weak var scrollView: UIScrollView?
     private nonisolated(unsafe) var contentSizeObservation: NSKeyValueObservation?
+    private var isPanGestureActive = false
+    private var isPollingNativeIdle = false
     #elseif os(macOS)
     private(set) weak var scrollView: NSScrollView?
     private nonisolated(unsafe) var willStartObserver: NSObjectProtocol?
@@ -1034,6 +1182,7 @@ private final class PagerScrollInteractionTracker: NSObject {
     #endif
 
     private var isScrollPhaseUserActive = false
+    private var isNotifiedInteracting = false
     private(set) var hasUnconsumedUserScroll = false
     var needsReanchorWhenIdle = false
     var onUserInteractionBegan: (() -> Void)?
@@ -1043,7 +1192,7 @@ private final class PagerScrollInteractionTracker: NSObject {
     var isUserInteracting: Bool {
         #if os(iOS)
         let nativeActive = scrollView.map { $0.isTracking || $0.isDragging || $0.isDecelerating } ?? false
-        return isScrollPhaseUserActive || nativeActive
+        return isScrollPhaseUserActive || isPanGestureActive || nativeActive
         #elseif os(macOS)
         return isScrollPhaseUserActive || isMacLiveScrolling
         #else
@@ -1059,16 +1208,59 @@ private final class PagerScrollInteractionTracker: NSObject {
 
     func setScrollPhaseUserActive(_ active: Bool) {
         guard isScrollPhaseUserActive != active else { return }
-        let wasInteracting = isUserInteracting
         isScrollPhaseUserActive = active
         if active {
             hasUnconsumedUserScroll = true
         }
-        if !wasInteracting && isUserInteracting {
-            onUserInteractionBegan?()
-        } else if wasInteracting && !isUserInteracting {
-            onUserInteractionEnded?()
+        syncInteractionState()
+        #if os(iOS)
+        if !active {
+            scheduleIdleVerificationIfNeeded()
         }
+        #endif
+    }
+
+    private func syncInteractionState() {
+        let currentlyInteracting = isUserInteracting
+        if !isNotifiedInteracting && currentlyInteracting {
+            isNotifiedInteracting = true
+            onUserInteractionBegan?()
+        } else if isNotifiedInteracting && !currentlyInteracting {
+            isNotifiedInteracting = false
+            onUserInteractionEnded?()
+            hasUnconsumedUserScroll = false
+        } else if !currentlyInteracting && hasUnconsumedUserScroll {
+            hasUnconsumedUserScroll = false
+        }
+    }
+
+    func settledPagerPage(totalPages: Int, expectedWidth: CGFloat, isRtl: Bool) -> Int? {
+        guard totalPages > 0, expectedWidth > 1 else { return nil }
+        #if os(iOS)
+        guard let sv = scrollView else { return nil }
+        let svWidth = sv.bounds.width
+        guard svWidth > 1 else { return nil }
+        let expectedContentWidth = CGFloat(totalPages) * svWidth
+        guard abs(sv.contentSize.width - expectedContentWidth) <= max(svWidth * 0.25, 4.0) else { return nil }
+        let maxVisualIndex = totalPages - 1
+        let visualIndex = min(max(Int((sv.contentOffset.x / svWidth).rounded()), 0), maxVisualIndex)
+        return isRtl ? (maxVisualIndex - visualIndex) : visualIndex
+        #elseif os(macOS)
+        guard let sv = scrollView else { return nil }
+        let svWidth = sv.contentView.bounds.width
+        let docWidth = sv.documentView?.frame.width ?? 0
+        guard svWidth > 1, docWidth >= svWidth - 1 else { return nil }
+        let originX = sv.contentView.bounds.origin.x
+        let rawPage: Int
+        if isRtl {
+            rawPage = Int(((docWidth - originX) / svWidth).rounded()) - 1
+        } else {
+            rawPage = Int((originX / svWidth).rounded())
+        }
+        return min(max(rawPage, 0), totalPages - 1)
+        #else
+        return nil
+        #endif
     }
 
     func hasViewportWidthMismatch(expectedWidth: CGFloat) -> Bool {
@@ -1142,6 +1334,7 @@ private final class PagerScrollInteractionTracker: NSObject {
             previous.panGestureRecognizer.removeTarget(self, action: #selector(handlePanGesture(_:)))
         }
         contentSizeObservation?.invalidate()
+        isPanGestureActive = false
         scrollView = candidate
         candidate.panGestureRecognizer.addTarget(self, action: #selector(handlePanGesture(_:)))
         contentSizeObservation = candidate.observe(\.contentSize, options: [.old, .new]) { [weak self] _, change in
@@ -1161,18 +1354,40 @@ private final class PagerScrollInteractionTracker: NSObject {
         contentSizeObservation?.invalidate()
     }
 
-    @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
-        switch recognizer.state {
+    func processPanGestureState(_ state: UIGestureRecognizer.State) {
+        switch state {
         case .began, .changed:
+            isPanGestureActive = true
             hasUnconsumedUserScroll = true
-            onUserInteractionBegan?()
+            syncInteractionState()
         case .ended, .cancelled, .failed:
-            if !isUserInteracting {
-                onUserInteractionEnded?()
+            isPanGestureActive = false
+            let nativeStillActive = scrollView.map { $0.isTracking || $0.isDragging || $0.isDecelerating } ?? false
+            if !nativeStillActive {
+                isScrollPhaseUserActive = false
             }
+            syncInteractionState()
+            scheduleIdleVerificationIfNeeded()
         default:
             break
         }
+    }
+
+    private func scheduleIdleVerificationIfNeeded() {
+        guard isNotifiedInteracting, !isPollingNativeIdle else { return }
+        isPollingNativeIdle = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+            guard let self else { return }
+            self.isPollingNativeIdle = false
+            self.syncInteractionState()
+            if self.isNotifiedInteracting && !self.isScrollPhaseUserActive && !self.isPanGestureActive {
+                self.scheduleIdleVerificationIfNeeded()
+            }
+        }
+    }
+
+    @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
+        processPanGestureState(recognizer.state)
     }
     #elseif os(macOS)
     func attach(to candidate: NSScrollView) {
@@ -1186,12 +1401,9 @@ private final class PagerScrollInteractionTracker: NSObject {
         ) { [weak self] _ in
             let work = { @MainActor [weak self] in
                 guard let self else { return }
-                let wasInteracting = self.isUserInteracting
                 self.isMacLiveScrolling = true
                 self.hasUnconsumedUserScroll = true
-                if !wasInteracting {
-                    self.onUserInteractionBegan?()
-                }
+                self.syncInteractionState()
             }
             if Thread.isMainThread {
                 MainActor.assumeIsolated { work() }
@@ -1206,11 +1418,9 @@ private final class PagerScrollInteractionTracker: NSObject {
         ) { [weak self] _ in
             let work = { @MainActor [weak self] in
                 guard let self else { return }
-                let wasInteracting = self.isUserInteracting
                 self.isMacLiveScrolling = false
-                if wasInteracting && !self.isUserInteracting {
-                    self.onUserInteractionEnded?()
-                }
+                self.isScrollPhaseUserActive = false
+                self.syncInteractionState()
             }
             if Thread.isMainThread {
                 MainActor.assumeIsolated { work() }
@@ -1230,6 +1440,8 @@ private final class PagerScrollInteractionTracker: NSObject {
             self.didEndObserver = nil
         }
         isMacLiveScrolling = false
+        isNotifiedInteracting = false
+        hasUnconsumedUserScroll = false
         scrollView = nil
     }
 
@@ -1247,7 +1459,8 @@ private final class PagerScrollInteractionTracker: NSObject {
 private extension View {
     @ViewBuilder
     func trackPagerScrollPhase(tracker: PagerScrollInteractionTracker) -> some View {
-        if #available(iOS 18.0, macOS 15.0, *) {
+        #if os(iOS)
+        if #available(iOS 18.0, *) {
             onScrollPhaseChange { _, newPhase in
                 let active = newPhase == .tracking || newPhase == .interacting || newPhase == .decelerating
                 tracker.setScrollPhaseUserActive(active)
@@ -1255,6 +1468,9 @@ private extension View {
         } else {
             self
         }
+        #else
+        self
+        #endif
     }
 }
 

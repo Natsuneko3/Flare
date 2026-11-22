@@ -661,7 +661,66 @@ final class MangaScreenTests: XCTestCase {
         let initialScrollViewID = ObjectIdentifier(initialScrollView)
         XCTAssertNil(controller.zoomResetHandler)
 
-        // 1. Zoom active slot (slot 1 / pagerPage 2) and verify 1pt live window resizes + non-active spread split preserve NSScrollView identity & zoom
+        // 1. Mid-live-scroll spread split in .rtl freezes ForEach layout during active gesture and lands on exact next page (page 3, without skipping to page 4)
+        let rtlInitialDocWidth = try XCTUnwrap(initialScrollView.documentView?.frame.width)
+        let rtlInitialStartOriginX = initialScrollView.contentView.bounds.origin.x
+        XCTAssertEqual(rtlInitialStartOriginX, rtlInitialDocWidth - 2400, accuracy: 2.0)
+
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: initialScrollView)
+        initialScrollView.contentView.scroll(to: CGPoint(x: rtlInitialStartOriginX - 400, y: 0)) // halfway forward in RTL
+        initialScrollView.reflectScrolledClipView(initialScrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: initialScrollView)
+        XCTAssertTrue(controller.hasUnconsumedUserScroll)
+
+        // Trigger spread split mid-live-scroll in RTL (slot 2 Double(4,3) -> Single(3), Single(4))
+        fakeState.updateSlots(fiveSplitSlots)
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))),
+            initialScrollViewID
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(initialScrollView.documentView?.frame.width),
+            rtlInitialDocWidth,
+            accuracy: 2.0,
+            "Displayed slots must stay frozen during active RTL live scroll"
+        )
+        XCTAssertEqual(
+            initialScrollView.contentView.bounds.origin.x,
+            rtlInitialStartOriginX - 400,
+            accuracy: 2.0,
+            "Mid-live-scroll RTL spread split must not shift or yank active scroll"
+        )
+
+        // Complete 1-page forward live scroll in RTL (-800pt from start) -> must land on page 3 (slot 2), NOT skip to page 4
+        initialScrollView.contentView.scroll(to: CGPoint(x: rtlInitialStartOriginX - 800, y: 0))
+        initialScrollView.reflectScrolledClipView(initialScrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: initialScrollView)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: initialScrollView)
+
+        XCTAssertFalse(controller.hasUnconsumedUserScroll, "hasUnconsumedUserScroll must clear once live scroll settles to idle")
+        try await eventually(window: window) {
+            guard let page3Frame = hostModel.pageFrames[3] else { return false }
+            return fakeState.currentPageIndex == 3 &&
+                fakeState.currentSlotIndex == 2 &&
+                controller.activePagerPage == 3 &&
+                page3Frame.minX >= -1.5 &&
+                page3Frame.maxX <= 801.5
+        }
+        XCTAssertEqual(
+            ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))),
+            initialScrollViewID
+        )
+
+        fakeState.updateSlots(fourSpreadSlots)
+        fakeState.goToSlot(slotIndex: 1)
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            controller.activePagerPage == 2 && hostModel.pageFrames[1] != nil
+        }
+
+        // 2. Zoom active slot (slot 1 / pagerPage 2) and verify 1pt live window resizes + non-active spread split preserve NSScrollView identity & zoom
         controller.handleDoubleTap(at: CGPoint(x: 400, y: 300))
         try await eventually(window: window) { controller.zoomResetHandler != nil }
 
@@ -701,7 +760,7 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertTrue(controller.handleKey(.escape))
         try await eventually(window: window) { controller.zoomResetHandler == nil }
 
-        // 2. Boundary card position preserved across NSWindow width resizes AND slot-count splits (nextBoundaryPage & prevBoundaryPage)
+        // 3. Boundary card position preserved across NSWindow width resizes AND slot-count splits (nextBoundaryPage & prevBoundaryPage)
         fakeState.updateSlots(fourSpreadSlots) // totalPagerPages == 6, nextBoundaryPage == 5
         try await Task.sleep(for: .milliseconds(50))
         window.contentView?.layoutSubtreeIfNeeded()
@@ -771,9 +830,76 @@ final class MangaScreenTests: XCTestCase {
             initialScrollViewID
         )
 
-        // 3. Mid-live-scroll spread split does NOT destroy NSScrollView or yank an active live scroll back
+        // 4. Cancelled < 50% live scroll in .rtl clears hasUnconsumedUserScroll so subsequent .rtl slot splits & idle NSWindow resizes re-anchor cleanly
+        fakeState.updateSlots(fourSpreadSlots)
+        fakeState.goToSlot(slotIndex: 1) // page 1, slot 1, pagerPage == 2
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            let docWidth = initialScrollView.documentView?.frame.width ?? 0
+            return controller.activePagerPage == 2 &&
+                docWidth >= 2400 &&
+                abs(initialScrollView.contentView.bounds.origin.x - (docWidth - 2400)) <= 2.0
+        }
+        let cancelStartOriginX = initialScrollView.contentView.bounds.origin.x
+
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: initialScrollView)
+        initialScrollView.contentView.scroll(to: CGPoint(x: cancelStartOriginX - 150, y: 0)) // < 50% scroll
+        initialScrollView.reflectScrolledClipView(initialScrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: initialScrollView)
+        initialScrollView.contentView.scroll(to: CGPoint(x: cancelStartOriginX, y: 0)) // snap back
+        initialScrollView.reflectScrolledClipView(initialScrollView.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: initialScrollView)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: initialScrollView)
+
+        XCTAssertFalse(controller.hasUnconsumedUserScroll, "Cancelled < 50% live scroll must clear hasUnconsumedUserScroll on settle")
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+        XCTAssertEqual(fakeState.currentPageIndex, 1)
+
+        fakeState.updateSlots(fiveSplitSlots)
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return fakeState.currentSlotIndex == 1 &&
+                controller.activePagerPage == 2 &&
+                frame.minX >= -1.5 &&
+                frame.maxX <= 801.5
+        }
+
+        window.setContentSize(NSSize(width: 540, height: 600))
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return fakeState.currentSlotIndex == 1 &&
+                controller.activePagerPage == 2 &&
+                frame.minX >= -1.5 &&
+                frame.maxX <= 541.5
+        }
+        XCTAssertFalse(controller.hasUnconsumedUserScroll)
+
+        window.setContentSize(NSSize(width: 800, height: 600))
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 && controller.activePagerPage == 2
+        }
+
+        // 5. Earlier-slot split mid-live-scroll in .ltr also freezes layout during scroll and lands on exact destination page
+        let ltrPreSplitSlots: [any ReaderSlot] = [
+            ReaderSlotDouble(leftPageIndex: 0, rightPageIndex: 1, primaryPageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 3, primaryPageIndex: 2),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 5, primaryPageIndex: 4),
+        ]
+        let ltrEarlierSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotSingle(pageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 3, primaryPageIndex: 2),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 5, primaryPageIndex: 4),
+        ]
         fakeState.setDirection(direction: .ltr)
-        fakeState.goToSlot(slotIndex: 1) // pagerPage == 2 in LTR (x == 1600)
+        fakeState.updateSlots(ltrPreSplitSlots)
+        fakeState.goToSlot(slotIndex: 1) // pages [2, 3], pagerPage == 2 in 5-page LTR (x == 1600)
         try await Task.sleep(for: .milliseconds(80))
         window.contentView?.layoutSubtreeIfNeeded()
         try await eventually(window: window) { controller.activePagerPage == 2 }
@@ -785,8 +911,8 @@ final class MangaScreenTests: XCTestCase {
         ltrScrollView.reflectScrolledClipView(ltrScrollView.contentView)
         NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: ltrScrollView)
 
-        // Trigger spread split mid-live-scroll
-        fakeState.updateSlots(fiveSplitSlots)
+        // Split earlier slot 0 mid-live-scroll in LTR
+        fakeState.updateSlots(ltrEarlierSplitSlots)
         window.contentView?.layoutSubtreeIfNeeded()
         XCTAssertEqual(
             ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))),
@@ -796,18 +922,23 @@ final class MangaScreenTests: XCTestCase {
             ltrScrollView.contentView.bounds.origin.x,
             2000,
             accuracy: 2.0,
-            "Mid-live-scroll spread split must not yank active scroll back"
+            "Mid-live-scroll earlier-slot split must not yank active scroll back"
         )
 
-        // Complete live scroll onto slot 2 (pagerPage == 3 at x == 2400)
         ltrScrollView.contentView.scroll(to: CGPoint(x: 2400, y: 0))
         ltrScrollView.reflectScrolledClipView(ltrScrollView.contentView)
         NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: ltrScrollView)
         NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: ltrScrollView)
 
         try await eventually(window: window) {
-            fakeState.currentSlotIndex == 2 && controller.activePagerPage == 3
+            guard let page4Frame = hostModel.pageFrames[4] else { return false }
+            return fakeState.currentPageIndex == 4 &&
+                fakeState.currentSlotIndex == 3 &&
+                controller.activePagerPage == 4 &&
+                page4Frame.minX >= -1.5 &&
+                page4Frame.maxX <= 801.5
         }
+        XCTAssertFalse(controller.hasUnconsumedUserScroll)
         XCTAssertEqual(
             ObjectIdentifier(try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))),
             ltrScrollViewID
