@@ -66,6 +66,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.annotation.ExperimentalCoilApi
 import coil3.imageLoader
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -85,7 +87,9 @@ import compose.icons.fontawesomeicons.solid.RotateRight
 import compose.icons.fontawesomeicons.solid.ShareNodes
 import dev.dimension.flare.R
 import dev.dimension.flare.common.AndroidDownloadManager
+import dev.dimension.flare.common.AndroidMediaSaveLocationRepository
 import dev.dimension.flare.common.MediaFileNamePolicy
+import dev.dimension.flare.common.MediaSaveLocationMode
 import dev.dimension.flare.common.prepareImageTranslationExport
 import dev.dimension.flare.common.shareImageMedia
 import dev.dimension.flare.model.AccountType
@@ -136,7 +140,13 @@ internal fun MangaReaderScreen(
     val context = LocalContext.current
     val ioScope = koinInject<CoroutineScope>()
     val downloadManager = koinInject<AndroidDownloadManager>()
-    val permissionState = rememberPermissionState(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    val saveLocation = koinInject<AndroidMediaSaveLocationRepository>()
+    val pendingSave = viewModel { PendingMangaPageSave() }
+    val permissionState =
+        rememberPermissionState(Manifest.permission.WRITE_EXTERNAL_STORAGE) { granted ->
+            pendingSave.permissionResult(granted)
+            if (!granted) Toast.makeText(context, R.string.media_save_fail, Toast.LENGTH_SHORT).show()
+        }
 
     FlareTheme(darkTheme = true) {
         MangaReaderContent(
@@ -147,8 +157,8 @@ internal fun MangaReaderScreen(
                 val appContext = context.applicationContext
                 val performSave = {
                     val fileName =
-                        buildAndroidMangaPageFileName(
-                            mangaKey = mangaKey,
+                        MediaFileNamePolicy.mangaPageFileName(
+                            mangaId = mangaKey.id,
                             chapterId = activeChapterId,
                             pageIndex = pageIndex,
                             original = original,
@@ -162,7 +172,11 @@ internal fun MangaReaderScreen(
                         fileName = fileName,
                     )
                 }
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && !permissionState.status.isGranted) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                    saveLocation.state.value.mode == MediaSaveLocationMode.DefaultDownloads &&
+                    !permissionState.status.isGranted
+                ) {
+                    pendingSave.onGranted = performSave
                     permissionState.launchPermissionRequest()
                 } else {
                     performSave()
@@ -178,8 +192,8 @@ internal fun MangaReaderScreen(
                         }
                     if (prepared is UiMedia.Image || prepared is UiMedia.Gif) {
                         val fileName =
-                            buildAndroidMangaPageFileName(
-                                mangaKey = mangaKey,
+                            MediaFileNamePolicy.mangaPageFileName(
+                                mangaId = mangaKey.id,
                                 chapterId = activeChapterId,
                                 pageIndex = pageIndex,
                                 original = original,
@@ -677,23 +691,13 @@ private fun formatAndroidReaderPageBadge(state: MangaReaderPresenter.State): Str
     return "${state.currentPageIndex + 1} / $total"
 }
 
-internal fun buildAndroidMangaPageFileName(
-    mangaKey: MicroBlogKey,
-    chapterId: String,
-    pageIndex: Int,
-    original: UiMedia,
-    displayed: UiMedia,
-): String {
-    val rawOriginalName = MediaFileNamePolicy.rawMediaFileName(original)
-    val defaultExt = if (original is UiMedia.Gif || displayed is UiMedia.Gif) "gif" else "jpg"
-    val ext = rawOriginalName.substringAfterLast('.', defaultExt)
-    val safeManga = mangaKey.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
-    val safeChapter = chapterId.replace(Regex("[^A-Za-z0-9._-]"), "_")
-    val base = "${safeManga}_${safeChapter}_p${pageIndex + 1}.$ext"
-    return if (displayed.url == original.url) {
-        base
-    } else {
-        "${base.substringBeforeLast('.')}_${MediaFileNamePolicy.rawMediaFileName(displayed)}"
+internal class PendingMangaPageSave : ViewModel() {
+    var onGranted: (() -> Unit)? = null
+
+    fun permissionResult(granted: Boolean) {
+        val save = onGranted
+        onGranted = null
+        if (granted) save?.invoke()
     }
 }
 
@@ -715,7 +719,7 @@ private fun saveAndroidMangaPage(
                 withContext(Dispatchers.IO) {
                     context.imageLoader.diskCache?.openSnapshot(media.cacheKey)?.use { snapshot ->
                         val bytes = snapshot.data.toFile().readBytes()
-                        downloadManager.saveByteArray(byteArray = bytes, fileName = fileName)
+                        downloadManager.saveByteArray(byteArray = bytes, fileName = fileName, keepExisting = true)
                     }
                 }
             if (cachedSaved != null) {
@@ -732,6 +736,7 @@ private fun saveAndroidMangaPage(
         }
         downloadManager.downloadMedia(
             media = media,
+            keepExisting = true,
             fileName = fileName,
             callback =
                 object : AndroidDownloadManager.DownloadCallback {

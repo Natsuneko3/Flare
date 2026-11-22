@@ -7,6 +7,7 @@ import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.database.sqlite.SQLiteConstraintException
 import android.net.Uri
+import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import dev.dimension.flare.ui.component.Media3VideoCacheManager
@@ -54,6 +55,30 @@ class AndroidDownloadManagerTest {
     fun tearDown() {
         provider.file.delete()
     }
+
+    @Test
+    @Config(sdk = [28])
+    fun legacyDownloadsPreserveBothPagesWhenNamesCollide() =
+        runBlocking {
+            val directory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val name = "manga_chapter_p1.jpg"
+            val first = byteArrayOf(1)
+            val second = byteArrayOf(2)
+            try {
+                assertTrue(manager.saveByteArray(first, name, "image/jpeg", keepExisting = true))
+                assertTrue(manager.saveByteArray(second, name, "image/jpeg", keepExisting = true))
+                val files = directory.listFiles().orEmpty().filter { it.name.startsWith("manga_chapter_p1") }
+                assertEquals(2, files.size)
+                assertArrayEquals(first, File(directory, name).readBytes())
+                assertArrayEquals(second, files.single { it.name != name }.readBytes())
+            } finally {
+                directory
+                    .listFiles()
+                    .orEmpty()
+                    .filter { it.name.startsWith("manga_chapter_p1") }
+                    .forEach(File::delete)
+            }
+        }
 
     @Test
     fun publishesWrittenBytesWithoutDeletingTheOutput() {
@@ -136,7 +161,7 @@ class AndroidDownloadManagerTest {
         context: Context,
     ) : ContentProvider() {
         val file = File.createTempFile("media-save-test-", ".png", context.cacheDir)
-        val outputUri: Uri = Uri.withAppendedPath(MediaStore.Downloads.EXTERNAL_CONTENT_URI, "42")
+        val outputUri: Uri get() = Uri.withAppendedPath(MediaStore.Downloads.EXTERNAL_CONTENT_URI, "42")
         val operations = mutableListOf<String>()
         val deletedUris = mutableListOf<Uri>()
         var insertFailure: Exception? = null

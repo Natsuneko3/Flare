@@ -190,18 +190,13 @@ struct MangaReaderScreen: View {
     }
 
     private func mangaPageFileName(original: any UiMedia, displayed: any UiMedia, pageIndex: Int) -> String {
-        let safeManga = MediaFileNamePolicy.shared.sanitizeFileName(value: mangaKey.id, fallback: "manga")
-        let safeChapter = MediaFileNamePolicy.shared.sanitizeFileName(
-            value: presenter.state.activeChapterId,
-            fallback: "chapter"
+        MediaFileNamePolicy.shared.mangaPageFileName(
+            mangaId: mangaKey.id,
+            chapterId: presenter.state.activeChapterId,
+            pageIndex: Int32(pageIndex),
+            original: original,
+            displayed: displayed
         )
-        let rawName = MediaFileNamePolicy.shared.rawMediaFileName(media: original)
-        let ext = (rawName as NSString).pathExtension.isEmpty ? "jpg" : (rawName as NSString).pathExtension
-        let base = "\(safeManga)_\(safeChapter)_p\(pageIndex + 1).\(ext)"
-        if displayed.url == original.url {
-            return base
-        }
-        return "\((base as NSString).deletingPathExtension)_\(MediaFileNamePolicy.shared.rawMediaFileName(media: displayed))"
     }
 
     private func presentActivitySheet(items: [Any], from presenter: UIViewController) {

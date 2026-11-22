@@ -9,6 +9,18 @@ import kotlin.time.Clock
 
 class MediaFileNamePolicyTest {
     @Test
+    fun mangaPageNamesKeepUnicodeChaptersAndUseTheDisplayedFormat() {
+        val original = UiMedia.Image("https://example.com/page.jpg")
+        val displayed = UiMedia.Image("file:///translated/page.png")
+
+        fun name(chapter: String) = MediaFileNamePolicy.mangaPageFileName("漫画", chapter, 2, original, displayed)
+        assertEquals("漫画_第一話_p3_translated.png", name("第一話"))
+        assertEquals("漫画_第二話_p3_translated.png", name("第二話"))
+        assertEquals("漫画_1_2_p3_translated.png", name("1/2"))
+        assertTrue(name("章".repeat(300)).encodeToByteArray().size < 255)
+    }
+
+    @Test
     fun videoDownloadUsesItsOwnUrlAndMp4FileName() {
         val media =
             UiMedia.Video(
