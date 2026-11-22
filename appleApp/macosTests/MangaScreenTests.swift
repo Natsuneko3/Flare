@@ -1288,6 +1288,213 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertEqual(spreadState.currentPageIndex, 3, "Stepping inward onto Double slot must preserve secondary page index 3")
     }
 
+    func testMacAdaptiveChapterGridAndNarrowPinnedTabs() async throws {
+        _ = NSApplication.shared
+        let mangaKey = MicroBlogKey(id: "manga-grid-1", host: "manga.example")
+        let guestAccount = AccountType.GuestPlugin(platformId: "manga-plat", host: "manga.example")
+        let ch0 = UiMangaChapter(id: "ch-0", title: "Chapter 0: Prologue", subtitle: "Vol. 1", uploadedAt: nil, locked: false, url: nil)
+        let ch1 = UiMangaChapter(id: "ch-1", title: "Chapter 1: Dawn", subtitle: "Vol. 1", uploadedAt: nil, locked: false, url: nil)
+
+        let detail = UiMangaDetail(
+            pluginId: "dev.example.manga",
+            platformId: "manga-plat",
+            mangaKey: mangaKey,
+            accountType: guestAccount,
+            title: "Grid Horizon",
+            altTitles: ["网格地平线"],
+            cover: nil,
+            author: nil,
+            authors: ["Aria Lin"],
+            artists: ["Kuro"],
+            status: .ongoing,
+            content: makeMacRichSynopsis(["A journey across star seas."]),
+            url: "https://manga.example/series/grid-1",
+            updatedAt: nil,
+            readingDirection: .rtl,
+            tagGroups: [
+                UiMangaTagGroup(
+                    id: "genre",
+                    title: UiTextRaw(string: "Genre"),
+                    tags: [UiMangaTag(name: "Sci-Fi", clickEvent: ClickEventNoop.shared)]
+                ),
+            ],
+            chapterGroups: [
+                UiMangaChapterGroup(id: "main", title: UiTextRaw(string: "Main Story"), chapters: [ch0, ch1]),
+            ],
+            isBookmarked: false,
+            bookmarkAction: ClickEventNoop.shared,
+            actions: [],
+            sourceLanguages: ["en"]
+        )
+        let chapterItems = [
+            UiMangaChapterItem(chapter: ch0, isRead: false, isCurrent: true, lastPageIndex: 3, pageCount: 20),
+            UiMangaChapterItem(chapter: ch1, isRead: false, isCurrent: false, lastPageIndex: 0, pageCount: 18),
+        ]
+        let primaryTarget = PrimaryReadTarget(
+            chapterId: "ch-0",
+            chapterTitle: "Chapter 0: Prologue",
+            initialPage: 3,
+            isContinue: true,
+            isSingleChapterWork: false
+        )
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 1080, height: 720),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        var refreshCount = 0
+        var paneFrames = MangaDetailPaneFrames()
+        var chapterFrames: [String: CGRect] = [:]
+
+        func makeHostRoot(
+            supportsComments: Bool,
+            supportsRecommendations: Bool
+        ) -> some View {
+            MangaDetailContentView(
+                detail: UiStateSuccess(data: detail),
+                selectedGroupId: "main",
+                chapterSortDescending: false,
+                chapters: chapterItems,
+                primaryReadTarget: primaryTarget,
+                supportsComments: supportsComments,
+                supportsRecommendations: supportsRecommendations,
+                onRefresh: { refreshCount += 1 },
+                onNavigate: { _ in }
+            )
+            .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self) { paneFrames = $0 }
+            .onPreferenceChange(MangaChapterFramesPreferenceKey.self) { chapterFrames = $0 }
+        }
+
+        let hostingView = NSHostingView(
+            rootView: makeHostRoot(supportsComments: true, supportsRecommendations: true)
+        )
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        // 1. 1080x720 (right chapters pane > 520pt): ch-0 and ch-1 sit side-by-side
+        try await eventually(window: window) {
+            paneFrames.heroCard != nil &&
+                paneFrames.chaptersSection != nil &&
+                chapterFrames["ch-0"] != nil &&
+                chapterFrames["ch-1"] != nil
+        }
+        XCTAssertLessThan(
+            try XCTUnwrap(paneFrames.heroCard).maxX,
+            try XCTUnwrap(paneFrames.chaptersSection).minX
+        )
+        let ch0Wide = try XCTUnwrap(chapterFrames["ch-0"])
+        let ch1Wide = try XCTUnwrap(chapterFrames["ch-1"])
+        XCTAssertLessThanOrEqual(
+            abs(ch0Wide.minY - ch1Wide.minY),
+            2.0,
+            "Expected ch-0 (\(ch0Wide)) and ch-1 (\(ch1Wide)) side-by-side at 1080x720"
+        )
+        XCTAssertLessThan(
+            ch0Wide.minX,
+            ch1Wide.minX,
+            "Expected ch-0 (\(ch0Wide)) to the left of ch-1 (\(ch1Wide)) at 1080x720"
+        )
+
+        // 2. Resize to 760x720 (split layout >= 560pt, right chapters pane < 520pt): single column
+        window.setContentSize(NSSize(width: 760, height: 720))
+        try await eventually(window: window) {
+            guard let f0 = chapterFrames["ch-0"],
+                  let f1 = chapterFrames["ch-1"] else {
+                return false
+            }
+            return abs(f0.minX - f1.minX) <= 2.0 && abs(f0.minY - f1.minY) > 10.0
+        }
+        let ch0Mid = try XCTUnwrap(chapterFrames["ch-0"])
+        let ch1Mid = try XCTUnwrap(chapterFrames["ch-1"])
+        XCTAssertLessThanOrEqual(abs(ch0Mid.minX - ch1Mid.minX), 2.0)
+        XCTAssertNotEqual(ch0Mid.minY, ch1Mid.minY)
+
+        // 3. Resize to 480x720 (< 560pt compact macOS): NSSegmentedControl for 3 tabs is mounted,
+        //    and dynamic availableTabs shrinking resets removed tab to .chapters while preserving remaining selected tab
+        window.setContentSize(NSSize(width: 480, height: 720))
+        try await eventually(window: window) {
+            let controls = self.findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView)
+            return controls.contains { $0.segmentCount == 3 }
+        }
+        let narrowSegmented = try XCTUnwrap(
+            findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView).first { $0.segmentCount == 3 }
+        )
+        narrowSegmented.selectedSegment = 2
+        _ = narrowSegmented.sendAction(narrowSegmented.action, to: narrowSegmented.target)
+        try await eventually(window: window) { narrowSegmented.selectedSegment == 2 }
+
+        // Shrink 3 tabs -> 2 tabs while on removed Recommendations (index 2) -> must reset to Chapters (index 0)
+        hostingView.rootView = makeHostRoot(supportsComments: true, supportsRecommendations: false)
+        try await eventually(window: window) {
+            guard let control = self.findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView).first else {
+                return false
+            }
+            return control.segmentCount == 2 && control.selectedSegment == 0
+        }
+
+        // Select Comments (index 1), restore 3 tabs, then shrink 3 -> 2 tabs -> Comments stays selected (index 1)
+        hostingView.rootView = makeHostRoot(supportsComments: true, supportsRecommendations: true)
+        try await eventually(window: window) {
+            self.findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView).first?.segmentCount == 3
+        }
+        let threeTabControl = try XCTUnwrap(findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView).first)
+        threeTabControl.selectedSegment = 1
+        _ = threeTabControl.sendAction(threeTabControl.action, to: threeTabControl.target)
+        try await eventually(window: window) { threeTabControl.selectedSegment == 1 }
+
+        hostingView.rootView = makeHostRoot(supportsComments: true, supportsRecommendations: false)
+        try await eventually(window: window) {
+            guard let control = self.findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView).first else {
+                return false
+            }
+            return control.segmentCount == 2 && control.selectedSegment == 1
+        }
+
+        // Shrink to 1 tab (Chapters only) -> NSSegmentedControl hidden
+        hostingView.rootView = makeHostRoot(supportsComments: false, supportsRecommendations: false)
+        try await eventually(window: window) {
+            self.findMacSubviews(ofType: NSSegmentedControl.self, in: hostingView).isEmpty
+        }
+        XCTAssertEqual(refreshCount, 0)
+
+        // 4. Read-only guest MangaDetailContentView at 960x720 with primaryReadTarget: nil, actions: [], bookmarkAction: ClickEventNoop renders 0 NSButtons in left inspector hero section
+        var guestPaneFrames = MangaDetailPaneFrames()
+        let guestHosting = NSHostingView(
+            rootView: MangaDetailContentView(
+                detail: UiStateSuccess(data: detail),
+                selectedGroupId: "main",
+                chapterSortDescending: false,
+                chapters: chapterItems,
+                primaryReadTarget: nil,
+                supportsComments: false,
+                supportsRecommendations: false,
+                onNavigate: { _ in }
+            )
+            .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self) { guestPaneFrames = $0 }
+        )
+        guestHosting.sizingOptions = []
+        window.contentView = guestHosting
+        window.setContentSize(NSSize(width: 960, height: 720))
+        try await eventually(window: window) {
+            guestPaneFrames.heroCard != nil && guestPaneFrames.chaptersSection != nil
+        }
+        let guestHeroFrame = try XCTUnwrap(guestPaneFrames.heroCard)
+        let leftPaneButtons = findMacSubviews(ofType: NSButton.self, in: guestHosting).filter { button in
+            let rectInWindow = button.convert(button.bounds, to: nil)
+            return rectInWindow.midX < guestHeroFrame.maxX + 8
+        }
+        XCTAssertEqual(
+            leftPaneButtons.count,
+            0,
+            "Read-only guest left inspector hero section must render zero NSButtons when primaryReadTarget is nil"
+        )
+    }
+
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -1309,8 +1516,12 @@ final class MangaScreenTests: XCTestCase {
     }
 
     private func countMacSubviews<T: NSView>(ofType type: T.Type, in root: NSView) -> Int {
-        let own = root is T ? 1 : 0
-        return own + root.subviews.reduce(0) { $0 + countMacSubviews(ofType: type, in: $1) }
+        findMacSubviews(ofType: type, in: root).count
+    }
+
+    private func findMacSubviews<T: NSView>(ofType type: T.Type, in root: NSView) -> [T] {
+        let own = (root as? T).map { [$0] } ?? []
+        return own + root.subviews.flatMap { findMacSubviews(ofType: type, in: $0) }
     }
 
     private func renderPDFText<V: View>(_ view: V, width: CGFloat, height: CGFloat) throws -> String {

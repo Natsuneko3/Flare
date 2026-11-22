@@ -9,6 +9,66 @@ public nonisolated enum MangaChapterTitleEmphasis: Equatable, Sendable {
     case unread
 }
 
+public nonisolated enum MangaChapterRowStyle: Equatable, Sendable {
+    case groupedCard(index: Int, totalCount: Int)
+    case listPlain
+}
+
+public struct MangaBlurredCoverBackdropView: View {
+    public let cover: UiMediaImage?
+    public let targetBackgroundColor: Color
+
+    public init(
+        cover: UiMediaImage?,
+        targetBackgroundColor: Color = .flareSystemGroupedBackground
+    ) {
+        self.cover = cover
+        self.targetBackgroundColor = targetBackgroundColor
+    }
+
+    public var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                targetBackgroundColor
+
+                if let cover {
+                    NetworkImage(data: cover, placeholder: cover.preview, contentMode: .fill)
+                        .frame(width: max(proxy.size.width, 1), height: max(proxy.size.height, 1))
+                        .scaleEffect(1.18)
+                        .blur(radius: 28)
+                        .overlay {
+                            targetBackgroundColor.opacity(0.42)
+                        }
+                } else {
+                    LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0.18),
+                            Color.accentColor.opacity(0.06),
+                            targetBackgroundColor,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
+
+                LinearGradient(
+                    stops: [
+                        .init(color: targetBackgroundColor.opacity(0.08), location: 0.0),
+                        .init(color: targetBackgroundColor.opacity(0.56), location: 0.62),
+                        .init(color: targetBackgroundColor, location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 public nonisolated struct MangaDetailPaneFrames: Equatable, Sendable {
     public var heroCard: CGRect?
     public var chaptersSection: CGRect?
@@ -30,6 +90,14 @@ public struct MangaDetailPaneFramesPreferenceKey: PreferenceKey {
         if let chaptersSection = next.chaptersSection {
             value.chaptersSection = chaptersSection
         }
+    }
+}
+
+public struct MangaChapterFramesPreferenceKey: PreferenceKey {
+    public static var defaultValue: [String: CGRect] { [:] }
+
+    public static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
     }
 }
 
@@ -361,12 +429,75 @@ public struct MangaStatusBadgeView: View {
     }
 }
 
-public struct MangaSynopsisAndTagsCardView: View {
-    public let detail: UiMangaDetail
-    public let onTagClick: ((UiMangaTag) -> Void)?
+public struct MangaSynopsisContentView: View {
+    public let content: UiRichText
 
     @State private var isSynopsisExpanded = false
     @State private var measuredSynopsisOverflow: Bool?
+
+    public init(content: UiRichText) {
+        self.content = content
+    }
+
+    public var body: some View {
+        let plainText = content.innerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !plainText.isEmpty {
+            let heuristicOverflow =
+                content.renderRuns.count > 4 ||
+                plainText.filter({ $0 == "\n" }).count >= 4 ||
+                plainText.count > 220
+            let canToggle = (measuredSynopsisOverflow ?? heuristicOverflow) || isSynopsisExpanded
+
+            VStack(alignment: .leading, spacing: 6) {
+                CollapsibleRichText(
+                    text: content,
+                    lineLimit: 4,
+                    collapseThreshold: 4,
+                    isExpanded: isSynopsisExpanded,
+                    isTextSelectionEnabled: true
+                ) { overflows in
+                    if !isSynopsisExpanded {
+                        measuredSynopsisOverflow = overflows
+                    }
+                }
+                .lineSpacing(1.5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if canToggle {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isSynopsisExpanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(
+                                verbatim: isSynopsisExpanded
+                                    ? FlareAppleUILocalization.string("mastodon_item_show_less", fallback: "Show less")
+                                    : FlareAppleUILocalization.string("mastodon_item_show_more", fallback: "Show more")
+                            )
+                            Image(systemName: isSynopsisExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption2.weight(.semibold))
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.vertical, 2)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("manga_synopsis_toggle")
+                }
+            }
+            .onChange(of: content.raw) { _, _ in
+                isSynopsisExpanded = false
+                measuredSynopsisOverflow = nil
+            }
+        }
+    }
+}
+
+public struct MangaSynopsisAndTagsCardView: View {
+    public let detail: UiMangaDetail
+    public let onTagClick: ((UiMangaTag) -> Void)?
 
     public init(
         detail: UiMangaDetail,
@@ -376,71 +507,31 @@ public struct MangaSynopsisAndTagsCardView: View {
         self.onTagClick = onTagClick
     }
 
+    private var hasSynopsis: Bool {
+        detail.content?.innerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private var hasTags: Bool {
+        detail.tagGroups.contains(where: { !$0.tags.isEmpty })
+    }
+
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let content = detail.content {
-                let plainText = content.innerText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !plainText.isEmpty {
-                    let heuristicOverflow =
-                        content.renderRuns.count > 4 ||
-                        plainText.filter({ $0 == "\n" }).count >= 4 ||
-                        plainText.count > 220
-                    let canToggle = (measuredSynopsisOverflow ?? heuristicOverflow) || isSynopsisExpanded
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        CollapsibleRichText(
-                            text: content,
-                            lineLimit: 4,
-                            collapseThreshold: 4,
-                            isExpanded: isSynopsisExpanded,
-                            isTextSelectionEnabled: true
-                        ) { overflows in
-                            if !isSynopsisExpanded {
-                                measuredSynopsisOverflow = overflows
-                            }
-                        }
-                        .lineSpacing(1.5)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        if canToggle {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    isSynopsisExpanded.toggle()
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(
-                                        verbatim: isSynopsisExpanded
-                                            ? FlareAppleUILocalization.string("mastodon_item_show_less", fallback: "Show less")
-                                            : FlareAppleUILocalization.string("mastodon_item_show_more", fallback: "Show more")
-                                    )
-                                    Image(systemName: isSynopsisExpanded ? "chevron.up" : "chevron.down")
-                                        .font(.caption2.weight(.semibold))
-                                }
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Color.accentColor)
-                                .padding(.vertical, 2)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("manga_synopsis_toggle")
-                        }
+        if hasSynopsis || hasTags {
+            ListCardView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let content = detail.content, hasSynopsis {
+                        MangaSynopsisContentView(content: content)
                     }
-                    .onChange(of: content.raw) { _, _ in
-                        isSynopsisExpanded = false
-                        measuredSynopsisOverflow = nil
-                    }
+
+                    MangaTagGroupsView(
+                        tagGroups: detail.tagGroups,
+                        onTagClick: onTagClick
+                    )
                 }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            MangaTagGroupsView(
-                tagGroups: detail.tagGroups,
-                onTagClick: onTagClick
-            )
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .mangaDetailCardSurface()
     }
 }
 
@@ -616,16 +707,26 @@ public struct MangaChaptersHeaderView: View {
 }
 
 public struct MangaChapterRowView: View {
+    @Environment(\.openURL) private var openURL
     public let item: UiMangaChapterItem
+    public let showsTrailingMenu: Bool
+    public let detailURL: String?
+    public let style: MangaChapterRowStyle
     public let onClick: () -> Void
     public let onSetRead: (Bool) -> Void
 
     public init(
         item: UiMangaChapterItem,
+        showsTrailingMenu: Bool = true,
+        detailURL: String? = nil,
+        style: MangaChapterRowStyle = .groupedCard(index: 0, totalCount: 1),
         onClick: @escaping () -> Void,
         onSetRead: @escaping (Bool) -> Void
     ) {
         self.item = item
+        self.showsTrailingMenu = showsTrailingMenu
+        self.detailURL = detailURL
+        self.style = style
         self.onClick = onClick
         self.onSetRead = onSetRead
     }
@@ -652,10 +753,50 @@ public struct MangaChapterRowView: View {
         return FlareAppleUILocalization.string("manga_detail_mark_read", fallback: "Mark as read")
     }
 
+    private var resolvedOpenURL: String? {
+        MangaDetailFormatting.resolveLockedChapterURL(chapter: item.chapter, detailURL: detailURL)
+    }
+
     public var body: some View {
+        Group {
+            switch style {
+            case .groupedCard(let index, let totalCount):
+                ListCardView(index: index, totalCount: totalCount) {
+                    rowContent
+                }
+                .contextMenu {
+                    menuActions
+                }
+                .accessibilityAction(named: Text(verbatim: markToggleLabel)) {
+                    onSetRead(!item.isRead)
+                }
+
+            case .listPlain:
+                rowContent
+            }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: MangaChapterFramesPreferenceKey.self,
+                    value: [item.chapter.id: proxy.frame(in: .global)]
+                )
+            }
+        }
+        .accessibilityIdentifier("manga_chapter_row_\(item.chapter.id)")
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 8) {
             Button(action: onClick) {
                 HStack(spacing: 10) {
+                    if emphasis == .current {
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: 3, height: 22)
+                            .accessibilityHidden(true)
+                    }
+
                     if item.chapter.locked {
                         Image(fontAwesome: .lock)
                             .font(.caption)
@@ -712,40 +853,58 @@ public struct MangaChapterRowView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.leading, 14)
-                .padding(.vertical, 10)
+                .padding(.leading, 16)
+                .padding(.trailing, showsTrailingMenu ? 0 : 16)
+                .padding(.vertical, 12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            Menu {
-                Button {
-                    onSetRead(!item.isRead)
+            if showsTrailingMenu {
+                Menu {
+                    menuActions
                 } label: {
-                    Text(verbatim: markToggleLabel)
+                    Image(fontAwesome: .ellipsisVertical)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.flareSecondaryLabel)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .padding(.trailing, 8)
+                .accessibilityIdentifier("manga_chapter_menu_\(item.chapter.id)")
+                .accessibilityLabel(Text(verbatim: FlareAppleUILocalization.string("more", fallback: "More")))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var menuActions: some View {
+        Button {
+            onSetRead(!item.isRead)
+        } label: {
+            Label(
+                markToggleLabel,
+                systemImage: item.isRead ? "circle" : "checkmark.circle"
+            )
+        }
+
+        if let openUrl = resolvedOpenURL {
+            Button {
+                let uri = DeeplinkRoute.OpenLinkDirectly(url: openUrl).toUri()
+                if let url = URL(string: uri) {
+                    openURL(url)
+                } else if let direct = URL(string: openUrl) {
+                    openURL(direct)
                 }
             } label: {
-                Image(fontAwesome: .ellipsisVertical)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.flareSecondaryLabel)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .padding(.trailing, 6)
-            .accessibilityIdentifier("manga_chapter_menu_\(item.chapter.id)")
-            .accessibilityLabel(Text(verbatim: FlareAppleUILocalization.string("more", fallback: "More")))
-        }
-        .mangaDetailCardSurface(cornerRadius: 12)
-        .contextMenu {
-            Button {
-                onSetRead(!item.isRead)
-            } label: {
-                Text(verbatim: markToggleLabel)
+                Label(
+                    FlareAppleUILocalization.string("manga_open_in_browser", fallback: "Open in browser"),
+                    systemImage: "safari"
+                )
             }
         }
-        .accessibilityIdentifier("manga_chapter_row_\(item.chapter.id)")
     }
 
     private var hasMetadataSubtitle: Bool {
@@ -760,6 +919,7 @@ public struct MangaChapterListSection: View {
     public let selectedGroupId: String?
     public let chapterSortDescending: Bool
     public let chapters: [UiMangaChapterItem]
+    public let detailURL: String?
     public let onSelectGroup: (String) -> Void
     public let onToggleSort: () -> Void
     public let onChapterTap: (UiMangaChapter) -> Void
@@ -771,6 +931,7 @@ public struct MangaChapterListSection: View {
         selectedGroupId: String?,
         chapterSortDescending: Bool,
         chapters: [UiMangaChapterItem],
+        detailURL: String? = nil,
         onSelectGroup: @escaping (String) -> Void,
         onToggleSort: @escaping () -> Void,
         onChapterTap: @escaping (UiMangaChapter) -> Void,
@@ -781,6 +942,7 @@ public struct MangaChapterListSection: View {
         self.selectedGroupId = selectedGroupId
         self.chapterSortDescending = chapterSortDescending
         self.chapters = chapters
+        self.detailURL = detailURL
         self.onSelectGroup = onSelectGroup
         self.onToggleSort = onToggleSort
         self.onChapterTap = onChapterTap
@@ -791,11 +953,11 @@ public struct MangaChapterListSection: View {
     public var body: some View {
         Group {
             if chapters.count > 80 {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 2) {
                     sectionContent
                 }
             } else {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
                     sectionContent
                 }
             }
@@ -820,6 +982,7 @@ public struct MangaChapterListSection: View {
             onSelectGroup: onSelectGroup,
             onToggleSort: onToggleSort
         )
+        .padding(.bottom, 6)
 
         if chapters.isEmpty {
             Text(
@@ -832,9 +995,11 @@ public struct MangaChapterListSection: View {
             .flareSecondaryText()
             .padding(.vertical, 16)
         } else {
-            ForEach(chapters, id: \.chapter.id) { item in
+            ForEach(Array(chapters.enumerated()), id: \.element.chapter.id) { index, item in
                 MangaChapterRowView(
                     item: item,
+                    detailURL: detailURL,
+                    style: .groupedCard(index: index, totalCount: chapters.count),
                     onClick: {
                         if item.chapter.locked {
                             onLockedChapterTap(item.chapter)

@@ -6,7 +6,6 @@ import SwiftUI
 
 struct MangaDetailScreen: View {
     @State private var presenter: KotlinPresenter<MangaDetailPresenterState>
-    @State private var refreshGeneration = 0
 
     private let accountType: AccountType
     private let mangaKey: MicroBlogKey
@@ -32,13 +31,9 @@ struct MangaDetailScreen: View {
             state: presenter.state,
             onNavigate: onNavigate,
             onRetry: {
-                refreshGeneration += 1
-                presenter = KotlinPresenter(
-                    presenter: MangaDetailPresenter(accountType: accountType, mangaKey: mangaKey)
-                )
+                presenter.state.refresh()
             }
         )
-        .id(refreshGeneration)
     }
 }
 
@@ -90,6 +85,8 @@ struct MangaDetailContentView: View {
     let supportsRecommendations: Bool
     let comments: PagingState<UiTimelineV2>?
     let recommendations: PagingState<UiTimelineV2>?
+    let isRefreshing: Bool
+    let onRefresh: () -> Void
     let onSelectGroup: (String) -> Void
     let onToggleSort: () -> Void
     let onSetChapterRead: (String, Bool) -> Void
@@ -99,12 +96,13 @@ struct MangaDetailContentView: View {
 
     @State private var selectedTab: IOSMangaDetailTab = .chapters
     @State private var lockedPromptChapter: UiMangaChapter?
+    @State private var isHeroVisible = true
 
     init(
         state: any MangaDetailPresenterState,
         onNavigate: @escaping (Route) -> Void,
         onOpenExternalURL: ((String) -> Void)? = nil,
-        onRetry: @escaping () -> Void = {}
+        onRetry: (() -> Void)? = nil
     ) {
         self.detail = state.detail
         self.translation = state.translation
@@ -116,12 +114,14 @@ struct MangaDetailContentView: View {
         self.supportsRecommendations = state.supportsRecommendations
         self.comments = state.comments
         self.recommendations = state.recommendations
+        self.isRefreshing = state.isRefreshing
+        self.onRefresh = { state.refresh() }
         self.onSelectGroup = { state.selectGroup(groupId: $0) }
         self.onToggleSort = { state.toggleChapterSort() }
         self.onSetChapterRead = { state.setChapterRead(chapterId: $0, isRead: $1) }
         self.onNavigate = onNavigate
         self.onOpenExternalURL = onOpenExternalURL
-        self.onRetry = onRetry
+        self.onRetry = onRetry ?? { state.refresh() }
     }
 
     init(
@@ -135,6 +135,8 @@ struct MangaDetailContentView: View {
         supportsRecommendations: Bool = false,
         comments: PagingState<UiTimelineV2>? = nil,
         recommendations: PagingState<UiTimelineV2>? = nil,
+        isRefreshing: Bool = false,
+        onRefresh: @escaping () -> Void = {},
         onSelectGroup: @escaping (String) -> Void = { _ in },
         onToggleSort: @escaping () -> Void = {},
         onSetChapterRead: @escaping (String, Bool) -> Void = { _, _ in },
@@ -152,6 +154,8 @@ struct MangaDetailContentView: View {
         self.supportsRecommendations = supportsRecommendations
         self.comments = comments
         self.recommendations = recommendations
+        self.isRefreshing = isRefreshing
+        self.onRefresh = onRefresh
         self.onSelectGroup = onSelectGroup
         self.onToggleSort = onToggleSort
         self.onSetChapterRead = onSetChapterRead
@@ -190,6 +194,15 @@ struct MangaDetailContentView: View {
         return tabs
     }
 
+    private var activeTab: IOSMangaDetailTab {
+        availableTabs.contains(selectedTab) ? selectedTab : .chapters
+    }
+
+    private func hasSynopsisOrTags(_ detail: UiMangaDetail) -> Bool {
+        detail.content?.innerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ||
+            detail.tagGroups.contains(where: { !$0.tags.isEmpty })
+    }
+
     var body: some View {
         StateView(state: detail) { loaded in
             if isRegularWidth {
@@ -206,8 +219,27 @@ struct MangaDetailContentView: View {
         .environment(\.timelineAppearance, timelineAppearance.mangaCardTimeline())
         .flareTextBackground(.flareSystemGroupedBackground)
         .background(Color(.systemGroupedBackground))
-        .navigationTitle(loadedDetail?.title ?? "")
+        .toolbarBackground(
+            !isRegularWidth && isHeroVisible && loadedDetail != nil ? Visibility.hidden : Visibility.automatic,
+            for: .navigationBar
+        )
+        .navigationTitle(!isRegularWidth && isHeroVisible ? "" : (loadedDetail?.title ?? ""))
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if !availableTabs.contains(selectedTab) {
+                selectedTab = .chapters
+            }
+        }
+        .onChange(of: availableTabs) { _, newTabs in
+            if !newTabs.contains(selectedTab) {
+                selectedTab = .chapters
+            }
+        }
+        .onChange(of: loadedDetail == nil) { _, isNil in
+            if isNil {
+                isHeroVisible = true
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let translation {
@@ -232,23 +264,6 @@ struct MangaDetailContentView: View {
                 }
 
                 Button {
-                    if let shareURL {
-                        openExternal(shareURL)
-                    }
-                } label: {
-                    Image(systemName: "safari")
-                }
-                .disabled(shareURL == nil)
-                .accessibilityLabel(
-                    Text(
-                        verbatim: FlareAppleUILocalization.string(
-                            "manga_open_in_browser",
-                            fallback: "Open in browser"
-                        )
-                    )
-                )
-
-                Button {
                     if let loadedDetail, let shareURL {
                         onNavigate(
                             .statusShareSheet(
@@ -268,6 +283,39 @@ struct MangaDetailContentView: View {
                     Text(
                         verbatim: FlareAppleUILocalization.string("fx_share", fallback: "Share")
                     )
+                )
+
+                Menu {
+                    Button {
+                        if let shareURL {
+                            openExternal(shareURL)
+                        }
+                    } label: {
+                        Label(
+                            FlareAppleUILocalization.string(
+                                "manga_open_in_browser",
+                                fallback: "Open in browser"
+                            ),
+                            systemImage: "safari"
+                        )
+                    }
+                    .disabled(shareURL == nil)
+
+                    Button {
+                        onRefresh()
+                    } label: {
+                        Label(
+                            FlareAppleUILocalization.string("Refresh", fallback: "Refresh"),
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .disabled(isRefreshing)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("manga_more_menu")
+                .accessibilityLabel(
+                    Text(verbatim: FlareAppleUILocalization.string("more", fallback: "More"))
                 )
             }
         }
@@ -305,57 +353,222 @@ struct MangaDetailContentView: View {
     }
 
     private func compactBody(detail: UiMangaDetail) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                heroCard(detail: detail)
-
-                if detail.content != nil || detail.tagGroups.contains(where: { !$0.tags.isEmpty }) {
-                    MangaSynopsisAndTagsCardView(detail: detail)
+        List {
+            heroHeader(detail: detail, usesCardSurface: false)
+                .onAppear { isHeroVisible = true }
+                .onDisappear { isHeroVisible = false }
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    let frame = proxy.frame(in: .global)
+                    return frame.height == 0 ? 10_000 : frame.maxY
+                } action: { maxY in
+                    if isHeroVisible && maxY < 88 {
+                        isHeroVisible = false
+                    } else if !isHeroVisible && maxY > 108 {
+                        isHeroVisible = true
+                    }
                 }
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
 
-                MangaChapterListSection(
-                    chapterGroups: detail.chapterGroups,
-                    selectedGroupId: selectedGroupId,
-                    chapterSortDescending: chapterSortDescending,
-                    chapters: chapters,
-                    onSelectGroup: onSelectGroup,
-                    onToggleSort: onToggleSort,
-                    onChapterTap: { chapter in
-                        onNavigate(.mangaReader(detail.accountType, detail.mangaKey, chapter.id, nil))
-                    },
-                    onLockedChapterTap: { chapter in
-                        lockedPromptChapter = chapter
-                    },
-                    onSetChapterRead: onSetChapterRead
+            if hasSynopsisOrTags(detail) {
+                MangaSynopsisAndTagsCardView(detail: detail)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(
+                        EdgeInsets(
+                            top: 4,
+                            leading: TimelineHorizontalInsets.card,
+                            bottom: 6,
+                            trailing: TimelineHorizontalInsets.card
+                        )
+                    )
+                    .listRowBackground(Color.clear)
+            }
+
+            if availableTabs.count > 1 {
+                Section {
+                    compactTabRows(detail: detail, tab: activeTab)
+                } header: {
+                    stickyTabPickerHeader
+                }
+                .id("manga_compact_tabs_multi")
+            } else {
+                Section {
+                    compactTabRows(detail: detail, tab: .chapters)
+                }
+                .id("manga_compact_tabs_single")
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .listRowSpacing(2)
+        .refreshable {
+            onRefresh()
+        }
+        .detectScrolling()
+    }
+
+    private var stickyTabPickerHeader: some View {
+        Picker("", selection: $selectedTab) {
+            ForEach(availableTabs) { tab in
+                Text(verbatim: tab.localizedTitle).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .textCase(nil)
+        .listRowInsets(EdgeInsets())
+    }
+
+    @ViewBuilder
+    private func compactTabRows(detail: UiMangaDetail, tab: IOSMangaDetailTab) -> some View {
+        switch tab {
+        case .chapters:
+            chaptersListRows(detail: detail)
+
+        case .comments:
+            if let comments {
+                TimelinePagingListContent(data: comments)
+            }
+
+        case .recommendations:
+            if let recommendations {
+                IOSMangaRecommendationsSection(
+                    recommendations: recommendations,
+                    showTitle: false,
+                    onOpenMedia: { post, media in
+                        openPostMedia(post: post, media: media)
+                    }
                 )
+                .padding(.horizontal, TimelineHorizontalInsets.card)
+                .padding(.vertical, 6)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+        }
+    }
 
-                if supportsComments, let comments {
-                    IOSMangaCommentsPreview(
-                        comments: comments,
-                        onViewMore: {
-                            onNavigate(.mangaComments(detail.accountType, detail.mangaKey))
+    @ViewBuilder
+    private func chaptersListRows(detail: UiMangaDetail) -> some View {
+        MangaChaptersHeaderView(
+            chapterGroups: detail.chapterGroups,
+            selectedGroupId: selectedGroupId,
+            chapterSortDescending: chapterSortDescending,
+            chapterCount: chapters.count,
+            onSelectGroup: onSelectGroup,
+            onToggleSort: onToggleSort
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: MangaDetailPaneFramesPreferenceKey.self,
+                    value: MangaDetailPaneFrames(chaptersSection: proxy.frame(in: .global))
+                )
+            }
+        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.clear)
+
+        if chapters.isEmpty {
+            Text(
+                verbatim: FlareAppleUILocalization.string(
+                    "manga_detail_empty_chapters",
+                    fallback: "No chapters available"
+                )
+            )
+            .font(.subheadline)
+            .flareSecondaryText()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+        } else {
+            ForEach(Array(chapters.enumerated()), id: \.element.chapter.id) { index, item in
+                let markToggleLabel = item.isRead
+                    ? FlareAppleUILocalization.string("manga_detail_mark_unread", fallback: "Mark as unread")
+                    : FlareAppleUILocalization.string("manga_detail_mark_read", fallback: "Mark as read")
+
+                ListCardView(index: index, totalCount: chapters.count) {
+                    MangaChapterRowView(
+                        item: item,
+                        showsTrailingMenu: false,
+                        detailURL: detail.url,
+                        style: .listPlain,
+                        onClick: {
+                            if item.chapter.locked {
+                                lockedPromptChapter = item.chapter
+                            } else {
+                                onNavigate(.mangaReader(detail.accountType, detail.mangaKey, item.chapter.id, nil))
+                            }
+                        },
+                        onSetRead: { isRead in
+                            onSetChapterRead(item.chapter.id, isRead)
                         }
                     )
-                    .padding(.top, 4)
                 }
-
-                if supportsRecommendations, let recommendations {
-                    IOSMangaRecommendationsSection(
-                        recommendations: recommendations,
-                        onOpenMedia: { post, media in
-                            let medias = post.images.filter { $0 is UiMediaImage || $0 is UiMediaUgoira }
-                            let index = medias.firstIndex { $0.url == media.url } ?? 0
-                            onNavigate(.mediaRaw(medias, index, media.mediaPreviewURL))
-                        }
+                .listRowSeparator(.hidden)
+                .listRowInsets(
+                    EdgeInsets(
+                        top: 0,
+                        leading: TimelineHorizontalInsets.card,
+                        bottom: 0,
+                        trailing: TimelineHorizontalInsets.card
                     )
-                    .padding(.top, 4)
+                )
+                .listRowBackground(Color.clear)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button {
+                        onSetChapterRead(item.chapter.id, !item.isRead)
+                    } label: {
+                        Label(
+                            markToggleLabel,
+                            systemImage: item.isRead ? "circle" : "checkmark.circle.fill"
+                        )
+                    }
+                    .tint(item.isRead ? .secondary : .accentColor)
+                }
+                .contextMenu {
+                    Button {
+                        onSetChapterRead(item.chapter.id, !item.isRead)
+                    } label: {
+                        Label(
+                            markToggleLabel,
+                            systemImage: item.isRead ? "circle" : "checkmark.circle"
+                        )
+                    }
+
+                    if let openUrl = MangaDetailFormatting.resolveLockedChapterURL(
+                        chapter: item.chapter,
+                        detailURL: detail.url
+                    ) {
+                        Button {
+                            openExternal(openUrl)
+                        } label: {
+                            Label(
+                                FlareAppleUILocalization.string(
+                                    "manga_open_in_browser",
+                                    fallback: "Open in browser"
+                                ),
+                                systemImage: "safari"
+                            )
+                        }
+                    }
+                }
+                .accessibilityAction(named: Text(verbatim: markToggleLabel)) {
+                    onSetChapterRead(item.chapter.id, !item.isRead)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 24)
         }
-        .timelineMediaViewport()
     }
 
     private func regularSplitBody(detail: UiMangaDetail) -> some View {
@@ -364,8 +577,8 @@ struct MangaDetailContentView: View {
             HStack(spacing: 0) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        heroCard(detail: detail)
-                        if detail.content != nil || detail.tagGroups.contains(where: { !$0.tags.isEmpty }) {
+                        heroHeader(detail: detail, usesCardSurface: true)
+                        if hasSynopsisOrTags(detail) {
                             MangaSynopsisAndTagsCardView(detail: detail)
                         }
                     }
@@ -384,31 +597,23 @@ struct MangaDetailContentView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+                        .labelsHidden()
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                     }
 
-                    let activeTab = availableTabs.contains(selectedTab) ? selectedTab : .chapters
                     switch activeTab {
                     case .chapters:
-                        ScrollView {
-                            MangaChapterListSection(
-                                chapterGroups: detail.chapterGroups,
-                                selectedGroupId: selectedGroupId,
-                                chapterSortDescending: chapterSortDescending,
-                                chapters: chapters,
-                                onSelectGroup: onSelectGroup,
-                                onToggleSort: onToggleSort,
-                                onChapterTap: { chapter in
-                                    onNavigate(.mangaReader(detail.accountType, detail.mangaKey, chapter.id, nil))
-                                },
-                                onLockedChapterTap: { chapter in
-                                    lockedPromptChapter = chapter
-                                },
-                                onSetChapterRead: onSetChapterRead
-                            )
-                            .padding(16)
+                        List {
+                            chaptersListRows(detail: detail)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .listRowSpacing(2)
+                        .refreshable {
+                            onRefresh()
+                        }
+                        .detectScrolling()
 
                     case .comments:
                         if let comments {
@@ -438,11 +643,12 @@ struct MangaDetailContentView: View {
         }
     }
 
-    private func heroCard(detail: UiMangaDetail) -> some View {
-        MangaHeroCardView(
+    private func heroHeader(detail: UiMangaDetail, usesCardSurface: Bool) -> some View {
+        IOSMangaHeroHeaderView(
             detail: detail,
             translation: translation,
             primaryReadTarget: primaryReadTarget,
+            usesCardSurface: usesCardSurface,
             onOpenCover: { cover in
                 onNavigate(.mediaRaw([cover], 0, cover.previewUrl))
             },
@@ -455,6 +661,12 @@ struct MangaDetailContentView: View {
         )
     }
 
+    private func openPostMedia(post: UiTimelineV2.Post, media: UiMedia) {
+        let medias = post.images.filter { $0 is UiMediaImage || $0 is UiMediaUgoira }
+        let index = medias.firstIndex { $0.url == media.url } ?? 0
+        onNavigate(.mediaRaw(medias, index, media.mediaPreviewURL))
+    }
+
     private func openExternal(_ rawURL: String) {
         if let onOpenExternalURL {
             onOpenExternalURL(rawURL)
@@ -465,6 +677,207 @@ struct MangaDetailContentView: View {
             openURL(url)
         } else if let direct = URL(string: rawURL) {
             openURL(direct)
+        }
+    }
+}
+
+private struct IOSMangaHeroHeaderView: View {
+    @Environment(\.openURL) private var openURL
+    let detail: UiMangaDetail
+    let translation: (any MangaTranslatePresenterState)?
+    let primaryReadTarget: PrimaryReadTarget?
+    let usesCardSurface: Bool
+    let onOpenCover: (UiMediaImage) -> Void
+    let onOpenProfile: (AccountType, MicroBlogKey) -> Void
+    let onOpenReader: (String, Int) -> Void
+
+    private var combinedCreatorNames: String {
+        var seen = Set<String>()
+        var names: [String] = []
+        for raw in detail.authors + detail.artists {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, seen.insert(trimmed).inserted {
+                names.append(trimmed)
+            }
+        }
+        return names.joined(separator: " · ")
+    }
+
+    private var showsBookmarkFallback: Bool {
+        detail.actions.isEmpty && (!(detail.bookmarkAction is ClickEventNoop) || detail.isBookmarked)
+    }
+
+    private var targetBackdropColor: Color {
+        usesCardSurface ? .flareSecondarySystemGroupedBackground : .flareSystemGroupedBackground
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 16) {
+                if let cover = detail.cover {
+                    Button {
+                        onOpenCover(cover)
+                    } label: {
+                        NetworkImage(data: cover, placeholder: cover.preview, contentMode: .fill)
+                            .frame(width: 114, height: 171)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
+                            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("manga_cover_button")
+                    .accessibilityLabel(Text(verbatim: detail.title))
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: detail.title)
+                        .flarePrimaryText()
+                        .font(.title3.bold())
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let altTitle = detail.altTitles
+                        .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+                        .first(where: { !$0.isEmpty }) {
+                        Text(verbatim: altTitle)
+                            .font(.subheadline)
+                            .flareSecondaryText()
+                            .lineLimit(2)
+                    }
+
+                    if let author = detail.author {
+                        Button {
+                            onOpenProfile(detail.accountType, author.key)
+                        } label: {
+                            HStack(spacing: 8) {
+                                AvatarView(data: author.avatar)
+                                    .frame(width: 24, height: 24)
+                                RichText(text: author.name)
+                                    .font(.caption)
+                                    .flareSecondaryText()
+                                    .lineLimit(1)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("manga_author_button")
+                    } else if !combinedCreatorNames.isEmpty {
+                        Text(verbatim: combinedCreatorNames)
+                            .font(.caption)
+                            .flareSecondaryText()
+                            .lineLimit(2)
+                    }
+
+                    HStack(spacing: 8) {
+                        if let status = detail.status {
+                            MangaStatusBadgeView(status: status)
+                        }
+                        if let updatedAt = detail.updatedAt {
+                            DateTimeText(data: updatedAt)
+                                .font(.caption2)
+                                .flareSecondaryText()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let translation {
+                if translation.isTranslating {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                }
+                if translation.error != nil {
+                    Button {
+                        translation.retry()
+                    } label: {
+                        Text(
+                            verbatim: FlareAppleUILocalization.string(
+                                "Retry translation",
+                                fallback: "Retry translation"
+                            )
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("manga_translation_retry")
+                }
+            }
+
+            if primaryReadTarget != nil || showsBookmarkFallback {
+                HStack(spacing: 10) {
+                    if let target = primaryReadTarget {
+                        Button {
+                            onOpenReader(target.chapterId, Int(target.initialPage))
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "book.fill")
+                                Text(verbatim: MangaDetailFormatting.primaryReadButtonTitle(for: target))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("manga_primary_read_cta")
+                    } else {
+                        Spacer(minLength: 0)
+                    }
+
+                    if showsBookmarkFallback {
+                        let isBookmarkDisabled = detail.bookmarkAction is ClickEventNoop
+                        Button {
+                            detail.onBookmark(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
+                        } label: {
+                            Image(fontAwesome: detail.isBookmarked ? .heartFill : .heart)
+                                .frame(width: 34, height: 34)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isBookmarkDisabled)
+                        .opacity(isBookmarkDisabled ? 0.45 : 1.0)
+                        .foregroundStyle(detail.isBookmarked ? Color.red : Color.secondary)
+                        .accessibilityIdentifier("manga_cta_bookmark_fallback")
+                        .accessibilityLabel(
+                            Text(
+                                verbatim: detail.isBookmarked
+                                    ? FlareAppleUILocalization.string("bookmark_remove", fallback: "Remove bookmark")
+                                    : FlareAppleUILocalization.string("bookmark_add", fallback: "Add bookmark")
+                            )
+                        )
+                    }
+                }
+            }
+
+            if !detail.actions.isEmpty {
+                StatusActionsView(
+                    data: detail.actions,
+                    useText: false,
+                    isDetail: true,
+                    postKey: detail.mangaKey.description()
+                )
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
+        .flareTextBackground(usesCardSurface ? .flareSecondarySystemGroupedBackground : .flareSystemGroupedBackground)
+        .background {
+            MangaBlurredCoverBackdropView(
+                cover: detail.cover,
+                targetBackgroundColor: targetBackdropColor
+            )
+        }
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: usesCardSurface ? 28 : 0,
+                style: .continuous
+            )
+        )
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: MangaDetailPaneFramesPreferenceKey.self,
+                    value: MangaDetailPaneFrames(heroCard: proxy.frame(in: .global))
+                )
+            }
         }
     }
 }
@@ -488,87 +901,9 @@ private enum IOSMangaDetailTab: String, Identifiable {
     }
 }
 
-private struct IOSMangaCommentsPreview: View {
-    let comments: PagingState<UiTimelineV2>
-    let onViewMore: () -> Void
-
-    private var sectionTitle: String {
-        FlareAppleUILocalization.string("manga_detail_tab_comments", fallback: "Comments")
-    }
-
-    var body: some View {
-        switch onEnum(of: comments) {
-        case .empty:
-            EmptyView()
-        case .error(let error):
-            ListErrorView(error: error.error) {
-                error.onRetry()
-            }
-        case .loading:
-            VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: sectionTitle)
-                    .flarePrimaryText()
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                ForEach(0..<3, id: \.self) { index in
-                    ListCardView(index: index, totalCount: 3) {
-                        TimelinePlaceholderView()
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                    }
-                }
-            }
-        case .success(let success):
-            let total = Int(success.itemCount)
-            let visible = min(total, 3)
-            if visible > 0 {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: sectionTitle)
-                        .flarePrimaryText()
-                        .font(.headline)
-                        .fontWeight(.semibold)
-
-                    ForEach(0..<visible, id: \.self) { index in
-                        if let item = success.peek(index: Int32(index)) {
-                            ListCardView(index: index, totalCount: visible) {
-                                TimelineView(data: item, detailStatusKey: nil)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                            }
-                            .onAppear {
-                                _ = success.get(index: Int32(index))
-                            }
-                        }
-                    }
-
-                    let hasMore: Bool = {
-                        if total > 3 { return true }
-                        if case .notLoading(let notLoading) = onEnum(of: success.appendState) {
-                            return !notLoading.endOfPaginationReached
-                        }
-                        return false
-                    }()
-                    if hasMore {
-                        Button(action: onViewMore) {
-                            Text(
-                                verbatim: FlareAppleUILocalization.string(
-                                    "manga_detail_view_more",
-                                    fallback: "View more"
-                                )
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.top, 6)
-                    }
-                }
-            }
-        }
-    }
-}
-
 private struct IOSMangaRecommendationsSection: View {
     let recommendations: PagingState<UiTimelineV2>
+    var showTitle: Bool = true
     let onOpenMedia: (UiTimelineV2.Post, UiMedia) -> Void
     private let columnCount = 2
 
@@ -580,10 +915,12 @@ private struct IOSMangaRecommendationsSection: View {
         switch onEnum(of: recommendations) {
         case .empty:
             VStack(alignment: .leading, spacing: 8) {
-                Text(verbatim: sectionTitle)
-                    .flarePrimaryText()
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                if showTitle {
+                    Text(verbatim: sectionTitle)
+                        .flarePrimaryText()
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                }
                 Text(
                     verbatim: FlareAppleUILocalization.string(
                         "manga_detail_empty_recommendations",
@@ -594,22 +931,27 @@ private struct IOSMangaRecommendationsSection: View {
                 .flareSecondaryText()
                 .padding(.vertical, 16)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .error(let error):
             VStack(alignment: .leading, spacing: 8) {
-                Text(verbatim: sectionTitle)
-                    .flarePrimaryText()
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                if showTitle {
+                    Text(verbatim: sectionTitle)
+                        .flarePrimaryText()
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                }
                 ListErrorView(error: error.error) {
                     error.onRetry()
                 }
             }
         case .loading:
             VStack(alignment: .leading, spacing: 8) {
-                Text(verbatim: sectionTitle)
-                    .flarePrimaryText()
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                if showTitle {
+                    Text(verbatim: sectionTitle)
+                        .flarePrimaryText()
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                }
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(0..<columnCount, id: \.self) { column in
                         LazyVStack(spacing: 8) {
@@ -626,10 +968,12 @@ private struct IOSMangaRecommendationsSection: View {
             let itemCount = Int(success.itemCount)
             if itemCount > 0 {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(verbatim: sectionTitle)
-                        .flarePrimaryText()
-                        .font(.headline)
-                        .fontWeight(.semibold)
+                    if showTitle {
+                        Text(verbatim: sectionTitle)
+                            .flarePrimaryText()
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                    }
                     HStack(alignment: .top, spacing: 8) {
                         ForEach(0..<columnCount, id: \.self) { column in
                             LazyVStack(spacing: 8) {

@@ -1641,6 +1641,203 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertNil(controller.doubleTapZoomHandler)
     }
 
+    func testIOSCompactTabsEmptyChaptersAndIsolatedHeroButtons() async throws {
+        let mangaKey = MicroBlogKey(id: "manga-compact-1", host: "manga.example")
+        let guestAccount = AccountType.GuestPlugin(platformId: "manga-plat", host: "manga.example")
+        let detail = UiMangaDetail(
+            pluginId: "dev.example.manga",
+            platformId: "manga-plat",
+            mangaKey: mangaKey,
+            accountType: guestAccount,
+            title: "Compact Starlight",
+            altTitles: ["紧凑星光"],
+            cover: nil,
+            author: nil,
+            authors: ["Aria Lin"],
+            artists: ["Kuro"],
+            status: .ongoing,
+            content: makeRichSynopsis(["   "]),
+            url: "https://manga.example/series/compact-1",
+            updatedAt: nil,
+            readingDirection: .rtl,
+            tagGroups: [],
+            chapterGroups: [],
+            isBookmarked: false,
+            bookmarkAction: ClickEventNoop.shared,
+            actions: [],
+            sourceLanguages: ["en"]
+        )
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        // 1. Compact mode (390x844) with chapters: [], supportsComments: true, supportsRecommendations: true
+        //    must report both heroCard and chaptersSection (heroCard.maxY < chaptersSection.maxY) AND mount UISegmentedControl
+        var compactFrames = MangaDetailPaneFrames()
+        var refreshCount = 0
+        func makeCompactRoot(
+            detailValue: UiMangaDetail = detail,
+            primaryTarget: PrimaryReadTarget? = nil,
+            supportsComments: Bool,
+            supportsRecommendations: Bool,
+            onNavigate: @escaping (Route) -> Void = { _ in }
+        ) -> some View {
+            MangaDetailContentView(
+                detail: UiStateSuccess(data: detailValue),
+                chapters: [],
+                primaryReadTarget: primaryTarget,
+                supportsComments: supportsComments,
+                supportsRecommendations: supportsRecommendations,
+                onRefresh: { refreshCount += 1 },
+                onNavigate: onNavigate
+            )
+            .environment(\.horizontalSizeClass, .compact)
+            .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self) { compactFrames = $0 }
+        }
+
+        let compactWithTabsHost = UIHostingController(
+            rootView: makeCompactRoot(supportsComments: true, supportsRecommendations: true)
+        )
+        window.rootViewController = compactWithTabsHost
+        window.makeKeyAndVisible()
+
+        try await eventually(window: window) {
+            compactFrames.heroCard != nil &&
+                compactFrames.chaptersSection != nil &&
+                self.countSubviews(ofType: UISegmentedControl.self, in: compactWithTabsHost.view) == 1
+        }
+        let heroFrame = try XCTUnwrap(compactFrames.heroCard)
+        let chaptersFrame = try XCTUnwrap(compactFrames.chaptersSection)
+        XCTAssertLessThan(
+            heroFrame.maxY,
+            chaptersFrame.maxY,
+            "Expected heroCard (\(heroFrame)) above chaptersSection (\(chaptersFrame)) even when chapters is empty"
+        )
+        let segmented = try XCTUnwrap(descendants(compactWithTabsHost.view).compactMap { $0 as? UISegmentedControl }.first)
+        XCTAssertEqual(segmented.numberOfSegments, 3)
+
+        // Blank UiRichText synopsis with empty tagGroups must render zero height in MangaSynopsisAndTagsCardView
+        let blankSynopsisHost = UIHostingController(rootView: MangaSynopsisAndTagsCardView(detail: detail))
+        let blankSynopsisSize = blankSynopsisHost.sizeThatFits(in: CGSize(width: 390, height: 600))
+        XCTAssertEqual(blankSynopsisSize.height, 0, accuracy: 1.0, "Blank UiRichText with empty tagGroups must not render an empty card")
+
+        // Dynamic availableTabs shrinking: 3 -> 2 resets removed Recommendations tab (index 2) to Chapters (index 0),
+        // while preserving Comments (index 1) when still present
+        segmented.selectedSegmentIndex = 2
+        segmented.sendActions(for: .valueChanged)
+        try await eventually(window: window) { segmented.selectedSegmentIndex == 2 }
+
+        compactWithTabsHost.rootView = makeCompactRoot(supportsComments: true, supportsRecommendations: false)
+        try await eventually(window: window) {
+            guard let control = self.descendants(compactWithTabsHost.view).compactMap({ $0 as? UISegmentedControl }).first else {
+                return false
+            }
+            return control.numberOfSegments == 2 && control.selectedSegmentIndex == 0
+        }
+
+        compactWithTabsHost.rootView = makeCompactRoot(supportsComments: true, supportsRecommendations: true)
+        try await eventually(window: window) {
+            self.descendants(compactWithTabsHost.view).compactMap({ $0 as? UISegmentedControl }).first?.numberOfSegments == 3
+        }
+        let threeTabControl = try XCTUnwrap(descendants(compactWithTabsHost.view).compactMap { $0 as? UISegmentedControl }.first)
+        threeTabControl.selectedSegmentIndex = 1
+        threeTabControl.sendActions(for: .valueChanged)
+        try await eventually(window: window) { threeTabControl.selectedSegmentIndex == 1 }
+
+        compactWithTabsHost.rootView = makeCompactRoot(supportsComments: true, supportsRecommendations: false)
+        try await eventually(window: window) {
+            guard let control = self.descendants(compactWithTabsHost.view).compactMap({ $0 as? UISegmentedControl }).first else {
+                return false
+            }
+            return control.numberOfSegments == 2 && control.selectedSegmentIndex == 1
+        }
+
+        // 2. Compact mode when both supportsComments and supportsRecommendations are false must omit UISegmentedControl
+        compactWithTabsHost.rootView = makeCompactRoot(supportsComments: false, supportsRecommendations: false)
+        try await eventually(window: window) {
+            self.visibleSubviews(ofType: UISegmentedControl.self, in: compactWithTabsHost.view).isEmpty
+        }
+        let freshSingleTabHost = UIHostingController(
+            rootView: makeCompactRoot(supportsComments: false, supportsRecommendations: false)
+        )
+        window.rootViewController = freshSingleTabHost
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        window.layoutIfNeeded()
+        XCTAssertEqual(
+            countSubviews(ofType: UISegmentedControl.self, in: freshSingleTabHost.view),
+            0,
+            "UISegmentedControl must not be mounted when only the Chapters tab is available"
+        )
+        XCTAssertEqual(refreshCount, 0)
+
+        // 3. Hero controls inside List row use explicit button styles so List cell selection never merges cover + Read CTA taps
+        let sampleCover = try XCTUnwrap((makeSamplePages(count: 1)[0].status as? PageMediaStatusReady)?.original as? UiMediaImage)
+        let detailWithCover = UiMangaDetail(
+            pluginId: detail.pluginId,
+            platformId: detail.platformId,
+            mangaKey: detail.mangaKey,
+            accountType: detail.accountType,
+            title: detail.title,
+            altTitles: detail.altTitles,
+            cover: sampleCover,
+            author: nil,
+            authors: detail.authors,
+            artists: detail.artists,
+            status: detail.status,
+            content: detail.content,
+            url: detail.url,
+            updatedAt: nil,
+            readingDirection: .rtl,
+            tagGroups: [],
+            chapterGroups: [],
+            isBookmarked: false,
+            bookmarkAction: ClickEventNoop.shared,
+            actions: [],
+            sourceLanguages: ["en"]
+        )
+        let readTarget = PrimaryReadTarget(
+            chapterId: "ch-1",
+            chapterTitle: "Chapter 1",
+            initialPage: 0,
+            isContinue: false,
+            isSingleChapterWork: false
+        )
+        var navigatedRoutes: [Route] = []
+        let isolatedHeroHost = UIHostingController(
+            rootView: makeCompactRoot(
+                detailValue: detailWithCover,
+                primaryTarget: readTarget,
+                supportsComments: false,
+                supportsRecommendations: false,
+                onNavigate: { navigatedRoutes.append($0) }
+            )
+        )
+        window.rootViewController = isolatedHeroHost
+        try await eventually(window: window) {
+            self.descendants(isolatedHeroHost.view).contains { $0 is UICollectionView }
+        }
+        let listCollectionView = try XCTUnwrap(
+            descendants(isolatedHeroHost.view).compactMap { $0 as? UICollectionView }.first
+        )
+        XCTAssertNotNil(listCollectionView.refreshControl, "Compact List must wire pull-to-refresh via .refreshable")
+        XCTAssertGreaterThan(listCollectionView.numberOfSections, 0)
+        XCTAssertGreaterThan(listCollectionView.numberOfItems(inSection: 0), 0)
+        let heroIndexPath = IndexPath(item: 0, section: 0)
+        listCollectionView.delegate?.collectionView?(listCollectionView, didSelectItemAt: heroIndexPath)
+        XCTAssertTrue(
+            navigatedRoutes.isEmpty,
+            "Selecting the hero List row must not trigger merged cover or Read CTA actions (\(navigatedRoutes))"
+        )
+    }
+
     private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -1677,6 +1874,20 @@ final class MangaReaderAndDetailTests: XCTestCase {
     private func countSubviews<T: UIView>(ofType type: T.Type, in root: UIView) -> Int {
         let own = root is T ? 1 : 0
         return own + root.subviews.reduce(0) { $0 + countSubviews(ofType: type, in: $1) }
+    }
+
+    private func visibleSubviews<T: UIView>(ofType type: T.Type, in root: UIView) -> [T] {
+        descendants(root).compactMap { $0 as? T }.filter { view in
+            guard view.window != nil, view.bounds.width > 0, view.bounds.height > 0 else { return false }
+            var current: UIView? = view
+            while let node = current {
+                if node.isHidden || node.alpha <= 0.01 {
+                    return false
+                }
+                current = node.superview
+            }
+            return true
+        }
     }
 
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
