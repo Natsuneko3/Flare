@@ -493,6 +493,75 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertEqual(fakeState.currentSlotIndex, 2, "Manual scroll after LTR -> RTL switch must not be yanked back")
         XCTAssertEqual(controller.activePagerPage, 2)
 
+        // 6. RTL totalPagerPages growing (4 -> 5), shrinking (5 -> 4), and idle viewport resize must preserve currentSlotIndex
+        let sixPages = makeMacSamplePages(count: 6)
+        let fourSpreadSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 3, primaryPageIndex: 3),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        let fiveSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotSingle(pageIndex: 3),
+            ReaderSlotSingle(pageIndex: 4),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        fakeState.replacePagesAndSlots(pages: sixPages, slots: fourSpreadSlots, currentPageIndex: 1)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 && controller.activePagerPage == 1
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // Grow totalPagerPages 4 -> 5 in RTL while on slot 1 (simulating runtime landscape page split)
+        fakeState.updateSlots(fiveSplitSlots)
+        try await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Growing totalPagerPages in RTL must preserve currentSlotIndex == 1")
+
+        // Shrink totalPagerPages 5 -> 4 in RTL while on slot 1 (simulating re-pairing / spread toggle)
+        fakeState.updateSlots(fourSpreadSlots)
+        try await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Shrinking totalPagerPages in RTL must preserve currentSlotIndex == 1")
+
+        // Resize viewport width while idle in RTL (800 -> 520 -> 800) must preserve currentSlotIndex == 1
+        window.setContentSize(NSSize(width: 520, height: 600))
+        try await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 521.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Idle viewport narrowing in RTL must preserve currentSlotIndex == 1")
+
+        window.setContentSize(NSSize(width: 800, height: 600))
+        try await Task.sleep(for: .milliseconds(80))
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostModel.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Idle viewport widening in RTL must preserve currentSlotIndex == 1")
+
+        // Manual user scroll after RTL reflows must still advance cleanly without yanking back
+        let postReflowScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: try XCTUnwrap(window.contentView)))
+        simulateMacUserHorizontalScroll(postReflowScrollView, by: -800)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 2)
+
         // Webtoon mode: unscaled 1x strip width and full bottom page reachability
         let webtoonPages = makeMacSamplePages(count: 6)
         let webtoonSlots: [any ReaderSlot] = (0..<6).map { ReaderSlotSingle(pageIndex: Int32($0)) }
@@ -812,6 +881,20 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
 
     func setSpreadCoverSinglePage(enabled: Bool) {
         spreadCoverSinglePage = enabled
+        onStateMutated?()
+    }
+
+    func updateSlots(_ newSlots: [any ReaderSlot]) {
+        slots = newSlots
+        doublePageSpread = newSlots.contains { $0 is ReaderSlotDouble }
+        onStateMutated?()
+    }
+
+    func replacePagesAndSlots(pages: [ReaderPageState], slots: [any ReaderSlot], currentPageIndex: Int32) {
+        self.pages = pages
+        self.slots = slots
+        self.currentPageIndex = currentPageIndex
+        self.doublePageSpread = slots.contains { $0 is ReaderSlotDouble }
         onStateMutated?()
     }
 }

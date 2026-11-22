@@ -327,13 +327,16 @@ public struct MangaReaderCanvas: View {
                                 onOpenLockedUrl: openLockedURL
                             )
                         } else {
+                            let hasPrev = !(state.previousBoundary is ChapterBoundaryNone)
+                            let hasNext = !(state.nextBoundary is ChapterBoundaryNone)
+                            let pagedKey = "\(state.activeChapterId)|\(state.direction == .rtl)|\(state.slots.count)|\(hasPrev)|\(hasNext)|\(Int(viewportSize.width.rounded()))"
                             MangaPagedCanvas(
                                 state: state,
                                 viewportSize: viewportSize,
                                 controller: controller,
                                 onOpenLockedUrl: openLockedURL
                             )
-                            .id("\(state.activeChapterId)|\(state.direction == .rtl)")
+                            .id(pagedKey)
                         }
                     }
                     .id(state.activeChapterId)
@@ -415,7 +418,6 @@ private struct MangaPagedCanvas: View {
     @State private var programmaticScrollTarget: Int?
     @State private var programmaticScrollGeneration = 0
     @State private var mountScrollGeneration = 0
-    @State private var hasCompletedInitialScroll = false
     @State private var isCurrentPageZoomed = false
 
     init(
@@ -496,28 +498,21 @@ private struct MangaPagedCanvas: View {
                         }
                         .scrollTargetLayout()
                     }
-                    .syncSettledScrollPage(totalPages: totalPagerPages) { settledPage in
-                        guard hasCompletedInitialScroll,
-                              !controller.isPerformingProgrammaticScroll,
-                              activePagerPage != settledPage else { return }
-                        activePagerPage = settledPage
-                    }
                     .scrollIndicators(.hidden)
                     .scrollTargetBehavior(.paging)
                     .scrollPosition(id: $activePagerPage)
                     .scrollDisabled(isCurrentPageZoomed)
                     .environment(\.layoutDirection, isRtl ? .rightToLeft : .leftToRight)
-                    .id(isRtl)
+                    .id("\(isRtl)|\(totalPagerPages)|\(Int(viewportSize.width.rounded()))")
                     .onAppear {
                         controller.webtoonScrollByPage = nil
                         isCurrentPageZoomed = false
                         controller.zoomResetHandler = nil
-                        hasCompletedInitialScroll = false
                         mountScrollGeneration = programmaticScrollGeneration
                         let initial = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
                         if activePagerPage == initial {
                             programmaticScrollTarget = nil
-                        } else if initial > 0 {
+                        } else if initial > 0 || activePagerPage != nil {
                             programmaticScrollTarget = initial
                         }
                         controller.updatePagerStatus(
@@ -527,7 +522,6 @@ private struct MangaPagedCanvas: View {
                         )
                     }
                     .task {
-                        defer { hasCompletedInitialScroll = true }
                         let expectedGen = mountScrollGeneration
                         guard programmaticScrollGeneration == expectedGen else { return }
                         let initial = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
@@ -564,21 +558,9 @@ private struct MangaPagedCanvas: View {
                         }
                     }
                     .onChange(of: totalPagerPages) { oldTotal, newTotal in
-                        let target = clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset)
-                        if activePagerPage == nil || (activePagerPage ?? 0) >= newTotal {
-                            scrollProgrammatically(to: target, animated: false, scrollProxy: scrollProxy)
-                        } else {
-                            if newTotal < oldTotal {
-                                DispatchQueue.main.async {
-                                    scrollProxy.scrollTo(clampedPagerPage(Int(state.currentSlotIndex) + startBoundaryOffset))
-                                }
-                            }
-                            controller.updatePagerStatus(
-                                activePage: activePagerPage,
-                                prevBoundaryPage: prevBoundaryPage,
-                                nextBoundaryPage: nextBoundaryPage
-                            )
-                        }
+                        guard newTotal > 0, newTotal != oldTotal else { return }
+                        let expected = min(max(Int(state.currentSlotIndex) + startBoundaryOffset, 0), newTotal - 1)
+                        scrollProgrammatically(to: expected, animated: false, scrollProxy: scrollProxy)
                     }
                     .onChange(of: activePagerPage) { _, newPage in
                         guard let newPage else { return }
@@ -793,53 +775,6 @@ private struct MangaPagedCanvas: View {
     private func clampedPagerPage(_ value: Int) -> Int {
         guard totalPagerPages > 0 else { return 0 }
         return min(max(value, 0), totalPagerPages - 1)
-    }
-}
-
-#if os(iOS)
-@available(iOS 18.0, *)
-private struct SettledScrollPageSyncModifier: ViewModifier {
-    let totalPages: Int
-    let onSettled: (Int) -> Void
-
-    @State private var isScrollIdle = true
-
-    func body(content: Content) -> some View {
-        content
-            .onScrollPhaseChange { _, phase in
-                isScrollIdle = (phase == .idle)
-            }
-            .onScrollGeometryChange(for: Int?.self) { geometry in
-                let width = geometry.containerSize.width
-                guard width > 1, totalPages > 0, geometry.contentSize.width >= width else { return nil }
-                let raw = geometry.contentOffset.x / width
-                let rawIndex = Int(raw.rounded())
-                guard abs(raw - CGFloat(rawIndex)) < 0.02 else { return nil }
-                return min(max(rawIndex, 0), totalPages - 1)
-            } action: { _, settledPage in
-                if isScrollIdle, let settledPage {
-                    onSettled(settledPage)
-                }
-            }
-    }
-}
-#endif
-
-private extension View {
-    @ViewBuilder
-    func syncSettledScrollPage(
-        totalPages: Int,
-        onSettled: @escaping (Int) -> Void
-    ) -> some View {
-        #if os(iOS)
-        if #available(iOS 18.0, *) {
-            modifier(SettledScrollPageSyncModifier(totalPages: totalPages, onSettled: onSettled))
-        } else {
-            self
-        }
-        #else
-        self
-        #endif
     }
 }
 

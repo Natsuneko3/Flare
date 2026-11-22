@@ -215,7 +215,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // Manual horizontal swipe after initial mount with previousBoundary (initial == 1 > 0) must advance slot 0 -> slot 1 without yanking back
         let boundaryScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        simulateUserHorizontalScroll(boundaryScrollView, pageDelta: 1)
+        await simulateUserHorizontalScroll(boundaryScrollView, pageDelta: 1)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 1 && controller.activePagerPage == 2
         }
@@ -233,7 +233,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         window.layoutIfNeeded()
         XCTAssertTrue(controller.isOnNextBoundaryPage)
-        simulateUserHorizontalScroll(boundaryScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(boundaryScrollView, pageDelta: -1)
         try await eventually(window: window) {
             controller.activePagerPage == 2 && !controller.isOnNextBoundaryPage
         }
@@ -347,7 +347,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // 1. Simulated manual horizontal user swipe after initial mount (slot 0 -> slot 1 in RTL) must NOT yank back
         let initialScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        simulateUserHorizontalScroll(initialScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(initialScrollView, pageDelta: -1)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 1 && controller.activePagerPage == 1
         }
@@ -377,7 +377,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // 3. Simulated manual horizontal user swipe after RTL -> LTR switch (slot 2 -> slot 3 in LTR) must NOT yank back
         let ltrScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        simulateUserHorizontalScroll(ltrScrollView, pageDelta: 1)
+        await simulateUserHorizontalScroll(ltrScrollView, pageDelta: 1)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 3 && controller.activePagerPage == 3
         }
@@ -404,7 +404,7 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         // 5. Simulated manual horizontal user swipe after LTR -> RTL switch (slot 1 -> slot 2 in RTL) must NOT yank back
         let rtlScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
-        simulateUserHorizontalScroll(rtlScrollView, pageDelta: -1)
+        await simulateUserHorizontalScroll(rtlScrollView, pageDelta: -1)
         try await eventually(window: window) {
             fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
         }
@@ -412,6 +412,77 @@ final class MangaReaderAndDetailTests: XCTestCase {
         window.layoutIfNeeded()
         XCTAssertEqual(fakeState.currentSlotIndex, 2, "Manual swipe after LTR -> RTL switch must not be yanked back")
         XCTAssertEqual(controller.activePagerPage, 2)
+
+        // 6. RTL totalPagerPages growing (4 -> 5), shrinking (5 -> 4), and idle viewport resize must preserve currentSlotIndex
+        let sixPages = makeSamplePages(count: 6)
+        let fourSpreadSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotDouble(leftPageIndex: 4, rightPageIndex: 3, primaryPageIndex: 3),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        let fiveSplitSlots: [any ReaderSlot] = [
+            ReaderSlotSingle(pageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 2, rightPageIndex: 1, primaryPageIndex: 1),
+            ReaderSlotSingle(pageIndex: 3),
+            ReaderSlotSingle(pageIndex: 4),
+            ReaderSlotSingle(pageIndex: 5),
+        ]
+        fakeState.replacePagesAndSlots(pages: sixPages, slots: fourSpreadSlots, currentPageIndex: 1)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 1 && controller.activePagerPage == 1
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        window.layoutIfNeeded()
+
+        // Grow totalPagerPages 4 -> 5 in RTL while on slot 1 (simulating runtime landscape page split)
+        fakeState.updateSlots(fiveSplitSlots)
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Growing totalPagerPages in RTL must preserve currentSlotIndex == 1")
+
+        // Shrink totalPagerPages 5 -> 4 in RTL while on slot 1 (simulating re-pairing / spread toggle)
+        fakeState.updateSlots(fourSpreadSlots)
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Shrinking totalPagerPages in RTL must preserve currentSlotIndex == 1")
+
+        // Resize viewport width while idle in RTL (800 -> 520 -> 800) must preserve currentSlotIndex == 1
+        window.frame = CGRect(x: 0, y: 0, width: 520, height: 600)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 521.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Idle viewport narrowing in RTL must preserve currentSlotIndex == 1")
+
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        window.layoutIfNeeded()
+        try await eventually(window: window) {
+            guard let frame = hostBox.pageFrames[1] else { return false }
+            return controller.activePagerPage == 1 && frame.minX >= -1.5 && frame.maxX <= 801.5
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 1, "Idle viewport widening in RTL must preserve currentSlotIndex == 1")
+
+        // Manual user swipe after RTL reflows must still advance cleanly without yanking back
+        let postReflowScrollView = try XCTUnwrap(findHorizontalPagingScrollView(in: window))
+        await simulateUserHorizontalScroll(postReflowScrollView, pageDelta: -1)
+        try await eventually(window: window) {
+            fakeState.currentSlotIndex == 2 && controller.activePagerPage == 2
+        }
+        XCTAssertEqual(fakeState.currentSlotIndex, 2)
     }
 
     func testReaderGifPageShowsShareButtonExportsGifAndSurfacesShareErrors() async throws {
@@ -793,11 +864,17 @@ final class MangaReaderAndDetailTests: XCTestCase {
         return nil
     }
 
-    private func simulateUserHorizontalScroll(_ scrollView: UIScrollView, pageDelta: Int) {
+    private func simulateUserHorizontalScroll(_ scrollView: UIScrollView, pageDelta: Int) async {
         let pageWidth = max(scrollView.bounds.width, 1)
         let maxX = max(scrollView.contentSize.width - pageWidth, 0)
         let nextX = min(max(scrollView.contentOffset.x + CGFloat(pageDelta) * pageWidth, 0), maxX)
-        scrollView.setContentOffset(CGPoint(x: nextX, y: 0), animated: false)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.bounds.origin = CGPoint(x: nextX, y: 0)
+        scrollView.layoutIfNeeded()
+        try? await Task.sleep(for: .milliseconds(25))
+        var target = CGPoint(x: nextX, y: 0)
+        scrollView.delegate?.scrollViewWillEndDragging?(scrollView, withVelocity: .zero, targetContentOffset: &target)
+        scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
     }
 
     private func eventually(
@@ -1053,6 +1130,20 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
 
     func setSpreadCoverSinglePage(enabled: Bool) {
         spreadCoverSinglePage = enabled
+        onStateMutated?()
+    }
+
+    func updateSlots(_ newSlots: [any ReaderSlot]) {
+        slots = newSlots
+        doublePageSpread = newSlots.contains { $0 is ReaderSlotDouble }
+        onStateMutated?()
+    }
+
+    func replacePagesAndSlots(pages: [ReaderPageState], slots: [any ReaderSlot], currentPageIndex: Int32) {
+        self.pages = pages
+        self.slots = slots
+        self.currentPageIndex = currentPageIndex
+        self.doublePageSpread = slots.contains { $0 is ReaderSlotDouble }
         onStateMutated?()
     }
 }
