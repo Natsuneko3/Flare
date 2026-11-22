@@ -1300,6 +1300,14 @@ class MangaReaderPresenterTest {
                 assertEquals(3, updatedDetailState.primaryReadTarget?.initialPage)
                 assertEquals(3, canonicalProgress.lastPageIndex)
                 assertEquals(MangaReadingDirection.Webtoon, canonicalProgress.readerModeOverride)
+
+                // Exiting before the debounce must flush the live page under the canonical key.
+                ready.goToPage(4)
+                readerJob.cancelAndJoin()
+                readerPresenter.awaitPendingWrites()
+                val onExit = progressRepository.observe(accountType, canonicalKey).first()
+                assertEquals(4, onExit.lastPageIndex)
+                assertTrue(onExit.chapters.getValue("ch-1").isCompleted)
                 assertEquals(null, progressRepository.observe(accountType, slugKey).first().lastChapterId)
             } finally {
                 readerJob.cancelAndJoin()

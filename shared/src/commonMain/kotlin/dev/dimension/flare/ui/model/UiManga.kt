@@ -89,7 +89,9 @@ public data class UiMangaChapter(
     public val uploadedAt: UiDateTime?,
     public val locked: Boolean,
     public val url: String?,
-)
+) {
+    public fun openUrl(mangaUrl: String?): String? = url?.trim()?.takeIf(String::isNotEmpty) ?: mangaUrl?.trim()?.takeIf(String::isNotEmpty)
+}
 
 @Immutable
 public sealed interface UiMangaPage {

@@ -555,7 +555,7 @@ public class MangaReaderPresenter(
 
                 is UiState.Success -> {
                     if (activeChapter != null && activeChapter.locked) {
-                        val openUrl = resolveLockedOpenUrl(activeChapter, detailUi.data)
+                        val openUrl = activeChapter.openUrl(detailUi.data.url).orEmpty()
                         UiState.Error(LockedChapterException(chapter = activeChapter, openUrl = openUrl))
                     } else {
                         when (val pagesUi = session?.pagesLoadState) {
@@ -645,9 +645,10 @@ public class MangaReaderPresenter(
                 }
         }
 
+        val flushOnExit by rememberUpdatedState { computeLiveProgressRecord()?.let(::flushRecord) }
         DisposableEffect(Unit) {
             onDispose {
-                computeLiveProgressRecord()?.let(::flushRecord)
+                flushOnExit()
                 activeSessionHolder.session?.cancel()
                 writeJob.complete()
             }
@@ -672,8 +673,7 @@ public class MangaReaderPresenter(
             override val mangaTitle: String = rawDetail?.title.orEmpty()
             override val chapterTitle: String = activeChapter?.title ?: activeChapterId.takeIf { rawDetail != null }.orEmpty()
             override val chapterUrl: String? =
-                activeChapter?.url?.takeIf(String::isNotBlank)
-                    ?: rawDetail?.url?.takeIf(String::isNotBlank)
+                activeChapter?.openUrl(rawDetail?.url) ?: rawDetail?.url?.trim()?.takeIf(String::isNotEmpty)
             override val activeChapterId: String = activeChapterId
             override val loadState: UiState<Unit> = loadState
             override val pages: ImmutableList<ReaderPageState> = pages
@@ -925,7 +925,7 @@ private fun UiMangaChapter?.toChapterBoundary(
     return if (locked) {
         ChapterBoundary.Locked(
             chapter = this,
-            openUrl = resolveLockedOpenUrl(this, detail),
+            openUrl = openUrl(detail.url).orEmpty(),
         )
     } else {
         ChapterBoundary.Unlocked(
@@ -934,13 +934,6 @@ private fun UiMangaChapter?.toChapterBoundary(
         )
     }
 }
-
-private fun resolveLockedOpenUrl(
-    chapter: UiMangaChapter,
-    detail: UiMangaDetail,
-): String =
-    chapter.url?.takeIf(String::isNotBlank)
-        ?: detail.url?.takeIf(String::isNotBlank).orEmpty()
 
 private class ActiveSessionRef {
     var session: ChapterPagesSession? = null

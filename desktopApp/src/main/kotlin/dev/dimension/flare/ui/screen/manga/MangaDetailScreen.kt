@@ -251,9 +251,7 @@ internal fun MangaDetailContent(
                     }
                 }
                 lockedPromptChapter?.let { lockedChapter ->
-                    val openUrl =
-                        lockedChapter.url?.takeIf { it.isNotBlank() }
-                            ?: detail.url?.takeIf { it.isNotBlank() }
+                    val openUrl = lockedChapter.openUrl(detail.url)
                     FluentDialog(visible = true) {
                         CompositionLocalProvider(LocalUriHandler provides uriHandler) {
                             Column(

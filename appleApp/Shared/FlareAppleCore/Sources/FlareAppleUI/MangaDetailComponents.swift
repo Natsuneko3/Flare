@@ -45,13 +45,7 @@ public enum MangaDetailFormatting {
     }
 
     public static func resolveLockedChapterURL(chapter: UiMangaChapter, detailURL: String?) -> String? {
-        if let chapterURL = chapter.url?.trimmedNonBlank {
-            return chapterURL
-        }
-        if let fallbackURL = detailURL?.trimmedNonBlank {
-            return fallbackURL
-        }
-        return nil
+        chapter.openUrl(mangaUrl: detailURL)
     }
 
     public static func primaryReadButtonTitle(for target: PrimaryReadTarget) -> String {
