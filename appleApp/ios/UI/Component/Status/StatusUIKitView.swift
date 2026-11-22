@@ -23,7 +23,6 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
     // MARK: - SwiftUI `var` parameters
 
     private var data: UiTimelineV2.Post?
-    private var boundStatusKey: MicroBlogKey?
     private var isDetail: Bool = false
     private var isQuote: Bool = false
     private var withLeadingPadding: Bool = false
@@ -410,11 +409,12 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         allowsMediaCarousel: Bool = false,
         carouselOuterHorizontalPadding: CGFloat = 0
     ) {
-        let newStatusKey = data.statusKey
-        if boundStatusKey != newStatusKey {
+        let shouldCollapse = expand && self.data.map(StatusReadingContent.init) != StatusReadingContent(data)
+        if shouldCollapse {
             expand = false
+        }
+        if self.data?.statusKey != data.statusKey || self.data?.accountType != data.accountType {
             reactionViewStorage?.resetExpansion()
-            boundStatusKey = newStatusKey
         }
         let signature = ConfigureSignature(
             data: data,
@@ -436,7 +436,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         )
         let signatureUnchanged = lastConfigureSignature == signature
         self.data = data
-        if signatureUnchanged {
+        if signatureUnchanged && !shouldCollapse {
             forwardOpenURL()
             return
         }
@@ -464,7 +464,6 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         data = nil
         lastConfigureSignature = nil
         lastPreparedFittingWidthKey = nil
-        boundStatusKey = nil
         expand = false
         inlineParents = []
         quotes = []
@@ -887,6 +886,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             showOriginalWithTranslation: appearance.showOriginalWithTranslation
         )
         let hasCW = contentWarnings.contains { !$0.text.isEmpty }
+        let showsBody = expand || appearance.expandContentWarning || !hasCW
 
         // reply-to
         if showsReplyContext, let replyToHandle = data.replyToHandle {
@@ -927,7 +927,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
 
         // main body
-        if expand || appearance.expandContentWarning || !hasCW {
+        if showsBody {
             let bodyLineLimit: Int?
             let collapseAboveLineCount: Int?
             let bodySelectionEnabled: Bool
@@ -1082,7 +1082,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             items.append(view)
         }
 
-        if !isQuote, !data.pluginWidgets.isEmpty {
+        if showsBody, !isQuote, !data.pluginWidgets.isEmpty {
             let view = pluginWidgetHostViewStorage ?? {
                 let hosted = TimelineHostedAccessoryView()
                 hosted.onHeightChanged = { [weak self, weak hosted] in
@@ -1103,7 +1103,7 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
             updatePluginWidgetHostView(view, data: data, width: bounds.width)
             items.append(view)
         } else {
-            pluginWidgetHostViewStorage?.update(AnyView(EmptyView()), key: AnyHashable("empty"))
+            pluginWidgetHostViewStorage = nil
         }
 
         // source channel + reactions
@@ -1246,10 +1246,6 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         if !(data != nil && isDetail && showTranslate) {
             translateViewStorage?.prepareForPoolRemoval()
         }
-        if !(data != nil && !isQuote && !(data?.pluginWidgets.isEmpty ?? true)) {
-            pluginWidgetHostViewStorage?.removeFromSuperview()
-            pluginWidgetHostViewStorage = nil
-        }
         trimParentContainers(activeCount: activeParentCount)
         trimQuoteChildren(activeCount: activeQuoteCount)
         trimQuoteDividers(activeCount: max(0, activeQuoteCount - 1))
@@ -1286,10 +1282,6 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
         if !(data != nil && isDetail && showTranslate) {
             translateViewStorage?.prepareForPoolRemoval()
-        }
-        if !(data != nil && !isQuote && !(data?.pluginWidgets.isEmpty ?? true)) {
-            pluginWidgetHostViewStorage?.removeFromSuperview()
-            pluginWidgetHostViewStorage = nil
         }
         trimParentContainers(activeCount: activeParentCount)
         trimQuoteChildren(activeCount: activeQuoteCount)

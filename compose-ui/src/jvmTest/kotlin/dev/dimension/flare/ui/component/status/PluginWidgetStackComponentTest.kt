@@ -8,6 +8,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -538,6 +539,70 @@ class PluginWidgetStackComponentTest {
             } finally {
                 stopKoin()
             }
+        }
+
+    @Test
+    fun postWidgetsFollowWarningRevealAcrossRefreshAndReuse() =
+        runComposeUiTest {
+            val card =
+                UiPluginWidgetCard(
+                    pluginId = "p1",
+                    pluginName = "Scores",
+                    pluginIconPath = null,
+                    id = "score",
+                    title = "Final score",
+                    body = persistentListOf(UiWidgetNode.Text("2–1")),
+                )
+            var post by mutableStateOf(
+                createSampleStatus(createSampleUser()).copy(
+                    user = null,
+                    content = UiTranslatableText("Match details".toUiPlainText()),
+                    contentWarning = UiTranslatableText("Spoiler".toUiPlainText()),
+                    actions = persistentListOf(),
+                ),
+            )
+            var autoExpand by mutableStateOf(false)
+            var mounted by mutableStateOf(true)
+
+            setContent {
+                FluentTheme {
+                    CompositionLocalProvider(LocalTimelineAppearance provides TimelineAppearance(expandContentWarning = autoExpand)) {
+                        val history = rememberSaveableStateHolder()
+                        if (mounted) {
+                            history.SaveableStateProvider("post") {
+                                CommonStatusComponent(post, isClickable = false, forceHideActions = true)
+                            }
+                        }
+                    }
+                }
+            }
+
+            val stack = onNodeWithTag("plugin_widget_stack")
+            post = post.copy(pluginWidgets = persistentListOf(card))
+            stack.assertDoesNotExist()
+            onNodeWithText("Show more").performClick()
+            onNodeWithText("Final score").assertIsDisplayed()
+
+            post = post.copy(pluginWidgets = persistentListOf(card.copy(title = "Updated score")))
+            onNodeWithText("Updated score").assertIsDisplayed()
+            onNodeWithText("Show less").performClick()
+            stack.assertDoesNotExist()
+
+            onNodeWithText("Show more").performClick()
+            post = post.copy(statusKey = MicroBlogKey("other-post", "example.com"))
+            stack.assertDoesNotExist()
+            autoExpand = true
+            stack.assertIsDisplayed()
+            autoExpand = false
+            stack.assertDoesNotExist()
+
+            onNodeWithText("Show more").performClick()
+            stack.assertIsDisplayed()
+            mounted = false
+            stack.assertDoesNotExist()
+            post = post.copy(contentWarning = UiTranslatableText("New warning".toUiPlainText()))
+            mounted = true
+            stack.assertDoesNotExist()
         }
 
     @Test

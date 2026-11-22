@@ -8,6 +8,55 @@ import FlareAppleCore
 
 @MainActor
 final class TimelinePluginWidgetTests: XCTestCase {
+    func testWidgetVisibilityFollowsWarningRevealRefreshAndCellReuse() throws {
+        let plain = makeSampleTimelinePost(id: "match", warning: "Spoiler", pluginWidgets: [])
+        let card = makeSamplePluginWidgetCard(id: "score", title: "Final score")
+        let enriched = makeSampleTimelinePost(id: "match", warning: "Spoiler", pluginWidgets: [card])
+        let updated = makeSampleTimelinePost(id: "match", warning: "Spoiler", pluginWidgets: [
+            makeSamplePluginWidgetCard(id: "score", title: "Updated score"),
+        ])
+        let next = makeSampleTimelinePost(id: "next", warning: "Spoiler", pluginWidgets: [card])
+        let edited = makeSampleTimelinePost(id: "match", text: "Edited body", warning: "Spoiler", pluginWidgets: [card])
+        let appearance = StatusUIKitAppearance(timeline: TimelineAppearance.companion.Default)
+        let status = StatusUIKitView(frame: CGRect(x: 0, y: 0, width: 390, height: 200))
+
+        func configure(_ post: UiTimelineV2.Post, appearance: StatusUIKitAppearance = appearance) {
+            status.configure(data: post, appearance: appearance)
+            status.prepareForFitting(width: 390)
+            status.layoutIfNeeded()
+        }
+        func hasWidget() -> Bool { status.subviews.contains { $0 is TimelineHostedAccessoryView } }
+        func toggleWarning() throws {
+            let toggle = try XCTUnwrap(status.subviews.compactMap { $0 as? UIButton }.first { !$0.isHidden })
+            UIView.performWithoutAnimation { toggle.sendActions(for: .touchUpInside) }
+        }
+
+        configure(plain)
+        let collapsedHeight = try XCTUnwrap(status.timelineHeight(for: 390))
+        configure(enriched)
+        XCTAssertFalse(hasWidget())
+        XCTAssertEqual(try XCTUnwrap(status.timelineHeight(for: 390)), collapsedHeight)
+        try toggleWarning()
+        XCTAssertTrue(hasWidget())
+        XCTAssertGreaterThan(try XCTUnwrap(status.timelineHeight(for: 390)), collapsedHeight + 40)
+        configure(updated)
+        XCTAssertTrue(hasWidget())
+        try toggleWarning()
+        XCTAssertFalse(hasWidget())
+        XCTAssertEqual(try XCTUnwrap(status.timelineHeight(for: 390)), collapsedHeight)
+
+        try toggleWarning()
+        configure(edited)
+        XCTAssertFalse(hasWidget())
+        try toggleWarning()
+        configure(next)
+        XCTAssertFalse(hasWidget())
+        configure(next, appearance: StatusUIKitAppearance(timeline: autoExpandWarnings))
+        XCTAssertTrue(hasWidget())
+        configure(next)
+        XCTAssertFalse(hasWidget())
+    }
+
     func testOrdinaryPostsDoNotAllocateHostedViewAndReuseDetachesHostedView() throws {
         let plainPost = makeSampleTimelinePost(id: "plain-1", pluginWidgets: [])
         let appearance = StatusUIKitAppearance(timeline: TimelineAppearance.companion.Default)
@@ -587,10 +636,12 @@ final class TimelinePluginWidgetTests: XCTestCase {
             _ post: UiTimelineV2.Post,
             isQuote: Bool = false,
             showAttachments: Bool = true,
-            isGalleryFallback: Bool = false
+            isGalleryFallback: Bool = false,
+            appearance: TimelineAppearance = TimelineAppearance.companion.Default
         ) -> CGFloat {
             let view = StatusView(data: post, isQuote: isQuote, showAttachments: showAttachments, forceHideActions: true)
                 .environment(\.timelineGalleryFallback, isGalleryFallback)
+                .environment(\.timelineAppearance, appearance)
             return UIHostingController(rootView: view).sizeThatFits(in: CGSize(width: 360, height: CGFloat.greatestFiniteMagnitude)).height
         }
 
@@ -604,6 +655,14 @@ final class TimelinePluginWidgetTests: XCTestCase {
             measureStatus(plain, isGalleryFallback: true),
             accuracy: 1.0
         )
+        let warned = makeSampleTimelinePost(id: "sv-1", warning: "Spoiler", pluginWidgets: [])
+        let warnedWithCard = makeSampleTimelinePost(id: "sv-1", warning: "Spoiler", pluginWidgets: [card])
+        XCTAssertEqual(measureStatus(warnedWithCard), measureStatus(warned), accuracy: 1.0)
+        XCTAssertGreaterThan(measureStatus(warnedWithCard, appearance: autoExpandWarnings),
+                             measureStatus(warned, appearance: autoExpandWarnings) + 40)
+        XCTAssertNotEqual(warned.renderHash, warnedWithCard.renderHash)
+        XCTAssertEqual(StatusReadingContent(warned), StatusReadingContent(warnedWithCard))
+        XCTAssertNotEqual(StatusReadingContent(warned), StatusReadingContent(plain))
     }
 
     func testPluginManagementPermissionDescriptionAndTimelineProcessorToggle() async throws {
@@ -812,9 +871,16 @@ final class TimelinePluginWidgetTests: XCTestCase {
         )
     }
 
+    private var autoExpandWarnings: TimelineAppearance {
+        let helper = TimelinePresentationAppearancePatchHelper.shared
+        return helper.resolve(base: TimelineAppearance.companion.Default,
+                              patch: helper.setExpandContentWarning(patch: helper.empty, value: true))
+    }
+
     private func makeSampleTimelinePost(
         id: String,
         text: String = "Checking the game tonight!",
+        warning: String? = nil,
         pluginWidgets: [UiPluginWidgetCard]
     ) -> UiTimelineV2.Post {
         let style = RenderTextStyle(
@@ -829,13 +895,11 @@ final class TimelinePluginWidgetTests: XCTestCase {
             time: false,
             imageLink: nil
         )
-        let rich = UiRichText(
-            renderRuns: [RenderContent.Text(runs: [RenderRun.Text(text: text, style: style)], block: RenderBlockStyle())],
-            isRtl: false,
-            raw: text,
-            innerText: text,
-            imageUrls: []
-        )
+        func richText(_ text: String) -> UiRichText {
+            UiRichText(renderRuns: [RenderContent.Text(runs: [RenderRun.Text(text: text, style: style)], block: RenderBlockStyle())],
+                       isRtl: false, raw: text, innerText: text, imageUrls: [])
+        }
+        let rich = richText(text)
         let profile = UiProfile(
             key: MicroBlogKey(id: "user", host: "example.invalid"),
             handle: UiHandle(raw: "reader", host: "example.invalid", displayOverride: "@reader"),
@@ -868,7 +932,7 @@ final class TimelinePluginWidgetTests: XCTestCase {
             platformId: "mastodon",
             images: [],
             sensitive: false,
-            contentWarning: nil,
+            contentWarning: warning.map { UiTranslatableText(original: richText($0), translation: nil) },
             user: profile,
             platformIcon: IconType.Material(icon: .world),
             sourceLanguages: [],
