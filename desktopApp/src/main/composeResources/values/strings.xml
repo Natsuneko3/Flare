@@ -123,6 +123,8 @@
     <string name="media_playback_position">Playback position</string>
     <string name="status_share_crosspost">Cross-post</string>
     <string name="status_share_crosspost_failed">Unable to prepare cross-post</string>
+    <string name="manga_reader_copy_page">Copy page image</string>
+    <string name="manga_reader_copy_page_failed">Unable to copy the page image</string>
     <string name="status_share">Share link</string>
     <string name="status_share_save_screenshot">Save screenshot</string>
     <string name="status_share_image">Share screenshot</string>

@@ -58,6 +58,7 @@ import dev.dimension.flare.common.FileSystemUtilsExt
 import dev.dimension.flare.common.MediaFileNamePolicy
 import dev.dimension.flare.common.prepareImageTranslationExport
 import dev.dimension.flare.manga_open_in_browser
+import dev.dimension.flare.manga_reader_copy_page
 import dev.dimension.flare.manga_reader_direction
 import dev.dimension.flare.manga_reader_direction_ltr
 import dev.dimension.flare.manga_reader_direction_rtl
@@ -72,7 +73,6 @@ import dev.dimension.flare.manga_reader_spread_cover_single
 import dev.dimension.flare.media_save
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
-import dev.dimension.flare.status_share
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.manga.MangaReaderCanvas
 import dev.dimension.flare.ui.model.MangaReadingDirection
@@ -83,7 +83,6 @@ import dev.dimension.flare.ui.presenter.manga.MangaReaderPresenter
 import dev.dimension.flare.ui.presenter.manga.PageMediaStatus
 import dev.dimension.flare.ui.presenter.manga.ReaderSlot
 import dev.dimension.flare.ui.route.DeeplinkRoute
-import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.screen.media.ImageTranslationActions
 import dev.dimension.flare.ui.theme.LocalComposeWindow
@@ -110,7 +109,6 @@ internal fun MangaReaderScreen(
     chapterId: String,
     initialPage: Int?,
     accountType: AccountType,
-    navigate: (Route) -> Unit,
     onBack: () -> Unit,
 ) {
     val state by producePresenter("desktop_manga_reader_$accountType-$mangaKey-$chapterId-$initialPage") {
@@ -130,21 +128,16 @@ internal fun MangaReaderScreen(
     MangaReaderContent(
         state = state,
         onBack = onBack,
-        onShareUrl = { shareUrl ->
-            navigate(
-                Route.StatusShareSheet(
-                    accountType = accountType,
-                    statusKey = mangaKey,
-                    shareUrl = shareUrl,
-                ),
-            )
+        onSharePage = { original, displayed, pageIndex ->
+            val name = MediaFileNamePolicy.mangaPageFileName(mangaKey.id, state.activeChapterId, pageIndex, original, displayed)
+            ioScope.launch { downloader.copyImageToClipboard(displayed, name) }
         },
         onSavePage = { original, displayed, pageIndex ->
             if (original is UiMedia.Ugoira) return@MangaReaderContent
             val activeChapterId = state.activeChapterId
             val defaultName =
-                buildMangaPageFileName(
-                    mangaKey = mangaKey,
+                MediaFileNamePolicy.mangaPageFileName(
+                    mangaId = mangaKey.id,
                     chapterId = activeChapterId,
                     pageIndex = pageIndex,
                     original = original,
@@ -172,7 +165,7 @@ internal fun MangaReaderScreen(
 internal fun MangaReaderContent(
     state: MangaReaderPresenter.State,
     onBack: () -> Unit,
-    onShareUrl: ((String) -> Unit)? = null,
+    onSharePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)? = null,
     onSavePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)? = null,
 ) {
     var hudVisible by remember { mutableStateOf(true) }
@@ -276,18 +269,22 @@ internal fun MangaReaderContent(
                     }
                 }
 
-                state.chapterUrl?.takeIf { it.isNotBlank() }?.let { chapterUrl ->
-                    if (onShareUrl != null) {
-                        SubtleButton(
-                            onClick = { onShareUrl(chapterUrl) },
-                            iconOnly = true,
-                        ) {
-                            FAIcon(
-                                imageVector = FontAwesomeIcons.Solid.ShareNodes,
-                                contentDescription = stringResource(Res.string.status_share),
-                            )
-                        }
+                if (onSharePage != null && currentReady != null &&
+                    (currentReady.displayed is UiMedia.Image || currentReady.displayed is UiMedia.Gif)
+                ) {
+                    SubtleButton(
+                        onClick = { onSharePage(currentReady.original, currentReady.displayed, state.currentPageIndex) },
+                        iconOnly = true,
+                        modifier = Modifier.testTag("manga_reader_share_page"),
+                    ) {
+                        FAIcon(
+                            imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                            contentDescription = stringResource(Res.string.manga_reader_copy_page),
+                        )
                     }
+                }
+
+                state.chapterUrl?.takeIf { it.isNotBlank() }?.let { chapterUrl ->
                     SubtleButton(
                         onClick = {
                             uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(chapterUrl).toUri())
@@ -582,24 +579,4 @@ private fun formatReaderPageBadge(state: MangaReaderPresenter.State): String {
         }
     }
     return "${state.currentPageIndex + 1} / $total"
-}
-
-private fun buildMangaPageFileName(
-    mangaKey: MicroBlogKey,
-    chapterId: String,
-    pageIndex: Int,
-    original: UiMedia,
-    displayed: UiMedia,
-): String {
-    val rawOriginalName = MediaFileNamePolicy.rawMediaFileName(original)
-    val defaultExt = if (original is UiMedia.Gif || displayed is UiMedia.Gif) "gif" else "jpg"
-    val ext = rawOriginalName.substringAfterLast('.', defaultExt)
-    val safeManga = mangaKey.id.replace(Regex("[^A-Za-z0-9._-]"), "_")
-    val safeChapter = chapterId.replace(Regex("[^A-Za-z0-9._-]"), "_")
-    val base = "${safeManga}_${safeChapter}_p${pageIndex + 1}.$ext"
-    return if (displayed.url == original.url) {
-        base
-    } else {
-        "${base.substringBeforeLast('.')}_${MediaFileNamePolicy.rawMediaFileName(displayed)}"
-    }
 }

@@ -369,6 +369,20 @@ class MangaScreenTest {
     }
 
     @Test
+    fun shareUsesTheSelectedPageWithoutAChapterUrl() {
+        val reader = FakeDesktopReaderState(pageCount = 3, initialDirection = MangaReadingDirection.Ltr, chapterUrl = null)
+        reader.goToPage(1)
+        var shared: UiMedia? = null
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                MangaReaderContent(state = reader, onBack = {}, onSharePage = { _, displayed, _ -> shared = displayed })
+            }
+        }
+        compose.onNodeWithTag("manga_reader_share_page").performClick()
+        assertEquals("local-1", shared?.url)
+    }
+
+    @Test
     fun readerSettingsHidesDoublePageSpreadOnNarrowViewport() {
         val fakeReaderState = FakeDesktopReaderState(pageCount = 4, initialDirection = MangaReadingDirection.Rtl)
         var viewportWidth by mutableStateOf(500.dp)
@@ -558,10 +572,10 @@ private class FakeMangaDetailState(
 private class FakeDesktopReaderState(
     pageCount: Int,
     initialDirection: MangaReadingDirection,
+    override val chapterUrl: String? = "https://manga.example/ch/1",
 ) : MangaReaderPresenter.State {
     override val mangaTitle: String = "Starlight Odyssey"
     override val chapterTitle: String = "Chapter 1"
-    override val chapterUrl: String = "https://manga.example/ch/1"
     override val activeChapterId: String = "ch-1"
     override val loadState: UiState<Unit> = UiState.Success(Unit)
     override val pages: ImmutableList<ReaderPageState> =

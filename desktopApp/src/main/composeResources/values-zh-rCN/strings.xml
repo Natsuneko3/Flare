@@ -94,6 +94,8 @@
     <string name="media_fullscreen">全屏</string>
     <string name="status_share_crosspost">跨平台转发</string>
     <string name="status_share_crosspost_failed">无法准备跨平台转发</string>
+    <string name="manga_reader_copy_page">复制当前页图片</string>
+    <string name="manga_reader_copy_page_failed">无法复制当前页图片</string>
     <string name="status_share">分享链接</string>
     <string name="status_share_save_screenshot">保存截图</string>
     <string name="status_share_image">分享截图</string>

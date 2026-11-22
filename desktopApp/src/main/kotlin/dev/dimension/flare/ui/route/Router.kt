@@ -865,7 +865,6 @@ internal fun Router(
                         chapterId = args.chapterId,
                         initialPage = args.initialPage,
                         accountType = args.accountType,
-                        navigate = navigate,
                         onBack = onBack,
                     )
                 }
