@@ -198,8 +198,8 @@ final class TimelineReadingScrollViewTests: XCTestCase {
         var restorePosition: TimelineReadingPosition?
         let hasNewContent = false
         let isAtLatest = false
-        func viewportChanged(index: Int32, offset: Double) {}
-        func positionChanged(index: Int32, offset: Double) {}
+        func viewportChanged(index: Int32, offset: Double, itemKey: String?) {}
+        func positionChanged(index: Int32, offset: Double, itemKey: String?) {}
         func restorationFinished() { restorePosition = nil }
         func restoreCurrentPosition() {}
         func savePosition() {}

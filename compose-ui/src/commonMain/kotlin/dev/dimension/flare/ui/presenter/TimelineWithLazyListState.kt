@@ -133,15 +133,22 @@ internal fun rememberTimelineWithLazyListState(
                 }
             }
         }
-        val target = baseState.reading?.restorePosition
+        val reader = baseState.reading
+        val target = reader?.restorePosition
         // A replacement page can contain the target without changing itemCount.
         LaunchedEffect(target, this, lazyListState, leadingItemCount) {
-            if (target == null || lazyListState.isScrollInProgress) return@LaunchedEffect
+            if (target == null || reader.restorePosition !== target || lazyListState.isScrollInProgress) return@LaunchedEffect
+            val index =
+                if (target.itemKey != null) {
+                    (0 until itemCount).firstOrNull { peek(it)?.stableItemKey == target.itemKey }
+                } else {
+                    target.index.takeIf { it in 0 until itemCount && peek(it) != null }
+                } ?: return@LaunchedEffect
             gapAnchor = null
-            val index = target.index.takeIf { it in 0 until itemCount && peek(it) != null } ?: return@LaunchedEffect
             restoring = true
             try {
                 lazyListState.scrollToItem(index + leadingItemCount)
+                if (reader.restorePosition !== target) return@LaunchedEffect
                 val height =
                     lazyListState.layoutInfo.visibleItemsInfo
                         .firstOrNull { it.index == index + leadingItemCount }
@@ -149,7 +156,7 @@ internal fun rememberTimelineWithLazyListState(
                         ?.height
                 val offset = (-target.offset * density).roundToInt().coerceAtMost(height?.minus(1)?.coerceAtLeast(0) ?: Int.MAX_VALUE)
                 if (offset != 0) lazyListState.scrollToItem(index + leadingItemCount, offset)
-                latestReading?.restorationFinished()
+                reader.restorationFinished()
             } finally {
                 restoring = false
             }
@@ -174,6 +181,7 @@ internal fun rememberTimelineWithLazyListState(
                             latestReading?.positionChanged(
                                 visible.index - currentLeadingItemCount,
                                 visible.offset.y.toDouble() / density,
+                                visible.key as? String,
                             )
                         }
                     userScrolled = false
@@ -195,10 +203,10 @@ internal fun rememberTimelineWithLazyListState(
                                 !it.isPaginationGap && it.stableItemKey == info.key
                             } == true
                     }.minWithOrNull(compareBy({ it.offset.y }, { it.offset.x }))
-                    ?.let { (it.index - currentLeadingItemCount) to it.offset.y }
+                    ?.let { Triple(it.index - currentLeadingItemCount, it.offset.y, it.key as? String) }
             }.collect { position ->
                 if (!restoring && position != null) {
-                    latestReading?.viewportChanged(position.first, position.second.toDouble() / density)
+                    latestReading?.viewportChanged(position.first, position.second.toDouble() / density, position.third)
                 }
             }
         }
@@ -210,7 +218,14 @@ internal fun rememberTimelineWithLazyListState(
                             val index = info.index - currentLeadingItemCount
                             info.offset.y + info.size.height > 0 && index in 0 until currentPagingState.itemCount &&
                                 currentPagingState.peek(index)?.let { !it.isPaginationGap && it.stableItemKey == info.key } == true
-                        }?.let { latestReading?.positionChanged(it.index - currentLeadingItemCount, it.offset.y.toDouble() / density) }
+                        }?.let {
+                            latestReading
+                                ?.positionChanged(
+                                    it.index - currentLeadingItemCount,
+                                    it.offset.y.toDouble() / density,
+                                    it.key as? String,
+                                )
+                        }
                 }
                 latestReading?.savePosition()
             }
@@ -284,7 +299,10 @@ internal fun rememberTimelineWithLazyListState(
                 val gapIndex = (0 until itemCount).firstOrNull { peek(it)?.stableItemKey == message.stableItemKey } ?: return@onSuccess
                 val next = (gapIndex + 1 until itemCount).firstOrNull { peek(it)?.isPaginationGap == false }
                 val visible = lazyListState.layoutInfo.visibleItemsInfo
-                val below = next?.let { index -> visible.firstOrNull { it.key == peek(index)?.stableItemKey } }
+                val below =
+                    next?.let { index ->
+                        visible.firstOrNull { it.index == index + leadingItemCount && it.key == peek(index)?.stableItemKey }
+                    }
                 val anchor =
                     below ?: visible
                         .filter { info ->
@@ -293,12 +311,15 @@ internal fun rememberTimelineWithLazyListState(
                                 peek(index)?.let { !it.isPaginationGap && it.stableItemKey == info.key } == true
                         }.minWithOrNull(compareBy({ it.offset.y }, { it.offset.x }))
                 if (anchor != null) {
+                    val index = anchor.index - leadingItemCount
+                    val itemKey = checkNotNull(peek(index)).stableItemKey
                     gapAnchor =
                         GapScrollAnchor(
-                            checkNotNull(peek(anchor.index - leadingItemCount)).stableItemKey,
+                            itemKey,
                             -anchor.offset.y,
                             (0 until itemCount).mapNotNull { peek(it)?.takeUnless { it.isPaginationGap }?.stableItemKey },
                         )
+                    latestReading?.positionChanged(index, anchor.offset.y.toDouble() / density, itemKey)
                 }
             }
             activate { activatingGaps -= request }

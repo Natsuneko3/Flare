@@ -9,4 +9,7 @@ import kotlinx.serialization.Serializable
 public data class TimelineReadingPosition(
     val index: Int,
     val offset: Double,
-)
+    val itemKey: String? = null,
+) {
+    public constructor(index: Int, offset: Double) : this(index, offset, null)
+}

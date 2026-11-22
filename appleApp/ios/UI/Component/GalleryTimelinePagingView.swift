@@ -121,7 +121,9 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
             } else {
                 gapScrollAnchor = ScrollAnchor(itemID: id, distanceFromViewportTop: offset, keepVisible: false,
                     itemOrder: collectionView.readingItemIDs?() ?? [id])
-                if frame.intersects(collectionView.bounds) { reading?.positionChanged(index: Int32(index), offset: offset) }
+                if frame.intersects(collectionView.bounds) {
+                    reading?.positionChanged(index: Int32(index), offset: offset, itemKey: success.post(at: Int32(index))?.stableItemKey)
+                }
             }
             return
         }
@@ -143,7 +145,8 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
     private func restoreBookmarkIfReady() {
         guard let target = reading?.restorePosition, target !== restoredBookmark,
               isViewLoaded, !isApplyingSnapshot, !isRestoringScrollAnchor, pendingScrollAnchor == nil, allowsScrollAnchorRestoration,
-              let id = itemIndexMap.first(where: { $0.value == Int(target.index) })?.key else { return }
+              let index = currentSuccess?.bookmarkIndex(for: target),
+              let id = itemIndexMap.first(where: { $0.value == index })?.key else { return }
         gapScrollAnchor = nil
         leadingGap = nil
         collectionView.interruptRefreshForScrolling()
@@ -163,8 +166,11 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
               isViewLoaded, view.window?.isKeyWindow == true, !isRestoringScrollAnchor,
               let anchor = captureScrollAnchor(requireIdle: false), let index = itemIndexMap[anchor.itemID],
               let item = currentSuccess?.post(at: Int32(index)), !item.isPaginationGap else { return }
-        if didScrollForReading { reading?.positionChanged(index: Int32(index), offset: anchor.distanceFromViewportTop) }
-        else { reading?.viewportChanged(index: Int32(index), offset: anchor.distanceFromViewportTop) }
+        if didScrollForReading {
+            reading?.positionChanged(index: Int32(index), offset: anchor.distanceFromViewportTop, itemKey: item.stableItemKey)
+        } else {
+            reading?.viewportChanged(index: Int32(index), offset: anchor.distanceFromViewportTop, itemKey: item.stableItemKey)
+        }
         didScrollForReading = false
     }
 
@@ -879,7 +885,7 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if scrollingState.isScrolling, let anchor = captureScrollAnchor(requireIdle: false),
            let index = itemIndexMap[anchor.itemID], let item = currentSuccess?.post(at: Int32(index)), !item.isPaginationGap {
-            reading?.viewportChanged(index: Int32(index), offset: anchor.distanceFromViewportTop)
+            reading?.viewportChanged(index: Int32(index), offset: anchor.distanceFromViewportTop, itemKey: item.stableItemKey)
         }
         restorePendingScrollAnchorIfNeeded()
         reportIsAtTop()

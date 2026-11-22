@@ -76,6 +76,13 @@ struct TimelineContent {
     }
     var hasPosts: Bool { kind == .timeline && (state == .loaded || header != nil || !leadingPosts.isEmpty) }
 
+    func bookmarkIndex(for position: TimelineReadingPosition) -> Int? {
+        if let itemKey = position.itemKey {
+            return items.firstIndex { $0?.post?.stableItemKey == itemKey }
+        }
+        return Int(position.index)
+    }
+
     static func timeline(
         _ data: PagingState<UiTimelineV2>?,
         header: UiState<UiTimelineV2>?,
