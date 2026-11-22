@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { accountSegment as formatAccountSegment, parseAccountType, searchAccountSegment } from '$lib/deeplink/accountRoute';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import AppBackButton from '$lib/components/AppBackButton.svelte';
@@ -11,8 +12,6 @@
 	import { useReactiveRetainedPresenter } from '$lib/presenter/presenterStore.svelte';
 	import {
 		createSearchPresenterController,
-		type AccountType,
-		type MicroBlogKey,
 		type PagingState,
 		type UiProfile as SearchUiProfile,
 	} from '@flare/web-presenters/search.svelte';
@@ -49,7 +48,7 @@
 	$effect(() => {
 		if (requestedAccount !== null || search.defaultAccountType.type !== 'Success') return;
 		const account = search.defaultAccountType.data;
-		const segment = account.type === 'Specific' ? accountSegmentFromKey(account.accountKey) : 'guest';
+		const segment = formatAccountSegment(account);
 		void goto(searchUrl(searchQuerySegment, segment), {
 			reset: false,
 			replace: true,
@@ -71,7 +70,7 @@
 
 	function selectAccount(profile: SearchUiProfile): void {
 		showAccountMenu = false;
-		void goto(searchUrl(searchQuerySegment, accountSegmentFromKey(profile.key)), {
+		void goto(searchUrl(searchQuerySegment, searchAccountSegment(profile.key)), {
 			reset: false,
 			replace: true,
 		});
@@ -87,55 +86,6 @@
 		}
 		const queryString = params.toString();
 		return queryString ? `/search?${queryString}` : '/search';
-	}
-
-	function parseAccountType(value: string): AccountType {
-		if (!value || value === 'guest') return { type: 'Guest' };
-		if (value.startsWith('guest@')) {
-			return { type: 'GuestHost', host: value.slice('guest@'.length) };
-		}
-		return { type: 'Specific', accountKey: parseMicroBlogKey(value) };
-	}
-
-	function parseMicroBlogKey(value: string): MicroBlogKey {
-		let escaping = false;
-		let idFinished = false;
-		let id = '';
-		let host = '';
-
-		for (const char of value) {
-			if (escaping) {
-				if (idFinished) host += char;
-				else id += char;
-				escaping = false;
-				continue;
-			}
-
-			if (char === '\\') {
-				escaping = true;
-				continue;
-			}
-
-			if (char === '@' && !idFinished) {
-				idFinished = true;
-				continue;
-			}
-
-			if (char === ',') break;
-
-			if (idFinished) host += char;
-			else id += char;
-		}
-
-		return { id, host };
-	}
-
-	function accountSegmentFromKey(key: MicroBlogKey): string {
-		return key.host ? `${escapeMicroBlogKeyPart(key.id)}@${escapeMicroBlogKeyPart(key.host)}` : key.id;
-	}
-
-	function escapeMicroBlogKeyPart(value: string): string {
-		return value.replace(/[\\@,]/g, (char) => `\\${char}`);
 	}
 
 	function indexes<T>(state: PagingState<T>, limit: number): number[] {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { parseAccountType, parseMicroBlogKey } from '$lib/deeplink/accountRoute';
 	import { page } from '$app/state';
 	import AppBackButton from '$lib/components/AppBackButton.svelte';
 	import AppTopBar from '$lib/components/AppTopBar.svelte';
@@ -8,11 +9,7 @@
 	import TimelineItem from '$lib/components/UiTimeline/TimelineItem.svelte';
 	import TimelineList from '$lib/components/UiTimeline/TimelineList.svelte';
 	import { useReactiveRetainedPresenter } from '$lib/presenter/presenterStore.svelte';
-	import {
-		createStatusContextPresenterController,
-		type AccountType,
-		type MicroBlogKey,
-	} from '@flare/web-presenters/statusContext.svelte';
+	import { createStatusContextPresenterController } from '@flare/web-presenters/statusContext.svelte';
 
 	const routeAccountKey = $derived(page.params.accountKey ?? 'guest');
 	const routeStatusKey = $derived(page.params.statusKey ?? '');
@@ -35,47 +32,6 @@
 	const isRefreshing = $derived(
 		statusState.listState.type === 'Success' ? statusState.listState.isRefreshing : false
 	);
-
-	function parseAccountType(value: string): AccountType {
-		if (value === 'guest') return { type: 'Guest' };
-		if (value.startsWith('guest@')) {
-			return { type: 'GuestHost', host: value.slice('guest@'.length) };
-		}
-		return { type: 'Specific', accountKey: parseMicroBlogKey(value) };
-	}
-
-	function parseMicroBlogKey(value: string): MicroBlogKey {
-		let escaping = false;
-		let idFinished = false;
-		let id = '';
-		let host = '';
-
-		for (const char of value) {
-			if (escaping) {
-				if (idFinished) host += char;
-				else id += char;
-				escaping = false;
-				continue;
-			}
-
-			if (char === '\\') {
-				escaping = true;
-				continue;
-			}
-
-			if (char === '@' && !idFinished) {
-				idFinished = true;
-				continue;
-			}
-
-			if (char === ',') break;
-
-			if (idFinished) host += char;
-			else id += char;
-		}
-
-		return { id, host };
-	}
 </script>
 
 <section class="min-h-screen bg-base-100">
