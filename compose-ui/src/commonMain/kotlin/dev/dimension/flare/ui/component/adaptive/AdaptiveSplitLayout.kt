@@ -108,10 +108,14 @@ public fun AdaptiveSplitLayout(
                 },
     ) {
         val containerBounds =
-            Rect(
-                offset = windowOffset,
-                size = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat()),
-            )
+            if (constraints.hasBoundedWidth && constraints.hasBoundedHeight) {
+                Rect(
+                    offset = windowOffset,
+                    size = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat()),
+                )
+            } else {
+                Rect.Zero
+            }
         val mode =
             calculateSplitPaneMode(
                 containerBoundsInWindow = containerBounds,

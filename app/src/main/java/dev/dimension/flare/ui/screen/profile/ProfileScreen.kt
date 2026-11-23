@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -60,12 +62,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.Images
@@ -132,7 +133,6 @@ import kotlinx.coroutines.launch
 import moe.tlaster.nestedscrollview.VerticalNestedScrollView
 import moe.tlaster.nestedscrollview.rememberNestedScrollViewState
 import moe.tlaster.precompose.molecule.producePresenter
-import kotlin.math.max
 
 @Composable
 internal fun ProfileWithUserNameAndHostDeeplinkRoute(
@@ -294,12 +294,6 @@ internal fun ProfileScreen(
             showBlockedProfileContent = false
         }
     }
-    val windowSize =
-        with(LocalDensity.current) {
-            LocalWindowInfo.current.containerSize
-                .toSize()
-                .toDpSize()
-        }
     val splitState = rememberSplitPaneState(initialIsSplit = isBigScreen())
     val isSplit = splitState.mode.isSplit
     val profilePrimaryWidthStrategy = rememberProfilePrimaryWidthStrategy(horizontalPadding = 32.dp)
@@ -647,6 +641,7 @@ internal fun ProfileScreen(
                 }
             },
             secondaryPane = { _, padding ->
+                val layoutDirection = LocalLayoutDirection.current
                 RefreshContainer(
                     modifier = Modifier.fillMaxSize(),
                     onRefresh = onRefreshProfile,
@@ -657,7 +652,11 @@ internal fun ProfileScreen(
                             modifier =
                                 Modifier
                                     .fillMaxSize()
-                                    .padding(top = padding.calculateTopPadding()),
+                                    .padding(
+                                        start = padding.calculateStartPadding(layoutDirection),
+                                        top = padding.calculateTopPadding(),
+                                        end = padding.calculateEndPadding(layoutDirection),
+                                    ),
                         ) {
                             tabAndPagerContent(padding.calculateBottomPadding())
                         }

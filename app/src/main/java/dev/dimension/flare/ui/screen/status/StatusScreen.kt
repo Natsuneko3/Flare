@@ -128,7 +128,7 @@ internal fun StatusDetailScreenContent(
                         }
                     }
 
-                    SplitPaneMode.Compact -> Unit
+                    SplitPaneMode.Compact -> {}
                 }
             },
             compactContent = { padding ->
