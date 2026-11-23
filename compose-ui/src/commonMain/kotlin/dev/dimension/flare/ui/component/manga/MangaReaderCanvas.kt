@@ -60,6 +60,9 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.isOutOfBounds
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
@@ -71,6 +74,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -131,6 +135,7 @@ import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.roundToInt
 
+internal const val MAX_CONSTRAINED_WEBTOON_WIDTH_DP = 800
 private const val WIDE_VIEWPORT_BREAKPOINT_DP = 720
 private const val LEFT_TAP_ZONE_FRACTION = 0.3f
 private const val RIGHT_TAP_ZONE_FRACTION = 0.7f
@@ -166,6 +171,14 @@ public fun MangaReaderCanvas(
     onToggleHud: () -> Unit,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    onPageLongPress: ((page: ReaderPageState, ready: PageMediaStatus.Ready) -> Unit)? = null,
+    pageContextWrapper: (
+        @Composable (
+            page: ReaderPageState,
+            ready: PageMediaStatus.Ready,
+            content: @Composable () -> Unit,
+        ) -> Unit
+    )? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -287,6 +300,30 @@ public fun MangaReaderCanvas(
 
                         Key.DirectionUp -> {
                             performStepBackward()
+                            true
+                        }
+
+                        Key.PageDown -> {
+                            performStepForward()
+                            true
+                        }
+
+                        Key.PageUp -> {
+                            performStepBackward()
+                            true
+                        }
+
+                        Key.MoveHome -> {
+                            if (readerState.pages.isNotEmpty()) {
+                                readerState.goToPage(0)
+                            }
+                            true
+                        }
+
+                        Key.MoveEnd -> {
+                            if (readerState.pages.isNotEmpty()) {
+                                readerState.goToPage(readerState.pages.lastIndex)
+                            }
                             true
                         }
 
@@ -414,10 +451,18 @@ public fun MangaReaderCanvas(
                         activePagedStepHandlers = null
                         MangaWebtoonStrip(
                             state = state,
+                            constrainMaxWidthDp =
+                                if (isWide && state.webtoonConstrainWidthOnWideScreen) {
+                                    MAX_CONSTRAINED_WEBTOON_WIDTH_DP.dp
+                                } else {
+                                    null
+                                },
                             onZoneTap = handleZoneTap,
                             onOpenLockedUrl = openExternalUrl,
                             onListStateReady = { activeWebtoonListState = it },
                             onZoomResetChanged = { activeZoomReset = it },
+                            onPageLongPress = onPageLongPress,
+                            pageContextWrapper = pageContextWrapper,
                         )
                     } else {
                         activeWebtoonListState = null
@@ -427,6 +472,8 @@ public fun MangaReaderCanvas(
                             onOpenLockedUrl = openExternalUrl,
                             onStepHandlersChanged = { activePagedStepHandlers = it },
                             onZoomResetChanged = { activeZoomReset = it },
+                            onPageLongPress = onPageLongPress,
+                            pageContextWrapper = pageContextWrapper,
                         )
                     }
                 }
@@ -483,6 +530,14 @@ private fun MangaPagedCanvas(
     onOpenLockedUrl: (String) -> Unit,
     onStepHandlersChanged: (PagedStepHandlers?) -> Unit,
     onZoomResetChanged: ((() -> Unit)?) -> Unit,
+    onPageLongPress: ((page: ReaderPageState, ready: PageMediaStatus.Ready) -> Unit)?,
+    pageContextWrapper: (
+        @Composable (
+            page: ReaderPageState,
+            ready: PageMediaStatus.Ready,
+            content: @Composable () -> Unit,
+        ) -> Unit
+    )?,
 ) {
     val hasPrevBoundary = state.previousBoundary != ChapterBoundary.None
     val hasNextBoundary = state.nextBoundary != ChapterBoundary.None
@@ -810,6 +865,8 @@ private fun MangaPagedCanvas(
                             onZoomResetChanged(if (zoomed) resetFn else null)
                         }
                     },
+                    onPageLongPress = onPageLongPress,
+                    pageContextWrapper = pageContextWrapper,
                 )
             }
         }
@@ -825,6 +882,14 @@ private fun ZoomablePagedSlot(
     isCurrentPagerPage: Boolean,
     onZoneTap: (Offset, IntSize) -> Unit,
     onZoomStateChanged: (Boolean, () -> Unit) -> Unit,
+    onPageLongPress: ((page: ReaderPageState, ready: PageMediaStatus.Ready) -> Unit)?,
+    pageContextWrapper: (
+        @Composable (
+            page: ReaderPageState,
+            ready: PageMediaStatus.Ready,
+            content: @Composable () -> Unit,
+        ) -> Unit
+    )?,
 ) {
     var scale by remember(slot) { mutableFloatStateOf(1f) }
     var offset by remember(slot) { mutableStateOf(Offset.Zero) }
@@ -853,6 +918,8 @@ private fun ZoomablePagedSlot(
 
     val gestureScope = rememberCoroutineScope()
     val currentOnZoneTap by rememberUpdatedState(onZoneTap)
+    val currentOnPageLongPress by rememberUpdatedState(onPageLongPress)
+    val currentPages by rememberUpdatedState(pages)
 
     Box(
         modifier =
@@ -860,7 +927,7 @@ private fun ZoomablePagedSlot(
                 .fillMaxSize()
                 .clipToBounds()
                 .readerTapAndDoubleTap(
-                    key = slot,
+                    key = slot to (onPageLongPress != null),
                     scope = gestureScope,
                     onTap = { tapOffset, containerSize ->
                         currentOnZoneTap(tapOffset, containerSize)
@@ -885,6 +952,35 @@ private fun ZoomablePagedSlot(
                                 )
                         }
                     },
+                    onLongPress =
+                        if (onPageLongPress != null) {
+                            { tapOffset, containerSize ->
+                                val handler = currentOnPageLongPress
+                                if (handler != null) {
+                                    val targetPageIndex =
+                                        when (slot) {
+                                            is ReaderSlot.Single -> {
+                                                slot.pageIndex
+                                            }
+
+                                            is ReaderSlot.Double -> {
+                                                if (tapOffset.x < containerSize.width / 2f) {
+                                                    slot.leftPageIndex
+                                                } else {
+                                                    slot.rightPageIndex
+                                                }
+                                            }
+                                        }
+                                    val page = currentPages.getOrNull(targetPageIndex)
+                                    val ready = page?.status as? PageMediaStatus.Ready
+                                    if (page != null && ready != null) {
+                                        handler(page, ready)
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        },
                 ).pointerInput(slot) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -934,6 +1030,7 @@ private fun ZoomablePagedSlot(
                         state = state,
                         contentScale = ContentScale.Fit,
                         contentAlignment = Alignment.Center,
+                        pageContextWrapper = pageContextWrapper,
                         modifier =
                             Modifier
                                 .fillMaxSize()
@@ -955,6 +1052,7 @@ private fun ZoomablePagedSlot(
                                 state = state,
                                 contentScale = ContentScale.Fit,
                                 contentAlignment = Alignment.CenterEnd,
+                                pageContextWrapper = pageContextWrapper,
                                 modifier =
                                     Modifier
                                         .weight(1f)
@@ -968,6 +1066,7 @@ private fun ZoomablePagedSlot(
                                 state = state,
                                 contentScale = ContentScale.Fit,
                                 contentAlignment = Alignment.CenterStart,
+                                pageContextWrapper = pageContextWrapper,
                                 modifier =
                                     Modifier
                                         .weight(1f)
@@ -985,11 +1084,22 @@ private fun ZoomablePagedSlot(
 @Composable
 private fun MangaWebtoonStrip(
     state: MangaReaderPresenter.State,
+    constrainMaxWidthDp: Dp?,
     onZoneTap: (Offset, IntSize) -> Unit,
     onOpenLockedUrl: (String) -> Unit,
     onListStateReady: (LazyListState) -> Unit,
     onZoomResetChanged: ((() -> Unit)?) -> Unit,
+    onPageLongPress: ((page: ReaderPageState, ready: PageMediaStatus.Ready) -> Unit)?,
+    pageContextWrapper: (
+        @Composable (
+            page: ReaderPageState,
+            ready: PageMediaStatus.Ready,
+            content: @Composable () -> Unit,
+        ) -> Unit
+    )?,
 ) {
+    val density = LocalDensity.current
+    val maxStripWidthPx = constrainMaxWidthDp?.let { with(density) { it.roundToPx() }.coerceAtLeast(1) }
     val hasPrevBoundary = state.previousBoundary != ChapterBoundary.None
     val hasNextBoundary = state.nextBoundary != ChapterBoundary.None
     val headerCount = if (hasPrevBoundary) 1 else 0
@@ -1071,6 +1181,7 @@ private fun MangaWebtoonStrip(
 
     val gestureScope = rememberCoroutineScope()
     val currentOnZoneTap by rememberUpdatedState(onZoneTap)
+    val currentOnPageLongPress by rememberUpdatedState(onPageLongPress)
 
     Box(
         modifier =
@@ -1078,7 +1189,7 @@ private fun MangaWebtoonStrip(
                 .fillMaxSize()
                 .clipToBounds()
                 .readerTapAndDoubleTap(
-                    key = Unit,
+                    key = onPageLongPress != null,
                     scope = gestureScope,
                     onTap = { tapOffset, containerSize ->
                         currentOnZoneTap(tapOffset, containerSize)
@@ -1108,6 +1219,32 @@ private fun MangaWebtoonStrip(
                             offsetY = unconsumedScreenY.coerceIn(-maxY, maxY)
                         }
                     },
+                    onLongPress =
+                        if (onPageLongPress != null) {
+                            { tapOffset, containerSize ->
+                                val handler = currentOnPageLongPress
+                                if (handler != null) {
+                                    val listY =
+                                        if (scale > ZOOM_EPSILON) {
+                                            (tapOffset.y - containerSize.height / 2f - offsetY) / scale + containerSize.height / 2f
+                                        } else {
+                                            tapOffset.y
+                                        }
+                                    val hitItem =
+                                        listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                            listY >= item.offset && listY < item.offset + item.size
+                                        }
+                                    val pageIndex = hitItem?.let { it.index - latestHeaderCount }
+                                    val page = pageIndex?.let(latestState.pages::getOrNull)
+                                    val ready = page?.status as? PageMediaStatus.Ready
+                                    if (page != null && ready != null) {
+                                        handler(page, ready)
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        },
                 ).pointerInput(listState) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -1198,16 +1335,24 @@ private fun MangaWebtoonStrip(
                 items = state.pages,
                 key = { it.id },
             ) { page ->
-                ReaderPageCell(
-                    page = page,
-                    state = state,
-                    contentScale = ContentScale.Fit,
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.TopCenter,
-                    modifier =
-                        Modifier
-                            .webtoonPageSize(page.aspectRatio ?: DEFAULT_WEBTOON_ASPECT_RATIO)
-                            .testTag("manga_reader_page_${page.index}"),
-                )
+                ) {
+                    ReaderPageCell(
+                        page = page,
+                        state = state,
+                        contentScale = ContentScale.Fit,
+                        contentAlignment = Alignment.TopCenter,
+                        pageContextWrapper = pageContextWrapper,
+                        modifier =
+                            Modifier
+                                .webtoonPageSize(
+                                    aspectRatio = page.aspectRatio ?: DEFAULT_WEBTOON_ASPECT_RATIO,
+                                    maxStripWidthPx = maxStripWidthPx,
+                                ).testTag("manga_reader_page_${page.index}"),
+                    )
+                }
             }
 
             if (hasNextBoundary) {
@@ -1241,6 +1386,13 @@ private fun ReaderPageCell(
     contentScale: ContentScale,
     contentAlignment: Alignment,
     modifier: Modifier = Modifier,
+    pageContextWrapper: (
+        @Composable (
+            page: ReaderPageState,
+            ready: PageMediaStatus.Ready,
+            content: @Composable () -> Unit,
+        ) -> Unit
+    )? = null,
 ) {
     when (val status = page.status) {
         is PageMediaStatus.Loading -> {
@@ -1312,49 +1464,61 @@ private fun ReaderPageCell(
                 )
             } else {
                 val requestReady = fullSizeRequest.data != NullRequestData
+                val readyContent: @Composable () -> Unit = {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = contentAlignment,
+                    ) {
+                        if (requestReady) {
+                            AsyncImage(
+                                model = fullSizeRequest,
+                                contentDescription = status.displayed.accessibleDescription(),
+                                contentScale = contentScale,
+                                alignment = contentAlignment,
+                                onLoading = {
+                                    imageLoading = true
+                                },
+                                onSuccess = { success ->
+                                    imageLoading = false
+                                    loadError = null
+                                    val decoded = success.result.image
+                                    state.onPageDimensionsLoaded(
+                                        pageId = page.id,
+                                        width = decoded.width.toFloat(),
+                                        height = decoded.height.toFloat(),
+                                    )
+                                },
+                                onError = { error ->
+                                    imageLoading = false
+                                    if (status.displayed.url != status.original.url) {
+                                        state.imageTranslation.imageFailed(status.original, status.displayed.url)
+                                    }
+                                    loadError = error.result.throwable
+                                },
+                                modifier =
+                                    Modifier
+                                        .fillMaxSize()
+                                        .blur(blurRadius),
+                            )
+                        }
+                        if (!requestReady || translating || imageLoading) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                PlatformCircularProgressIndicator()
+                            }
+                        }
+                    }
+                }
                 Box(
                     modifier = modifier,
                     contentAlignment = contentAlignment,
                 ) {
-                    if (requestReady) {
-                        AsyncImage(
-                            model = fullSizeRequest,
-                            contentDescription = status.displayed.accessibleDescription(),
-                            contentScale = contentScale,
-                            alignment = contentAlignment,
-                            onLoading = {
-                                imageLoading = true
-                            },
-                            onSuccess = { success ->
-                                imageLoading = false
-                                loadError = null
-                                val decoded = success.result.image
-                                state.onPageDimensionsLoaded(
-                                    pageId = page.id,
-                                    width = decoded.width.toFloat(),
-                                    height = decoded.height.toFloat(),
-                                )
-                            },
-                            onError = { error ->
-                                imageLoading = false
-                                if (status.displayed.url != status.original.url) {
-                                    state.imageTranslation.imageFailed(status.original, status.displayed.url)
-                                }
-                                loadError = error.result.throwable
-                            },
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .blur(blurRadius),
-                        )
-                    }
-                    if (!requestReady || translating || imageLoading) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            PlatformCircularProgressIndicator()
-                        }
+                    if (pageContextWrapper != null) {
+                        pageContextWrapper(page, status, readyContent)
+                    } else {
+                        readyContent()
                     }
                 }
             }
@@ -1408,9 +1572,17 @@ private fun ReaderPageErrorContent(
     }
 }
 
-private fun Modifier.webtoonPageSize(aspectRatio: Float): Modifier =
+private fun Modifier.webtoonPageSize(
+    aspectRatio: Float,
+    maxStripWidthPx: Int? = null,
+): Modifier =
     layout { measurable, constraints ->
-        val width = constraints.maxWidth
+        val width =
+            if (maxStripWidthPx != null) {
+                minOf(constraints.maxWidth, maxStripWidthPx)
+            } else {
+                constraints.maxWidth
+            }
         val height = (width / aspectRatio).roundToInt().coerceIn(1, Constraints.Infinity - 1)
         val page = measurable.measure(Constraints.fitPrioritizingWidth(width, width, height, height))
         layout(page.width, page.height) { page.place(0, 0) }
@@ -1565,6 +1737,7 @@ private fun Modifier.readerTapAndDoubleTap(
     scope: CoroutineScope,
     onTap: (Offset, IntSize) -> Unit,
     onDoubleTap: (Offset, IntSize) -> Unit,
+    onLongPress: ((Offset, IntSize) -> Unit)? = null,
 ): Modifier =
     pointerInput(key) {
         var pendingTapJob: Job? = null
@@ -1589,7 +1762,7 @@ private fun Modifier.readerTapAndDoubleTap(
                     lastTapUpTimeMillis = -1L
                     onDoubleTap(up.position, size)
                 }
-            } else {
+            } else if (onLongPress == null) {
                 val up = waitForUpOrCancellation()
                 if (up != null) {
                     up.consume()
@@ -1606,6 +1779,87 @@ private fun Modifier.readerTapAndDoubleTap(
                             }
                             onTap(tapPos, containerSize)
                         }
+                }
+            } else {
+                val downId = down.id
+                val downPos = down.position
+                val containerSize = size
+                val touchSlop = viewConfiguration.touchSlop
+                val longPressTimeoutMs = viewConfiguration.longPressTimeoutMillis
+                var longPressTriggered = false
+                val longPressJob =
+                    scope.launch {
+                        val start = withFrameMillis { it }
+                        while (withFrameMillis { it } - start < longPressTimeoutMs) {
+                            // Yield frames on MonotonicFrameClock so both real runtime and ComposeUiTest advance cleanly.
+                        }
+                        longPressTriggered = true
+                        pendingTapJob?.cancel()
+                        pendingTapJob = null
+                        lastTapUpTimeMillis = -1L
+                        onLongPress(downPos, containerSize)
+                    }
+                try {
+                    var gestureActive = true
+                    var tapCandidate = true
+                    while (gestureActive) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        if (longPressTriggered) {
+                            event.changes.forEach { it.consume() }
+                            if (event.changes.none { it.pressed }) {
+                                gestureActive = false
+                            }
+                        } else if (event.changes.all { it.changedToUp() }) {
+                            longPressJob.cancel()
+                            gestureActive = false
+                            if (tapCandidate) {
+                                val up = event.changes[0]
+                                up.consume()
+                                val tapPos = up.position
+                                lastTapPosition = tapPos
+                                lastTapUpTimeMillis = up.uptimeMillis
+                                pendingTapJob?.cancel()
+                                pendingTapJob =
+                                    scope.launch {
+                                        val start = withFrameMillis { it }
+                                        while (withFrameMillis { it } - start < timeoutMs) {
+                                            // Yield frames on MonotonicFrameClock so both real runtime and ComposeUiTest advance cleanly.
+                                        }
+                                        onTap(tapPos, containerSize)
+                                    }
+                            }
+                        } else {
+                            val pressedCount = event.changes.count { it.pressed }
+                            val singleSamePointer = pressedCount == 1 && event.changes.all { !it.pressed || it.id == downId }
+                            val movedPastSlop = event.changes.any { (it.position - downPos).getDistance() > touchSlop }
+                            val cancelledOrConsumed =
+                                event.changes.any { it.isConsumed || it.isOutOfBounds(size, extendedTouchPadding) }
+                            if (!singleSamePointer || movedPastSlop || cancelledOrConsumed) {
+                                longPressJob.cancel()
+                                tapCandidate = false
+                                gestureActive = false
+                            } else {
+                                val consumeCheck = awaitPointerEvent(PointerEventPass.Final)
+                                if (longPressTriggered) {
+                                    consumeCheck.changes.forEach { it.consume() }
+                                    if (consumeCheck.changes.none { it.pressed }) {
+                                        gestureActive = false
+                                    }
+                                } else if (consumeCheck.changes.any { it.isConsumed }) {
+                                    longPressJob.cancel()
+                                    tapCandidate = false
+                                    gestureActive = false
+                                } else if (consumeCheck.changes.none { it.pressed }) {
+                                    longPressJob.cancel()
+                                    gestureActive = false
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    if (!longPressTriggered) {
+                        longPressJob.cancel()
+                    }
                 }
             }
         }

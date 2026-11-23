@@ -1,6 +1,7 @@
 package dev.dimension.flare.ui.component.manga
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -903,7 +905,12 @@ class MangaReaderCanvasTest {
             doubleClick(center)
         }
         composeRule.mainClock.advanceTimeBy(400)
-        val zoomedPage0Width = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().boundsInRoot.width
+        val zoomedPage0Width =
+            composeRule
+                .onNodeWithTag("manga_reader_page_0")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .width
         assertTrue(zoomedPage0Width >= canvasBounds.width - 1f)
 
         // Drag downward to reach very top of item 0 (offsetY == +maxY -> positionInRoot.y == 0f)
@@ -914,7 +921,12 @@ class MangaReaderCanvasTest {
                 up()
             }
         }
-        val topEdgeY = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot.y
+        val topEdgeY =
+            composeRule
+                .onNodeWithTag("manga_reader_page_0")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .y
         assertTrue(
             abs(topEdgeY) <= 2f,
             "Expected very top of zoomed Webtoon item 0 to be reachable at y=0, got y=$topEdgeY",
@@ -992,7 +1004,12 @@ class MangaReaderCanvasTest {
         composeRule.runOnIdle {
             assertEquals(null, fakeState.openedBoundaryChapterId)
         }
-        val posAfterTap = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot.y
+        val posAfterTap =
+            composeRule
+                .onNodeWithTag("manga_reader_page_0")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .y
         assertTrue(
             abs(posAfterTap + expectedStepPx) <= 6f,
             "Expected right tap to scroll tall strip by -$expectedStepPx, got $posAfterTap",
@@ -1003,7 +1020,12 @@ class MangaReaderCanvasTest {
             click(Offset(canvasBounds.width * 0.15f, canvasBounds.height * 0.5f))
         }
         composeRule.runOnIdle {}
-        val posAfterBackTap = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot.y
+        val posAfterBackTap =
+            composeRule
+                .onNodeWithTag("manga_reader_page_0")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .y
         assertTrue(abs(posAfterBackTap) <= 6f, "Expected left tap to scroll back to top=0, got $posAfterBackTap")
 
         // 3. Repeated Spacebar presses scroll down in ~80% increments and only open nextChapter after reaching the bottom
@@ -1017,6 +1039,191 @@ class MangaReaderCanvasTest {
         }
         assertTrue(presses >= 4, "Expected multiple ~80% viewport steps before advancing chapter, took $presses")
         assertEquals("ch-2", fakeState.openedBoundaryChapterId)
+    }
+
+    @Test
+    fun wideViewportWebtoonConstrainsStripWidthAndTogglesFullWidth() {
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Webtoon,
+                initialPages = samplePages(2),
+                initialSlots = persistentListOf(ReaderSlot.Single(0), ReaderSlot.Single(1)),
+                initialWebtoonConstrainWidthOnWideScreen = true,
+            )
+        val longPressedWebtoonPages = mutableListOf<Int>()
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.requiredSize(width = 1200.dp, height = 800.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = false,
+                        onToggleHud = {},
+                        onPageLongPress = { page, _ -> longPressedWebtoonPages += page.index },
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        assertEquals(800, MAX_CONSTRAINED_WEBTOON_WIDTH_DP)
+        val tolerancePx = with(composeRule.density) { 2.dp.toPx() }
+        val expectedConstrainedWidthPx = with(composeRule.density) { 800.dp.toPx() }
+        val expectedCenteredLeftPx = with(composeRule.density) { 200.dp.toPx() }
+        val expectedFullWidthPx = with(composeRule.density) { 1200.dp.toPx() }
+
+        val canvasNode = composeRule.onNodeWithTag("reader_canvas").fetchSemanticsNode()
+        val constrainedNode = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode()
+        val constrainedLeftInCanvas = constrainedNode.positionInRoot.x - canvasNode.positionInRoot.x
+        assertTrue(
+            abs(constrainedNode.size.width - expectedConstrainedWidthPx) <= tolerancePx,
+            "Expected constrained webtoon page width ~$expectedConstrainedWidthPx, got ${constrainedNode.size.width}",
+        )
+        assertTrue(
+            abs(constrainedLeftInCanvas - expectedCenteredLeftPx) <= tolerancePx,
+            "Expected centered webtoon page left ~$expectedCenteredLeftPx, got $constrainedLeftInCanvas",
+        )
+
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            longClick(center)
+        }
+        composeRule.runOnIdle {
+            assertEquals(listOf(0), longPressedWebtoonPages)
+            fakeState.setWebtoonConstrainWidthOnWideScreen(false)
+        }
+
+        val expandedNode = composeRule.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode()
+        val expandedLeftInCanvas = expandedNode.positionInRoot.x - canvasNode.positionInRoot.x
+        assertTrue(
+            abs(expandedNode.size.width - expectedFullWidthPx) <= tolerancePx,
+            "Expected full-width webtoon page width ~$expectedFullWidthPx, got ${expandedNode.size.width}",
+        )
+        assertTrue(
+            abs(expandedLeftInCanvas) <= tolerancePx,
+            "Expected full-width webtoon page left ~0, got $expandedLeftInCanvas",
+        )
+    }
+
+    @Test
+    fun doublePageSpreadLongPressTargetsExactLeftOrRightPageWithoutStepping() {
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Rtl,
+                initialPages = samplePages(4),
+                initialSlots =
+                    persistentListOf(
+                        ReaderSlot.Double(leftPageIndex = 1, rightPageIndex = 0, primaryPageIndex = 0),
+                        ReaderSlot.Double(leftPageIndex = 3, rightPageIndex = 2, primaryPageIndex = 2),
+                    ),
+            )
+        var hudVisible by mutableStateOf(false)
+        val longPressedPages = mutableListOf<Pair<Int, String>>()
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.size(width = 1000.dp, height = 700.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = hudVisible,
+                        onToggleHud = { hudVisible = !hudVisible },
+                        onPageLongPress = { page, ready ->
+                            longPressedPages += page.index to (ready.displayed as UiMedia.Image).url
+                        },
+                        pageContextWrapper = { page, _, content ->
+                            Box(Modifier.testTag("manga_page_context_${page.index}")) {
+                                content()
+                            }
+                        },
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("manga_page_context_1").assertExists()
+        composeRule.onNodeWithTag("manga_page_context_0").assertExists()
+
+        val leftX = with(composeRule.density) { 250.dp.toPx() }
+        val rightX = with(composeRule.density) { 750.dp.toPx() }
+        val centerY = with(composeRule.density) { 350.dp.toPx() }
+
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            longClick(Offset(leftX, centerY))
+        }
+        composeRule.runOnIdle {
+            assertEquals(listOf(1 to "local-test-page-1"), longPressedPages)
+            assertEquals(0, fakeState.stepForwardCount)
+            assertEquals(0, fakeState.stepBackwardCount)
+            assertEquals(false, hudVisible)
+        }
+
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            longClick(Offset(rightX, centerY))
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(1 to "local-test-page-1", 0 to "local-test-page-0"),
+                longPressedPages,
+            )
+            assertEquals(0, fakeState.stepForwardCount)
+            assertEquals(0, fakeState.stepBackwardCount)
+            assertEquals(false, hudVisible)
+        }
+    }
+
+    @Test
+    fun extendedKeyboardShortcutsSupportPageUpPageDownHomeAndEnd() {
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Rtl,
+                initialPages = samplePages(4),
+                initialSlots = (0..3).map(ReaderSlot::Single).toImmutableList(),
+            )
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.size(width = 600.dp, height = 800.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = false,
+                        onToggleHud = {},
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.PageDown)
+        }
+        composeRule.runOnIdle {
+            assertEquals(1, fakeState.currentPageIndex)
+            assertEquals(1, fakeState.stepForwardCount)
+        }
+
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.PageUp)
+        }
+        composeRule.runOnIdle {
+            assertEquals(0, fakeState.currentPageIndex)
+            assertEquals(1, fakeState.stepBackwardCount)
+        }
+
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.MoveEnd)
+        }
+        composeRule.runOnIdle {
+            assertEquals(3, fakeState.currentPageIndex)
+        }
+        composeRule.onNodeWithTag("manga_reader_page_3").assertExists()
+
+        composeRule.onNodeWithTag("reader_canvas").performKeyInput {
+            pressKey(Key.MoveHome)
+        }
+        composeRule.runOnIdle {
+            assertEquals(0, fakeState.currentPageIndex)
+        }
+        composeRule.onNodeWithTag("manga_reader_page_0").assertExists()
     }
 }
 
@@ -1048,6 +1255,7 @@ private class FakeMangaReaderState(
     override val previousBoundary: ChapterBoundary = ChapterBoundary.None,
     override val nextBoundary: ChapterBoundary = ChapterBoundary.None,
     override val prefetchMedia: ImmutableList<UiMedia.Image> = persistentListOf(),
+    initialWebtoonConstrainWidthOnWideScreen: Boolean = true,
 ) : MangaReaderPresenter.State {
     override val mangaTitle: String = "Test Manga"
     override val chapterTitle: String = "Chapter 1"
@@ -1061,9 +1269,11 @@ private class FakeMangaReaderState(
     private var _direction by mutableStateOf(initialDirection)
     private var _doublePageSpread by mutableStateOf(initialSlots.any { it is ReaderSlot.Double })
     private var _spreadCoverSinglePage by mutableStateOf(false)
+    private var _webtoonConstrainWidthOnWideScreen by mutableStateOf(initialWebtoonConstrainWidthOnWideScreen)
     override val direction: MangaReadingDirection get() = _direction
     override val doublePageSpread: Boolean get() = _doublePageSpread
     override val spreadCoverSinglePage: Boolean get() = _spreadCoverSinglePage
+    override val webtoonConstrainWidthOnWideScreen: Boolean get() = _webtoonConstrainWidthOnWideScreen
     override val imageTranslation: ImageTranslationPresenter.State = NoopImageTranslationState
 
     var lastWideViewport: Boolean? by mutableStateOf(null)
@@ -1135,6 +1345,10 @@ private class FakeMangaReaderState(
 
     override fun setSpreadCoverSinglePage(enabled: Boolean) {
         _spreadCoverSinglePage = enabled
+    }
+
+    override fun setWebtoonConstrainWidthOnWideScreen(enabled: Boolean) {
+        _webtoonConstrainWidthOnWideScreen = enabled
     }
 }
 
