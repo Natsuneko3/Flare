@@ -45,6 +45,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
@@ -347,7 +348,7 @@ internal fun MangaReaderScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun MangaReaderContent(
     state: MangaReaderPresenter.State,
@@ -355,6 +356,7 @@ internal fun MangaReaderContent(
     onSavePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)? = null,
     onSharePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)? = null,
 ) {
+    val motionScheme = MaterialTheme.motionScheme
     var hudVisible by remember { mutableStateOf(true) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showChapterSheet by remember { mutableStateOf(false) }
@@ -465,78 +467,84 @@ internal fun MangaReaderContent(
                 Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth(),
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut(),
+            enter =
+                slideInVertically(motionScheme.defaultSpatialSpec()) { -it } +
+                    fadeIn(motionScheme.defaultEffectsSpec()),
+            exit =
+                slideOutVertically(motionScheme.defaultSpatialSpec()) { -it } +
+                    fadeOut(motionScheme.defaultEffectsSpec()),
         ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                contentColor = MaterialTheme.colorScheme.onSurface,
-            ) {
-                val canOpenChapters = state.chapterItems.isNotEmpty()
-                val saveTargets =
-                    if (onSavePage != null) {
-                        visibleTargets.filter { it.ready.original !is UiMedia.Ugoira }
-                    } else {
-                        emptyList()
+            val canOpenChapters = state.chapterItems.isNotEmpty()
+            val saveTargets =
+                if (onSavePage != null) {
+                    visibleTargets.filter { it.ready.original !is UiMedia.Ugoira }
+                } else {
+                    emptyList()
+                }
+            val shareTargets =
+                if (onSharePage != null) {
+                    visibleTargets.filter {
+                        it.ready.displayed is UiMedia.Image || it.ready.displayed is UiMedia.Gif
                     }
-                val shareTargets =
-                    if (onSharePage != null) {
-                        visibleTargets.filter {
-                            it.ready.displayed is UiMedia.Image || it.ready.displayed is UiMedia.Gif
-                        }
-                    } else {
-                        emptyList()
-                    }
-                val primarySharePageIndex =
-                    shareTargets.firstOrNull { it.pageIndex == state.currentPageIndex }?.pageIndex
-                        ?: shareTargets.firstOrNull()?.pageIndex
-                val regenerateTargets =
-                    visibleTargets.filter { state.imageTranslation.canRegenerate(it.ready.original) }
-                val hasOverflowActions =
-                    saveTargets.isNotEmpty() ||
-                        shareTargets.isNotEmpty() ||
-                        regenerateTargets.isNotEmpty() ||
-                        chapterUrl != null
+                } else {
+                    emptyList()
+                }
+            val primarySharePageIndex =
+                shareTargets.firstOrNull { it.pageIndex == state.currentPageIndex }?.pageIndex
+                    ?: shareTargets.firstOrNull()?.pageIndex
+            val regenerateTargets =
+                visibleTargets.filter { state.imageTranslation.canRegenerate(it.ready.original) }
+            val hasOverflowActions =
+                saveTargets.isNotEmpty() ||
+                    shareTargets.isNotEmpty() ||
+                    regenerateTargets.isNotEmpty() ||
+                    chapterUrl != null
 
-                Row(
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(
+                            WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                        ).padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilledTonalIconButton(
+                    onClick = onBack,
+                    modifier = Modifier.testTag("manga_reader_back"),
+                ) {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.ArrowLeft,
+                        contentDescription = stringResource(R.string.navigate_back),
+                    )
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier =
                         Modifier
-                            .fillMaxWidth()
-                            .windowInsetsPadding(
-                                WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                            ).padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            .weight(1f)
+                            .heightIn(min = 40.dp)
+                            .clip(CircleShape)
+                            .then(
+                                if (canOpenChapters) {
+                                    Modifier.clickable { showChapterSheet = true }
+                                } else {
+                                    Modifier
+                                },
+                            ).testTag("manga_reader_chapters_button"),
                 ) {
-                    FilledTonalIconButton(
-                        onClick = onBack,
-                        modifier = Modifier.testTag("manga_reader_back"),
-                    ) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.ArrowLeft,
-                            contentDescription = stringResource(R.string.navigate_back),
-                        )
-                    }
-
                     Row(
-                        modifier =
-                            Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .then(
-                                    if (canOpenChapters) {
-                                        Modifier.clickable { showChapterSheet = true }
-                                    } else {
-                                        Modifier
-                                    },
-                                ).padding(horizontal = 8.dp, vertical = 4.dp)
-                                .testTag("manga_reader_chapters_button"),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Column(
                             modifier = Modifier.weight(1f, fill = false),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
                             Text(
                                 text =
@@ -554,7 +562,7 @@ internal fun MangaReaderContent(
                                 Text(
                                     text = state.mangaTitle,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -565,160 +573,160 @@ internal fun MangaReaderContent(
                                 imageVector = FontAwesomeIcons.Solid.ChevronDown,
                                 contentDescription = stringResource(R.string.manga_reader_chapters),
                                 modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
                             )
                         }
                     }
+                }
 
-                    currentReady?.let { ready ->
-                        val item = state.imageTranslation.item(ready.original)
-                        if (state.imageTranslation.canToggle(ready.original)) {
-                            FilledTonalIconButton(
-                                onClick = { state.imageTranslation.toggle(ready.original) },
-                                enabled = !item.loading,
-                            ) {
-                                FAIcon(
-                                    imageVector = FontAwesomeIcons.Solid.Language,
-                                    contentDescription =
-                                        imageTranslationText(
-                                            when {
-                                                item.showingTranslated -> "Show original"
-                                                item.translated != null -> "Show translation"
-                                                else -> "Translate image"
-                                            },
-                                        ),
-                                )
-                            }
+                currentReady?.let { ready ->
+                    val item = state.imageTranslation.item(ready.original)
+                    if (state.imageTranslation.canToggle(ready.original)) {
+                        FilledTonalIconButton(
+                            onClick = { state.imageTranslation.toggle(ready.original) },
+                            enabled = !item.loading,
+                        ) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Solid.Language,
+                                contentDescription =
+                                    imageTranslationText(
+                                        when {
+                                            item.showingTranslated -> "Show original"
+                                            item.translated != null -> "Show translation"
+                                            else -> "Translate image"
+                                        },
+                                    ),
+                            )
                         }
                     }
+                }
 
+                FilledTonalIconButton(
+                    onClick = { showSettingsSheet = true },
+                    modifier = Modifier.testTag("manga_reader_settings_button"),
+                ) {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.Gear,
+                        contentDescription = stringResource(R.string.manga_reader_settings),
+                    )
+                }
+
+                Box {
                     FilledTonalIconButton(
-                        onClick = { showSettingsSheet = true },
-                        modifier = Modifier.testTag("manga_reader_settings_button"),
+                        onClick = { showMoreMenu = true },
+                        enabled = hasOverflowActions,
+                        modifier = Modifier.testTag("manga_reader_more_button"),
                     ) {
                         FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Gear,
-                            contentDescription = stringResource(R.string.manga_reader_settings),
+                            imageVector = FontAwesomeIcons.Solid.EllipsisVertical,
+                            contentDescription = stringResource(R.string.more),
                         )
                     }
 
-                    Box {
-                        FilledTonalIconButton(
-                            onClick = { showMoreMenu = true },
-                            enabled = hasOverflowActions,
-                            modifier = Modifier.testTag("manga_reader_more_button"),
-                        ) {
-                            FAIcon(
-                                imageVector = FontAwesomeIcons.Solid.EllipsisVertical,
-                                contentDescription = stringResource(R.string.more),
+                    FlareDropdownMenu(
+                        expanded = showMoreMenu && hasOverflowActions,
+                        onDismissRequest = { showMoreMenu = false },
+                    ) {
+                        val isMultiPageSpread = visibleTargets.size > 1
+                        saveTargets.forEach { target ->
+                            val label =
+                                if (isMultiPageSpread) {
+                                    "${stringResource(R.string.media_menu_save)} (${
+                                        stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
+                                    })"
+                                } else {
+                                    stringResource(R.string.media_menu_save)
+                                }
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                leadingIcon = {
+                                    FAIcon(
+                                        imageVector = FontAwesomeIcons.Solid.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onSavePage?.invoke(target.ready.original, target.ready.displayed, target.pageIndex)
+                                },
                             )
                         }
 
-                        FlareDropdownMenu(
-                            expanded = showMoreMenu && hasOverflowActions,
-                            onDismissRequest = { showMoreMenu = false },
-                        ) {
-                            val isMultiPageSpread = visibleTargets.size > 1
-                            saveTargets.forEach { target ->
-                                val label =
-                                    if (isMultiPageSpread) {
-                                        "${stringResource(R.string.media_menu_save)} (${
-                                            stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
-                                        })"
+                        shareTargets.forEach { target ->
+                            val label =
+                                if (isMultiPageSpread) {
+                                    "${stringResource(R.string.media_menu_share_image)} (${
+                                        stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
+                                    })"
+                                } else {
+                                    stringResource(R.string.media_menu_share_image)
+                                }
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                leadingIcon = {
+                                    FAIcon(
+                                        imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onSharePage?.invoke(target.ready.original, target.ready.displayed, target.pageIndex)
+                                },
+                                modifier =
+                                    if (target.pageIndex == primarySharePageIndex) {
+                                        Modifier.testTag("manga_reader_share_page")
                                     } else {
-                                        stringResource(R.string.media_menu_save)
-                                    }
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    leadingIcon = {
-                                        FAIcon(
-                                            imageVector = FontAwesomeIcons.Solid.Download,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
+                                        Modifier
                                     },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onSavePage?.invoke(target.ready.original, target.ready.displayed, target.pageIndex)
-                                    },
-                                )
-                            }
+                            )
+                        }
 
-                            shareTargets.forEach { target ->
-                                val label =
-                                    if (isMultiPageSpread) {
-                                        "${stringResource(R.string.media_menu_share_image)} (${
-                                            stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
-                                        })"
-                                    } else {
-                                        stringResource(R.string.media_menu_share_image)
-                                    }
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    leadingIcon = {
-                                        FAIcon(
-                                            imageVector = FontAwesomeIcons.Solid.ShareNodes,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onSharePage?.invoke(target.ready.original, target.ready.displayed, target.pageIndex)
-                                    },
-                                    modifier =
-                                        if (target.pageIndex == primarySharePageIndex) {
-                                            Modifier.testTag("manga_reader_share_page")
-                                        } else {
-                                            Modifier
-                                        },
-                                )
-                            }
+                        regenerateTargets.forEach { target ->
+                            val item = state.imageTranslation.item(target.ready.original)
+                            val baseLabel = imageTranslationText("Translate again")
+                            val label =
+                                if (isMultiPageSpread) {
+                                    "$baseLabel (${
+                                        stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
+                                    })"
+                                } else {
+                                    baseLabel
+                                }
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                enabled = !item.loading,
+                                leadingIcon = {
+                                    FAIcon(
+                                        imageVector = FontAwesomeIcons.Solid.RotateRight,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    state.imageTranslation.regenerate(target.ready.original)
+                                },
+                            )
+                        }
 
-                            regenerateTargets.forEach { target ->
-                                val item = state.imageTranslation.item(target.ready.original)
-                                val baseLabel = imageTranslationText("Translate again")
-                                val label =
-                                    if (isMultiPageSpread) {
-                                        "$baseLabel (${
-                                            stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
-                                        })"
-                                    } else {
-                                        baseLabel
-                                    }
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    enabled = !item.loading,
-                                    leadingIcon = {
-                                        FAIcon(
-                                            imageVector = FontAwesomeIcons.Solid.RotateRight,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        state.imageTranslation.regenerate(target.ready.original)
-                                    },
-                                )
-                            }
-
-                            chapterUrl?.let { url ->
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.manga_open_in_browser)) },
-                                    leadingIcon = {
-                                        FAIcon(
-                                            imageVector = FontAwesomeIcons.Brands.Chrome,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(url).toUri())
-                                    },
-                                )
-                            }
+                        chapterUrl?.let { url ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.manga_open_in_browser)) },
+                                leadingIcon = {
+                                    FAIcon(
+                                        imageVector = FontAwesomeIcons.Brands.Chrome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(url).toUri())
+                                },
+                            )
                         }
                     }
                 }
@@ -737,8 +745,12 @@ internal fun MangaReaderContent(
                         end = 16.dp,
                         bottom = WindowInsets.systemBars.asPaddingValues().calculateBottomPadding() + 12.dp,
                     ).widthIn(max = BottomSheetDefaults.SheetMaxWidth),
-            enter = slideInVertically { it } + fadeIn(),
-            exit = slideOutVertically { it } + fadeOut(),
+            enter =
+                slideInVertically(motionScheme.defaultSpatialSpec()) { it } +
+                    fadeIn(motionScheme.defaultEffectsSpec()),
+            exit =
+                slideOutVertically(motionScheme.defaultSpatialSpec()) { it } +
+                    fadeOut(motionScheme.defaultEffectsSpec()),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -770,7 +782,7 @@ internal fun MangaReaderContent(
 
                 Surface(
                     shape = MaterialTheme.shapes.extraLarge,
-                    color = BottomSheetDefaults.ContainerColor.copy(alpha = 0.94f),
+                    color = BottomSheetDefaults.ContainerColor,
                 ) {
                     val isRtl = state.direction == MangaReadingDirection.Rtl
                     val prevUnlocked = state.previousBoundary as? ChapterBoundary.Unlocked
