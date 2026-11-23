@@ -9,7 +9,7 @@ struct ProfileScreen: View {
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
     let onProfileShareScreenshot: (MicroBlogKey) -> Void
-    let onProfileCrossPost: (MicroBlogKey, String?) -> Void
+    let onProfileCrossPost: (MicroBlogKey) -> Void
     let goBack: () -> Void
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     @Environment(\.timelineAppearance.aiConfig.agent) private var agentEnabled
@@ -24,7 +24,7 @@ struct ProfileScreen: View {
         onFansClick: @escaping (MicroBlogKey) -> Void,
         onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
         onProfileShareScreenshot: @escaping (MicroBlogKey) -> Void = { _ in },
-        onProfileCrossPost: @escaping (MicroBlogKey, String?) -> Void = { _, _ in },
+        onProfileCrossPost: @escaping (MicroBlogKey) -> Void = { _ in },
         goBack: @escaping () -> Void = {}
     ) {
         self.accountType = accountType
@@ -134,7 +134,7 @@ struct ProfileScreen: View {
                                 onProfileShareScreenshot(user.key)
                             },
                             onCrossPost: {
-                                onProfileCrossPost(user.key, user.url)
+                                onProfileCrossPost(user.key)
                             }
                         ) {
                             Image(fontAwesome: .shareNodes)
@@ -236,7 +236,7 @@ struct ProfileWithUserNameAndHostScreen: View {
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
     let onProfileShareScreenshot: (MicroBlogKey) -> Void
-    let onProfileCrossPost: (MicroBlogKey, String?) -> Void
+    let onProfileCrossPost: (MicroBlogKey) -> Void
     let goBack: () -> Void
 
     init(
@@ -247,7 +247,7 @@ struct ProfileWithUserNameAndHostScreen: View {
         onFansClick: @escaping (MicroBlogKey) -> Void,
         onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
         onProfileShareScreenshot: @escaping (MicroBlogKey) -> Void = { _ in },
-        onProfileCrossPost: @escaping (MicroBlogKey, String?) -> Void = { _, _ in },
+        onProfileCrossPost: @escaping (MicroBlogKey) -> Void = { _ in },
         goBack: @escaping () -> Void = {}
     ) {
         self.accountType = accountType

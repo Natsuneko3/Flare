@@ -932,7 +932,8 @@ final class TimelinePluginWidgetTests: XCTestCase {
             mark: [],
             bottomContent: nil,
             pluginId: nil,
-            clearedMarks: []
+            clearedMarks: [],
+            url: nil
         )
         let action = ActionMenu.Item(
             updateKey: "like",

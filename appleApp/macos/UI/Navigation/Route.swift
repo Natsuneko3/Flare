@@ -32,7 +32,7 @@ enum Route: Hashable, Identifiable {
     case profileUserNameWithHost(AccountType, String, String)
     case profileInsight(AccountType, MicroBlogKey)
     case profileShareSheet(AccountType, MicroBlogKey)
-    case profileCrossPost(AccountType, MicroBlogKey, String?)
+    case profileCrossPost(AccountType, MicroBlogKey)
     case userFollowing(AccountType, MicroBlogKey)
     case userFans(AccountType, MicroBlogKey)
     case mediaImage(String, String?, [String: String]?, ProxyRef)
@@ -211,7 +211,7 @@ enum Route: Hashable, Identifiable {
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
                 onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
                 onProfileShareScreenshot: { key in onNavigate(.profileShareSheet(accountType, key)) },
-                onProfileCrossPost: { key, shareUrl in onNavigate(.profileCrossPost(accountType, key, shareUrl)) },
+                onProfileCrossPost: { key in onNavigate(.profileCrossPost(accountType, key)) },
                 goBack: goBack
             )
         case .profileUserNameWithHost(let accountType, let userName, let host):
@@ -223,7 +223,7 @@ enum Route: Hashable, Identifiable {
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
                 onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
                 onProfileShareScreenshot: { key in onNavigate(.profileShareSheet(accountType, key)) },
-                onProfileCrossPost: { key, shareUrl in onNavigate(.profileCrossPost(accountType, key, shareUrl)) },
+                onProfileCrossPost: { key in onNavigate(.profileCrossPost(accountType, key)) },
                 goBack: goBack
             )
         case .profileInsight(let accountType, let userKey):
@@ -272,7 +272,7 @@ enum Route: Hashable, Identifiable {
                 userKey: userKey,
                 accountType: accountType
             )
-        case .profileCrossPost(let accountType, let userKey, _):
+        case .profileCrossPost(let accountType, let userKey):
             MacProfileShareSheet(
                 userKey: userKey,
                 accountType: accountType,
