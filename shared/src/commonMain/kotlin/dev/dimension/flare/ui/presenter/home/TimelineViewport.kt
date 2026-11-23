@@ -76,13 +76,15 @@ internal class TimelineViewport(
         if (previous != null && first != previous && previous in keys) mutableHasNewContent.value = true
         headKey = first
         val pending = target.value ?: return null
-        if (pending.index < keys.size) return null
+        val index = pending.itemKey?.let(keys::indexOf) ?: pending.index
+        if (index in keys.indices) return null
         if (!endOfCache) return keys.lastIndex.takeIf { it >= 0 }
-        // A missing local index falls back to the top; never fetch a remote page to restore it.
-        mutableTarget.value = TimelineReadingPosition(0, 0.0)
-        current = target.value
+        // Restore only from local history, falling back to the saved index and then the top.
+        val fallback = if (pending.index in keys.indices) pending.copy(itemKey = null) else TimelineReadingPosition(0, 0.0)
+        mutableTarget.value = fallback
+        current = fallback
         dirtyAt = nextPositionTime()
-        mutableIsAtLatest.value = true
+        mutableIsAtLatest.value = fallback.index == 0
         if (keys.isEmpty()) restorationFinished(target.value)
         return null
     }
@@ -90,9 +92,10 @@ internal class TimelineViewport(
     fun viewportChanged(
         index: Int,
         offset: Double,
+        itemKey: String? = null,
     ) {
         if (index < 0 || !offset.isFinite() || !initialized || target.value != null) return
-        val position = TimelineReadingPosition(index, offset)
+        val position = TimelineReadingPosition(index, offset, itemKey)
         if (current != null && current != position) dirtyAt = nextPositionTime()
         current = position
         mutableIsAtLatest.value = index == 0
@@ -102,13 +105,19 @@ internal class TimelineViewport(
     fun positionChanged(
         index: Int,
         offset: Double,
+        itemKey: String? = null,
     ) {
         if (index < 0 || !offset.isFinite()) return
+        cancelRestoration()
+        viewportChanged(index, offset, itemKey)
+        dirtyAt = nextPositionTime()
+    }
+
+    fun cancelRestoration() {
         initialized = true
+        if (target.value != null) current = null
         mutableTarget.value = null
         restored.complete(Unit)
-        viewportChanged(index, offset)
-        dirtyAt = nextPositionTime()
     }
 
     fun deactivate() {
@@ -116,7 +125,7 @@ internal class TimelineViewport(
     }
 
     fun restorationFinished(expected: TimelineReadingPosition?) {
-        if (target.value != expected) return
+        if (target.value !== expected) return
         current = expected ?: current
         mutableTarget.value = null
         restored.complete(Unit)

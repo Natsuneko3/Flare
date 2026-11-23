@@ -484,6 +484,22 @@ final class TimelineControllerIntegrationTests: XCTestCase {
         try fixture.assertPosition(("g:case-30", -37))
     }
 
+    func testKeyedBookmarkWaitsForThePostEvenWhenItsOldIndexIsLoaded() async throws {
+        let fixture = await Fixture(posts: true)
+        let allItems = fixture.input.items
+        fixture.input.items = Array(allItems.prefix(20))
+        await fixture.apply()
+        let reading = ReadingState(position: TimelineReadingPosition(index: 14, offset: -37, itemKey: "case-30"))
+        fixture.controller.reading = reading
+        await fixture.settle()
+        XCTAssertNotNil(reading.restorePosition)
+
+        fixture.input.items = allItems
+        await fixture.apply()
+        XCTAssertNil(reading.restorePosition)
+        try fixture.assertPosition(("t:case-30", -37))
+    }
+
     func testSavingAfterAPrependCapturesTheNewIndexWithoutAnotherGesture() async throws {
         let fixture = await Fixture(posts: true)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -1248,6 +1264,8 @@ final class TimelineControllerIntegrationTests: XCTestCase {
 
     func testLoadingAGapKeepsItsSuccessorWhileFillingUpward() async throws {
         let fixture = await Fixture(posts: true)
+        fixture.input.key = "retained-home"
+        fixture.controller.minimumVerticalScrollDistance = 120
         let reading = ReadingState()
         fixture.controller.reading = reading
         let gap = makeGap()
@@ -1268,6 +1286,7 @@ final class TimelineControllerIntegrationTests: XCTestCase {
 
         try fixture.assertPosition(("t:case-4", expected))
         XCTAssertEqual(reading.saved.last?.index, 5)
+        XCTAssertEqual(reading.saved.last?.itemKey, "case-4")
         XCTAssertFalse(fixture.collection.readingItemIDs?().contains("t:\(gap.stableItemKey)") ?? true)
         let insertedPath = try XCTUnwrap(fixture.collection.readingIndexPath?("t:case-100"))
         let insertedFrame = try XCTUnwrap(fixture.collection.layoutAttributesForItem(at: insertedPath)?.frame)
@@ -1410,11 +1429,11 @@ final class TimelineControllerIntegrationTests: XCTestCase {
         var latestRequests = 0
 
         init(position: TimelineReadingPosition? = nil) { restorePosition = position }
-        func viewportChanged(index: Int32, offset: Double) {
-            viewports.append(TimelineReadingPosition(index: index, offset: offset))
+        func viewportChanged(index: Int32, offset: Double, itemKey: String?) {
+            viewports.append(TimelineReadingPosition(index: index, offset: offset, itemKey: itemKey))
         }
-        func positionChanged(index: Int32, offset: Double) {
-            saved.append(TimelineReadingPosition(index: index, offset: offset))
+        func positionChanged(index: Int32, offset: Double, itemKey: String?) {
+            saved.append(TimelineReadingPosition(index: index, offset: offset, itemKey: itemKey))
         }
         var onRestorationFinished: (() -> Void)?
         func restorationFinished() { restorePosition = nil; onRestorationFinished?() }
