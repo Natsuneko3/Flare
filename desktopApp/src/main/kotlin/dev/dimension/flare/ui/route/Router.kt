@@ -77,6 +77,7 @@ import dev.dimension.flare.ui.screen.home.MuteUserDialog
 import dev.dimension.flare.ui.screen.home.NotificationScreen
 import dev.dimension.flare.ui.screen.home.ProfileInsightDialog
 import dev.dimension.flare.ui.screen.home.ProfileScreen
+import dev.dimension.flare.ui.screen.home.ProfileShareSheet
 import dev.dimension.flare.ui.screen.home.ProfileWithUserNameAndHostDeeplinkRoute
 import dev.dimension.flare.ui.screen.home.ReportUserDialog
 import dev.dimension.flare.ui.screen.home.SearchScreen
@@ -105,6 +106,7 @@ import dev.dimension.flare.ui.screen.settings.LocalHistoryAgentScreen
 import dev.dimension.flare.ui.screen.settings.NostrRelaysScreen
 import dev.dimension.flare.ui.screen.settings.PostActionLayoutScreen
 import dev.dimension.flare.ui.screen.settings.SettingsScreen
+import dev.dimension.flare.ui.screen.share.crossPostInitialText
 import dev.dimension.flare.ui.screen.status.StatusScreen
 import dev.dimension.flare.ui.screen.status.VVOCommentScreen
 import dev.dimension.flare.ui.screen.status.action.AddReactionSheet
@@ -392,6 +394,24 @@ internal fun Router(
                     )
                 }
 
+                entry<Route.ProfileShareSheet>(
+                    metadata = dialog(),
+                ) { args ->
+                    ProfileShareSheet(
+                        accountType = args.accountType,
+                        userKey = args.userKey,
+                        onBack = onBack,
+                        onCrossPost = { imageFile, shareUrl ->
+                            replace(
+                                Route.Compose.CrossPost(
+                                    shareUrl = shareUrl,
+                                    imagePath = imageFile.absolutePath,
+                                ),
+                            )
+                        },
+                    )
+                }
+
                 entry<Route.CreateRssSource>(
                     metadata = dialog(),
                 ) { args ->
@@ -438,7 +458,7 @@ internal fun Router(
                         ComposeDialog(
                             onBack = onBack,
                             accountType = null,
-                            initialText = "\n\n${args.shareUrl}",
+                            initialText = crossPostInitialText(args.shareUrl),
                             initialCursorPosition = 0,
                             initialMedia = File(args.imagePath),
                             cleanupInitialMediaOnDispose = true,
@@ -625,6 +645,14 @@ internal fun Router(
                                 ),
                             )
                         },
+                        onProfileShareClick = {
+                            navigate(
+                                Route.ProfileShareSheet(
+                                    accountType = args.accountType,
+                                    userKey = it,
+                                ),
+                            )
+                        },
                     )
                 }
 
@@ -674,6 +702,14 @@ internal fun Router(
                         onProfileInsightClick = {
                             navigate(
                                 Route.ProfileInsight(
+                                    accountType = args.accountType,
+                                    userKey = it,
+                                ),
+                            )
+                        },
+                        onProfileShareClick = {
+                            navigate(
+                                Route.ProfileShareSheet(
                                     accountType = args.accountType,
                                     userKey = it,
                                 ),
@@ -907,6 +943,14 @@ internal fun Router(
                         onProfileInsightClick = {
                             navigate(
                                 Route.ProfileInsight(
+                                    accountType = args.accountType,
+                                    userKey = it,
+                                ),
+                            )
+                        },
+                        onProfileShareClick = {
+                            navigate(
+                                Route.ProfileShareSheet(
                                     accountType = args.accountType,
                                     userKey = it,
                                 ),
