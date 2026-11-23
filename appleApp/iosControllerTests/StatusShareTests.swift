@@ -346,12 +346,144 @@ final class StatusShareTests: XCTestCase {
         try await loading.awaitReady()
     }
 
+    func testShareContentAndReplyPickerHideAiAgentIconWhenEnabled() async throws {
+        let author = sampleUser()
+        let root = post("root", textBlocks: ["Root post"], user: author)
+        let reply = post("reply", textBlocks: ["Reply post"], user: author)
+        let disabled = appearanceWithAgent(false)
+        let enabled = appearanceWithAgent(true)
+
+        let baselineDisabled = try await TimelineView(data: reply, detailStatusKey: nil, showTranslate: false)
+            .frame(width: 360)
+            .background(Color.flareSystemGroupedBackground)
+            .environment(\.colorScheme, .light)
+            .environment(\.timelineAppearance, disabled)
+            .snapshot(colorScheme: .light)
+        let baselineEnabled = try await TimelineView(data: reply, detailStatusKey: nil, showTranslate: false)
+            .frame(width: 360)
+            .background(Color.flareSystemGroupedBackground)
+            .environment(\.colorScheme, .light)
+            .environment(\.timelineAppearance, enabled)
+            .snapshot(colorScheme: .light)
+        XCTAssertNotEqual(baselineEnabled.pngData(), baselineDisabled.pngData(),
+                          "Baseline TimelineView fixture must render the AI agent icon when agent is enabled")
+
+        let expectedContent = try await StatusShareContent(data: root, statusKey: root.statusKey, replies: [reply])
+            .frame(width: 360)
+            .background(Color.flareSystemGroupedBackground)
+            .environment(\.colorScheme, .light)
+            .environment(\.timelineAppearance, disabled)
+            .snapshot(colorScheme: .light)
+        let actualContent = try await StatusShareContent(data: root, statusKey: root.statusKey, replies: [reply])
+            .frame(width: 360)
+            .background(Color.flareSystemGroupedBackground)
+            .environment(\.colorScheme, .light)
+            .environment(\.timelineAppearance, enabled)
+            .snapshot(colorScheme: .light)
+        XCTAssertEqual(actualContent.pngData(), expectedContent.pngData(),
+                       "StatusShareContent must not display the AI agent icon when agent is enabled")
+
+        let pickerState = ReplyPickerState(replies: [reply])
+        let expectedPicker = try await StatusShareReplyPicker(state: pickerState)
+            .frame(width: 360, height: 320)
+            .environment(\.colorScheme, .light)
+            .environment(\.timelineAppearance, disabled)
+            .snapshot(colorScheme: .light)
+        let actualPicker = try await StatusShareReplyPicker(state: pickerState)
+            .frame(width: 360, height: 320)
+            .environment(\.colorScheme, .light)
+            .environment(\.timelineAppearance, enabled)
+            .snapshot(colorScheme: .light)
+        XCTAssertTrue(hasNonUniformPixels(in: expectedPicker),
+                      "StatusShareReplyPicker snapshot must materialize reply content")
+        XCTAssertEqual(actualPicker.pngData(), expectedPicker.pngData(),
+                       "StatusShareReplyPicker must not display the AI agent icon when agent is enabled")
+    }
+
+    private func hasNonUniformPixels(in image: UIImage) -> Bool {
+        guard let cgImage = image.cgImage else { return false }
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard pixels.count >= 4 else { return false }
+        let r0 = pixels[0], g0 = pixels[1], b0 = pixels[2]
+        for offset in stride(from: 4, to: pixels.count, by: 4) {
+            if pixels[offset] != r0 || pixels[offset + 1] != g0 || pixels[offset + 2] != b0 {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func sampleUser() -> UiProfile {
+        let name = post("user-name", text: "Alice").content.original
+        return UiProfile(
+            key: MicroBlogKey(id: "alice", host: "example.invalid"),
+            handle: UiHandle(raw: "alice", host: "example.invalid", displayOverride: "@alice"),
+            avatar: nil as UiMediaImage?,
+            nameInternal: name,
+            platformId: "mastodon",
+            platformIcon: IconType.Material(icon: .mastodon),
+            clickEvent: ClickEventNoop.shared,
+            banner: nil,
+            description: nil,
+            sourceLanguages: [],
+            translationDisplayState: .hidden,
+            matrices: UiProfile.Matrices(fansCount: 0, followsCount: 0, statusesCount: 0, platformFansCount: nil),
+            mark: [],
+            bottomContent: nil,
+            pluginId: nil,
+            clearedMarks: []
+        )
+    }
+
+    private func appearanceWithAgent(_ agent: Bool) -> TimelineAppearance {
+        let base = TimelineAppearance.companion.Default
+        return base.doCopy(
+            avatarShape: base.avatarShape,
+            showMedia: base.showMedia,
+            showSensitiveContent: base.showSensitiveContent,
+            expandContentWarning: base.expandContentWarning,
+            expandMediaSize: base.expandMediaSize,
+            limitSingleMediaHeight: base.limitSingleMediaHeight,
+            mediaLayout: base.mediaLayout,
+            limitMediaGridToNine: base.limitMediaGridToNine,
+            videoAutoplay: base.videoAutoplay,
+            showLinkPreview: base.showLinkPreview,
+            compatLinkPreview: base.compatLinkPreview,
+            showEmojiReactions: base.showEmojiReactions,
+            showNumbers: base.showNumbers,
+            postActionStyle: base.postActionStyle,
+            postActionLayout: base.postActionLayout,
+            postActionFixedWidth: base.postActionFixedWidth,
+            fullWidthPost: base.fullWidthPost,
+            absoluteTimestamp: base.absoluteTimestamp,
+            showPlatformLogo: base.showPlatformLogo,
+            timelineDisplayMode: base.timelineDisplayMode,
+            aiConfig: TimelineAppearance.AiConfig(
+                translation: base.aiConfig.translation,
+                tldr: base.aiConfig.tldr,
+                agent: agent,
+                showOriginalWithTranslation: base.aiConfig.showOriginalWithTranslation
+            ),
+            lineLimit: base.lineLimit,
+            showTranslateButton: base.showTranslateButton
+        )
+    }
+
     private func post(_ id: String, text: String) -> UiTimelineV2.Post {
         post(id, textBlocks: [text])
     }
 
     private func post(_ id: String, textBlocks: [String], platformIcon: IconType = IconType.Material(icon: .world), images: [UiMedia] = [],
-                      translation: UiRichText? = nil, translationDisplayState: TranslationDisplayState = .hidden) -> UiTimelineV2.Post {
+                      user: UiProfile? = nil, translation: UiRichText? = nil, translationDisplayState: TranslationDisplayState = .hidden) -> UiTimelineV2.Post {
         let style = RenderTextStyle(link: nil, bold: false, italic: false, strikethrough: false,
                                     monospace: false, code: false, underline: false, small: false, time: false, imageLink: nil)
         let text = textBlocks.joined(separator: "\n\n")
@@ -360,7 +492,7 @@ final class StatusShareTests: XCTestCase {
         },
                               isRtl: false, raw: text, innerText: text, imageUrls: [])
         return UiTimelineV2.Post(platformId: "mastodon", images: images, sensitive: false, contentWarning: nil,
-                                user: nil, platformIcon: platformIcon, sourceLanguages: [], translationDisplayState: translationDisplayState,
+                                user: user, platformIcon: platformIcon, sourceLanguages: [], translationDisplayState: translationDisplayState,
                                 content: UiTranslatableText(original: rich, translation: translation), actions: [], poll: nil,
                                 statusKey: MicroBlogKey(id: id, host: "example.invalid"), card: nil,
                                 createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0).toUi(),

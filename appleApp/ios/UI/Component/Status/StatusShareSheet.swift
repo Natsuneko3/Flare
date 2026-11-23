@@ -193,6 +193,8 @@ struct StatusShareSheetContent: View {
             set: { if !$0 { state.cancelSelection() } }
         )) {
             StatusShareReplyPicker(state: state)
+                .environment(\.timelineAppearance, timelineAppearance)
+                .environment(\.translateConfig, translateConfig)
                 .presentationDetents([.large])
         }
         .task(id: previewRevision) {

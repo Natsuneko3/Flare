@@ -44,7 +44,6 @@ import dev.dimension.flare.cancel
 import dev.dimension.flare.common.DesktopSaveDialog
 import dev.dimension.flare.common.MediaFileNamePolicy
 import dev.dimension.flare.copied_to_clipboard
-import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.settings_appearance_layout_group_title
@@ -68,7 +67,6 @@ import dev.dimension.flare.status_share_via_fxembed
 import dev.dimension.flare.ui.component.ComposeInAppNotification
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.LocalShareImageLoading
-import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.ShareImageLoading
 import dev.dimension.flare.ui.component.ViewBox
 import dev.dimension.flare.ui.component.status.StatusShareContent
@@ -205,12 +203,6 @@ internal fun StatusShareSheet(
                                 val content: @Composable () -> Unit = {
                                     CompositionLocalProvider(
                                         LocalShareImageLoading provides imageLoading,
-                                        LocalTimelineAppearance provides
-                                            LocalTimelineAppearance.current.copy(
-                                                expandContentWarning = true,
-                                                showTranslateButton = false,
-                                                videoAutoplay = VideoAutoplay.NEVER,
-                                            ),
                                         LocalContentColor provides FluentTheme.colors.text.text.primary,
                                         LocalTextStyle provides LocalTextStyle.current.copy(Color.Unspecified),
                                     ) {

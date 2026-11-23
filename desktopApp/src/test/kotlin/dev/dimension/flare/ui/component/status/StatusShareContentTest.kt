@@ -15,14 +15,18 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -242,6 +246,109 @@ class StatusShareContentTest {
                 androidx.compose.ui.test
                     .hasText("2026-01-01"),
             ).assertCountEquals(1)
+    }
+
+    @Test
+    fun shareContentAndReplyPickerHideAiAgentIconWhenEnabled() {
+        val author = createSampleUser().copy(avatar = null, banner = null)
+        val root = post("root", "Root post").copy(user = author)
+        val reply = post("reply", "Reply post").copy(user = author)
+        var agentEnabled by mutableStateOf(false)
+        var mode by mutableStateOf("baseline")
+        val state =
+            object : StatusSharePresenter.State {
+                override val status = UiState.Success<UiTimelineV2>(root)
+                override val replies = persistentListOf<UiTimelineV2>(reply)
+                override val selectedReplies = persistentListOf<UiTimelineV2>(reply)
+                override val expandableReplies = persistentListOf<MicroBlogKey>()
+                override val selecting = true
+                override val selectedCount = 1
+                override val loading = false
+                override val error: Throwable? = null
+                override val hasMore = false
+
+                override fun isSelected(key: MicroBlogKey) = true
+
+                override fun toggleReply(key: MicroBlogKey) {}
+
+                override fun selectReplies() {}
+
+                override fun clearSelection() {}
+
+                override fun cancelSelection() {}
+
+                override fun confirmSelection() {}
+
+                override fun loadMore() {}
+
+                override fun loadReplyChildren(key: MicroBlogKey) {}
+            }
+        composeRule.setContent {
+            FlareTheme(isDarkTheme = false) {
+                CompositionLocalProvider(
+                    LocalGlobalAppearance provides GlobalAppearance(),
+                    LocalTimelineAppearance provides
+                        TimelineAppearance(
+                            aiConfig = TimelineAppearance.AiConfig(agent = agentEnabled),
+                            showTranslateButton = false,
+                        ),
+                ) {
+                    when (mode) {
+                        "baseline" -> {
+                            Box(Modifier.width(360.dp)) {
+                                StatusItem(item = root)
+                            }
+                        }
+
+                        "picker" -> {
+                            Box(Modifier.width(360.dp).testTag("reply-picker")) {
+                                StatusShareReplyList(state)
+                            }
+                        }
+
+                        else -> {
+                            Box(Modifier.width(360.dp)) {
+                                StatusShareContent(root, root.statusKey, listOf(reply))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val baselineDescriptions =
+            composeRule
+                .onAllNodes(hasClickAction())
+                .fetchSemanticsNodes()
+                .flatMap { it.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() }
+                .toSet()
+        composeRule.runOnIdle { agentEnabled = true }
+        val insightDescription =
+            composeRule
+                .onAllNodes(hasClickAction())
+                .fetchSemanticsNodes()
+                .flatMap { it.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() }
+                .single { it !in baselineDescriptions }
+        composeRule.onAllNodesWithContentDescription(insightDescription).assertCountEquals(1)
+        composeRule.runOnIdle { mode = "share" }
+        composeRule.onAllNodesWithContentDescription(insightDescription).assertCountEquals(0)
+        composeRule.runOnIdle {
+            mode = "picker"
+            agentEnabled = false
+        }
+        val expectedPicker = composeRule.onNodeWithTag("reply-picker").captureToImage().toAwtImage()
+        composeRule.runOnIdle { agentEnabled = true }
+        val actualPicker = composeRule.onNodeWithTag("reply-picker").captureToImage().toAwtImage()
+        assertEquals(expectedPicker.width, actualPicker.width)
+        assertEquals(expectedPicker.height, actualPicker.height)
+        for (y in 0 until expectedPicker.height) {
+            for (x in 0 until expectedPicker.width) {
+                assertEquals(
+                    "Reply picker pixel ($x, $y) must not change when AI agent is enabled",
+                    expectedPicker.getRGB(x, y),
+                    actualPicker.getRGB(x, y),
+                )
+            }
+        }
     }
 
     private fun post(

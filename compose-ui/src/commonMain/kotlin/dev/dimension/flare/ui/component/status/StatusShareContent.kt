@@ -26,6 +26,7 @@ import dev.dimension.flare.compose.ui.share_replies_empty
 import dev.dimension.flare.compose.ui.share_replies_failed
 import dev.dimension.flare.compose.ui.share_replies_more
 import dev.dimension.flare.compose.ui.share_replies_retry
+import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.HorizontalDivider
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
@@ -45,7 +46,18 @@ public fun StatusShareContent(
     statusKey: MicroBlogKey,
     replies: List<UiTimelineV2>,
 ) {
-    CompositionLocalProvider(PlatformTextStyle provides PlatformTheme.typography.body) {
+    val appearance = LocalTimelineAppearance.current
+    val shareAppearance =
+        appearance.copy(
+            expandContentWarning = true,
+            showTranslateButton = false,
+            videoAutoplay = VideoAutoplay.NEVER,
+            aiConfig = appearance.aiConfig.copy(agent = false),
+        )
+    CompositionLocalProvider(
+        PlatformTextStyle provides PlatformTheme.typography.body,
+        LocalTimelineAppearance provides shareAppearance,
+    ) {
         Column {
             StatusItem(item = status, detailStatusKey = statusKey)
             if (replies.isNotEmpty()) {
@@ -53,7 +65,7 @@ public fun StatusShareContent(
                 replies.forEachIndexed { index, reply ->
                     if (index > 0) HorizontalDivider()
                     CompositionLocalProvider(
-                        LocalTimelineAppearance provides LocalTimelineAppearance.current.copy(lineLimit = Int.MAX_VALUE),
+                        LocalTimelineAppearance provides shareAppearance.copy(lineLimit = Int.MAX_VALUE),
                     ) {
                         StatusItem(item = reply)
                     }
@@ -68,7 +80,14 @@ public fun StatusShareReplyList(
     state: StatusSharePresenter.State,
     modifier: Modifier = Modifier,
 ) {
-    CompositionLocalProvider(PlatformTextStyle provides PlatformTheme.typography.body) {
+    val appearance = LocalTimelineAppearance.current
+    CompositionLocalProvider(
+        PlatformTextStyle provides PlatformTheme.typography.body,
+        LocalTimelineAppearance provides
+            appearance.copy(
+                aiConfig = appearance.aiConfig.copy(agent = false),
+            ),
+    ) {
         LazyColumn(modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp)) {
             itemsIndexed(state.replies, key = { _, reply -> reply.statusKey.toString() }) { index, reply ->
                 if (index > 0) HorizontalDivider()
