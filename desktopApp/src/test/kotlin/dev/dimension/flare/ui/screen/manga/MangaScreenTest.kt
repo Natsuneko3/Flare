@@ -76,6 +76,7 @@ import dev.dimension.flare.ui.render.toUiPlainText
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.TopLevelBackStack
+import dev.dimension.flare.ui.route.dispatchDesktopRouterNavigation
 import dev.dimension.flare.ui.theme.FlareTheme
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -1076,6 +1077,198 @@ class MangaScreenTest {
             assertEquals(0, contextCopiedPageIndex)
         }
     }
+
+    @Test(timeout = 30_000)
+    fun desktopRouterNavigationDispatchesMangaReaderToCoordinatorInsteadOfInlineDeckBackStack() {
+        val coordinator = DesktopMangaReaderWindowCoordinator()
+        val account = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
+        val mangaKey = MicroBlogKey("manga-deck-1", "manga.example")
+        val deckBackStack = mutableListOf<Route>(Route.DeckTimeline("tab-1"))
+
+        val detailRoute = Route.Manga.Detail(mangaKey = mangaKey, accountType = account)
+        dispatchDesktopRouterNavigation(
+            route = detailRoute,
+            coordinator = coordinator,
+            fallback = { deckBackStack.add(it) },
+        )
+        assertEquals(listOf(Route.DeckTimeline("tab-1"), detailRoute), deckBackStack)
+        assertTrue(coordinator.sessions.isEmpty())
+
+        val firstReaderRoute =
+            Route.Manga.Reader(
+                mangaKey = mangaKey,
+                chapterId = "ch-1",
+                initialPage = 0,
+                accountType = account,
+            )
+        dispatchDesktopRouterNavigation(
+            route = firstReaderRoute,
+            coordinator = coordinator,
+            fallback = { deckBackStack.add(it) },
+        )
+        assertEquals(1, coordinator.sessions.size)
+        assertEquals("ch-1", coordinator.sessions.single().chapterId)
+        assertEquals(0, coordinator.sessions.single().initialPage)
+        assertEquals(listOf(Route.DeckTimeline("tab-1"), detailRoute), deckBackStack)
+
+        val replaceReaderRoute =
+            Route.Manga.Reader(
+                mangaKey = mangaKey,
+                chapterId = "ch-2",
+                initialPage = 4,
+                accountType = account,
+            )
+        dispatchDesktopRouterNavigation(
+            route = replaceReaderRoute,
+            coordinator = coordinator,
+            fallback = { replacement ->
+                deckBackStack[deckBackStack.lastIndex] = replacement
+            },
+        )
+        assertEquals(1, coordinator.sessions.size)
+        assertEquals("ch-2", coordinator.sessions.single().chapterId)
+        assertEquals(4, coordinator.sessions.single().initialPage)
+        assertEquals(1, coordinator.sessions.single().requestNonce)
+        assertEquals(listOf(Route.DeckTimeline("tab-1"), detailRoute), deckBackStack)
+
+        dispatchDesktopRouterNavigation(
+            route = firstReaderRoute,
+            coordinator = null,
+            fallback = { deckBackStack.add(it) },
+        )
+        assertEquals(listOf(Route.DeckTimeline("tab-1"), detailRoute, firstReaderRoute), deckBackStack)
+    }
+
+    @Test(timeout = 30_000)
+    fun escapeKeyDismissesLockedChapterDialogWithoutClosingStandaloneWindowAndClearsOnChapterOrNonceChange() {
+        val chapterGroups =
+            persistentListOf(
+                UiMangaChapterGroup(
+                    id = "main",
+                    title = null,
+                    chapters =
+                        persistentListOf(
+                            UiMangaChapter("ch-1", "Chapter 1: Dawn", null, null, locked = false, url = "https://manga.example/ch/1"),
+                            UiMangaChapter(
+                                "ch-locked",
+                                "Chapter 2: Locked Bonus",
+                                "Paid",
+                                null,
+                                locked = true,
+                                url = "https://manga.example/ch/2-locked",
+                            ),
+                            UiMangaChapter("ch-3", "Chapter 3: Horizon", null, null, locked = false, url = "https://manga.example/ch/3"),
+                        ),
+                ),
+            )
+        val fakeReaderState =
+            FakeDesktopReaderState(
+                pageCount = 3,
+                initialDirection = MangaReadingDirection.Rtl,
+                chapterGroups = chapterGroups,
+            )
+        var windowClosedCount = 0
+        var requestNonce by mutableIntStateOf(0)
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(900.dp, 700.dp)
+                            .onPreviewKeyEvent { false }
+                            .onKeyEvent { event ->
+                                if (shouldCloseDesktopWindowOnEscape(event)) {
+                                    windowClosedCount++
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                ) {
+                    MangaReaderContent(
+                        state = fakeReaderState,
+                        onBack = { windowClosedCount++ },
+                        isStandaloneWindow = true,
+                        requestNonce = requestNonce,
+                    )
+                }
+            }
+        }
+
+        // 1. Escape on focused locked-chapter FluentDialog dismisses dialog without closing standalone window
+        compose.onNodeWithTag("manga_reader_chapters_button").performClick()
+        compose.onNodeWithTag("manga_reader_chapter_item_ch-locked").performClick()
+        compose.onNodeWithText("Locked chapter").assertIsDisplayed()
+        compose.onNodeWithTag("manga_reader_locked_chapter_dialog").assertIsDisplayed().performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.onNodeWithText("Locked chapter").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(0, windowClosedCount)
+        }
+
+        // 2. Escape routed through root/canvas while zoomed also dismisses locked-chapter dialog without resetting zoom or closing window
+        compose.onNodeWithTag("manga_reader_page_0").performTouchInput {
+            doubleClick(center)
+        }
+        compose.runOnIdle {}
+        val zoomedPosition = compose.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot
+        assertTrue(
+            "Expected double-click to zoom page 0 to 2.5x, got positionInRoot=$zoomedPosition",
+            zoomedPosition.x < -100f && zoomedPosition.y < -100f,
+        )
+
+        compose.onNodeWithTag("manga_reader_chapters_button").performClick()
+        compose.onNodeWithTag("manga_reader_chapter_item_ch-locked").performClick()
+        compose.onNodeWithText("Locked chapter").assertIsDisplayed()
+        compose.onNodeWithTag("manga_reader_canvas").performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.onNodeWithText("Locked chapter").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(0, windowClosedCount)
+        }
+        val stillZoomedPosition = compose.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot
+        assertTrue(
+            "Expected page 0 to remain zoomed after dismissing locked chapter dialog, got $stillZoomedPosition",
+            stillZoomedPosition.x < -100f && stillZoomedPosition.y < -100f,
+        )
+
+        // Reset zoom with next Escape, still keeping window open
+        compose.onNodeWithTag("manga_reader_canvas").performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.runOnIdle {
+            assertEquals(0, windowClosedCount)
+        }
+
+        // 3. Changing state.activeChapterId clears lockedPromptChapter
+        compose.onNodeWithTag("manga_reader_chapters_button").performClick()
+        compose.onNodeWithTag("manga_reader_chapter_item_ch-locked").performClick()
+        compose.onNodeWithText("Locked chapter").assertIsDisplayed()
+        compose.runOnIdle {
+            fakeReaderState.selectChapter("ch-3")
+        }
+        compose.onNodeWithText("Locked chapter").assertDoesNotExist()
+
+        // 4. Incrementing requestNonce clears lockedPromptChapter even when activeChapterId is unchanged
+        compose.onNodeWithTag("manga_reader_chapters_button").performClick()
+        compose.onNodeWithTag("manga_reader_chapter_item_ch-locked").performClick()
+        compose.onNodeWithText("Locked chapter").assertIsDisplayed()
+        compose.runOnIdle {
+            requestNonce++
+        }
+        compose.onNodeWithText("Locked chapter").assertDoesNotExist()
+
+        // 5. Escape at 1.0x with no dialog open closes the standalone window
+        compose.onNodeWithTag("manga_reader_canvas").performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.runOnIdle {
+            assertEquals(1, windowClosedCount)
+        }
+    }
 }
 
 private class FakeMangaDetailState(
@@ -1269,6 +1462,8 @@ private class FakeDesktopReaderState(
         selectedChapterIds += chapterId
         activeChapterId = chapterId
     }
+
+    override fun resolveChapterOpenUrl(chapter: UiMangaChapter): String? = chapter.url
 
     override fun setWebtoonConstrainWidthOnWideScreen(enabled: Boolean) {
         _webtoonConstrainWidthOnWideScreen = enabled

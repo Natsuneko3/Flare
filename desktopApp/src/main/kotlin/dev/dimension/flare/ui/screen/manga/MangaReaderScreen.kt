@@ -9,6 +9,7 @@ import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -45,9 +46,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -192,6 +201,7 @@ internal fun MangaReaderScreen(
         state = state,
         onBack = onBack,
         isStandaloneWindow = isStandaloneWindow,
+        requestNonce = requestNonce,
         onSharePage = { original, displayed, pageIndex ->
             val name = MediaFileNamePolicy.mangaPageFileName(mangaKey.id, state.activeChapterId, pageIndex, original, displayed)
             ioScope.launch { downloader.copyImageToClipboard(displayed, name) }
@@ -232,6 +242,7 @@ internal fun MangaReaderContent(
     onSharePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)? = null,
     onSavePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)? = null,
     isStandaloneWindow: Boolean = false,
+    requestNonce: Int = 0,
 ) {
     var hudVisible by remember { mutableStateOf(true) }
     var manuallyHiddenUntilMove by remember { mutableStateOf(false) }
@@ -241,6 +252,10 @@ internal fun MangaReaderContent(
     var settingsFlyoutOpen by remember { mutableStateOf(false) }
     var lockedPromptChapter by remember { mutableStateOf<UiMangaChapter?>(null) }
 
+    LaunchedEffect(state.activeChapterId, requestNonce) {
+        lockedPromptChapter = null
+    }
+
     val topHudInteractionSource = remember { MutableInteractionSource() }
     val isTopHudHovered by topHudInteractionSource.collectIsHoveredAsState()
     val bottomHudInteractionSource = remember { MutableInteractionSource() }
@@ -248,6 +263,13 @@ internal fun MangaReaderContent(
 
     val anyFlyoutOpen = chaptersFlyoutOpen || settingsFlyoutOpen || lockedPromptChapter != null
     val isHudHovered = isTopHudHovered || isBottomHudHovered
+    val canvasFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(anyFlyoutOpen, hudVisible) {
+        if (!anyFlyoutOpen) {
+            runCatching { canvasFocusRequester.requestFocus() }
+        }
+    }
 
     LaunchedEffect(hudVisible, pointerActivityNonce, anyFlyoutOpen, isHudHovered, manuallyHiddenUntilMove) {
         if (hudVisible && !anyFlyoutOpen && !isHudHovered && !manuallyHiddenUntilMove) {
@@ -274,7 +296,14 @@ internal fun MangaReaderContent(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .pointerInput(Unit) {
+                .onPreviewKeyEvent { event ->
+                    if (lockedPromptChapter != null && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        lockedPromptChapter = null
+                        true
+                    } else {
+                        false
+                    }
+                }.pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -389,6 +418,7 @@ internal fun MangaReaderContent(
             modifier =
                 Modifier
                     .fillMaxSize()
+                    .focusRequester(canvasFocusRequester)
                     .testTag("manga_reader_canvas"),
         )
 
@@ -687,12 +717,33 @@ internal fun MangaReaderContent(
         lockedPromptChapter?.let { lockedChapter ->
             val openUrl = state.resolveChapterOpenUrl(lockedChapter)?.takeIf { it.isNotBlank() }
             FluentDialog(visible = true) {
+                val dialogFocusRequester = remember { FocusRequester() }
+                LaunchedEffect(lockedChapter.id) {
+                    runCatching { dialogFocusRequester.requestFocus() }
+                }
                 CompositionLocalProvider(LocalUriHandler provides uriHandler) {
                     Column(
                         modifier =
                             Modifier
                                 .widthIn(min = 320.dp, max = 440.dp)
-                                .padding(24.dp),
+                                .padding(24.dp)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                        lockedPromptChapter = null
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }.onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                        lockedPromptChapter = null
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }.focusRequester(dialogFocusRequester)
+                                .focusable()
+                                .testTag("manga_reader_locked_chapter_dialog"),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         Text(
