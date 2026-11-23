@@ -1084,11 +1084,32 @@ class MangaReaderCanvasTest {
             "Expected centered webtoon page left ~$expectedCenteredLeftPx, got $constrainedLeftInCanvas",
         )
 
+        val topBeforeLongPressDrag =
+            composeRule
+                .onNodeWithTag("manga_reader_page_0")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .y
         composeRule.onNodeWithTag("reader_canvas").performTouchInput {
-            longClick(center)
+            down(center)
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100L)
+            moveTo(Offset(center.x, center.y - 250f))
+            up()
         }
         composeRule.runOnIdle {
             assertEquals(listOf(0), longPressedWebtoonPages)
+        }
+        val topAfterLongPressDrag =
+            composeRule
+                .onNodeWithTag("manga_reader_page_0")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .y
+        assertTrue(
+            abs(topAfterLongPressDrag - topBeforeLongPressDrag) <= tolerancePx,
+            "Expected post-long-press drag not to scroll Webtoon strip, before=$topBeforeLongPressDrag, after=$topAfterLongPressDrag",
+        )
+        composeRule.runOnIdle {
             fakeState.setWebtoonConstrainWidthOnWideScreen(false)
         }
 
@@ -1169,6 +1190,51 @@ class MangaReaderCanvasTest {
             assertEquals(0, fakeState.stepBackwardCount)
             assertEquals(false, hudVisible)
         }
+
+        // Double-tap near physical left edge (x = 100dp) -> 2.5x zoom with positive X pan so leftPageIndex (1) spans past x = 750dp
+        val zoomAnchorX = with(composeRule.density) { 100.dp.toPx() }
+        val dragTargetX = with(composeRule.density) { 450.dp.toPx() }
+        val tolerancePx = with(composeRule.density) { 2.dp.toPx() }
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            doubleClick(Offset(zoomAnchorX, centerY))
+        }
+        composeRule.mainClock.advanceTimeBy(400)
+
+        val zoomedLeftPosBefore =
+            composeRule
+                .onNodeWithTag("manga_reader_page_1")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .x
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            down(Offset(rightX, centerY))
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100L)
+            moveTo(Offset(dragTargetX, centerY))
+            up()
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(
+                    1 to "local-test-page-1",
+                    0 to "local-test-page-0",
+                    1 to "local-test-page-1",
+                ),
+                longPressedPages,
+            )
+            assertEquals(0, fakeState.stepForwardCount)
+            assertEquals(0, fakeState.stepBackwardCount)
+            assertEquals(false, hudVisible)
+        }
+        val zoomedLeftPosAfter =
+            composeRule
+                .onNodeWithTag("manga_reader_page_1")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .x
+        assertTrue(
+            abs(zoomedLeftPosAfter - zoomedLeftPosBefore) <= tolerancePx,
+            "Expected post-long-press drag not to pan zoomed spread, before=$zoomedLeftPosBefore, after=$zoomedLeftPosAfter",
+        )
     }
 
     @Test

@@ -964,7 +964,14 @@ private fun ZoomablePagedSlot(
                                             }
 
                                             is ReaderSlot.Double -> {
-                                                if (tapOffset.x < containerSize.width / 2f) {
+                                                val localX =
+                                                    if (scale > ZOOM_EPSILON) {
+                                                        (tapOffset.x - containerSize.width / 2f - offset.x) / scale +
+                                                            containerSize.width / 2f
+                                                    } else {
+                                                        tapOffset.x
+                                                    }
+                                                if (localX < containerSize.width / 2f) {
                                                     slot.leftPageIndex
                                                 } else {
                                                     slot.rightPageIndex
@@ -985,9 +992,11 @@ private fun ZoomablePagedSlot(
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         do {
-                            val event = awaitPointerEvent()
+                            val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
+                            val consumedUpstream = initialEvent.changes.any { it.isConsumed }
+                            val event = awaitPointerEvent(PointerEventPass.Main)
                             val pressed = event.changes.count { it.pressed }
-                            if (pressed >= 2 || scale > ZOOM_EPSILON) {
+                            if (!consumedUpstream && (pressed >= 2 || scale > ZOOM_EPSILON)) {
                                 val zoomChange = event.calculateZoom()
                                 val panChange = event.calculatePan()
                                 val newScale = (scale * zoomChange).coerceIn(1f, MAX_READER_ZOOM)
@@ -1249,9 +1258,11 @@ private fun MangaWebtoonStrip(
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         do {
-                            val event = awaitPointerEvent()
+                            val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
+                            val consumedUpstream = initialEvent.changes.any { it.isConsumed }
+                            val event = awaitPointerEvent(PointerEventPass.Main)
                             val pressed = event.changes.count { it.pressed }
-                            if (pressed >= 2 || scale > ZOOM_EPSILON) {
+                            if (!consumedUpstream && (pressed >= 2 || scale > ZOOM_EPSILON)) {
                                 val zoomChange = event.calculateZoom()
                                 val panChange = event.calculatePan()
                                 val newScale = (scale * zoomChange).coerceIn(1f, MAX_READER_ZOOM)
@@ -1803,6 +1814,14 @@ private fun Modifier.readerTapAndDoubleTap(
                     var gestureActive = true
                     var tapCandidate = true
                     while (gestureActive) {
+                        val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
+                        if (longPressTriggered) {
+                            initialEvent.changes.forEach { it.consume() }
+                            if (initialEvent.changes.none { it.pressed }) {
+                                gestureActive = false
+                            }
+                            continue
+                        }
                         val event = awaitPointerEvent(PointerEventPass.Main)
                         if (longPressTriggered) {
                             event.changes.forEach { it.consume() }
