@@ -3,6 +3,7 @@ import FlareAppleUI
 import Foundation
 @preconcurrency import KotlinSharedUI
 import SwiftUI
+import UIKit
 
 struct MangaDetailScreen: View {
     @State private var presenter: KotlinPresenter<MangaDetailPresenterState>
@@ -504,12 +505,14 @@ struct MangaDetailContentView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .background(.bar)
+        .background {
+            ClearSectionHeaderPlate()
+        }
         .textCase(nil)
-        .listRowInsets(EdgeInsets())
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+        .listRowBackground(Color.clear)
     }
 
     @ViewBuilder
@@ -1189,5 +1192,50 @@ private extension TimelineAppearance {
             lineLimit: lineLimit,
             showTranslateButton: showTranslateButton
         )
+    }
+}
+
+private struct ClearSectionHeaderPlate: UIViewRepresentable {
+    func makeUIView(context: Context) -> PlateClearingView {
+        let view = PlateClearingView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: PlateClearingView, context: Context) {
+        uiView.clearEnclosingHeader()
+    }
+
+    final class PlateClearingView: UIView {
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            clearEnclosingHeader()
+        }
+
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            clearEnclosingHeader()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            clearEnclosingHeader()
+        }
+
+        func clearEnclosingHeader() {
+            guard let reusable = sequence(first: superview, next: \.?.superview)
+                .compactMap({ $0 })
+                .first(where: { $0 is UICollectionReusableView }) else {
+                return
+            }
+            reusable.backgroundColor = .clear
+            if let cell = reusable as? UICollectionViewCell {
+                cell.automaticallyUpdatesBackgroundConfiguration = false
+                cell.backgroundConfiguration = .clear()
+                cell.backgroundView = nil
+                cell.selectedBackgroundView = nil
+            }
+        }
     }
 }

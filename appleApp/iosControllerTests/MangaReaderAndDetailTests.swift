@@ -1723,6 +1723,53 @@ final class MangaReaderAndDetailTests: XCTestCase {
         let segmented = try XCTUnwrap(descendants(compactWithTabsHost.view).compactMap { $0 as? UISegmentedControl }.first)
         XCTAssertEqual(segmented.numberOfSegments, 3)
 
+        func assertNoOuterSegmentedBackground(for control: UISegmentedControl, contextLabel: String) throws {
+            let headerContainer = try XCTUnwrap(
+                sequence(first: control.superview, next: \.?.superview)
+                    .compactMap({ $0 })
+                    .first(where: { $0 is UICollectionReusableView })
+            )
+            func allLayers(in layer: CALayer) -> [CALayer] {
+                [layer] + (layer.sublayers ?? []).flatMap(allLayers)
+            }
+            let segmentedLayers = Set(allLayers(in: control.layer).map(ObjectIdentifier.init))
+            let ancestorLayers = Set(
+                sequence(first: control.layer.superlayer, next: \.?.superlayer)
+                    .compactMap { $0 }
+                    .map(ObjectIdentifier.init)
+            )
+            let externalBackingLayers = allLayers(in: headerContainer.layer).filter { layer in
+                let id = ObjectIdentifier(layer)
+                guard !segmentedLayers.contains(id), !ancestorLayers.contains(id), !layer.isHidden, layer.opacity > 0.01 else {
+                    return false
+                }
+                let typeName = String(describing: type(of: layer))
+                let hasFill = (layer.backgroundColor?.alpha ?? 0) > 0.01
+                let isBackdrop = typeName.localizedCaseInsensitiveContains("backdrop") || typeName.localizedCaseInsensitiveContains("material")
+                return hasFill || isBackdrop
+            }
+            let externalVisualEffects = descendants(headerContainer)
+                .compactMap { $0 as? UIVisualEffectView }
+                .filter { !$0.isDescendant(of: control) && !$0.isHidden && $0.alpha > 0.01 && $0.effect != nil }
+            if let headerCell = headerContainer as? UICollectionViewCell {
+                XCTAssertNil(
+                    headerCell.backgroundConfiguration?.visualEffect,
+                    "Tab switcher (\(contextLabel)) header cell must not carry a visualEffect backgroundConfiguration"
+                )
+                let configAlpha = headerCell.backgroundConfiguration?.backgroundColor?.cgColor.alpha ?? 0
+                XCTAssertLessThanOrEqual(
+                    configAlpha,
+                    0.01,
+                    "Tab switcher (\(contextLabel)) header cell must not carry an opaque backgroundColor configuration"
+                )
+            }
+            XCTAssertTrue(
+                externalBackingLayers.isEmpty && externalVisualEffects.isEmpty,
+                "Tab switcher (\(contextLabel)) must not render an outer background around UISegmentedControl; layers=\(externalBackingLayers) effects=\(externalVisualEffects)"
+            )
+        }
+        try assertNoOuterSegmentedBackground(for: segmented, contextLabel: "at rest")
+
         // Blank UiRichText synopsis with empty tagGroups must render zero height in MangaSynopsisAndTagsCardView
         let blankSynopsisHost = UIHostingController(rootView: MangaSynopsisAndTagsCardView(detail: detail))
         let blankSynopsisSize = blankSynopsisHost.sizeThatFits(in: CGSize(width: 390, height: 600))
@@ -1941,6 +1988,10 @@ final class MangaReaderAndDetailTests: XCTestCase {
         try await eventually(window: window) {
             navHeroVisible == false
         }
+        let pinnedControl = try XCTUnwrap(
+            descendants(navHost.view).compactMap { $0 as? UISegmentedControl }.first
+        )
+        try assertNoOuterSegmentedBackground(for: pinnedControl, contextLabel: "pinned while scrolled")
 
         // Scroll back up so cell 0 is remounted with remainingHero == 16 (< 40 expand hysteresis) -> must NOT flicker isHeroVisible back to true
         let scrolledPastForPartial = initialHero.height - 16
@@ -2418,6 +2469,7 @@ private struct CompactNavTestHost: View {
                             detail: UiStateSuccess(data: detail),
                             chapters: chapters,
                             primaryReadTarget: readTarget,
+                            supportsComments: true,
                             onNavigate: { _ in }
                         )
                         .onPreferenceChange(MangaDetailPaneFramesPreferenceKey.self, perform: onHeroFrames)
