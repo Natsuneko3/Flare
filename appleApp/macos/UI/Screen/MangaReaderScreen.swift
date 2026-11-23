@@ -5,6 +5,7 @@ import Foundation
 import Kingfisher
 @preconcurrency import KotlinSharedUI
 import SwiftUI
+import SwiftUIBackports
 
 @MainActor
 final class MacMangaShareAnchorBox {
@@ -405,7 +406,8 @@ struct MangaReaderContentView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(.black.opacity(0.68), in: Capsule())
+                        .backport
+                        .glassEffect(.regular, in: .capsule, fallbackBackground: .regularMaterial)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)
@@ -596,12 +598,12 @@ struct MangaReaderContentView: View {
             Button(action: goBack) {
                 Image(systemName: "chevron.backward")
                     .font(.body.weight(.semibold))
-                    .frame(width: 32, height: 32)
+                    .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
             .accessibilityIdentifier("manga_reader_back")
+            .backport
+            .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
 
             Button {
                 if hasChapterDirectory {
@@ -609,7 +611,7 @@ struct MangaReaderContentView: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 4) {
                             Text(verbatim: state.chapterTitle)
                                 .font(.subheadline.weight(.semibold))
@@ -630,11 +632,15 @@ struct MangaReaderContentView: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .contentShape(Rectangle())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .frame(minHeight: 36)
+                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
             .disabled(!hasChapterDirectory)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .backport
+            .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
             .accessibilityIdentifier("manga_reader_chapters_button")
             .popover(isPresented: $showChapters, arrowEdge: .bottom) {
                 MangaReaderChapterListView(
@@ -646,117 +652,110 @@ struct MangaReaderContentView: View {
                 .preferredColorScheme(.dark)
             }
 
-            if let ready = currentReadyPage {
-                let item = state.imageTranslation.item(media: ready.original)
-                if state.imageTranslation.canToggle(media: ready.original) {
-                    Button {
-                        state.imageTranslation.toggle(media: ready.original)
-                    } label: {
-                        Image(fontAwesome: .language)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .disabled(item.loading)
-                }
-
-                if state.imageTranslation.canRegenerate(media: ready.original) {
-                    Button {
-                        state.imageTranslation.regenerate(media: ready.original)
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .disabled(item.loading)
-                }
-
-                if let onSavePage {
-                    Button {
-                        onSavePage(ready.original, ready.displayed, Int(state.currentPageIndex))
-                    } label: {
-                        Image(fontAwesome: .download)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .accessibilityLabel(
-                        Text(verbatim: FlareAppleUILocalization.string("media_menu_download", fallback: "Save"))
-                    )
-                }
-
-                if let onSharePage, ready.displayed is UiMediaImage || ready.displayed is UiMediaGif {
-                    Button {
-                        onSharePage(ready.original, ready.displayed, Int(state.currentPageIndex))
-                    } label: {
-                        Image(fontAwesome: .shareNodes)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .background {
-                        if let shareAnchor {
-                            MacMangaShareAnchorView(anchor: shareAnchor)
+            HStack(spacing: 0) {
+                if let ready = currentReadyPage {
+                    let item = state.imageTranslation.item(media: ready.original)
+                    if state.imageTranslation.canToggle(media: ready.original) {
+                        Button {
+                            state.imageTranslation.toggle(media: ready.original)
+                        } label: {
+                            Image(systemName: "translate")
+                                .frame(width: 36, height: 36)
+                                .contentShape(Rectangle())
                         }
+                        .disabled(item.loading)
+                    }
+
+                    if state.imageTranslation.canRegenerate(media: ready.original) {
+                        Button {
+                            state.imageTranslation.regenerate(media: ready.original)
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .frame(width: 36, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .disabled(item.loading)
+                    }
+
+                    if let onSavePage {
+                        Button {
+                            onSavePage(ready.original, ready.displayed, Int(state.currentPageIndex))
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                                .frame(width: 36, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityLabel(
+                            Text(verbatim: FlareAppleUILocalization.string("media_menu_download", fallback: "Save"))
+                        )
+                    }
+
+                    if let onSharePage, ready.displayed is UiMediaImage || ready.displayed is UiMediaGif {
+                        Button {
+                            onSharePage(ready.original, ready.displayed, Int(state.currentPageIndex))
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .frame(width: 36, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .background {
+                            if let shareAnchor {
+                                MacMangaShareAnchorView(anchor: shareAnchor)
+                            }
+                        }
+                        .accessibilityLabel(
+                            Text(verbatim: FlareAppleUILocalization.string("media_menu_share_image", fallback: "Share image"))
+                        )
+                    }
+                }
+
+                if let chapterUrl = state.chapterUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !chapterUrl.isEmpty {
+                    Button {
+                        openChapterURL(chapterUrl)
+                    } label: {
+                        Image(systemName: "safari")
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel(
-                        Text(verbatim: FlareAppleUILocalization.string("media_menu_share_image", fallback: "Share image"))
+                        Text(
+                            verbatim: FlareAppleUILocalization.string(
+                                "manga_open_in_browser",
+                                fallback: "Open in browser"
+                            )
+                        )
                     )
                 }
-            }
 
-            if let chapterUrl = state.chapterUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !chapterUrl.isEmpty {
                 Button {
-                    openChapterURL(chapterUrl)
+                    showSettings.toggle()
                 } label: {
-                    Image(systemName: "safari")
-                        .frame(width: 32, height: 32)
+                    Image(systemName: "gearshape")
+                        .frame(width: 36, height: 36)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
+                .accessibilityIdentifier("manga_reader_settings_button")
                 .accessibilityLabel(
                     Text(
                         verbatim: FlareAppleUILocalization.string(
-                            "manga_open_in_browser",
-                            fallback: "Open in browser"
+                            "manga_reader_settings",
+                            fallback: "Reader settings"
                         )
                     )
                 )
+                .popover(isPresented: $showSettings) {
+                    MangaReaderSettingsView(state: state, isWideViewport: isWideViewport)
+                        .preferredColorScheme(.dark)
+                }
             }
-
-            Button {
-                showSettings.toggle()
-            } label: {
-                Image(fontAwesome: .gear)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .accessibilityIdentifier("manga_reader_settings_button")
-            .accessibilityLabel(
-                Text(
-                    verbatim: FlareAppleUILocalization.string(
-                        "manga_reader_settings",
-                        fallback: "Reader settings"
-                    )
-                )
-            )
-            .popover(isPresented: $showSettings) {
-                MangaReaderSettingsView(state: state, isWideViewport: isWideViewport)
-                    .preferredColorScheme(.dark)
-            }
+            .padding(.horizontal, 4)
+            .backport
+            .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .padding([.top, .horizontal], 12)
     }
 
     private var bottomHudBar: some View {
@@ -805,7 +804,8 @@ struct MangaReaderContentView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: 640)
-        .background(.ultraThinMaterial, in: Capsule())
+        .backport
+        .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
     }

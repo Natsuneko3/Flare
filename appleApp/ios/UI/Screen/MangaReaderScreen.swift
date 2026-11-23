@@ -4,6 +4,7 @@ import Foundation
 @preconcurrency import KotlinSharedUI
 import Observation
 import SwiftUI
+import SwiftUIBackports
 import UIKit
 
 nonisolated struct IOSMangaExportAlert: Identifiable, Equatable, Sendable {
@@ -352,7 +353,7 @@ struct MangaReaderContentView: View {
                     state: state,
                     hudVisible: hudVisible,
                     onToggleHud: {
-                        withAnimation(.easeInOut(duration: 0.18)) {
+                        withAnimation(.smooth(duration: 0.2)) {
                             hudVisible.toggle()
                         }
                     },
@@ -392,7 +393,8 @@ struct MangaReaderContentView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(.black.opacity(0.68), in: Capsule())
+                        .backport
+                        .glassEffect(.regular, in: .capsule, fallbackBackground: .regularMaterial)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)
@@ -434,12 +436,12 @@ struct MangaReaderContentView: View {
             Button(action: goBack) {
                 Image(systemName: "chevron.backward")
                     .font(.body.weight(.semibold))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
             .accessibilityIdentifier("manga_reader_back")
+            .backport
+            .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
 
             Button {
                 if hasChapterDirectory {
@@ -447,7 +449,7 @@ struct MangaReaderContentView: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 4) {
                             Text(verbatim: state.chapterTitle)
                                 .font(.subheadline.weight(.semibold))
@@ -468,11 +470,15 @@ struct MangaReaderContentView: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .contentShape(Rectangle())
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .frame(minHeight: 44)
+                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
             .disabled(!hasChapterDirectory)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .backport
+            .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
             .accessibilityIdentifier("manga_reader_chapters_button")
             .accessibilityLabel(
                 Text(
@@ -495,67 +501,72 @@ struct MangaReaderContentView: View {
                 .preferredColorScheme(.dark)
             }
 
-            if let ready = currentReadyPage {
-                let item = state.imageTranslation.item(media: ready.original)
-                if state.imageTranslation.canToggle(media: ready.original) {
-                    Button {
-                        state.imageTranslation.toggle(media: ready.original)
-                    } label: {
-                        Image(fontAwesome: .language)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                if let ready = currentReadyPage {
+                    let item = state.imageTranslation.item(media: ready.original)
+                    if state.imageTranslation.canToggle(media: ready.original) {
+                        Button {
+                            state.imageTranslation.toggle(media: ready.original)
+                        } label: {
+                            Image(systemName: "translate")
+                                .font(.body)
+                                .imageScale(.large)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .disabled(item.loading)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .disabled(item.loading)
                 }
-            }
 
-            Button {
-                showSettings = true
-            } label: {
-                Image(fontAwesome: .gear)
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-            .accessibilityIdentifier("manga_reader_settings_button")
-            .accessibilityLabel(
-                Text(
-                    verbatim: FlareAppleUILocalization.string(
-                        "manga_reader_settings",
-                        fallback: "Reader settings"
-                    )
-                )
-            )
-            .popover(isPresented: Binding(
-                get: { showSettings && horizontalSizeClass == .regular },
-                set: { if !$0 { showSettings = false } }
-            )) {
-                MangaReaderSettingsView(state: state, isWideViewport: isWideViewport)
-                    .preferredColorScheme(.dark)
-            }
-
-            if hasMoreMenuActions {
-                Menu {
-                    moreMenuContent
+                Button {
+                    showSettings = true
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
-                        .frame(width: 34, height: 34)
+                    Image(systemName: "gearshape")
+                        .font(.body)
+                        .imageScale(.large)
+                        .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("manga_reader_more_menu")
+                .accessibilityIdentifier("manga_reader_settings_button")
                 .accessibilityLabel(
-                    Text(verbatim: FlareAppleUILocalization.string("more", fallback: "More"))
+                    Text(
+                        verbatim: FlareAppleUILocalization.string(
+                            "manga_reader_settings",
+                            fallback: "Reader settings"
+                        )
+                    )
                 )
+                .popover(isPresented: Binding(
+                    get: { showSettings && horizontalSizeClass == .regular },
+                    set: { if !$0 { showSettings = false } }
+                )) {
+                    MangaReaderSettingsView(state: state, isWideViewport: isWideViewport)
+                        .preferredColorScheme(.dark)
+                }
+
+                if hasMoreMenuActions {
+                    Menu {
+                        moreMenuContent
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.body)
+                            .imageScale(.large)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("manga_reader_more_menu")
+                    .accessibilityLabel(
+                        Text(verbatim: FlareAppleUILocalization.string("more", fallback: "More"))
+                    )
+                }
             }
+            .padding(.horizontal, 4)
+            .backport
+            .glassEffect(.regularInteractive, in: .capsule, fallbackBackground: .regularMaterial)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .safeAreaPadding([.top, .horizontal])
         .preference(key: IOSMangaReaderShareButtonVisiblePreferenceKey.self, value: canShareAnyVisiblePage)
     }
 
@@ -673,7 +684,37 @@ struct MangaReaderContentView: View {
         }
     }
 
+    @ViewBuilder
     private var bottomHudBar: some View {
+        if #available(iOS 26.0, *) {
+            bottomHudBarContent
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 640)
+                .backport
+                .glassEffect(
+                    .tinted(.init(.systemGroupedBackground).opacity(0.5)),
+                    in: .rect(corners: .concentric, isUniform: true),
+                    fallbackBackground: .regularMaterial
+                )
+                .padding()
+        } else {
+            bottomHudBarContent
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 640)
+                .backport
+                .glassEffect(
+                    .regular,
+                    in: .rect(cornerRadius: 24, style: .continuous),
+                    fallbackBackground: .regularMaterial
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+        }
+    }
+
+    private var bottomHudBarContent: some View {
         let isRtl = state.direction == .rtl
         let prevUnlocked = state.previousBoundary as? ChapterBoundaryUnlocked
         let nextUnlocked = state.nextBoundary as? ChapterBoundaryUnlocked
@@ -716,12 +757,6 @@ struct MangaReaderContentView: View {
             .foregroundStyle(rightTarget == nil ? .white.opacity(0.35) : .white)
             .disabled(rightTarget == nil)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 640)
-        .background(.ultraThinMaterial, in: Capsule())
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
     }
 
     private func openChapterURL(_ rawURL: String) {

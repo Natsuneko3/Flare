@@ -207,6 +207,7 @@ private struct MangaReaderWindowConfigurator: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.styleMask.insert(.fullSizeContentView)
             window.backgroundColor = .black
+            window.isMovableByWindowBackground = true
             if isInitial || revision != lastFocusedRevision {
                 lastFocusedRevision = revision
                 if !isInitial {
