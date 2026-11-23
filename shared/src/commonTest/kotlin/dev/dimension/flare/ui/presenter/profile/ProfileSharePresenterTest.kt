@@ -29,6 +29,7 @@ import dev.dimension.flare.data.network.ai.OpenAIService
 import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.DraftMediaStore
 import dev.dimension.flare.data.repository.DraftRepository
+import dev.dimension.flare.data.repository.NoActiveAccountException
 import dev.dimension.flare.data.repository.ProxyRepository
 import dev.dimension.flare.data.translation.OnlinePreTranslationService
 import dev.dimension.flare.data.translation.PreTranslationService
@@ -83,6 +84,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProfileSharePresenterTest : RobolectricTest() {
@@ -262,6 +264,49 @@ class ProfileSharePresenterTest : RobolectricTest() {
             assertEquals(listOf(otherKey.id), requestedIds)
             assertEquals(otherKey, loaded.takeSuccess()?.key)
             assertEquals("https://example.org/@other", loaded.takeSuccess()?.url)
+        }
+
+    @Test
+    fun `missing accountProfileFlow emits NoActiveAccountException error`() =
+        runTest {
+            val unauthenticatedService =
+                FakeProfileService(
+                    accountKey = null,
+                    authenticatedProfile = null,
+                    userHandler = null,
+                )
+            val missingProfileService =
+                FakeProfileService(
+                    accountKey = accountKey,
+                    authenticatedProfile = null,
+                    userHandler = null,
+                )
+
+            val nullKeyUnauth = assertIs<UiState.Error<UiProfile>>(resolveProfileShareFlow(unauthenticatedService, null).first())
+            val nullKeyMissing = assertIs<UiState.Error<UiProfile>>(resolveProfileShareFlow(missingProfileService, null).first())
+            val ownKeyMissing = assertIs<UiState.Error<UiProfile>>(resolveProfileShareFlow(missingProfileService, accountKey).first())
+
+            assertSame(NoActiveAccountException, nullKeyUnauth.throwable)
+            assertSame(NoActiveAccountException, nullKeyMissing.throwable)
+            assertSame(NoActiveAccountException, ownKeyMissing.throwable)
+        }
+
+    @Test
+    fun `missing profile capability emits NoActiveAccountException error for other user`() =
+        runTest {
+            val serviceWithoutProfileCapability =
+                FakeProfileService(
+                    accountKey = accountKey,
+                    authenticatedProfile = createSampleUser().copy(key = accountKey),
+                    userHandler = null,
+                )
+
+            val otherUserState =
+                assertIs<UiState.Error<UiProfile>>(
+                    resolveProfileShareFlow(serviceWithoutProfileCapability, otherKey).first(),
+                )
+
+            assertSame(NoActiveAccountException, otherUserState.throwable)
         }
 
     @Test

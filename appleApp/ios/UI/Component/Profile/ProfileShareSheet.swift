@@ -64,36 +64,20 @@ struct ProfileShareSheetContent: View {
     }
 
     private var previewRevision: String {
-        let profileHash: Int = if case .success(let data) = onEnum(of: state.profile) {
-            data.data.hash
+        let profileKey: String = if case .success(let data) = onEnum(of: state.profile) {
+            "loaded-\(data.data.hash)"
         } else {
-            0
+            "unloaded"
         }
-        return "\(profileHash)-\(String(describing: theme ?? colorScheme))-\(previewStyle)-\(renderAttempt)-\(timelineAppearance.hash)-\(translateConfig.showOriginalWithTranslation)-\(dynamicTypeSize)"
+        return "\(profileKey)-\(String(describing: theme ?? colorScheme))-\(previewStyle)-\(renderAttempt)-\(timelineAppearance.hash)-\(translateConfig.showOriginalWithTranslation)-\(dynamicTypeSize)"
     }
 
     private var currentImage: UIImage? {
         renderedRevision == previewRevision ? image : nil
     }
 
-    private var trimmedShareUrl: String? {
-        guard let trimmed = state.shareUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty
-        else {
-            return nil
-        }
-        return trimmed
-    }
-
     private var shareLinkURL: URL? {
-        guard let trimmedShareUrl,
-              let url = URL(string: trimmedShareUrl),
-              let scheme = url.scheme,
-              !scheme.isEmpty
-        else {
-            return nil
-        }
-        return url
+        ProfileShareURLResolver.resolve(state.shareUrl)?.url
     }
 
     var body: some View {
@@ -236,7 +220,7 @@ struct ProfileShareSheetContent: View {
 
     private func crossPost() {
         guard let imageData = currentImage?.pngData() else { return }
-        let text = trimmedShareUrl.map { "\n\n\($0)" } ?? ""
+        let text = shareLinkURL.map { "\n\n\($0.absoluteString)" } ?? ""
         onCrossPost(
             ComposePrefill(
                 text: text,

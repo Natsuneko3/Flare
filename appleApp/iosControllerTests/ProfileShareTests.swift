@@ -119,10 +119,33 @@ final class ProfileShareTests: XCTestCase {
     }
 
     func testProfileShareSheetWithNilUrlAllowsImageOnlyCrossPost() async throws {
-        let profile = makeProfile(
+        try await assertImageOnlyCrossPost(
             id: "nil-url",
             descriptionText: "Profile without canonical URL",
-            url: nil
+            profileUrl: nil,
+            shareUrl: nil
+        )
+    }
+
+    func testProfileShareSheetWithSchemelessUrlHidesLinkAndProducesEmptyCrossPostText() async throws {
+        try await assertImageOnlyCrossPost(
+            id: "schemeless-url",
+            descriptionText: "Profile with schemeless URL",
+            profileUrl: "example.org/@alice",
+            shareUrl: "  example.org/@alice  "
+        )
+    }
+
+    private func assertImageOnlyCrossPost(
+        id: String,
+        descriptionText: String,
+        profileUrl: String?,
+        shareUrl: String?
+    ) async throws {
+        let profile = makeProfile(
+            id: id,
+            descriptionText: descriptionText,
+            url: profileUrl
         )
         var capturedPrefill: ComposePrefill?
         var renderedRevision: String?
@@ -135,7 +158,7 @@ final class ProfileShareTests: XCTestCase {
 
         try await withProfileShareSheet(
             profile: profile,
-            shareUrl: nil,
+            shareUrl: shareUrl,
             observer: observer,
             onCrossPost: { capturedPrefill = $0 }
         ) { host in

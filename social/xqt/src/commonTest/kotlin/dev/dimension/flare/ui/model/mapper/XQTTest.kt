@@ -117,6 +117,26 @@ class XQTTest {
     }
 
     @Test
+    fun renderUserLeavesProfileUrlNullWhenScreenNamesAreMissing() {
+        val xqtAccount = MicroBlogKey("account", xqtHost)
+        val missingScreenNameUser =
+            User(
+                restId = "missing-screen-name",
+                legacy = UserLegacy(name = "Missing Handle", screenName = null),
+                core = null,
+            ).render(xqtAccount)
+        val coreOnlyScreenNameUser =
+            User(
+                restId = "core-screen-name",
+                legacy = UserLegacy(name = "Core Handle", screenName = null),
+                core = User.Core(screenName = "core_handle"),
+            ).render(xqtAccount)
+
+        assertNull(missingScreenNameUser.url)
+        assertEquals("https://$xqtHost/core_handle", coreOnlyScreenNameUser.url)
+    }
+
+    @Test
     fun parseXQTCustomDateTime_appliesTimezoneOffset() {
         val parsedPlus = parseXQTCustomDateTime("Wed Mar 04 14:17:49 +0900 2026")
         val parsedMinus = parseXQTCustomDateTime("Wed Mar 04 14:17:49 -0500 2026")

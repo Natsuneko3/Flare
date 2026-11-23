@@ -8,6 +8,7 @@ import dev.dimension.flare.data.datasource.microblog.accountKeyOrNull
 import dev.dimension.flare.data.datasource.microblog.accountProfileFlow
 import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.repository.AccountRepository
+import dev.dimension.flare.data.repository.NoActiveAccountException
 import dev.dimension.flare.data.repository.accountServiceFlow
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
@@ -20,6 +21,7 @@ import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.model.toUi
 import dev.dimension.flare.ui.presenter.PresenterBase
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 public class ProfileSharePresenter(
     private val accountType: AccountType,
@@ -38,10 +40,10 @@ public class ProfileSharePresenter(
         val profile by profileFlow.flattenUiState()
         val shareUrl = normalizeProfileShareUrl(profile)
 
-        return object : State {
-            override val profile: UiState<UiProfile> = profile
-            override val shareUrl: String? = shareUrl
-        }
+        return ProfileShareState(
+            profile = profile,
+            shareUrl = shareUrl,
+        )
     }
 
     @Immutable
@@ -49,6 +51,11 @@ public class ProfileSharePresenter(
         public val profile: UiState<UiProfile>
         public val shareUrl: String?
     }
+
+    private data class ProfileShareState(
+        override val profile: UiState<UiProfile>,
+        override val shareUrl: String?,
+    ) : State
 }
 
 internal fun resolveProfileShareFlow(
@@ -56,9 +63,13 @@ internal fun resolveProfileShareFlow(
     userKey: MicroBlogKey?,
 ): Flow<UiState<UiProfile>> =
     if (userKey == null || userKey == service.accountKeyOrNull) {
-        requireNotNull(service.accountProfileFlow())
+        service.accountProfileFlow() ?: flowOf(UiState.Error(NoActiveAccountException))
     } else {
-        requireNotNull(service.capabilities.profile).userHandler.userById(userKey.id).toUi()
+        service.capabilities.profile
+            ?.userHandler
+            ?.userById(userKey.id)
+            ?.toUi()
+            ?: flowOf(UiState.Error(NoActiveAccountException))
     }
 
 internal fun normalizeProfileShareUrl(profile: UiState<UiProfile>): String? =

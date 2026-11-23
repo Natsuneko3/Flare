@@ -272,15 +272,13 @@ enum Route: Hashable, Identifiable {
                 userKey: userKey,
                 accountType: accountType
             )
-        case .profileCrossPost(let accountType, let userKey, let shareUrl):
+        case .profileCrossPost(let accountType, let userKey, _):
             MacProfileShareSheet(
                 userKey: userKey,
                 accountType: accountType,
                 purpose: .crossPost,
                 onCrossPost: { imageData, fileName, resolvedShareUrl in
-                    let candidate = resolvedShareUrl ?? shareUrl
-                    let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let resolvedUrl = trimmed?.isEmpty == false ? trimmed : nil
+                    let resolvedUrl = MacProfileShareMenu<EmptyView>.resolveShareURL(from: resolvedShareUrl)?.url.absoluteString
                     onNavigate(
                         .composeCrossPost(
                             MacComposePrefill(

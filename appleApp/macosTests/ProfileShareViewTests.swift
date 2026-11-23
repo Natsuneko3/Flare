@@ -12,6 +12,11 @@ final class ProfileShareViewTests: XCTestCase {
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: nil))
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: ""))
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "   \n\t "))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "example.org/@alice"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "  example.org/@alice  "))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "/@alice"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "://example.org/@alice"))
+        XCTAssertNil(ProfileShareURLResolver.resolve("example.org/@alice"))
 
         let clean = MacProfileShareMenu<Text>.resolveShareURL(from: "https://example.org/@alice")
         XCTAssertEqual(clean?.raw, "https://example.org/@alice")

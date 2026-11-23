@@ -138,11 +138,6 @@ internal fun normalizeShareUrl(shareUrl: String?): String? =
 internal fun crossPostInitialText(shareUrl: String?): String =
     normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
 
-internal fun shareImageFileName(
-    prefix: String,
-    key: String,
-): String = "${prefix}_${MediaFileNamePolicy.sanitizeFileName(key)}.png"
-
 internal fun buildCrossPostIntent(
     context: Context,
     imageUri: Uri,
@@ -783,7 +778,7 @@ private suspend fun saveBitmapToDownloads(
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
             stream.toByteArray()
         }
-    val fileName = shareImageFileName(prefix = fileNamePrefix, key = fileKey)
+    val fileName = MediaFileNamePolicy.screenshotFileName(key = fileKey, prefix = fileNamePrefix)
     val success =
         downloadManager.saveByteArray(
             byteArray = bytes,

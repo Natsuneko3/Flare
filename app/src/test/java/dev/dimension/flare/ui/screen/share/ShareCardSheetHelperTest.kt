@@ -2,6 +2,7 @@ package dev.dimension.flare.ui.screen.share
 
 import android.content.Intent
 import android.net.Uri
+import dev.dimension.flare.common.MediaFileNamePolicy
 import dev.dimension.flare.ui.screen.compose.ShortcutComposeActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,9 +27,30 @@ class ShareCardSheetHelperTest {
     }
 
     @Test
-    fun `shareFileName uses provided prefix and sanitizes key`() {
-        assertEquals("profile_alice_example.org.png", shareImageFileName("profile", "alice/example.org"))
-        assertEquals("status_123_example.org.png", shareImageFileName("status", "123/example.org"))
+    fun `saved screenshot file name uses provided prefix sanitizes key and appends timestamp`() {
+        val before = System.currentTimeMillis()
+        val profileFileName = MediaFileNamePolicy.screenshotFileName(key = "alice/example.org", prefix = "profile")
+        val statusFileName = MediaFileNamePolicy.screenshotFileName(key = "123/example.org", prefix = "status")
+        val after = System.currentTimeMillis()
+
+        assertTimestampedPngFileName("profile_alice_example.org_", profileFileName, before, after)
+        assertTimestampedPngFileName("status_123_example.org_", statusFileName, before, after)
+    }
+
+    private fun assertTimestampedPngFileName(
+        expectedPrefix: String,
+        fileName: String,
+        before: Long,
+        after: Long,
+    ) {
+        val timestamp =
+            fileName
+                .removePrefix(expectedPrefix)
+                .removeSuffix(".png")
+                .toLongOrNull()
+        assertTrue(fileName.startsWith(expectedPrefix))
+        assertTrue(fileName.endsWith(".png"))
+        assertTrue(timestamp != null && timestamp in before..after)
     }
 
     @Test

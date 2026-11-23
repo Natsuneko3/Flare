@@ -1,7 +1,22 @@
+import Foundation
+
+public enum ProfileShareURLResolver {
+    public static func resolve(_ shareUrl: String?) -> (raw: String, url: URL)? {
+        guard let trimmed = shareUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty,
+              let url = URL(string: trimmed),
+              let scheme = url.scheme,
+              !scheme.isEmpty
+        else {
+            return nil
+        }
+        return (trimmed, url)
+    }
+}
+
 #if os(macOS)
 import AppKit
 import FlareAppleCore
-import Foundation
 import KotlinSharedUI
 import SwiftUI
 
@@ -90,14 +105,8 @@ public struct MacProfileShareMenu<LabelContent: View>: View {
         Self.resolveShareURL(from: data.shareUrl)
     }
 
-    static func resolveShareURL(from shareUrl: String?) -> (raw: String, url: URL)? {
-        guard let trimmed = shareUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty,
-              let url = URL(string: trimmed)
-        else {
-            return nil
-        }
-        return (trimmed, url)
+    public static func resolveShareURL(from shareUrl: String?) -> (raw: String, url: URL)? {
+        ProfileShareURLResolver.resolve(shareUrl)
     }
 
     private func copyLink(_ shareUrl: String) {
@@ -114,12 +123,10 @@ public struct MacProfileShareSheet: View {
     @State private var presenter: KotlinPresenter<ProfileSharePresenterState>
 
     private var previewRevisionKey: String {
-        let profileHash: Int = if case .success(let data) = onEnum(of: presenter.state.profile) {
-            data.data.hash
-        } else {
-            0
+        if case .success(let data) = onEnum(of: presenter.state.profile) {
+            return "loaded-\(data.data.hash)"
         }
-        return "\(profileHash)"
+        return "unloaded"
     }
 
     public init(
@@ -151,7 +158,11 @@ public struct MacProfileShareSheet: View {
             fallbackFileName: "flare-profile.png",
             appliesContentPadding: false,
             onCrossPost: { data, fileName in
-                onCrossPost?(data, fileName, presenter.state.shareUrl)
+                onCrossPost?(
+                    data,
+                    fileName,
+                    ProfileShareURLResolver.resolve(presenter.state.shareUrl)?.url.absoluteString
+                )
             }
         ) { profile in
             ProfileShareContent(profile: profile)

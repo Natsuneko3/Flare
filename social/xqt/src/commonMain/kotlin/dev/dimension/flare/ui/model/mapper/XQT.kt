@@ -1040,7 +1040,7 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
             },
         platformId = XQT_PLATFORM_ID,
         platformIcon = UiIcon.X.asType(),
-        url = xqtProfileUrl(screenName),
+        url = xqtProfileUrl(legacy.screenName ?: core?.screenName),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
