@@ -24,21 +24,38 @@ struct ProfileScreen: View {
     @State private var isProfileHeaderVisible = true
     @State private var isInlineTabPickerVisible = true
     @State private var showBlockedProfileContent = false
+    @State private var currentLayout = ProfileLayoutPolicy(size: .zero, isRegularWidth: false)
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     
     var body: some View {
-        ZStack {
-            if horizontalSizeClass == .regular {
-                regularBody
+        let isSplit = currentLayout.mode.isSplit
+        GeometryReader { proxy in
+            let division = proxy.activeDivisionFrame
+            let layout = ProfileLayoutPolicy(
+                size: proxy.size,
+                isRegularWidth: horizontalSizeClass == .regular,
+                division: division,
+                layoutDirection: layoutDirection
+            )
+            Group {
+                switch layout.mode {
+                case .compact:
+                    compatBody
+                case .horizontalSplit:
+                    horizontalSplitBody(proxy: proxy, layout: layout)
+                case let .verticalSplit(primaryHeight, spacing):
+                    verticalSplitBody(proxy: proxy, layout: layout, primaryHeight: primaryHeight, spacing: spacing)
+                }
             }
-            else {
-                compatBody
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: division)
+            .onChange(of: layout, initial: true) { _, newLayout in
+                currentLayout = newLayout
             }
         }
-        .flareTextBackground(timelineDisplayMode == .plain && horizontalSizeClass == .compact ? .flareSystemBackground : .flareSystemGroupedBackground)
-        .background(Color(timelineDisplayMode == .plain && horizontalSizeClass == .compact ? .clear : .systemGroupedBackground))
+        .flareTextBackground(timelineDisplayMode == .plain && !isSplit ? .flareSystemBackground : .flareSystemGroupedBackground)
+        .background(Color(timelineDisplayMode == .plain && !isSplit ? .clear : .systemGroupedBackground))
         .toolbarBackground(
-            horizontalSizeClass == .compact ? Visibility.hidden : Visibility.automatic,
+            !isSplit ? Visibility.hidden : Visibility.automatic,
             for: .navigationBar
         )
         .navigationBarTitleDisplayMode(.inline)
@@ -51,7 +68,7 @@ struct ProfileScreen: View {
             }
         }
         .toolbar {
-            if horizontalSizeClass == .compact && !isProfileHeaderVisible && !shouldGateBlockedProfile, case .success(let userState) = onEnum(of: presenter.state.userState) {
+            if !isSplit && !isProfileHeaderVisible && !shouldGateBlockedProfile, case .success(let userState) = onEnum(of: presenter.state.userState) {
                 if #available(iOS 27.1, *) {
                     ProfileNavigationTitle(text: userState.data.name)
                 } else {
@@ -61,7 +78,7 @@ struct ProfileScreen: View {
                 }
             }
             
-            if !shouldGateBlockedProfile && horizontalSizeClass == .regular, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
+            if !shouldGateBlockedProfile && currentLayout.showsToolbarInlineTabs, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
                 let tabs = tabState.data.cast(ProfileState.Tab.self)
                 if tabs.count > 1 {
                     let tabIDs = tabs.map(\.id)
@@ -83,7 +100,7 @@ struct ProfileScreen: View {
                 if #available(iOS 26.0, *) {
                     ToolbarSpacer()
                 }
-            } else if !shouldGateBlockedProfile && horizontalSizeClass == .compact, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
+            } else if !shouldGateBlockedProfile && !isSplit, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
                 let tabs = tabState.data.cast(ProfileState.Tab.self)
                 if tabs.count > 1 && showToolbarTabPicker {
                     ToolbarItem(placement: .primaryAction) {
@@ -117,95 +134,136 @@ struct ProfileScreen: View {
         }
     }
     
-    var regularBody: some View {
-        GeometryReader { proxy in
-            let division = profileDivision(in: proxy)
-            let layout = ProfileLayoutPolicy(
-                width: proxy.size.width,
-                division: division,
-                layoutDirection: layoutDirection
-            )
-            HStack(spacing: 0) {
-                ScrollView {
-                    ProfileHeader(
-                        user: presenter.state.userState,
-                        relation: presenter.state.relationState,
-                        followButtonState: presenter.state.followButtonState,
-                        isMe: presenter.state.isMe,
-                        bannerTopInset: layout.usesCard ? 0 : proxy.safeAreaInsets.top,
-                        onFollowClick: { user, followButtonState in
-                            handleFollowAction(user: user, followButtonState: followButtonState)
-                        },
-                        onFollowingClick: onFollowingClick,
-                        onFansClick: onFansClick
-                    )
-                    .padding(.bottom)
-                    .flareTextBackground(layout.usesCard ? .flareSecondarySystemGroupedBackground : .flareSystemBackground)
-                    .background(layout.usesCard ? Color.flareSecondarySystemGroupedBackground : Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: layout.usesCard ? 32 : 0, style: .continuous))
-                }
-                .contentMargins(.top, 0, for: .scrollContent)
-                .padding(.leading, layout.usesCard ? 16 : 0)
-                .frame(width: layout.profileWidth)
-                .background {
-                    if !layout.usesCard {
-                        Color(.systemBackground).ignoresSafeArea(edges: .vertical)
-                    }
-                }
-                .ignoresSafeArea(.container, edges: layout.usesCard ? [] : .top)
-
-                Divider()
-                    .frame(width: layout.columnSpacing)
-                    .opacity(layout.usesCard ? 0 : 1)
-                    .background(layout.usesCard ? Color.clear : Color(.systemBackground))
-                    .ignoresSafeArea(.container, edges: .vertical)
-
-                if shouldGateBlockedProfile {
-                    BlockedProfileGate {
-                        showBlockedProfileContent = true
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                } else {
-                    StateView(state: presenter.state.tabs) { tabsArray in
-                        let tabs = tabsArray.cast(ProfileState.Tab.self)
-                        profileTimelineCollection(
-                            tabs: tabs,
-                            showsProfileAccessories: false
-                        )
-                    } errorContent: { error in
-                        ListErrorView(error: error) {
-                            presenter.state.retryTabs()
-                        }
-                    } loadingContent: {
-                        GeometryReader { proxy in
-                            ScrollView {
-                                LazyVStack(spacing: 0) {
-                                    ProfileTabsLoadingPlaceholder()
-                                    ProfileTimelineUIKitLoadingPlaceholder(
-                                        columnCount: TimelineColumnPolicy.adaptive.columnCount(for: proxy.size.width)
-                                    )
-                                }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        }
-                    }
+    private func horizontalSplitBody(proxy: GeometryProxy, layout: ProfileLayoutPolicy) -> some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                ProfileHeader(
+                    user: presenter.state.userState,
+                    relation: presenter.state.relationState,
+                    followButtonState: presenter.state.followButtonState,
+                    isMe: presenter.state.isMe,
+                    bannerTopInset: layout.usesCard ? 0 : proxy.safeAreaInsets.top,
+                    onFollowClick: { user, followButtonState in
+                        handleFollowAction(user: user, followButtonState: followButtonState)
+                    },
+                    onFollowingClick: onFollowingClick,
+                    onFansClick: onFansClick
+                )
+                .padding(.bottom)
+                .flareTextBackground(layout.usesCard ? .flareSecondarySystemGroupedBackground : .flareSystemBackground)
+                .background(layout.usesCard ? Color.flareSecondarySystemGroupedBackground : Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: layout.usesCard ? 32 : 0, style: .continuous))
+            }
+            .contentMargins(.top, 0, for: .scrollContent)
+            .padding(.leading, layout.usesCard ? 16 : 0)
+            .frame(width: layout.profileWidth)
+            .background {
+                if !layout.usesCard {
+                    Color(.systemBackground).ignoresSafeArea(edges: .vertical)
                 }
             }
-            .modifier(TimelineListBackground(
-                columnPolicy: layout.usesCard ? .adaptive : .single
-            ))
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: division)
+            .ignoresSafeArea(.container, edges: layout.usesCard ? [] : .top)
+
+            Divider()
+                .frame(width: layout.columnSpacing)
+                .opacity(layout.usesCard ? 0 : 1)
+                .background(layout.usesCard ? Color.clear : Color(.systemBackground))
+                .ignoresSafeArea(.container, edges: .vertical)
+
+            splitSecondaryContent(layout: layout, isVerticalSplit: false)
         }
+        .modifier(TimelineListBackground(
+            columnPolicy: layout.usesCard ? .adaptive : .single
+        ))
     }
 
-    private func profileDivision(in proxy: GeometryProxy) -> CGRect? {
-        if #available(iOS 27.1, *) {
-            return proxy.reservedRegions(kind: .division)
-                .first { $0.isActive && $0.frame.height > $0.frame.width }?.frame
+    private func verticalSplitBody(
+        proxy: GeometryProxy,
+        layout: ProfileLayoutPolicy,
+        primaryHeight: CGFloat,
+        spacing: CGFloat
+    ) -> some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                ProfileHeader(
+                    user: presenter.state.userState,
+                    relation: presenter.state.relationState,
+                    followButtonState: presenter.state.followButtonState,
+                    isMe: presenter.state.isMe,
+                    bannerTopInset: proxy.safeAreaInsets.top,
+                    onFollowClick: { user, followButtonState in
+                        handleFollowAction(user: user, followButtonState: followButtonState)
+                    },
+                    onFollowingClick: onFollowingClick,
+                    onFansClick: onFansClick
+                )
+                .padding(.bottom)
+                .flareTextBackground(.flareSystemBackground)
+                .background(Color(.systemBackground))
+            }
+            .contentMargins(.top, 0, for: .scrollContent)
+            .frame(height: primaryHeight)
+            .frame(maxWidth: .infinity)
+            .background {
+                Color(.systemBackground).ignoresSafeArea(edges: .top)
+            }
+            .ignoresSafeArea(.container, edges: .top)
+
+            Divider()
+                .frame(height: spacing)
+                .frame(maxWidth: .infinity)
+                .background(Color(.systemBackground))
+
+            splitSecondaryContent(layout: layout, isVerticalSplit: true)
         }
-        return nil
+        .modifier(TimelineListBackground(columnPolicy: .single))
+    }
+
+    @ViewBuilder
+    private func splitSecondaryContent(layout: ProfileLayoutPolicy, isVerticalSplit: Bool) -> some View {
+        if shouldGateBlockedProfile {
+            BlockedProfileGate {
+                showBlockedProfileContent = true
+            }
+            .padding(.horizontal)
+            .padding(.top, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            StateView(state: presenter.state.tabs) { tabsArray in
+                let tabs = tabsArray.cast(ProfileState.Tab.self)
+                VStack(spacing: 0) {
+                    if layout.showsInlinePaneTabs && tabs.count > 1 {
+                        ProfileTabBar(
+                            tabs: tabs,
+                            selectedTab: $tabSelection[indexIn: tabs.map(\.id)]
+                        )
+                        .environment(\.profileUsesPlainStyle, true)
+                        .background(Color(.systemBackground))
+                    }
+                    profileTimelineCollection(
+                        tabs: tabs,
+                        showsProfileAccessories: false,
+                        ignoredVerticalSafeAreaEdges: isVerticalSplit || (layout.showsInlinePaneTabs && tabs.count > 1) ? .bottom : .vertical
+                    )
+                }
+            } errorContent: { error in
+                ListErrorView(error: error) {
+                    presenter.state.retryTabs()
+                }
+            } loadingContent: {
+                GeometryReader { paneProxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ProfileTabsLoadingPlaceholder()
+                            ProfileTimelineUIKitLoadingPlaceholder(
+                                columnCount: TimelineColumnPolicy.adaptive.columnCount(for: paneProxy.size.width)
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+            }
+        }
     }
     
     @ViewBuilder
@@ -279,7 +337,8 @@ struct ProfileScreen: View {
 
     private func profileTimelineCollection(
         tabs: [ProfileState.Tab],
-        showsProfileAccessories: Bool
+        showsProfileAccessories: Bool,
+        ignoredVerticalSafeAreaEdges: Edge.Set = .vertical
     ) -> some View {
         GeometryReader { proxy in
             ProfileTimelineCollectionView(
@@ -312,7 +371,7 @@ struct ProfileScreen: View {
             )
             .id(accountID)
         }
-        .ignoresSafeArea(edges: .vertical)
+        .ignoresSafeArea(edges: ignoredVerticalSafeAreaEdges)
     }
 
     private func updateToolbarTabPickerVisibility() {

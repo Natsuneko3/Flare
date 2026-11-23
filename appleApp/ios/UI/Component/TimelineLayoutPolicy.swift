@@ -19,6 +19,8 @@ nonisolated struct ProfileLayoutPolicy: Equatable {
     let usesCard: Bool
     let profileWidth: CGFloat
     let columnSpacing: CGFloat
+    let showsInlinePaneTabs: Bool
+    let showsToolbarInlineTabs: Bool
 
     init(
         size: CGSize,
@@ -45,10 +47,20 @@ nonisolated struct ProfileLayoutPolicy: Equatable {
             self.usesCard = multiColumnUnfolded
             self.profileWidth = primaryWidth
             self.columnSpacing = spacing
-        case .verticalSplit, .compact:
+            self.showsInlinePaneTabs = !isRegularWidth
+            self.showsToolbarInlineTabs = isRegularWidth
+        case .verticalSplit:
             self.usesCard = false
             self.profileWidth = 400
             self.columnSpacing = 8
+            self.showsInlinePaneTabs = true
+            self.showsToolbarInlineTabs = false
+        case .compact:
+            self.usesCard = false
+            self.profileWidth = 400
+            self.columnSpacing = 8
+            self.showsInlinePaneTabs = false
+            self.showsToolbarInlineTabs = false
         }
     }
 

@@ -102,4 +102,31 @@ final class ProfileLayoutPolicyTests: XCTestCase {
             )
         }
     }
+
+    func testTabPlacementAvoidsMissingOrDuplicatedTabsAcrossSplitModes() {
+        let compactUnfolded = ProfileLayoutPolicy(size: CGSize(width: 390, height: 844), isRegularWidth: false)
+        XCTAssertEqual(compactUnfolded.mode, .compact)
+        XCTAssertFalse(compactUnfolded.showsInlinePaneTabs)
+        XCTAssertFalse(compactUnfolded.showsToolbarInlineTabs)
+
+        let regularUnfolded = ProfileLayoutPolicy(size: CGSize(width: 1_000, height: 800), isRegularWidth: true)
+        XCTAssertFalse(regularUnfolded.showsInlinePaneTabs)
+        XCTAssertTrue(regularUnfolded.showsToolbarInlineTabs)
+
+        let compactBookFold = ProfileLayoutPolicy(
+            size: CGSize(width: 720, height: 844),
+            isRegularWidth: false,
+            division: CGRect(x: 344, y: 0, width: 32, height: 844)
+        )
+        XCTAssertTrue(compactBookFold.showsInlinePaneTabs)
+        XCTAssertFalse(compactBookFold.showsToolbarInlineTabs)
+
+        let regularTabletopFold = ProfileLayoutPolicy(
+            size: CGSize(width: 1_024, height: 768),
+            isRegularWidth: true,
+            division: CGRect(x: 0, y: 368, width: 1_024, height: 32)
+        )
+        XCTAssertTrue(regularTabletopFold.showsInlinePaneTabs)
+        XCTAssertFalse(regularTabletopFold.showsToolbarInlineTabs)
+    }
 }

@@ -5,6 +5,7 @@ import FlareAppleCore
 
 struct StatusDetailScreen: View {
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.timelineAccountID) private var accountID
     @Environment(\.self) private var environment
     @State private var presenter: KotlinPresenter<StatusContextPresenterState>
@@ -22,20 +23,80 @@ struct StatusDetailScreen: View {
         let isEmpty = hasHeader && isEmptyList(state.listState)
         let isFilteredEmpty = isEmpty && state.selectedFilterId != state.defaultFilterId
         let hidesList = isEmpty && (state.tabs.isEmpty || isFilteredEmpty)
-        ZStack {
-            UITimelineCollectionView(
-                data: hidesList ? nil : state.listState,
-                detailStatusKey: statusKey,
-                leadingPosts: state.header,
-                accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
-                suppressInitialRefreshIndicator: true,
-                contentKey: state.selectedTabId.map { AnyHashable([$0, state.selectedFilterId ?? ""]) }
-            )
-            .id("\(accountID):\(presenter.key)")
-            .ignoresSafeArea(edges: .vertical)
-            .modifier(TimelineListBackground(columnPolicy: .single))
-            .frame(maxWidth: 600, alignment: .center)
-        }
+        let contentKey = state.selectedTabId.map { AnyHashable([$0, state.selectedFilterId ?? ""]) }
+
+        AdaptiveSplitContainer(
+            isUnfoldedSplitEligible: { _ in horizontalSizeClass == .regular },
+            primaryWidthStrategy: .postDetailDefault,
+            unfoldedSpacing: 8,
+            separator: { mode in
+                switch mode {
+                case let .horizontalSplit(_, _, isFoldDriven):
+                    Divider()
+                        .opacity(timelineDisplayMode == .plain || isFoldDriven ? 1 : 0)
+                        .background(isFoldDriven ? Color(.systemBackground) : Color.clear)
+                        .ignoresSafeArea(.container, edges: .vertical)
+                case .verticalSplit:
+                    Divider()
+                        .background(Color(.systemBackground))
+                case .compact:
+                    EmptyView()
+                }
+            },
+            compactContent: {
+                ZStack {
+                    UITimelineCollectionView(
+                        data: hidesList ? nil : state.listState,
+                        detailStatusKey: statusKey,
+                        headerState: state.current,
+                        leadingPosts: state.header,
+                        accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
+                        suppressInitialRefreshIndicator: true,
+                        contentKey: contentKey
+                    )
+                    .id("\(accountID):\(presenter.key):compact")
+                    .ignoresSafeArea(edges: .vertical)
+                    .modifier(TimelineListBackground(columnPolicy: .single))
+                    .frame(maxWidth: 600, alignment: .center)
+                }
+            },
+            primaryPane: { mode in
+                let isVerticalSplit: Bool = {
+                    if case .verticalSplit = mode { return true }
+                    return false
+                }()
+                UITimelineCollectionView(
+                    data: nil,
+                    detailStatusKey: statusKey,
+                    headerState: state.current,
+                    leadingPosts: state.header,
+                    suppressInitialRefreshIndicator: true
+                )
+                .id("\(accountID):\(presenter.key):primary")
+                .ignoresSafeArea(edges: isVerticalSplit ? .top : .vertical)
+                .modifier(TimelineListBackground(columnPolicy: .single))
+            },
+            secondaryPane: { mode in
+                let isVerticalSplit: Bool = {
+                    if case .verticalSplit = mode { return true }
+                    return false
+                }()
+                GeometryReader { paneProxy in
+                    let columnCount = TimelineColumnPolicy.adaptive.columnCount(for: paneProxy.size.width)
+                    UITimelineCollectionView(
+                        data: hidesList ? nil : state.listState,
+                        detailStatusKey: statusKey,
+                        columnCount: columnCount,
+                        accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
+                        suppressInitialRefreshIndicator: true,
+                        contentKey: contentKey
+                    )
+                    .id("\(accountID):\(presenter.key):secondary")
+                    .ignoresSafeArea(edges: isVerticalSplit ? .bottom : .vertical)
+                    .modifier(TimelineListBackground(columnPolicy: columnCount > 1 ? .adaptive : .single))
+                }
+            }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(timelineDisplayMode == .plain ? .clear : .systemGroupedBackground))
         .navigationTitle("status_detail_title")

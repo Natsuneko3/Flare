@@ -1069,7 +1069,11 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
                   let headerState, case .error(let error) = onEnum(of: headerState) {
             let errorView = ListErrorUIView()
             errorView.onOpenURL = openURL
-            errorView.configure(error: error.throwable, onRetry: {})
+            errorView.configure(error: error.throwable, onRetry: { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.refreshCallback?()
+                }
+            })
             cell.setHostedView(CenteredCellContentView(content: errorView))
         } else if itemID == Self.footerLoadingID {
             cell.setHostedView(makeLoadingFooterView())
