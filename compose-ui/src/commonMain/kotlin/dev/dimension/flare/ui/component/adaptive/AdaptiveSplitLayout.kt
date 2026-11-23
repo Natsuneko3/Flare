@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +32,8 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+
+public val LocalAdaptiveSplitEnabled: ProvidableCompositionLocal<Boolean> = compositionLocalOf { true }
 
 @Stable
 public class SplitPaneState internal constructor(
@@ -117,15 +121,19 @@ public fun AdaptiveSplitLayout(
                 Rect.Zero
             }
         val mode =
-            calculateSplitPaneMode(
-                containerBoundsInWindow = containerBounds,
-                density = density,
-                layoutDirection = layoutDirection,
-                isBigScreen = isBigScreen,
-                hinge = hinge,
-                primaryWidthStrategy = primaryWidthStrategy,
-                unfoldedGap = unfoldedGap,
-            )
+            if (LocalAdaptiveSplitEnabled.current) {
+                calculateSplitPaneMode(
+                    containerBoundsInWindow = containerBounds,
+                    density = density,
+                    layoutDirection = layoutDirection,
+                    isBigScreen = isBigScreen,
+                    hinge = hinge,
+                    primaryWidthStrategy = primaryWidthStrategy,
+                    unfoldedGap = unfoldedGap,
+                )
+            } else {
+                SplitPaneMode.Compact
+            }
         SideEffect {
             state.updateMode(mode)
         }

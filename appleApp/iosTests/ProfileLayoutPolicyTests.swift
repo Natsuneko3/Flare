@@ -87,11 +87,10 @@ final class ProfileLayoutPolicyTests: XCTestCase {
         XCTAssertEqual(wideTabletop.mode, .verticalSplit(primaryHeight: 434, spacing: 32))
     }
 
-    func testZeroOutsideAndSliverDivisionsKeepTheUnfoldedLayout() {
+    func testEmptyOutsideAndSliverDivisionsKeepTheUnfoldedLayout() {
         let unfolded = ProfileLayoutPolicy(size: CGSize(width: 944, height: 600), isRegularWidth: true)
         for division in [
-            CGRect(x: 472, y: 0, width: 0, height: 600),
-            CGRect(x: 0, y: 284, width: 944, height: 0),
+            CGRect.zero,
             CGRect(x: -32, y: 0, width: 32, height: 600),
             CGRect(x: 944, y: 0, width: 32, height: 600),
             CGRect(x: 0, y: 100, width: 944, height: 32),

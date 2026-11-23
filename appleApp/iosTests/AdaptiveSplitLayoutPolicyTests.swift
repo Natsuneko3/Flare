@@ -118,6 +118,26 @@ final class AdaptiveSplitLayoutPolicyTests: XCTestCase {
         XCTAssertEqual(horizontalNearEdge.mode, .compact)
     }
 
+    func testLineDivisionsSplitWithoutAGap() {
+        let size = CGSize(width: 800, height: 600)
+        let book = AdaptiveSplitLayoutPolicy(
+            size: size,
+            division: CGRect(x: 350, y: 0, width: 0, height: 600),
+            isUnfoldedSplitEligible: false,
+            primaryWidthStrategy: .postDetailDefault,
+            layoutDirection: .rightToLeft
+        )
+        XCTAssertEqual(book.mode, .horizontalSplit(primaryWidth: 450, spacing: 0, isFoldDriven: true))
+
+        let tabletop = AdaptiveSplitLayoutPolicy(
+            size: size,
+            division: CGRect(x: 0, y: 260, width: 800, height: 0),
+            isUnfoldedSplitEligible: false,
+            primaryWidthStrategy: .postDetailDefault
+        )
+        XCTAssertEqual(tabletop.mode, .verticalSplit(primaryHeight: 260, spacing: 0))
+    }
+
     func testStatusDetailPanePolicyAvoidsDuplicateHeaderAndMirroredErrors() {
         let initialError = StatusDetailPanePolicy(
             hasHeader: false,

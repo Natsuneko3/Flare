@@ -22,6 +22,10 @@ struct StatusDetailScreen: View {
     var body: some View {
         let state = presenter.state
         let header = Array(state.header)
+        let replies = state.listState as? PagingStateSuccess<UiTimelineV2>
+        let replyItems = replies.map { replies in
+            (0..<Int(replies.itemCount)).compactMap { replies.peek(index: Int32($0)) }
+        } ?? []
 
         AdaptiveSplitContainer(
             isUnfoldedSplitEligible: { $0.width >= 840 },
@@ -29,15 +33,6 @@ struct StatusDetailScreen: View {
             unfoldedSpacing: 1,
             separator: { _ in
                 Divider()
-            },
-            compactContent: {
-                ScrollView {
-                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        headerItems(header, current: state.current, state: state, splitFallback: false)
-                        replySection(state, hasHeader: !header.isEmpty, suppressMirroredHeaderError: false)
-                    }
-                }
-                .detectScrolling()
             },
             primaryPane: { _ in
                 ScrollView {
@@ -47,10 +42,17 @@ struct StatusDetailScreen: View {
                 }
                 .detectScrolling()
             },
-            secondaryPane: { _ in
-                ScrollView {
+            secondaryPane: { mode in
+                TimelineReadingScrollView(
+                    itemKeys: (mode.isSplit ? [] : header.map(\.stableItemKey)) + replyItems.map(\.stableItemKey),
+                    gaps: replyItems.compactMap { $0 as? UiTimelineV2.Gap },
+                    isEmpty: header.isEmpty && state.listState is PagingStateEmpty<UiTimelineV2>
+                ) {
                     LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        replySection(state, hasHeader: !header.isEmpty, suppressMirroredHeaderError: true)
+                        if !mode.isSplit {
+                            headerItems(header, current: state.current, state: state, splitFallback: false)
+                        }
+                        replySection(state, hasHeader: !header.isEmpty, suppressMirroredHeaderError: mode.isSplit)
                     }
                 }
                 .detectScrolling()

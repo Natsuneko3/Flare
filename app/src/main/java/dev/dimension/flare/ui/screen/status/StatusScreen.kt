@@ -2,6 +2,7 @@ package dev.dimension.flare.ui.screen.status
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -72,6 +73,7 @@ internal fun StatusDetailScreenContent(
     onRefresh: () -> Unit,
 ) {
     val plainMode = LocalTimelineAppearance.current.timelineDisplayMode == TimelineDisplayMode.Plain
+    val replyListState = rememberLazyStaggeredGridState()
     val topAppBarScrollBehavior =
         if (LocalGlobalAppearance.current.bottomBarBehavior == BottomBarBehavior.AlwaysShow) {
             TopAppBarDefaults.pinnedScrollBehavior()
@@ -142,6 +144,7 @@ internal fun StatusDetailScreenContent(
                         LazyStatusVerticalStaggeredGrid(
                             columns = StaggeredGridCells.Fixed(1),
                             modifier = Modifier.fillMaxSize(),
+                            state = replyListState,
                             contentPadding = padding,
                         ) {
                             statusDetail(
@@ -177,6 +180,7 @@ internal fun StatusDetailScreenContent(
                     content = {
                         LazyStatusVerticalStaggeredGrid(
                             modifier = Modifier.fillMaxSize(),
+                            state = replyListState,
                             contentPadding = padding,
                         ) {
                             statusDetailBodyItems(

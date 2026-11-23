@@ -9,11 +9,8 @@ import dev.dimension.flare.data.platform.VVO_PLATFORM_ID
 import dev.dimension.flare.data.repository.LoginExpiredException
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiTimelineV2
-import dev.dimension.flare.ui.model.contentPostOrNull
 import dev.dimension.flare.ui.model.mapper.extractStatusMid
 import dev.dimension.flare.ui.model.mapper.render
-import dev.dimension.flare.ui.model.mapper.renderRootComment
-import kotlinx.collections.immutable.persistentListOf
 import kotlin.concurrent.Volatile
 
 @OptIn(ExperimentalPagingApi::class)
@@ -22,7 +19,7 @@ internal class CommentChildRemoteMediator(
     private val commentKey: MicroBlogKey,
     private val accountKey: MicroBlogKey,
     rootStatusId: String? = null,
-    private val cachedRootComment: (suspend () -> UiTimelineV2?)? = null,
+    private val cachedRootComment: (suspend () -> UiTimelineV2.Post?)? = null,
 ) : CacheableRemoteLoader<UiTimelineV2> {
     override val pagingKey: String = "status_comments_child_${commentKey}_$accountKey"
     override val collapseReplyChains: Boolean = false
@@ -48,9 +45,10 @@ internal class CommentChildRemoteMediator(
                 val root = response.rootComment?.firstOrNull()
                 val effectiveRootId = root?.extractStatusMid(resolvedRootStatusId) ?: resolvedRootStatusId
                 resolvedRootStatusId = effectiveRootId
+                val cachedRoot = cachedRootComment?.invoke()
                 val rootItem =
-                    root?.renderRootComment(accountKey, effectiveRootId)
-                        ?: cachedRootComment?.invoke()?.asRootCommentItem()
+                    root?.render(accountKey, rootStatusId = effectiveRootId, cachedClickEvent = cachedRoot?.clickEvent)
+                        ?: cachedRoot
                 val maxId = response.maxID?.takeIf { it > 0L }
                 PagingResult(
                     endOfPaginationReached = maxId == null,
@@ -92,5 +90,3 @@ internal class CommentChildRemoteMediator(
         }
     }
 }
-
-private fun UiTimelineV2.asRootCommentItem(): UiTimelineV2 = contentPostOrNull()?.copy(references = persistentListOf()) ?: this

@@ -54,7 +54,7 @@ nonisolated public struct AdaptiveSplitLayoutPolicy: Equatable, Sendable {
         if let division,
            division.minX.isFinite, division.minY.isFinite,
            division.width.isFinite, division.height.isFinite,
-           division.height > 0, division.width > division.height {
+           division.height >= 0, division.width > division.height {
             let topHeight = division.minY
             let bottomHeight = size.height - division.maxY
             if topHeight >= minPaneHeight, bottomHeight >= minPaneHeight {
@@ -73,7 +73,7 @@ nonisolated public struct AdaptiveSplitLayoutPolicy: Equatable, Sendable {
            let division,
            division.minX.isFinite, division.minY.isFinite,
            division.width.isFinite, division.height.isFinite,
-           division.width > 0, division.height > division.width {
+           division.width >= 0, division.height > division.width {
             let leftWidth = division.minX
             let rightWidth = size.width - division.maxX
             if leftWidth >= minPaneWidth, rightWidth >= minPaneWidth {
@@ -106,16 +106,15 @@ public extension GeometryProxy {
     var activeDivisionFrame: CGRect? {
         #if os(iOS)
         if #available(iOS 27.1, *) {
-            return reservedRegions(kind: .division)
-                .first { $0.isActive && $0.frame.width > 0 && $0.frame.height > 0 }?
-                .frame
+            // The split policy takes physical coordinates and resolves the leading pane.
+            return reservedRegions(kind: .division, layoutDirectionBehavior: .fixed).first?.frame
         }
         #endif
         return nil
     }
 }
 
-public struct AdaptiveSplitContainer<Compact: View, Primary: View, Secondary: View, Separator: View>: View {
+public struct AdaptiveSplitContainer<Primary: View, Secondary: View, Separator: View>: View {
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -123,7 +122,6 @@ public struct AdaptiveSplitContainer<Compact: View, Primary: View, Secondary: Vi
     private let primaryWidthStrategy: AdaptivePrimaryWidthStrategy
     private let unfoldedSpacing: CGFloat
     private let separator: (AdaptiveSplitMode) -> Separator
-    private let compactContent: () -> Compact
     private let primaryPane: (AdaptiveSplitMode) -> Primary
     private let secondaryPane: (AdaptiveSplitMode) -> Secondary
 
@@ -132,7 +130,6 @@ public struct AdaptiveSplitContainer<Compact: View, Primary: View, Secondary: Vi
         primaryWidthStrategy: AdaptivePrimaryWidthStrategy,
         unfoldedSpacing: CGFloat = 8,
         @ViewBuilder separator: @escaping (AdaptiveSplitMode) -> Separator,
-        @ViewBuilder compactContent: @escaping () -> Compact,
         @ViewBuilder primaryPane: @escaping (AdaptiveSplitMode) -> Primary,
         @ViewBuilder secondaryPane: @escaping (AdaptiveSplitMode) -> Secondary
     ) {
@@ -140,7 +137,6 @@ public struct AdaptiveSplitContainer<Compact: View, Primary: View, Secondary: Vi
         self.primaryWidthStrategy = primaryWidthStrategy
         self.unfoldedSpacing = unfoldedSpacing
         self.separator = separator
-        self.compactContent = compactContent
         self.primaryPane = primaryPane
         self.secondaryPane = secondaryPane
     }
@@ -156,34 +152,28 @@ public struct AdaptiveSplitContainer<Compact: View, Primary: View, Secondary: Vi
                 unfoldedSpacing: unfoldedSpacing,
                 layoutDirection: layoutDirection
             )
-            Group {
-                switch policy.mode {
-                case .compact:
-                    compactContent()
+            let mode = policy.mode
+            let (primaryWidth, primaryHeight, separatorWidth, separatorHeight): (CGFloat?, CGFloat?, CGFloat?, CGFloat?) = switch mode {
+            case .compact:
+                (nil, nil, nil, nil)
+            case let .horizontalSplit(width, spacing, _):
+                (width, nil, spacing, nil)
+            case let .verticalSplit(height, spacing):
+                (nil, height, nil, spacing)
+            }
+            let layout = primaryHeight == nil ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
+                if mode.isSplit {
+                    primaryPane(mode)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case let .horizontalSplit(primaryWidth, spacing, _):
-                    HStack(spacing: 0) {
-                        primaryPane(policy.mode)
-                            .frame(width: primaryWidth)
-                            .frame(maxHeight: .infinity)
-                        separator(policy.mode)
-                            .frame(width: spacing)
-                            .frame(maxHeight: .infinity)
-                        secondaryPane(policy.mode)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                case let .verticalSplit(primaryHeight, spacing):
-                    VStack(spacing: 0) {
-                        primaryPane(policy.mode)
-                            .frame(height: primaryHeight)
-                            .frame(maxWidth: .infinity)
-                        separator(policy.mode)
-                            .frame(height: spacing)
-                            .frame(maxWidth: .infinity)
-                        secondaryPane(policy.mode)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                        .frame(width: primaryWidth, height: primaryHeight)
+                    separator(mode)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(width: separatorWidth, height: separatorHeight)
                 }
+                // Keep the scrolling view's identity as its pane changes.
+                secondaryPane(mode)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: division)
         }

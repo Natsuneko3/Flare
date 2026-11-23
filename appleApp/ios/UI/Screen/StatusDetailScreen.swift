@@ -49,23 +49,6 @@ struct StatusDetailScreen: View {
                     EmptyView()
                 }
             },
-            compactContent: {
-                ZStack {
-                    UITimelineCollectionView(
-                        data: panePolicy.hidesCompactList ? nil : state.listState,
-                        detailStatusKey: statusKey,
-                        headerState: panePolicy.compactUsesHeaderState ? state.current : nil,
-                        leadingPosts: state.header,
-                        accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
-                        suppressInitialRefreshIndicator: true,
-                        contentKey: contentKey
-                    )
-                    .id("\(accountID):\(presenter.key):compact")
-                    .ignoresSafeArea(edges: .vertical)
-                    .modifier(TimelineListBackground(columnPolicy: .single))
-                    .frame(maxWidth: 600, alignment: .center)
-                }
-            },
             primaryPane: { mode in
                 let isVerticalSplit: Bool = {
                     if case .verticalSplit = mode { return true }
@@ -83,23 +66,29 @@ struct StatusDetailScreen: View {
                 .modifier(TimelineListBackground(columnPolicy: .single))
             },
             secondaryPane: { mode in
+                let compact = !mode.isSplit
                 let isVerticalSplit: Bool = {
                     if case .verticalSplit = mode { return true }
                     return false
                 }()
                 GeometryReader { paneProxy in
-                    let columnCount = TimelineColumnPolicy.adaptive.columnCount(for: paneProxy.size.width)
+                    let columnCount = compact ? 1 : TimelineColumnPolicy.adaptive.columnCount(for: paneProxy.size.width)
+                    let hidesList = compact ? panePolicy.hidesCompactList : panePolicy.hidesSplitSecondaryList
                     UITimelineCollectionView(
-                        data: panePolicy.hidesSplitSecondaryList ? nil : state.listState,
+                        data: hidesList ? nil : state.listState,
                         detailStatusKey: statusKey,
+                        headerState: compact && panePolicy.compactUsesHeaderState ? state.current : nil,
+                        leadingPosts: compact ? state.header : [],
                         columnCount: columnCount,
                         accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
                         suppressInitialRefreshIndicator: true,
                         contentKey: contentKey
                     )
-                    .id("\(accountID):\(presenter.key):secondary")
+                    .id("\(accountID):\(presenter.key):replies")
                     .ignoresSafeArea(edges: isVerticalSplit ? .bottom : .vertical)
                     .modifier(TimelineListBackground(columnPolicy: columnCount > 1 ? .adaptive : .single))
+                    .frame(maxWidth: compact ? 600 : .infinity)
+                    .frame(maxWidth: .infinity)
                 }
             }
         )

@@ -61,7 +61,8 @@ internal fun Comment.render(
     accountKey: MicroBlogKey,
     rootStatusId: String? = null,
     parentCommentKey: MicroBlogKey? = null,
-): UiTimelineV2 = renderStatusV2(accountKey, rootStatusId, parentCommentKey)
+    cachedClickEvent: ClickEvent? = null,
+): UiTimelineV2 = renderStatusV2(accountKey, rootStatusId, parentCommentKey, cachedClickEvent)
 
 internal fun Comment.extractStatusMid(rootStatusId: String? = null): String? =
     rootStatusId ?: status?.mid ?: analysis_extra
@@ -71,14 +72,6 @@ internal fun Comment.extractStatusMid(rootStatusId: String? = null): String? =
             if (pair.size == 2) pair[0] to pair[1] else null
         }?.toMap()
         ?.get("mid")
-
-internal fun Comment.renderRootComment(
-    accountKey: MicroBlogKey,
-    rootStatusId: String? = null,
-): UiTimelineV2 {
-    val effectiveRootId = extractStatusMid(rootStatusId)
-    return copy(comments = null, status = null).renderStatusV2(accountKey, effectiveRootId)
-}
 
 private fun vvoCommentRepliesRoute(
     accountKey: MicroBlogKey,
@@ -415,6 +408,7 @@ private fun Comment.renderStatusV2(
     accountKey: MicroBlogKey,
     rootStatusId: String? = null,
     parentCommentKey: MicroBlogKey? = null,
+    cachedClickEvent: ClickEvent? = null,
 ): UiTimelineV2 {
     val statusKey = MicroBlogKey(id = id, host = accountKey.host)
     val statusMid = extractStatusMid(rootStatusId)
@@ -544,10 +538,10 @@ private fun Comment.renderStatusV2(
             card = null,
             createdAt = createdAt?.toUi() ?: Clock.System.now().toUi(),
             clickEvent =
-                ClickEvent.Deeplink(
-                    if (status != null) {
+                cachedClickEvent ?: ClickEvent.Deeplink(
+                    if (parentCommentKey == null && status != null) {
                         DeeplinkRoute.Status.Detail(
-                            statusKey = status.renderStatusV2(accountKey).statusKey,
+                            statusKey = MicroBlogKey(status.id, accountKey.host),
                             accountType = AccountType.Specific(accountKey),
                         )
                     } else {

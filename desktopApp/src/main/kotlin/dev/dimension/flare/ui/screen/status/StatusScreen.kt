@@ -41,9 +41,8 @@ internal fun StatusScreen(
         statusPresenter(accountType = accountType, statusKey = statusKey)
     }
 
-    val compactListState = rememberLazyStaggeredGridState()
+    val replyListState = rememberLazyStaggeredGridState()
     val primaryListState = rememberLazyStaggeredGridState()
-    val secondaryListState = rememberLazyStaggeredGridState()
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter,
@@ -53,17 +52,17 @@ internal fun StatusScreen(
             unfoldedGap = 8.dp,
             contentPadding = LocalWindowPadding.current,
             compactContent = { padding ->
-                RegisterTabCallback(compactListState, onRefresh = state::refresh)
+                RegisterTabCallback(replyListState, onRefresh = state::refresh)
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.TopCenter,
                 ) {
-                    FlareScrollBar(compactListState) {
+                    FlareScrollBar(replyListState) {
                         LazyStatusVerticalStaggeredGrid(
                             modifier = Modifier.widthIn(max = 480.dp),
                             columns = StaggeredGridCells.Fixed(1),
                             contentPadding = padding,
-                            state = compactListState,
+                            state = replyListState,
                         ) {
                             statusDetail(state.state, statusKey)
                         }
@@ -87,12 +86,12 @@ internal fun StatusScreen(
                 }
             },
             secondaryPane = { _, padding ->
-                RegisterTabCallback(secondaryListState, onRefresh = state::refresh)
-                FlareScrollBar(secondaryListState) {
+                RegisterTabCallback(replyListState, onRefresh = state::refresh)
+                FlareScrollBar(replyListState) {
                     LazyStatusVerticalStaggeredGrid(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = padding,
-                        state = secondaryListState,
+                        state = replyListState,
                     ) {
                         statusDetailBodyItems(
                             state = state.state,

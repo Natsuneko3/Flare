@@ -392,7 +392,7 @@ class VVORenderTest {
 
         val floorComment =
             JSON.decodeFromString<Comment>(
-                """{"id":"801","comments":[{"id":"802","text":"子回复"}]}""",
+                """{"id":"801","comments":[{"id":"802","text":"子回复","status":{"id":"51001","mid":"51001"}}]}""",
             )
         val renderedFloor = assertIs<UiTimelineV2.TimelinePostItem>(floorComment.render(accountKey, rootStatusId = "51001"))
         val expectedPage =

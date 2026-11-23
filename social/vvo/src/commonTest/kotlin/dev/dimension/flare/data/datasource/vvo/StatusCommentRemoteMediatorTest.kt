@@ -195,7 +195,7 @@ class StatusCommentRemoteMediatorTest {
         }
 
     @Test
-    fun commentRepliesTimelinePageLoadsRootWithoutQuotesAndChildrenInOneRequest() =
+    fun commentRepliesTimelinePageLoadsRootAndChildrenInOneRequest() =
         runTest {
             var hotFlowChildRequests = 0
             val source =
@@ -226,9 +226,8 @@ class StatusCommentRemoteMediatorTest {
             assertEquals(1, hotFlowChildRequests)
             assertEquals("12345", page.nextKey)
             assertEquals(2, page.data.size)
-            val root = assertIs<UiTimelineV2.Post>(page.data[0])
+            val root = assertNotNull(page.data[0].contentPostOrNull())
             assertEquals("900", root.statusKey.id)
-            assertTrue(root.references.isEmpty())
             val child = assertNotNull(page.data[1].contentPostOrNull())
             assertEquals("901", child.statusKey.id)
             for (item in listOf(root, child)) {
@@ -240,6 +239,27 @@ class StatusCommentRemoteMediatorTest {
                     )
                 assertEquals(statusKey.id, replyRoute.rootId)
             }
+        }
+
+    @Test
+    fun freshThreadRootRetainsTheCachedNotificationTargetWhenTheResponseOmitsTheOriginalPost() =
+        runTest {
+            val cached =
+                dev.dimension.flare.common.JSON
+                    .decodeFromString<dev.dimension.flare.data.network.vvo.model.Comment>(
+                        """{"id":"900","text":"notification","status":{"id":"51001","mid":"51001"}}""",
+                    ).render(accountKey)
+                    .contentPostOrNull()!!
+            val loader =
+                CommentChildRemoteMediator(
+                    service = service { """{"ok":1,"rootComment":[{"id":"900","text":"updated"}],"data":[]}""" },
+                    commentKey = cached.statusKey,
+                    accountKey = accountKey,
+                    cachedRootComment = { cached },
+                )
+            val root = assertNotNull(loader.load(20, PagingRequest.Refresh).data.single().contentPostOrNull())
+            val route = assertIs<DeeplinkRoute.Status.Detail>(DeeplinkRoute.parse(assertIs<ClickEvent.Deeplink>(root.clickEvent).url))
+            assertEquals(MicroBlogKey("51001", accountKey.host), route.statusKey)
         }
 
     @Test
@@ -275,7 +295,7 @@ class StatusCommentRemoteMediatorTest {
             assertNull(emptyRefresh.nextKey)
             val fallbackRoot = assertIs<UiTimelineV2.Post>(emptyRefresh.data.single())
             assertEquals("900", fallbackRoot.statusKey.id)
-            assertTrue(fallbackRoot.references.isEmpty())
+            assertEquals(cachedWithPreview.references, fallbackRoot.references)
 
             val stalledAppend = loader.load(20, PagingRequest.Append("42"))
             assertEquals("902", stalledAppend.data.single().contentPostOrNull()?.statusKey?.id)

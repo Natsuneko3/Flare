@@ -73,6 +73,30 @@ class AdaptiveSplitLayoutTest {
     }
 
     @Test
+    fun deckColumnStaysCompactWithATabletopHinge() {
+        var splitEnabled by mutableStateOf(true)
+        composeRule.setContent {
+            CompositionLocalProvider(LocalAdaptiveSplitEnabled provides splitEnabled) {
+                Box(Modifier.size(width = 360.dp, height = 700.dp)) {
+                    AdaptiveSplitLayout(
+                        primaryWidthStrategy = PrimaryWidthStrategy.PostDetailDefault,
+                        isBigScreen = false,
+                        hinge = FoldHinge(Rect(0f, 330f, 1_000f, 330f), isVertical = false),
+                        compactContent = { Box(Modifier.fillMaxSize().testTag("compact")) },
+                        primaryPane = { _, _ -> Box(Modifier.fillMaxSize().testTag("primary")) },
+                        secondaryPane = { _, _ -> Box(Modifier.fillMaxSize().testTag("secondary")) },
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("secondary").assertExists()
+        composeRule.runOnIdle { splitEnabled = false }
+        composeRule.onNodeWithTag("compact").assertExists()
+        composeRule.onNodeWithTag("secondary").assertDoesNotExist()
+    }
+
+    @Test
     fun horizontalTabletopFoldPlacesTopAndBottomPanesWithPartitionedPadding() {
         composeRule.setContent {
             CompositionLocalProvider(

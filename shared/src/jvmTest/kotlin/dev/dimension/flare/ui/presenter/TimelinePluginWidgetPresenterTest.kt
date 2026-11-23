@@ -22,6 +22,7 @@ import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.PostDetailTab
 import dev.dimension.flare.data.datasource.microblog.PostDetailTabs
 import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.TimelinePageDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.HomeTimelineRefreshSessions
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
@@ -69,6 +70,7 @@ import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.home.TimelinePresenter
 import dev.dimension.flare.ui.presenter.status.StatusContextPresenter
 import dev.dimension.flare.ui.render.toUi
+import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.unavailableAccountService
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -109,6 +111,57 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimelinePluginWidgetPresenterTest {
+    @Test
+    fun timelinePageKeepsAFocusedCommentWhileFilteringItsReplies() =
+        withPresenterHarness {
+            localFilterRepository
+                .add("muted topic", forTimeline = true, forNotification = false, forSearch = false, expiredAt = null, isRegex = false)
+                .join()
+            val focused = createSamplePost(id = "floor", text = "muted topic").copy(accountType = accountType)
+            val filtered = createSamplePost(id = "filtered", text = "muted topic").copy(accountType = accountType)
+            val visible = createSamplePost(id = "visible", text = "Visible reply").copy(accountType = accountType)
+            val thread =
+                UiTimelineV2.TimelinePostItem(
+                    post = focused,
+                    presentation = UiTimelineV2.PostPresentation(quotes = persistentListOf(visible)),
+                )
+            attachDataSource(
+                object : MicroblogDataSource by UnavailableMicroblogDataSource,
+                    TimelinePageDataSource {
+                    override val pluginId = TEST_PLATFORM
+                    override val packageHash = ""
+                    override val revision = MutableStateFlow(0L)
+
+                    override fun timelinePage(
+                        pageId: String,
+                        parameters: Map<String, String>,
+                    ): RemoteLoader<UiTimelineV2> =
+                        object : CacheableRemoteLoader<UiTimelineV2> {
+                            override val pagingKey = "comment-thread"
+                            override val collapseReplyChains = false
+
+                            override suspend fun load(
+                                pageSize: Int,
+                                request: PagingRequest,
+                            ): PagingResult<UiTimelineV2> = PagingResult(data = listOf(thread, filtered, visible), endOfPaginationReached = true)
+                        }
+                },
+            )
+            val page =
+                DeeplinkRoute.Timeline.Page(
+                    accountType = accountType,
+                    pluginId = TEST_PLATFORM,
+                    platformId = TEST_PLATFORM,
+                    packageHash = "",
+                    pageId = "comments",
+                    title = UiText.Raw("Comments"),
+                    detailStatusKey = focused.statusKey,
+                )
+            val list = observe(TimelinePagePresenter(page)).await { it.listState is PagingState.Success }.listState as PagingState.Success
+            assertEquals(listOf(focused.statusKey, visible.statusKey), (0 until list.itemCount).map { list.peek(it)?.statusKey })
+            assertTrue((list.peek(0) as UiTimelineV2.TimelinePostItem).presentation.quotes.isEmpty())
+        }
+
     @Test
     fun emitsTimelineImmediatelyAndUpdatesPostReactivelyIncludingRepostsWhenRepostDisplayPostMatches() =
         runTest {

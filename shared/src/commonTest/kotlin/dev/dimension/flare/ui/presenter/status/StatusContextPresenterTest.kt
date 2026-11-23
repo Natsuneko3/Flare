@@ -15,6 +15,7 @@ import kotlinx.collections.immutable.toPersistentList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -188,6 +189,36 @@ class StatusContextPresenterTest {
             )
         assertEquals<List<UiTimelineV2>>(listOf(focal), resolvedSingle.header)
         assertIs<PagingState.Empty<UiTimelineV2>>(resolvedSingle.listState)
+    }
+
+    @Test
+    fun untabbedRepliesOnlyContextRetainsItsPagingWhenDetailSuppliesThePost() {
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val reply = createPost("reply", "2024-01-01T00:02:00Z")
+        for (finished in listOf(false, true)) {
+            val replies =
+                PagingState.Success.ImmutableSuccess<UiTimelineV2>(
+                    persistentListOf(reply),
+                    appendState = LoadState.NotLoading(endOfPaginationReached = finished),
+                )
+            val resolved = resolveUntabbedContextDetail(detailKey, replies, null, UiState.Success(focal)) {}
+
+            assertEquals<List<UiTimelineV2>>(listOf(focal), resolved.header)
+            assertSame(replies, resolved.listState)
+        }
+    }
+
+    @Test
+    fun untabbedContextCanHaveNoRepliesWhenDetailSuppliesThePost() {
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val empty = PagingState.Empty<UiTimelineV2> {}
+        val waitingForDetail = resolveUntabbedContextDetail(detailKey, empty, null, UiState.Loading()) {}
+        val resolved = resolveUntabbedContextDetail(detailKey, empty, null, UiState.Success(focal)) {}
+
+        assertIs<UiState.Loading<UiTimelineV2>>(waitingForDetail.current)
+        assertIs<PagingState.Loading<UiTimelineV2>>(waitingForDetail.listState)
+        assertEquals<List<UiTimelineV2>>(listOf(focal), resolved.header)
+        assertIs<PagingState.Empty<UiTimelineV2>>(resolved.listState)
     }
 
     @Test

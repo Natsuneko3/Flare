@@ -404,7 +404,7 @@ public class StatusContextPresenter(
                 page,
             ) { timeline(page.tab.loader(page.filterId), seed = false, context = page.tab.includesPostContext) }.body()
         val sections =
-            if (page.tab.includesPostContext) timeline.listState.splitPostDetail(statusKey, timeline::refreshAsync) else null
+            if (page.tab.includesPostContext) timeline.listState.splitPostDetail(statusKey, onRefresh = timeline::refreshAsync) else null
         if (sections?.appendFrom != null) {
             LaunchedEffect(timeline.listState) {
                 (timeline.listState as? PagingState.Success)?.get(sections.appendFrom)
@@ -521,7 +521,8 @@ internal fun resolveUntabbedContextDetail(
             appendFrom = null,
         )
     }
-    val sections = timelineListState.splitPostDetail(statusKey, onRefresh)
+    val canLoadPostSeparately = cachedPost != null || fallbackCurrentPost !is UiState.Error
+    val sections = timelineListState.splitPostDetail(statusKey, allowMissingPost = canLoadPostSeparately, onRefresh = onRefresh)
     val contextPost = sections.post
     val contextError = sections.children as? PagingState.Error
     val current =
@@ -555,13 +556,15 @@ internal fun resolveUntabbedContextDetail(
 
 internal fun PagingState<UiTimelineV2>.splitPostDetail(
     statusKey: MicroBlogKey,
+    allowMissingPost: Boolean = false,
     onRefresh: () -> Unit,
 ): PostDetailSections {
     fun missingPost() = PagingState.Error<UiTimelineV2>(IllegalStateException("Post context does not contain $statusKey"), onRefresh)
-    if (this is PagingState.Empty) return PostDetailSections(children = missingPost())
+    if (this is PagingState.Empty && !allowMissingPost) return PostDetailSections(children = missingPost())
     if (this !is PagingState.Success) return PostDetailSections(children = this)
 
     val anchor = (0 until itemCount).firstOrNull { peek(it)?.statusKey == statusKey }
+    if (anchor == null && allowMissingPost) return PostDetailSections(children = this)
     val sourceAppend = sourceAppendState
     val append = appendState
     val error = (sourceAppend as? LoadState.Error) ?: (append as? LoadState.Error)

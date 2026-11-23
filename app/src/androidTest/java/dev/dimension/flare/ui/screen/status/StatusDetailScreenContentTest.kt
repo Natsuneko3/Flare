@@ -1,6 +1,9 @@
 package dev.dimension.flare.ui.screen.status
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -10,13 +13,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ComposeUiFlags
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isPopup
@@ -26,6 +37,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.dimension.flare.common.collectPagingState
@@ -41,7 +56,7 @@ import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.adaptive.FoldHinge
 import dev.dimension.flare.ui.component.adaptive.LocalFoldHingeOverride
 import dev.dimension.flare.ui.component.platform.LocalWindowSizeClass
-import dev.dimension.flare.ui.component.platform.WindowSizeClass
+import dev.dimension.flare.ui.component.platform.calculateWindowSizeClass
 import dev.dimension.flare.ui.component.resolveText
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiHandle
@@ -71,13 +86,15 @@ import org.junit.runner.RunWith
 import java.io.File
 import kotlin.time.Instant
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class StatusDetailScreenContentTest {
     @get:Rule val compose = createComposeRule()
 
     private val originalMediaQueryIntegration = ComposeUiFlags.isMediaQueryIntegrationEnabled
     private var renderedLabels = emptyMap<UiStrings, String>()
+    private val defaultSize = DpSize(410.dp, 860.dp)
+    private val verticalScroll = hasScrollAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)
 
     init {
         ComposeUiFlags.isMediaQueryIntegrationEnabled = true
@@ -305,39 +322,68 @@ class StatusDetailScreenContentTest {
         val rootText = "Half-folded and big-screen layouts keep the post beside or above comments."
         val replyText = "Independent scroll pane for replies."
         val root = post("Bluesky", "bsky.social", "fold-post", "Maya Patel", rootText)
-        val windowSizeClass = mutableStateOf<WindowSizeClass?>(WindowSizeClass.Expanded)
-        val foldHinge = mutableStateOf<FoldHinge?>(null)
+        val paneWidth = mutableStateOf(940.dp)
+        val tabletop = mutableStateOf(false)
         show(
             root = root,
             primaryTab = UiStrings.Replies,
             secondaryTab = UiStrings.Quotes,
             filterOptions = listOf(UiStrings.Relevance),
             contents = mapOf(UiStrings.Relevance to page(root, "replies", replyText, "Second reply")),
-            windowSizeClass = { windowSizeClass.value },
-            foldHinge = { foldHinge.value },
+            size = DpSize(940.dp, 860.dp),
+            paneWidth = { paneWidth.value },
+            tabletop = { tabletop.value },
         )
 
         compose.onNodeWithText(rootText).assertIsDisplayed()
         compose.onNodeWithText(replyText).assertIsDisplayed()
         val scrollContainers =
             compose
-                .onAllNodes(hasScrollAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+                .onAllNodes(verticalScroll)
                 .fetchSemanticsNodes()
         assertEquals(2, scrollContainers.size)
 
         compose.runOnIdle {
-            windowSizeClass.value = WindowSizeClass.Medium
-            foldHinge.value = FoldHinge(boundsInWindow = Rect(0f, 500f, 1080f, 520f), isVertical = false)
+            paneWidth.value = defaultSize.width
+            tabletop.value = true
         }
         compose.onNodeWithText(rootText).assertIsDisplayed()
         compose.onNodeWithText(replyText).assertIsDisplayed()
         assertEquals(
             2,
             compose
-                .onAllNodes(hasScrollAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+                .onAllNodes(verticalScroll)
                 .fetchSemanticsNodes()
                 .size,
         )
+    }
+
+    @Test
+    fun movingThePostBetweenPanesKeepsTheVisibleReplyAtTheSameOffset() {
+        val root = post("Bluesky", "bsky.social", "resize-post", "Maya Patel", "Post above the replies in compact mode.")
+        val replies = List(30) { post(root.platformId, root.statusKey.host, "reply-$it", "Alex Moore", "Reply number $it.") }
+        val width = mutableStateOf(defaultSize.width)
+        show(
+            root = root,
+            primaryTab = UiStrings.Replies,
+            filterOptions = listOf(UiStrings.Relevance),
+            contents = mapOf(UiStrings.Relevance to replies),
+            size = DpSize(940.dp, 860.dp),
+            paneWidth = { width.value },
+        )
+        compose.onNode(verticalScroll).performSemanticsAction(SemanticsActions.ScrollToIndex) { it(8) }
+        val replyText = "Reply number 6."
+        val reply = compose.onNodeWithText(replyText).assertIsDisplayed()
+        val replyPane = compose.onNode(verticalScroll and hasAnyDescendant(hasText(replyText)))
+
+        fun replyOffset() = reply.fetchSemanticsNode().boundsInRoot.top - replyPane.fetchSemanticsNode().boundsInRoot.top
+
+        val initialOffset = replyOffset()
+        for (newWidth in listOf(940.dp, defaultSize.width)) {
+            compose.runOnIdle { width.value = newWidth }
+            reply.assertIsDisplayed()
+            assertEquals(initialOffset, replyOffset(), 2f)
+        }
     }
 
     private fun show(
@@ -349,8 +395,9 @@ class StatusDetailScreenContentTest {
         additionalTabs: List<UiStrings> = emptyList(),
         parents: List<UiTimelineV2> = emptyList(),
         isPostLoaded: () -> Boolean = { true },
-        windowSizeClass: () -> WindowSizeClass? = { null },
-        foldHinge: () -> FoldHinge? = { null },
+        size: DpSize = defaultSize,
+        paneWidth: () -> Dp = { size.width },
+        tabletop: () -> Boolean = { false },
     ) {
         val flows = contents.mapValues { (_, posts) -> flowOf(posts) }
         val loading = emptyFlow<List<UiTimelineV2>>()
@@ -390,22 +437,34 @@ class StatusDetailScreenContentTest {
 
                     override suspend fun refresh() = Unit
                 }
-            val overriddenSizeClass = windowSizeClass()
-            val overriddenHinge = foldHinge()
-            val providers =
-                buildList {
-                    add(LocalGlobalAppearance provides GlobalAppearance(bottomBarBehavior = BottomBarBehavior.AlwaysShow))
-                    add(LocalTimelineAppearance provides TimelineAppearance(showTranslateButton = false))
-                    if (overriddenSizeClass != null) {
-                        add(LocalWindowSizeClass provides overriddenSizeClass)
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
+                val width = paneWidth()
+                var bounds by remember { mutableStateOf(Rect.Zero) }
+                Box(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier.size(width, size.height).onGloballyPositioned {
+                            bounds = Rect(it.positionInWindow(), it.size.toSize())
+                        },
+                    ) {
+                        val hinge =
+                            if (tabletop() && bounds.height > 0f) {
+                                val halfGap = with(LocalDensity.current) { 6.dp.toPx() }
+                                FoldHinge(Rect(bounds.left, bounds.center.y - halfGap, bounds.right, bounds.center.y + halfGap), false)
+                            } else {
+                                null
+                            }
+                        CompositionLocalProvider(
+                            LocalGlobalAppearance provides GlobalAppearance(bottomBarBehavior = BottomBarBehavior.AlwaysShow),
+                            LocalTimelineAppearance provides TimelineAppearance(showTranslateButton = false),
+                            LocalFoldHingeOverride provides hinge,
+                        ) {
+                            FlareTheme(darkTheme = false, dynamicColor = false) {
+                                CompositionLocalProvider(LocalWindowSizeClass provides calculateWindowSizeClass(width)) {
+                                    StatusDetailScreenContent(root.statusKey, state, onBack = {}, isRefreshing = false, onRefresh = {})
+                                }
+                            }
+                        }
                     }
-                    if (overriddenHinge != null) {
-                        add(LocalFoldHingeOverride provides overriddenHinge)
-                    }
-                }.toTypedArray()
-            CompositionLocalProvider(*providers) {
-                FlareTheme(darkTheme = false, dynamicColor = false) {
-                    StatusDetailScreenContent(root.statusKey, state, onBack = {}, isRefreshing = false, onRefresh = {})
                 }
             }
         }
