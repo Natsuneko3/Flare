@@ -933,4 +933,8 @@
     <string name="manga_reader_next_chapter">下一話</string>
     <string name="manga_reader_page_position">頁面位置</string>
     <string name="manga_reader_page_of">第 %1$d 頁，共 %2$d 頁</string>
+    <string name="manga_reader_chapters">章節</string>
+    <string name="manga_reader_constrain_webtoon_width">限制條漫寬度</string>
+    <string name="manga_reader_sort_newest_first">最新優先</string>
+    <string name="manga_reader_sort_oldest_first">最早優先</string>
 </resources>

@@ -1,8 +1,6 @@
 package dev.dimension.flare.ui.route
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -18,6 +16,7 @@ import dev.dimension.flare.flare_logo
 import dev.dimension.flare.ui.component.PlatformTitleBar
 import dev.dimension.flare.ui.component.PlatformWindow
 import dev.dimension.flare.ui.route.WindowSceneStrategy.Companion.window
+import dev.dimension.flare.ui.screen.manga.shouldCloseDesktopWindowOnEscape
 import dev.dimension.flare.ui.theme.FlareTheme
 import dev.dimension.flare.ui.theme.ProvideComposeWindow
 import dev.dimension.flare.ui.theme.ProvideNucleusDecoratedWindowTheme
@@ -52,7 +51,7 @@ internal class WindowScene<T : Any>(
                 title = stringResource(Res.string.app_name),
                 icon = painterResource(Res.drawable.flare_logo),
                 onKeyEvent = {
-                    if (it.key == Key.Escape) {
+                    if (shouldCloseDesktopWindowOnEscape(it)) {
                         onBack.invoke()
                         true
                     } else {

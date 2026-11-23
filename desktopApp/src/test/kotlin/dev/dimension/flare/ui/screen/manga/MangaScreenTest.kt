@@ -9,17 +9,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
 import coil3.ColorImage
@@ -57,6 +66,7 @@ import dev.dimension.flare.ui.presenter.manga.MangaReaderPresenter
 import dev.dimension.flare.ui.presenter.manga.MangaTranslatePresenter
 import dev.dimension.flare.ui.presenter.manga.PageMediaStatus
 import dev.dimension.flare.ui.presenter.manga.PrimaryReadTarget
+import dev.dimension.flare.ui.presenter.manga.ReaderChapterItem
 import dev.dimension.flare.ui.presenter.manga.ReaderPageState
 import dev.dimension.flare.ui.presenter.manga.ReaderSlot
 import dev.dimension.flare.ui.presenter.manga.UiMangaChapterItem
@@ -65,6 +75,7 @@ import dev.dimension.flare.ui.presenter.media.ImageTranslationPresenter
 import dev.dimension.flare.ui.render.toUiPlainText
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
+import dev.dimension.flare.ui.route.TopLevelBackStack
 import dev.dimension.flare.ui.theme.FlareTheme
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -77,7 +88,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
-@OptIn(coil3.annotation.DelicateCoilApi::class)
+@OptIn(ExperimentalTestApi::class, coil3.annotation.DelicateCoilApi::class)
 class MangaScreenTest {
     @get:Rule
     val compose = createComposeRule()
@@ -831,6 +842,240 @@ class MangaScreenTest {
         }
         compose.onNodeWithTag("manga_chapter_row_ch-1").assertDoesNotExist()
     }
+
+    @Test
+    fun desktopReaderCoordinatorReusesSameMangaSessionAndSurvivesBackStackChanges() {
+        val coordinator = DesktopMangaReaderWindowCoordinator()
+        val accountA = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
+        val manga1 = MicroBlogKey("manga-1", "manga.example")
+        val manga2 = MicroBlogKey("manga-2", "manga.example")
+
+        coordinator.open(
+            Route.Manga.Reader(
+                accountType = accountA,
+                mangaKey = manga1,
+                chapterId = "ch-1",
+                initialPage = null,
+            ),
+        )
+        assertEquals(1, coordinator.sessions.size)
+        val firstSession = coordinator.sessions.single()
+        val initialFocusToken = firstSession.focusRequestToken
+        assertEquals("ch-1", firstSession.chapterId)
+        assertEquals(null, firstSession.initialPage)
+
+        coordinator.open(
+            Route.Manga.Reader(
+                accountType = accountA,
+                mangaKey = manga1,
+                chapterId = "ch-2",
+                initialPage = 3,
+            ),
+        )
+        assertEquals(1, coordinator.sessions.size)
+        val updatedSession = coordinator.sessions.single()
+        assertEquals("ch-2", updatedSession.chapterId)
+        assertEquals(3, updatedSession.initialPage)
+        assertTrue(
+            "Expected focusRequestToken to increment ($initialFocusToken -> ${updatedSession.focusRequestToken})",
+            updatedSession.focusRequestToken > initialFocusToken,
+        )
+        assertTrue("Expected requestNonce > 0 on reuse, got ${updatedSession.requestNonce}", updatedSession.requestNonce > 0)
+
+        coordinator.open(
+            Route.Manga.Reader(
+                accountType = accountA,
+                mangaKey = manga2,
+                chapterId = "ch-1",
+                initialPage = null,
+            ),
+        )
+        assertEquals(2, coordinator.sessions.size)
+
+        val homeRoute = Route.Home(AccountType.Guest)
+        val backStack =
+            TopLevelBackStack(
+                startKey = homeRoute,
+                topLevelRoutes = listOf(homeRoute, Route.Discover),
+            )
+        backStack.push(Route.Settings)
+        backStack.push(Route.Discover)
+        backStack.pop()
+        assertEquals(2, coordinator.sessions.size)
+
+        coordinator.close(SessionKey(accountType = accountA, mangaKey = manga1))
+        assertEquals(1, coordinator.sessions.size)
+        assertEquals(manga2, coordinator.sessions.single().mangaKey)
+
+        coordinator.close(SessionKey(accountType = accountA, mangaKey = manga2))
+        assertTrue(coordinator.sessions.isEmpty())
+    }
+
+    @Test
+    fun escapeKeyResetsZoomWithoutTriggeringWindowCloseOnKeyUp() {
+        val fakeReaderState = FakeDesktopReaderState(pageCount = 3, initialDirection = MangaReadingDirection.Rtl)
+        var windowClosedCount = 0
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(900.dp, 700.dp)
+                            .onPreviewKeyEvent { false }
+                            .onKeyEvent { event ->
+                                if (shouldCloseDesktopWindowOnEscape(event)) {
+                                    windowClosedCount++
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                ) {
+                    MangaReaderContent(
+                        state = fakeReaderState,
+                        onBack = { windowClosedCount++ },
+                        isStandaloneWindow = true,
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("manga_reader_back").assertDoesNotExist()
+
+        compose.onNodeWithTag("manga_reader_page_0").performTouchInput {
+            doubleClick(center)
+        }
+        compose.runOnIdle {}
+        val zoomedPosition = compose.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot
+        assertTrue(
+            "Expected double-click to zoom page 0 to 2.5x, got positionInRoot=$zoomedPosition",
+            zoomedPosition.x < -100f && zoomedPosition.y < -100f,
+        )
+
+        compose.onNodeWithTag("manga_reader_canvas").performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.runOnIdle {
+            assertEquals(0, windowClosedCount)
+        }
+        val resetPosition = compose.onNodeWithTag("manga_reader_page_0").fetchSemanticsNode().positionInRoot
+        assertEquals(0f, resetPosition.x, 2f)
+        assertEquals(0f, resetPosition.y, 2f)
+
+        compose.onNodeWithTag("manga_reader_canvas").performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.runOnIdle {
+            assertEquals(1, windowClosedCount)
+        }
+    }
+
+    @Test
+    fun desktopReaderChapterFlyoutAndWideWebtoonSettingSwitchChaptersAndWidthMode() {
+        val chapterGroups =
+            persistentListOf(
+                UiMangaChapterGroup(
+                    id = "tankobon",
+                    title = UiText.Raw("Tankobon"),
+                    chapters =
+                        persistentListOf(
+                            UiMangaChapter("ch-1", "Chapter 1: Dawn", null, null, locked = false, url = null),
+                            UiMangaChapter("ch-2", "Chapter 2: Horizon", null, null, locked = false, url = null),
+                        ),
+                ),
+                UiMangaChapterGroup(
+                    id = "serial",
+                    title = UiText.Raw("Serial"),
+                    chapters =
+                        persistentListOf(
+                            UiMangaChapter("ch-s1", "Episode 1", null, null, locked = false, url = null),
+                        ),
+                ),
+            )
+        val fakeReaderState =
+            FakeDesktopReaderState(
+                pageCount = 4,
+                initialDirection = MangaReadingDirection.Rtl,
+                chapterGroups = chapterGroups,
+            )
+        var contextCopiedPageIndex: Int? = null
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                Box(Modifier.size(900.dp, 700.dp)) {
+                    MangaReaderContent(
+                        state = fakeReaderState,
+                        onBack = {},
+                        onSharePage = { _, _, idx -> contextCopiedPageIndex = idx },
+                        onSavePage = { _, _, _ -> },
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("manga_reader_back").assertIsDisplayed()
+        compose.onNodeWithTag("manga_reader_chapters_button").performClick()
+        compose.onNodeWithText("Tankobon").assertIsDisplayed()
+        compose.onNodeWithText("Serial").assertIsDisplayed()
+
+        compose.onNodeWithText("Serial").performClick()
+        compose.runOnIdle {
+            assertEquals("serial", fakeReaderState.selectedChapterGroupId)
+        }
+        compose.onNodeWithText("Episode 1").assertIsDisplayed()
+
+        compose.onNodeWithText("Tankobon").performClick()
+        compose.runOnIdle {
+            assertEquals("tankobon", fakeReaderState.selectedChapterGroupId)
+        }
+
+        val initialSortDescending = fakeReaderState.chapterSortDescending
+        compose.onNodeWithTag("manga_reader_chapter_sort_toggle").performClick()
+        compose.runOnIdle {
+            assertEquals(!initialSortDescending, fakeReaderState.chapterSortDescending)
+        }
+
+        compose.onNodeWithTag("manga_reader_chapter_item_ch-2").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf("ch-2"), fakeReaderState.selectedChapterIds)
+        }
+
+        compose.runOnIdle {
+            fakeReaderState.setDirection(MangaReadingDirection.Webtoon)
+        }
+        compose.onNodeWithTag("manga_reader_settings_button").performClick()
+        compose.onNodeWithText("Constrain webtoon width").assertIsDisplayed()
+        compose.onNodeWithTag("manga_reader_constrain_webtoon_switcher").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertFalse(fakeReaderState.webtoonConstrainWidthOnWideScreen)
+        }
+
+        // Open flyout suppresses 2500ms auto-hide
+        compose.mainClock.advanceTimeBy(3_000)
+        compose.onNodeWithTag("manga_reader_chapters_button").assertIsDisplayed()
+
+        // Closing flyout allows HUD to auto-hide after 2500ms of pointer inactivity, and mouse motion reveals it again
+        compose.onNodeWithTag("manga_reader_canvas").performMouseInput {
+            click(Offset(50f, 500f))
+        }
+        compose.mainClock.advanceTimeBy(3_000)
+        compose.onNodeWithTag("manga_reader_collapsed_page_badge").assertIsDisplayed()
+
+        compose.onNodeWithTag("manga_reader_canvas").performMouseInput {
+            moveTo(Offset(120f, 220f))
+        }
+        compose.onNodeWithTag("manga_reader_chapters_button").assertIsDisplayed()
+
+        // Right-clicking ready page opens ContextMenuArea and copies that page
+        compose.onNodeWithTag("manga_reader_page_0").performMouseInput {
+            rightClick(center)
+        }
+        compose.onNodeWithText("Copy page image").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(0, contextCopiedPageIndex)
+        }
+    }
 }
 
 private class FakeMangaDetailState(
@@ -897,10 +1142,11 @@ private class FakeDesktopReaderState(
     pageCount: Int,
     initialDirection: MangaReadingDirection,
     override val chapterUrl: String? = "https://manga.example/ch/1",
+    override val chapterGroups: ImmutableList<UiMangaChapterGroup> = persistentListOf(),
 ) : MangaReaderPresenter.State {
     override val mangaTitle: String = "Starlight Odyssey"
     override val chapterTitle: String = "Chapter 1"
-    override val activeChapterId: String = "ch-1"
+    override var activeChapterId: String by mutableStateOf("ch-1")
     override val loadState: UiState<Unit> = UiState.Success(Unit)
     override val pages: ImmutableList<ReaderPageState> =
         (0 until pageCount)
@@ -919,9 +1165,28 @@ private class FakeDesktopReaderState(
     private var _direction by mutableStateOf(initialDirection)
     private var _doublePageSpread by mutableStateOf(false)
     private var _spreadCoverSinglePage by mutableStateOf(true)
+    private var _webtoonConstrainWidthOnWideScreen by mutableStateOf(true)
     override val direction: MangaReadingDirection get() = _direction
     override val doublePageSpread: Boolean get() = _doublePageSpread
     override val spreadCoverSinglePage: Boolean get() = _spreadCoverSinglePage
+    override val webtoonConstrainWidthOnWideScreen: Boolean get() = _webtoonConstrainWidthOnWideScreen
+    override var selectedChapterGroupId: String? by mutableStateOf(chapterGroups.firstOrNull()?.id)
+    override var chapterSortDescending: Boolean by mutableStateOf(true)
+    override val chapterItems: ImmutableList<ReaderChapterItem>
+        get() {
+            val group = chapterGroups.firstOrNull { it.id == selectedChapterGroupId } ?: return persistentListOf()
+            val ordered = if (chapterSortDescending) group.chapters.asReversed() else group.chapters
+            return ordered
+                .map { chapter ->
+                    ReaderChapterItem(
+                        chapter = chapter,
+                        isCurrent = chapter.id == activeChapterId,
+                        isRead = false,
+                        lastPageIndex = 0,
+                    )
+                }.toImmutableList()
+        }
+    val selectedChapterIds = mutableListOf<String>()
     override val previousBoundary: ChapterBoundary = ChapterBoundary.None
     override val nextBoundary: ChapterBoundary = ChapterBoundary.None
     override val prefetchMedia: ImmutableList<UiMedia.Image> = persistentListOf()
@@ -990,5 +1255,22 @@ private class FakeDesktopReaderState(
 
     override fun setSpreadCoverSinglePage(enabled: Boolean) {
         _spreadCoverSinglePage = enabled
+    }
+
+    override fun selectChapterGroup(groupId: String) {
+        selectedChapterGroupId = groupId
+    }
+
+    override fun toggleChapterSort() {
+        chapterSortDescending = !chapterSortDescending
+    }
+
+    override fun selectChapter(chapterId: String) {
+        selectedChapterIds += chapterId
+        activeChapterId = chapterId
+    }
+
+    override fun setWebtoonConstrainWidthOnWideScreen(enabled: Boolean) {
+        _webtoonConstrainWidthOnWideScreen = enabled
     }
 }

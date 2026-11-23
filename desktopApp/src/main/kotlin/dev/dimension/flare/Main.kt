@@ -1,6 +1,7 @@
 package dev.dimension.flare
 
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ExperimentalComposeApi
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,6 +29,9 @@ import dev.dimension.flare.ui.component.PlatformTitleBar
 import dev.dimension.flare.ui.component.PlatformWindow
 import dev.dimension.flare.ui.component.proxyImageFetcherFactory
 import dev.dimension.flare.ui.component.status.ProvideDesktopTimelineMediaActions
+import dev.dimension.flare.ui.screen.manga.DesktopMangaReaderWindowCoordinator
+import dev.dimension.flare.ui.screen.manga.DesktopMangaReaderWindowsHost
+import dev.dimension.flare.ui.screen.manga.LocalDesktopMangaReaderWindowCoordinator
 import dev.dimension.flare.ui.theme.FlareTheme
 import dev.dimension.flare.ui.theme.ProvideComposeWindow
 import dev.dimension.flare.ui.theme.ProvideThemeSettings
@@ -95,59 +99,65 @@ fun main(args: Array<String>) {
                 }.crossfade(true)
                 .build()
         }
+        val mangaReaderWindowCoordinator = remember { DesktopMangaReaderWindowCoordinator() }
         ProvideThemeSettings {
-            PlatformWindow(
-                onCloseRequest = {
-                    exitApplication()
-                },
-                title = stringResource(Res.string.app_name),
-                icon = painterResource(Res.drawable.flare_logo),
-                state =
-                    rememberWindowState(
-                        position = WindowPosition(Alignment.Center),
-                        size = DpSize(520.dp, 840.dp),
-                    ),
+            CompositionLocalProvider(
+                LocalDesktopMangaReaderWindowCoordinator provides mangaReaderWindowCoordinator,
             ) {
-                val restoreRequest by restoreRequestFlow.collectAsState()
-                LaunchedEffect(restoreRequest) {
-                    if (restoreRequest > 0) {
-                        window.toFront()
-                        window.requestFocus()
-                    }
-                }
-                val backButtonState =
-                    remember {
-                        NavigationBackButtonState()
-                    }
-                ProvidePluginTextResolverV1 {
-                    FlareTheme {
-                        ProvideComposeWindow {
-                            ProvideDesktopTimelineMediaActions {
-                                FlareApp(
-                                    backButtonState = backButtonState,
-                                )
-                            }
-                        }
-                        PlatformTitleBar {
-                            if (backButtonState.canGoBack) {
-                                NavigationDefaults.BackButton(
-                                    onClick = {
-                                        backButtonState.onClick.invoke()
-                                    },
-                                    modifier =
-                                        Modifier
-                                            .let {
-                                                if (SystemUtils.IS_OS_WINDOWS) {
-                                                    it.width(70.dp)
-                                                } else {
-                                                    it
-                                                }
-                                            },
-                                )
-                            }
+                PlatformWindow(
+                    onCloseRequest = {
+                        exitApplication()
+                    },
+                    title = stringResource(Res.string.app_name),
+                    icon = painterResource(Res.drawable.flare_logo),
+                    state =
+                        rememberWindowState(
+                            position = WindowPosition(Alignment.Center),
+                            size = DpSize(520.dp, 840.dp),
+                        ),
+                ) {
+                    val restoreRequest by restoreRequestFlow.collectAsState()
+                    LaunchedEffect(restoreRequest) {
+                        if (restoreRequest > 0) {
+                            window.toFront()
+                            window.requestFocus()
                         }
                     }
+                    val backButtonState =
+                        remember {
+                            NavigationBackButtonState()
+                        }
+                    ProvidePluginTextResolverV1 {
+                        FlareTheme {
+                            ProvideComposeWindow {
+                                ProvideDesktopTimelineMediaActions {
+                                    FlareApp(
+                                        backButtonState = backButtonState,
+                                    )
+                                }
+                            }
+                            PlatformTitleBar {
+                                if (backButtonState.canGoBack) {
+                                    NavigationDefaults.BackButton(
+                                        onClick = {
+                                            backButtonState.onClick.invoke()
+                                        },
+                                        modifier =
+                                            Modifier
+                                                .let {
+                                                    if (SystemUtils.IS_OS_WINDOWS) {
+                                                        it.width(70.dp)
+                                                    } else {
+                                                        it
+                                                    }
+                                                },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
+                DesktopMangaReaderWindowsHost(coordinator = mangaReaderWindowCoordinator)
             }
         }
     }

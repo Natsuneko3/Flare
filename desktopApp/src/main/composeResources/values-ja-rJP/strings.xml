@@ -923,4 +923,8 @@
     <string name="manga_reader_next_chapter">次の話</string>
     <string name="manga_reader_page_position">ページ位置</string>
     <string name="manga_reader_page_of">%1$d / %2$d ページ</string>
+    <string name="manga_reader_chapters">チャプター</string>
+    <string name="manga_reader_constrain_webtoon_width">縦スクロールの幅を制限</string>
+    <string name="manga_reader_sort_newest_first">新しい順</string>
+    <string name="manga_reader_sort_oldest_first">古い順</string>
 </resources>

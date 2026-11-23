@@ -86,6 +86,7 @@ import dev.dimension.flare.ui.screen.home.TimelineScreen
 import dev.dimension.flare.ui.screen.home.UnblockUserDialog
 import dev.dimension.flare.ui.screen.home.UnmuteUserDialog
 import dev.dimension.flare.ui.screen.list.AllListScreen
+import dev.dimension.flare.ui.screen.manga.LocalDesktopMangaReaderWindowCoordinator
 import dev.dimension.flare.ui.screen.manga.MangaCommentsScreen
 import dev.dimension.flare.ui.screen.manga.MangaDetailScreen
 import dev.dimension.flare.ui.screen.manga.MangaReaderScreen
@@ -136,6 +137,7 @@ internal fun Router(
 ) {
     val coroutineScope = rememberCoroutineScope()
     val pluginOAuthCallbacks: PluginOAuthCallbackCoordinatorV1 by koinInject()
+    val mangaReaderCoordinator = LocalDesktopMangaReaderWindowCoordinator.current
     val listDetailStrategy = rememberListDetailSceneStrategy<Route>()
 
     val isBigScreen = isBigScreen()
@@ -157,7 +159,11 @@ internal fun Router(
             } else {
                 val route = Route.parse(it)
                 if (route != null) {
-                    navigate(route)
+                    if (route is Route.Manga.Reader && mangaReaderCoordinator != null) {
+                        mangaReaderCoordinator.open(route)
+                    } else {
+                        navigate(route)
+                    }
                 }
                 route != null
             }

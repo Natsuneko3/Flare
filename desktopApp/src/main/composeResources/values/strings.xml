@@ -989,4 +989,8 @@
     <string name="manga_reader_next_chapter">Next chapter</string>
     <string name="manga_reader_page_position">Page position</string>
     <string name="manga_reader_page_of">%1$d of %2$d</string>
+    <string name="manga_reader_chapters">Chapters</string>
+    <string name="manga_reader_constrain_webtoon_width">Constrain webtoon width</string>
+    <string name="manga_reader_sort_newest_first">Newest first</string>
+    <string name="manga_reader_sort_oldest_first">Oldest first</string>
 </resources>
