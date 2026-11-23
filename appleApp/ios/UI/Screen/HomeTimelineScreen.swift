@@ -19,6 +19,7 @@ struct HomeTimelineScreen: View {
     @State private var selectedTabId: String?
     @Namespace private var selectedTabIndicatorNamespace
     @State private var presenter: KotlinPresenter<HomeTimelineWithTabsPresenterState>
+    @State private var activeAccountPresenter = KotlinPresenter(presenter: ActiveAccountPresenter())
     @State private var loggedInPresenter = KotlinPresenter(presenter: LoggedInPresenter())
     @State private var canComposePresenter = KotlinPresenter(presenter: CanComposePresenter())
     @State private var changeLogPresenter: KotlinPresenter<ChangeLogPresenterState>
@@ -257,7 +258,7 @@ struct HomeTimelineScreen: View {
     @ToolbarContentBuilder
     private var leadingToolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            StateView(state: presenter.state.user) { user in
+            StateView(state: activeAccountPresenter.state.user) { user in
                 if user.avatar == nil {
                     Image(fontAwesome: .gear)
                 } else {

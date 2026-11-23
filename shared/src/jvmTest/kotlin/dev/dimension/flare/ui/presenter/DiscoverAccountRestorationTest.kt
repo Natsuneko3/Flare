@@ -831,6 +831,8 @@ class DiscoverAccountRestorationTest {
                             override val accountKey = authenticatedAccountKey
                             override val directMessageHandler: DirectMessageHandler get() = error("Unused")
                             override val directMessageBadgeCount = Cacheable(fetchSource = {}, cacheSource = { flowOf(0) })
+
+                            override fun cachedCanSendDirectMessage(userKey: MicroBlogKey) = null
                         },
                 )
         }

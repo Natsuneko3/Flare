@@ -55,9 +55,9 @@ class CacheDatabaseDestructiveMigrationTest {
         }
 
     @Test
-    fun migration54To55PurgesWeiboStatusesWhilePreservingHistoryAndOtherAccounts() =
+    fun migration55To56PurgesWeiboStatusesWhilePreservingHistoryAndOtherAccounts() =
         runTest {
-            val databasePath = Files.createTempFile("flare-cache-v54", ".db")
+            val databasePath = Files.createTempFile("flare-cache-v55", ".db")
             val path = databasePath.toString()
             val mastoOwner = AccountType.Specific(MicroBlogKey("me", "mastodon.social"))
             val weiboOwner = AccountType.Specific(MicroBlogKey("23", "m.weibo.cn"))
@@ -72,7 +72,7 @@ class CacheDatabaseDestructiveMigrationTest {
                 BundledSQLiteDriver().open(path).use { connection ->
                     connection.execSQL(
                         "INSERT INTO DbStatus (statusKey, accountType, content, contentFingerprint, renderHash, text, id) " +
-                            "VALUES ('100@m.weibo.cn', '${weiboOwner}', X'00', 1, 1, 'weibo', '${weiboOwner}_100@m.weibo.cn')",
+                            "VALUES ('100@m.weibo.cn', '$weiboOwner', X'00', 1, 1, 'weibo', '${weiboOwner}_100@m.weibo.cn')",
                     )
                     connection.execSQL(
                         "INSERT INTO DbPagingTimeline (pagingKey, statusId, sortId, isGap, message, messageRenderHash, " +
@@ -81,9 +81,9 @@ class CacheDatabaseDestructiveMigrationTest {
                     )
                     connection.execSQL(
                         "INSERT INTO DbStatus (statusKey, accountType, content, contentFingerprint, renderHash, text, id) " +
-                            "VALUES ('200@mastodon.social', '${mastoOwner}', X'00', 2, 2, 'masto', '${mastoOwner}_200@mastodon.social')",
+                            "VALUES ('200@mastodon.social', '$mastoOwner', X'00', 2, 2, 'masto', '${mastoOwner}_200@mastodon.social')",
                     )
-                    connection.execSQL("PRAGMA user_version = 54")
+                    connection.execSQL("PRAGMA user_version = 55")
                 }
 
                 withCache(path) { database ->

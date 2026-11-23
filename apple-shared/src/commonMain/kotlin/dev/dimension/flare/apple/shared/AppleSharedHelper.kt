@@ -5,8 +5,6 @@ import co.touchlab.crashkios.crashlytics.setCrashlyticsUnhandledExceptionHook
 import dev.dimension.flare.common.InAppNotification
 import dev.dimension.flare.common.Message
 import dev.dimension.flare.common.SwiftOnDeviceAI
-import dev.dimension.flare.data.database.DatabaseMaintenance
-import dev.dimension.flare.di.koinGet
 import dev.dimension.flare.ui.humanizer.SwiftFormatter
 import dev.dimension.flare.ui.render.SwiftPlatformTextRenderer
 import kotlinx.coroutines.CoroutineScope
@@ -39,13 +37,6 @@ public object AppleSharedHelper {
             swiftOnDeviceAI = swiftOnDeviceAI,
         )
         startKoin<AppleKoinApplication>()
-        koinGet<DatabaseMaintenance>().startWarmup()
-    }
-
-    public suspend fun checkpointDatabases() {
-        runCatching { koinGet<DatabaseMaintenance>() }
-            .getOrNull()
-            ?.checkpoint()
     }
 }
 

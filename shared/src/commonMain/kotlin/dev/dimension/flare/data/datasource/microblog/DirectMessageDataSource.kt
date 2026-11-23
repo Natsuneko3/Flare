@@ -79,6 +79,8 @@ public interface DirectMessageDataSource : AuthenticatedMicroblogDataSource {
 
     public fun createDirectMessageRoom(userKey: MicroBlogKey): Flow<UiState<MicroBlogKey>> = directMessageHandler.createRoom(userKey)
 
+    public fun cachedCanSendDirectMessage(userKey: MicroBlogKey): Boolean? = directMessageHandler.cachedCanSend(userKey)
+
     public suspend fun canSendDirectMessage(userKey: MicroBlogKey): Boolean = directMessageHandler.canSend(userKey)
 }
 

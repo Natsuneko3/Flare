@@ -84,6 +84,105 @@ interface PlatformExtensionPluginDefinitionV1 {
   actions: Record<string, (request: PlatformExtensionRequestV1, context: PluginInvocationContextV1) => MaybePromise<PlatformExtensionResultV1>>;
 }
 
+type TimelineProcessTriggerV1 = "auto" | "manualRefresh";
+interface TimelineProcessInputItemV1 {
+  itemId: string;
+  platformId: string;
+  postKey: EntityKeyV1;
+  createdAt: string;
+  author?: { handle: string; displayName: string } | null;
+  contentPlain: string;
+  contentWarningPlain?: string | null;
+  links: string[];
+  card?: { url: string; title?: string | null; description?: string | null } | null;
+  sourceLanguages: string[];
+}
+interface TimelineProcessBatchRequestV1 {
+  locale: string;
+  trigger: TimelineProcessTriggerV1;
+  items: TimelineProcessInputItemV1[];
+}
+type WidgetCachePolicyV1 = "disk" | "memoryOnly" | "none";
+interface TimelineProcessCacheOptionsV1 {
+  policy?: WidgetCachePolicyV1;
+  /** Seconds before expiration (clamped to 15..604800). Omit or null to cache until post or plugin state changes. */
+  ttlSeconds?: number | null;
+}
+type WidgetToneV1 = "neutral" | "accent" | "positive" | "negative" | "warning";
+type WidgetGapV1 = "xs" | "sm" | "md";
+type WidgetAlignV1 = "start" | "center" | "end" | "spaceBetween";
+type WidgetTextStyleV1 = "title" | "subtitle" | "body" | "caption" | "code";
+type WidgetButtonStyleV1 = "secondary" | "primary";
+type WidgetCornerStyleV1 = "rounded" | "circle";
+type WidgetSparklineHeightV1 = "sm" | "md";
+type WidgetActionV1 =
+  | { type: "openUrl"; url: string }
+  | { type: "copy"; text: string; label?: string | null }
+  | { type: "refresh" };
+interface WidgetBadgeV1 {
+  text: string;
+  tone?: WidgetToneV1;
+}
+interface WidgetButtonV1 {
+  label: string;
+  tone?: WidgetToneV1;
+  style?: WidgetButtonStyleV1;
+  action: WidgetActionV1;
+}
+interface WidgetMatchupSideV1 {
+  name: string;
+  subtitle?: string | null;
+  /** HTTPS URL without credentials; requires permissions.mediaNetwork. */
+  iconUrl?: string | null;
+  score?: string | null;
+}
+interface WidgetBarSegmentV1 {
+  label: string;
+  valueText?: string | null;
+  weight: number;
+  tone?: WidgetToneV1;
+}
+interface WidgetKeyValueItemV1 {
+  label: string;
+  value: string;
+  tone?: WidgetToneV1;
+  action?: WidgetActionV1 | null;
+}
+type WidgetNodeV1 =
+  | { type: "text"; text: string; style?: WidgetTextStyleV1; tone?: WidgetToneV1; maxLines?: number | null; copyable?: boolean }
+  | { type: "row"; children: WidgetNodeV1[]; gap?: WidgetGapV1; align?: WidgetAlignV1; weight?: number | null }
+  | { type: "column"; children: WidgetNodeV1[]; gap?: WidgetGapV1; align?: WidgetAlignV1; weight?: number | null }
+  | { type: "stat"; label: string; value: string; delta?: string | null; deltaTone?: WidgetToneV1; subtext?: string | null; weight?: number | null }
+  | { type: "matchup"; left: WidgetMatchupSideV1; right: WidgetMatchupSideV1; status?: string | null; statusTone?: WidgetToneV1 }
+  | { type: "sparkline"; points: number[]; tone?: WidgetToneV1; minLabel?: string | null; maxLabel?: string | null; height?: WidgetSparklineHeightV1; weight?: number | null }
+  | { type: "segmentedBar"; segments: WidgetBarSegmentV1[] }
+  | { type: "keyValue"; items: WidgetKeyValueItemV1[] }
+  | { type: "badgeRow"; badges: WidgetBadgeV1[] }
+  | { type: "image"; url: string; alt?: string | null; aspectRatio?: number | null; cornerStyle?: WidgetCornerStyleV1; weight?: number | null }
+  | { type: "collapsible"; id: string; summary: string; defaultExpanded?: boolean; children: WidgetNodeV1[] }
+  | { type: "divider" };
+interface PluginWidgetCardV1 {
+  id: string;
+  title?: string | null;
+  badge?: WidgetBadgeV1 | null;
+  accentTone?: WidgetToneV1;
+  refreshable?: boolean;
+  cardAction?: WidgetActionV1 | null;
+  body: WidgetNodeV1[];
+  actions?: WidgetButtonV1[];
+}
+interface TimelineProcessItemResultV1 {
+  itemId: string;
+  cards: PluginWidgetCardV1[];
+  cache?: TimelineProcessCacheOptionsV1 | null;
+}
+interface TimelineProcessBatchResponseV1 {
+  results: TimelineProcessItemResultV1[];
+}
+interface TimelineProcessorPluginDefinitionV1 {
+  processBatch(request: TimelineProcessBatchRequestV1, context: PluginInvocationContextV1): MaybePromise<TimelineProcessBatchResponseV1>;
+}
+
 interface SocialPluginDefinitionV1 {
   detector?: { detect(request: DetectorRequestV1, context: PluginInvocationContextV1): MaybePromise<DetectorResultV1> };
   login?: Record<string, LoginServiceV1>;
@@ -812,3 +911,6 @@ declare function defineFlareTranslatePlugin(plugin: TranslatePluginDefinitionV1)
 
 /** Register actions for existing built-in or plugin-provided accounts once; may coexist with other plugin definitions. */
 declare function defineFlarePlatformExtensionPlugin(plugin: PlatformExtensionPluginDefinitionV1): void;
+
+/** Register timeline post processing once; runs in plugin scope and may coexist with other plugin definitions. */
+declare function defineFlareTimelineProcessorPlugin(plugin: TimelineProcessorPluginDefinitionV1): void;

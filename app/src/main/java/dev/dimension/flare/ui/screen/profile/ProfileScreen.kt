@@ -378,6 +378,7 @@ internal fun ProfileScreen(
                         TopAppBarDefaults.topAppBarColors(
                             containerColor = Color.Transparent,
                             scrolledContainerColor = Color.Transparent,
+                            actionIconContentColor = MaterialTheme.colorScheme.onSurface,
                         ),
                     scrollBehavior = scrollBehavior,
                     navigationIcon = {

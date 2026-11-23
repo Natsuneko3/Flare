@@ -141,6 +141,13 @@ public class PluginAppleFacadeV1 : PresenterBase<PluginManagementStateV1>() {
     public suspend fun rebuildIndex() {
         presenter.rebuildIndex()
     }
+
+    public fun setTimelineProcessorEnabled(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
+        presenter.setTimelineProcessorEnabled(pluginId, enabled)
+    }
 }
 
 /** Swift-facing entry point for OAuth callbacks delivered after the login UI or process disappeared. */

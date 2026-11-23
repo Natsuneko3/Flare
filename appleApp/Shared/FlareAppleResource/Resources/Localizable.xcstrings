@@ -29364,6 +29364,236 @@
       }
     }
   },
+  "plugin_permission_timeline_post_access": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Read displayed timeline posts to attach widgets, which may send post content to permitted network origins"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "读取时间线中显示的帖子以附加小组件，帖子内容可能会发送到允许访问的网络来源"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "讀取時間軸中顯示的貼文以附加小工具，貼文內容可能會傳送到允許存取的網路來源"
+        }
+      }
+    }
+  },
+  "plugin_timeline_processor_toggle": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Timeline post widgets"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "时间线帖子小组件"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "時間軸貼文小工具"
+        }
+      }
+    }
+  },
+  "plugin_widget_copy": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Copy"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "复制"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "複製"
+        }
+      }
+    }
+  },
+  "plugin_widget_page_indicator": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Page %1$lld of %2$lld"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "第 %1$lld 页，共 %2$lld 页"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "第 %1$lld 頁，共 %2$lld 頁"
+        }
+      }
+    }
+  },
+  "plugin_widget_refresh": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Refresh"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "刷新"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "重新整理"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_falling": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Falling trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "下降趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "下降趨勢"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_flat": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Flat trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "持平趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "持平趨勢"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_fluctuating": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fluctuating trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "波动趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "波動趨勢"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_range": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Low %1$@, high %2$@"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最低 %1$@，最高 %2$@"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最低 %1$@，最高 %2$@"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_rising": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Rising trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "上升趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "上升趨勢"
+        }
+      }
+    }
+  },
   "plugin_permission_media_network": {
     "extractionState": "manual",
     "localizations": {
@@ -212010,6 +212240,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "清理資料庫快取"
+          }
+        }
+      }
+    },
+    "storage_clear_database_cache_busy" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cache cleared. The database is busy. Try again later to reclaim the remaining space."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缓存已清除。数据库正忙，稍后再试即可回收剩余空间。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快取已清除。資料庫忙碌中，請稍後再試以回收剩餘空間。"
           }
         }
       }

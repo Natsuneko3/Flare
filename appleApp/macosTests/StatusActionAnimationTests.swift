@@ -45,6 +45,48 @@ final class MacStatusActionAnimationTests: XCTestCase {
                      "Timeline and detail actions must use the same body size and secondary color")
     }
 
+    func testProfileToolbarMenuMatchesTheNativeMenuInLightAndDark() async throws {
+        let item = ActionMenu.Item(updateKey: "", icon: .moreVerticel, text: nil, count: nil, color: nil,
+                                   clickEvent: ClickEventNoop.shared, actionFamily: nil, enabled: true)
+        let group = ActionMenu.Group(displayItem: item, actions: [item])
+        for scheme in [ColorScheme.light, .dark] {
+            let content = NavigationStack {
+                Color.clear.frame(width: 400, height: 120).toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        Menu { Button("Action") {} } label: { UiIcon.moreVerticel.image }
+                        ProfileToolbarMenu(group: group)
+                    }
+                }
+            }.environment(\.colorScheme, scheme)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: content))
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+            window.orderBack(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(150))
+            let frame = try XCTUnwrap(window.contentView?.superview)
+            frame.layoutSubtreeIfNeeded()
+            let foregrounds = try XCTUnwrap(window.toolbar).items.compactMap(\.view).map { view in
+                let rect = view.convert(view.bounds, to: frame)
+                let bitmap = try XCTUnwrap(frame.bitmapImageRepForCachingDisplay(in: rect))
+                frame.cacheDisplay(in: rect, to: bitmap)
+                // Sample the label inside the button, excluding the border and trailing menu arrow.
+                let tones = (bitmap.pixelsHigh / 4 ..< bitmap.pixelsHigh * 3 / 4).flatMap { y in
+                    (bitmap.pixelsWide / 6 ..< bitmap.pixelsWide * 3 / 5).compactMap { x in
+                        bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)?.brightnessComponent
+                    }
+                }
+                let darkest = try XCTUnwrap(tones.min())
+                let lightest = try XCTUnwrap(tones.max())
+                XCTAssertGreaterThan(lightest - darkest, 0.15, "The toolbar glyph must be visible")
+                return scheme == .light ? darkest : lightest
+            }
+            XCTAssertEqual(foregrounds.count, 2)
+            XCTAssertEqual(try XCTUnwrap(foregrounds.last), try XCTUnwrap(foregrounds.first),
+                           accuracy: 2.0 / 255, "Profile toolbar menu, \(scheme)")
+        }
+    }
+
     func testPostTextColorsRespectSurfaceAndContrast() throws {
         _ = NSApplication.shared
         let postPrimary = Color(white: 217.0 / 255)
@@ -344,6 +386,69 @@ final class MacStatusActionAnimationTests: XCTestCase {
         fixture.setReduceMotion(true)
         await fixture.settle(40)
         assertPixels(try fixture.pixels(), expected, "Enabling Reduce Motion must cancel in-flight motion")
+    }
+
+    func testWidgetUpdatesPreserveExpandedWarningAndFullText() async throws {
+        _ = Self.servicesReady
+        let source = previewPost("match", name: "Spoiler", text: Array(repeating: "Match details.", count: 20).joined(separator: "\n"))
+        let warning = UiTranslatableText(original: try XCTUnwrap(source.user).name, translation: nil)
+        let card = UiPluginWidgetCard(pluginId: "scores", pluginName: "Scores", pluginIconPath: nil,
+                                      id: "score", title: "Final score", badge: nil, accentTone: .neutral,
+                                      refreshable: false, isRefreshing: false, cardAction: nil, body: [], actions: [], onRefresh: nil)
+        func content(_ id: String, cards: [UiPluginWidgetCard] = []) -> some View {
+            let post = UiTimelineV2.Post(
+                platformId: source.platformId, images: [], sensitive: false, contentWarning: warning, user: nil,
+                platformIcon: source.platformIcon, sourceLanguages: [], translationDisplayState: .hidden,
+                content: source.content, actions: [], poll: nil, statusKey: MicroBlogKey(id: id, host: "example.invalid"),
+                card: nil, createdAt: source.createdAt, emojiReactions: [], sourceChannel: nil, visibility: nil,
+                replyToHandle: nil, references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
+                accountType: source.accountType, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil,
+                pluginWidgets: cards
+            )
+            return StatusView(data: post, isClickable: false, maxLine: 1, forceHideActions: true).frame(width: 320, alignment: .leading)
+        }
+        let host = NSHostingView(rootView: content("match"))
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: host.fittingSize), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        func measuredHeight() async throws -> CGFloat {
+            try await Task.sleep(for: .milliseconds(400))
+            window.setContentSize(host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+        func pressShowMore() throws {
+            // With no header, actions, or attachments, the active Show more button is the last row.
+            let y = host.isFlipped ? host.bounds.maxY - 8 : host.bounds.minY + 8
+            let point = host.convert(CGPoint(x: 20, y: y), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let click = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                window.sendEvent(click)
+            }
+        }
+
+        let hiddenHeight = try await measuredHeight()
+        try pressShowMore()
+        let previewHeight = try await measuredHeight()
+        XCTAssertGreaterThan(previewHeight, hiddenHeight)
+        try pressShowMore()
+        let fullHeight = try await measuredHeight()
+        XCTAssertGreaterThan(fullHeight, previewHeight + 100)
+        host.rootView = content("match", cards: [card])
+        let widgetHeight = try await measuredHeight()
+        XCTAssertGreaterThan(widgetHeight, fullHeight + 20)
+        host.rootView = content("match")
+        let restoredHeight = try await measuredHeight()
+        XCTAssertEqual(restoredHeight, fullHeight, accuracy: 1)
+        host.rootView = content("other", cards: [card])
+        let reusedHeight = try await measuredHeight()
+        XCTAssertEqual(reusedHeight, hiddenHeight, accuracy: 1)
     }
 
     private func actions(liked: Bool = false, count: Int64? = nil, grouped: Bool = false) -> [ActionMenu] {

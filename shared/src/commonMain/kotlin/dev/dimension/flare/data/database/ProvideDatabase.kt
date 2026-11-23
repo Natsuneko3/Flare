@@ -5,6 +5,7 @@ import dev.dimension.flare.common.PlatformDispatchers
 import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.TimelineRevisionCallback
+import dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
 import org.koin.core.annotation.Single
 
 @Single
@@ -27,11 +28,15 @@ internal const val CACHE_DATABASE_NAME = "cache.db"
 internal fun provideCacheDatabase(driverFactory: DriverFactory): CacheDatabase =
     buildCacheDatabase(driverFactory.createBuilder(CACHE_DATABASE_NAME, isCache = true))
 
+@Single
+internal fun providePluginPostWidgetDao(cacheDatabase: CacheDatabase): PluginPostWidgetDao = cacheDatabase.pluginPostWidgetDao()
+
 internal fun buildCacheDatabase(builder: RoomDatabase.Builder<CacheDatabase>): CacheDatabase =
     builder
         .addMigrations(
             CacheDatabase.MIGRATION_53_54,
             CacheDatabase.MIGRATION_54_55,
+            CacheDatabase.MIGRATION_55_56,
         ).fallbackToDestructiveMigration(dropAllTables = true)
         .addCallback(TimelineRevisionCallback)
         .setDriver(createDatabaseDriver())

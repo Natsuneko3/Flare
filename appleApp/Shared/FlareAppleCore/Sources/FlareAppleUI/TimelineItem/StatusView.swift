@@ -21,6 +21,20 @@ public extension EnvironmentValues {
     @Entry var timelineMediaActionHandler: TimelineMediaActionHandler? = nil
 }
 
+public struct StatusReadingContent: Equatable {
+    private let account: AccountType
+    private let statusKey: MicroBlogKey
+    private let body: UiRichText
+    private let warning: UiRichText?
+
+    public init(_ post: UiTimelineV2.Post) {
+        account = post.accountType
+        statusKey = post.statusKey
+        body = post.content.original
+        warning = post.contentWarning?.original
+    }
+}
+
 public struct StatusView: View {
     @Environment(\.timelineAppearance.fullWidthPost) private var fullWidthPost
     @Environment(\.timelineAppearance.showLinkPreview) private var showLinkPreview
@@ -58,7 +72,7 @@ public struct StatusView: View {
     private let quotes: [UiTimelineV2.Post]
     private let allowsMediaCarousel: Bool
     private let carouselOuterHorizontalPadding: CGFloat
-    @State private var contentWarningExpanded = false
+    @State private var revealedWarning: StatusReadingContent?
     @State private var textExpanded = false
     @State private var overflowingTextIndexes: Set<Int> = []
 
@@ -119,6 +133,9 @@ public struct StatusView: View {
             []
         }
         let contentWarningIsEmpty = contentWarnings.allSatisfy(\.isEmpty)
+        let readingContent = StatusReadingContent(data)
+        let contentWarningExpanded = revealedWarning == readingContent
+        let showsBody = contentWarningExpanded || expandContentWarning || contentWarningIsEmpty
         let contents: [UiRichText] = if translationDisplayed, let translation = data.content.translation {
             translateConfig.showOriginalWithTranslation ? [data.content.original, translation] : [translation]
         } else {
@@ -143,7 +160,8 @@ public struct StatusView: View {
         let showsQuotes = hasQuotes && !isQuote
         let showsCard = card != nil && showMedia && !hasImages && !hasQuotes && showLinkPreview
         let communityNote = showAttachments ? data.communityNote : nil
-        let showsAttachments = showsImages || showsCard || showsQuotes || communityNote != nil
+        let pluginWidgets = showsBody && showAttachments && !isQuote && !isGalleryFallback ? Array(data.pluginWidgets) : []
+        let showsAttachments = showsImages || showsCard || showsQuotes || communityNote != nil || !pluginWidgets.isEmpty
         let sourceChannelName = data.sourceChannel?.name
         let emojiReactions = Array(data.emojiReactions)
         let hasEmojiReactions = showEmojiReactions && !emojiReactions.isEmpty
@@ -324,10 +342,12 @@ public struct StatusView: View {
                                             if !expandContentWarning {
                                                 Button {
                                                     withAnimation {
-                                                        contentWarningExpanded.toggle()
-                                                        if !contentWarningExpanded {
+                                                        if contentWarningExpanded {
+                                                            revealedWarning = nil
                                                             textExpanded = false
                                                             overflowingTextIndexes.removeAll()
+                                                        } else {
+                                                            revealedWarning = readingContent
                                                         }
                                                     }
                                                 } label: {
@@ -343,7 +363,7 @@ public struct StatusView: View {
                                         }
                                     }
 
-                                    if (hasBodyText || showsPoll) && (contentWarningExpanded || expandContentWarning || contentWarningIsEmpty) {
+                                    if (hasBodyText || showsPoll) && showsBody {
                                         VStack(alignment: .leading, spacing: 8) {
                                             ForEach(Array(contents.enumerated()), id: \.offset) { index, content in
                                                 if !content.isEmpty {
@@ -484,6 +504,15 @@ public struct StatusView: View {
                                 .padding(.top, firstAttachmentSpacing)
                         }
 
+                        if !pluginWidgets.isEmpty {
+                            let hasPrecedingAttachment = showsImages || showsCard || showsQuotes || communityNote != nil
+                            PluginWidgetStackView(
+                                cards: pluginWidgets,
+                                postIdentity: "\(accountType):\(statusKey)"
+                            )
+                            .padding(.top, hasPrecedingAttachment ? 8 : firstAttachmentSpacing)
+                        }
+
                         if showMedia, !isQuote {
                             if sourceChannelName != nil || hasEmojiReactions {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -537,8 +566,8 @@ public struct StatusView: View {
                 data.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
             }
         }
-        .onChange(of: data.renderHash) { _, _ in
-            contentWarningExpanded = false
+        .onChange(of: readingContent) { _, _ in
+            revealedWarning = nil
             textExpanded = false
             overflowingTextIndexes.removeAll()
         }
@@ -546,7 +575,7 @@ public struct StatusView: View {
             textExpanded = false
             overflowingTextIndexes.removeAll()
         }
-        .onChange(of: translateConfig.showOriginalWithTranslation) { _, _ in
+        .onChange(of: contents) { _, _ in
             textExpanded = false
             overflowingTextIndexes.removeAll()
         }

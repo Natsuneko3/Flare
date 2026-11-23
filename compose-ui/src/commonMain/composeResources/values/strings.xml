@@ -621,4 +621,12 @@
     <string name="compose_x_reply_following">Accounts you follow</string>
     <string name="compose_x_reply_mentioned">Only mentioned accounts</string>
     <string name="compose_x_reply_verified">Verified accounts</string>
+    <string name="plugin_widget_refresh">Refresh</string>
+    <string name="plugin_widget_copy">Copy</string>
+    <string name="plugin_widget_page_indicator">Page %1$d of %2$d</string>
+    <string name="plugin_widget_trend_rising">Rising trend</string>
+    <string name="plugin_widget_trend_falling">Falling trend</string>
+    <string name="plugin_widget_trend_flat">Flat trend</string>
+    <string name="plugin_widget_trend_fluctuating">Fluctuating trend</string>
+    <string name="plugin_widget_trend_range">Low %1$s, high %2$s</string>
 </resources>

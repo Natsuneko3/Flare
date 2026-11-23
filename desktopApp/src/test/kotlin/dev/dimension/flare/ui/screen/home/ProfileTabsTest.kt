@@ -4,16 +4,21 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import dev.dimension.flare.common.FileSystemUtilsExt
+import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
@@ -28,9 +33,11 @@ import dev.dimension.flare.ui.component.platform.LocalWindowSizeClass
 import dev.dimension.flare.ui.component.platform.WindowSizeClass
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiIcon
+import dev.dimension.flare.ui.model.UiProfile
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.createSampleUser
 import dev.dimension.flare.ui.presenter.home.TimelinePresenter
 import dev.dimension.flare.ui.presenter.profile.ProfileState
 import dev.dimension.flare.ui.render.toUi
@@ -44,6 +51,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -66,6 +74,9 @@ class ProfileTabsTest {
     private var tabs by mutableStateOf<ImmutableList<ProfileState.Tab>>(persistentListOf())
     private var accountType by mutableStateOf<AccountType>(AccountType.Guest)
     private var userKey by mutableStateOf(MicroBlogKey("alice", "example.test"))
+    private var windowSize by mutableStateOf(WindowSizeClass.Compact)
+    private var userState by mutableStateOf<UiState<UiProfile>>(UiState.Error(IllegalStateException("Profile header unavailable")))
+    private var actions = persistentListOf<ActionMenu>()
 
     @Before
     fun setUp() {
@@ -149,12 +160,42 @@ class ProfileTabsTest {
         waitForText("Bob's likes")
     }
 
-    private fun showProfile() {
+    @Test
+    fun profileMenuOpensWhileUserIsLoadingInCompactAndExpandedLayouts() {
+        userState = UiState.Loading()
+        actions =
+            persistentListOf(
+                ActionMenu.Group(
+                    displayItem = ActionMenu.Item(text = ActionMenu.Item.Text.Raw("Profile actions")),
+                    actions = persistentListOf(ActionMenu.Item(text = ActionMenu.Item.Text.Raw("Report"))),
+                ),
+            )
+        showProfile(dark = true)
+
+        val user = createSampleUser().copy(key = userKey, avatar = null, banner = null)
+        for (size in listOf(WindowSizeClass.Compact, WindowSizeClass.Expanded)) {
+            compose.runOnIdle {
+                windowSize = size
+                userState = UiState.Loading()
+            }
+            compose.onNodeWithContentDescription("Profile actions").assertIsDisplayed().performClick()
+            compose.onNodeWithText("Report").assertIsDisplayed()
+            compose.runOnIdle { userState = UiState.Success(user) }
+            waitForText(user.handle.display)
+            compose.onNodeWithText("Report").assertIsDisplayed().performClick()
+            val icon = compose.onNodeWithContentDescription("Profile actions").captureToImage()
+            val pixels = IntArray(icon.width * icon.height)
+            icon.readPixels(pixels)
+            assertTrue("The $size header uses white icons in dark mode", Color.White.toArgb() in pixels)
+        }
+    }
+
+    private fun showProfile(dark: Boolean = false) {
         compose.setContent {
-            FlareTheme(isDarkTheme = false) {
+            FlareTheme(isDarkTheme = dark) {
                 CompositionLocalProvider(
                     LocalViewModelStoreOwner provides owner,
-                    LocalWindowSizeClass provides WindowSizeClass.Compact,
+                    LocalWindowSizeClass provides windowSize,
                     LocalGlobalAppearance provides GlobalAppearance(),
                     LocalTimelineAppearance provides TimelineAppearance(),
                 ) {
@@ -194,11 +235,11 @@ class ProfileTabsTest {
 
     private fun profile(tabs: ImmutableList<ProfileState.Tab>): ProfileState =
         object : ProfileState(
-            userState = UiState.Error(IllegalStateException("Profile header unavailable")),
+            userState = userState,
             relationState = UiState.Loading(),
             followButtonState = UiState.Loading(),
             isMe = UiState.Loading(),
-            actions = persistentListOf(),
+            actions = actions,
             myAccountKey = UiState.Loading(),
             tabs = UiState.Success(tabs),
         ) {

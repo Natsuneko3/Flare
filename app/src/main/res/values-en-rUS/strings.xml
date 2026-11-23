@@ -1074,4 +1074,6 @@
     <string name="plugin_marketplace_install">Install</string>
     <string name="plugin_marketplace_local">Local plugin</string>
     <string name="plugin_marketplace_search">Search plugins</string>
+    <string name="plugin_permission_timeline_post_access">Read displayed timeline posts to attach widgets, which may send post content to permitted network origins</string>
+    <string name="plugin_timeline_processor_toggle">Timeline post widgets</string>
 </resources>

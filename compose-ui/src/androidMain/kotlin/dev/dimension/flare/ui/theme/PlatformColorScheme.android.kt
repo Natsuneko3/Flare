@@ -10,6 +10,10 @@ internal actual object PlatformColorScheme {
         @Composable
         @ReadOnlyComposable
         get() = MaterialTheme.colorScheme.primary
+    actual val onPrimary: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.onPrimary
     actual val retweetColor: Color
         @Composable
         @ReadOnlyComposable
@@ -26,6 +30,10 @@ internal actual object PlatformColorScheme {
         @Composable
         @ReadOnlyComposable
         get() = MaterialTheme.colorScheme.error
+    actual val onError: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.onError
     actual val caption: Color
         @Composable
         @ReadOnlyComposable

@@ -71,6 +71,7 @@ robolectric = "4.18.1"
 quartz = "2.15.1"
 qrose = "1.3.1"
 quickjs = "1.0.18"
+re2j = "1.8"
 javascriptengine = "1.1.1"
 
 
@@ -235,6 +236,7 @@ commons-lang3 = { module = "org.apache.commons:commons-lang3", version = "3.22.0
 quartz = { module = "com.vitorpamplona.quartz:quartz", version.ref = "quartz" }
 qrose = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
 quickjs-kt = { module = "io.github.dokar3:quickjs-kt", version.ref = "quickjs" }
+re2j = { module = "com.google.re2j:re2j", version.ref = "re2j" }
 androidx-javascriptengine = { module = "androidx.javascriptengine:javascriptengine", version.ref = "javascriptengine" }
 
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }

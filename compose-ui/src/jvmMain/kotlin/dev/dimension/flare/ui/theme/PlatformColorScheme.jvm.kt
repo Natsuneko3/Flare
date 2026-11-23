@@ -3,6 +3,7 @@ package dev.dimension.flare.ui.theme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import io.github.composefluent.FluentTheme
 
 internal actual object PlatformColorScheme {
@@ -10,6 +11,11 @@ internal actual object PlatformColorScheme {
         @Composable
         @ReadOnlyComposable
         get() = FluentTheme.colors.fillAccent.default
+
+    actual val onPrimary: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = FluentTheme.colors.text.onAccent.primary
 
     actual val retweetColor: Color
         @Composable
@@ -27,6 +33,13 @@ internal actual object PlatformColorScheme {
         @Composable
         @ReadOnlyComposable
         get() = FluentTheme.colors.system.critical
+    actual val onError: Color
+        @Composable
+        @ReadOnlyComposable
+        get() {
+            val critical = FluentTheme.colors.system.critical
+            return if (critical.luminance() > 0.4f) Color(0xFF111111) else Color.White
+        }
     public actual val caption: Color
         @Composable
         @ReadOnlyComposable

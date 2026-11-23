@@ -43,11 +43,8 @@ struct FlareApp: App {
             }
         }
         .defaultSize(width: 480, height: 600)
-        .onChange(of: scenePhase, initial: true) { oldPhase, phase in
+        .onChange(of: scenePhase, initial: true) { _, phase in
             PluginRuntimeLifecycleFacadeV1().setForeground(active: phase == .active)
-            if oldPhase != phase {
-                MacDatabaseMaintenance.handleScenePhase(phase)
-            }
         }
         .windowResizability(.contentSize)
         .windowSizeFitContent()
@@ -466,35 +463,5 @@ final class MacDirectMessageWindowCoordinator {
 
         request = MacDirectMessageWindowRequest(route: route)
         openWindow(id: MacWindowID.directMessages)
-    }
-}
-
-@MainActor
-private enum MacDatabaseMaintenance {
-    private static var activeCheckpointTask: Task<Void, Never>?
-    private static var activeCheckpointId: UUID?
-
-    static func handleScenePhase(_ phase: ScenePhase) {
-        switch phase {
-        case .active:
-            activeCheckpointTask?.cancel()
-            activeCheckpointTask = nil
-            activeCheckpointId = nil
-        case .background:
-            guard activeCheckpointTask == nil else { return }
-            let checkpointId = UUID()
-            activeCheckpointId = checkpointId
-            activeCheckpointTask = Task {
-                defer {
-                    if activeCheckpointId == checkpointId {
-                        activeCheckpointId = nil
-                        activeCheckpointTask = nil
-                    }
-                }
-                try? await AppleSharedHelper.shared.checkpointDatabases()
-            }
-        default:
-            break
-        }
     }
 }

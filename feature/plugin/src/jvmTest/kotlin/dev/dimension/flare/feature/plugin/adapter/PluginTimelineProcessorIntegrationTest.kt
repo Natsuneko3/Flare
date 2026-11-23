@@ -1,0 +1,2388 @@
+package dev.dimension.flare.feature.plugin.adapter
+
+import dev.dimension.flare.common.Locale
+import dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
+import dev.dimension.flare.data.database.cache.model.DbPluginPostWidget
+import dev.dimension.flare.data.datastore.model.AppSettings
+import dev.dimension.flare.data.io.AppFileStore
+import dev.dimension.flare.data.model.PluginPermission
+import dev.dimension.flare.data.model.PluginPermissionType
+import dev.dimension.flare.data.repository.PluginAuthoringPhase
+import dev.dimension.flare.feature.plugin.PluginSubsystemV1
+import dev.dimension.flare.feature.plugin.PluginTimelineGrantStoreV1
+import dev.dimension.flare.feature.plugin.TimelineProcessorSettingsBacking
+import dev.dimension.flare.feature.plugin.authoring.PluginAuthoringServiceV1
+import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
+import dev.dimension.flare.feature.plugin.installer.PluginInstallWarningTypeV1
+import dev.dimension.flare.feature.plugin.installer.TestFppFactory
+import dev.dimension.flare.feature.plugin.installer.sensitivePermissions
+import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingStoreV1
+import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingV1
+import dev.dimension.flare.feature.plugin.management.PluginManagementPresenterV1
+import dev.dimension.flare.feature.plugin.management.PluginTestAccounts
+import dev.dimension.flare.feature.plugin.management.testPluginRegistry
+import dev.dimension.flare.feature.plugin.manifest.PluginPermissionsV1
+import dev.dimension.flare.feature.plugin.manifest.PluginTimelineFilterManifestV1
+import dev.dimension.flare.feature.plugin.storage.PluginStorageChangesV1
+import dev.dimension.flare.model.AccountType
+import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.model.UiCard
+import dev.dimension.flare.ui.model.UiHandle
+import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.UiTranslatableText
+import dev.dimension.flare.ui.model.UiWidgetNode
+import dev.dimension.flare.ui.model.createSampleStatus
+import dev.dimension.flare.ui.model.createSampleUser
+import dev.dimension.flare.ui.model.extractPluginPostInput
+import dev.dimension.flare.ui.model.pluginPostEntityKey
+import dev.dimension.flare.ui.render.RenderContent
+import dev.dimension.flare.ui.render.RenderRun
+import dev.dimension.flare.ui.render.RenderTextStyle
+import dev.dimension.flare.ui.render.toUi
+import dev.dimension.flare.ui.render.toUiPlainText
+import dev.dimension.flare.ui.render.uiRichTextOf
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toOkioPath
+import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Instant
+
+class PluginTimelineProcessorIntegrationTest {
+    @Test
+    fun linkHostFilterMatchesExactAndSubdomainOnlyNeverSuffixSpoof() {
+        val filter = PluginTimelineFilterManifestV1(linkHosts = listOf("polymarket.com"), requireLinks = true)
+        val legit = createSamplePost(link = "https://app.polymarket.com:443/event/fed").extractPluginPostInput()
+        val spoof = createSamplePost(link = "https://evilpolymarket.com/event/fed").extractPluginPostInput()
+        assertTrue(filter.matches(legit))
+        assertFalse(filter.matches(spoof))
+    }
+
+    @Test
+    fun executesBatchesPersistsDiskTtlSkipsMemoryOnlyInSqliteAndDropsLateResultAfterDisable() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val stockId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.stock",
+                        regex = "\\$[A-Z]{1,5}\\b",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "disk", ttlSeconds: 30 }, cards: [{ id: "q", body: [{ type: "stat", label: "AAPL", value: "192.4" }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val gpgId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.gpg",
+                        containsAny = listOf("-----BEGIN PGP MESSAGE-----"),
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "memoryOnly" }, cards: [{ id: "dec", body: [{ type: "text", style: "code", text: "secret-plaintext" }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                assertEquals("org.example.gpg", gpgId)
+                val stockPost = createSamplePost(text = "Watching \$AAPL today")
+                val gpgPost = createSamplePost(text = "-----BEGIN PGP MESSAGE-----\n\nhQEMA...")
+                harness.service.submitPosts(listOf(stockPost, gpgPost))
+                harness.awaitIdle()
+
+                assertEquals(1, harness.service.widgetsForPost(stockPost).size)
+                assertEquals(1, harness.service.widgetsForPost(gpgPost).size)
+                assertEquals(
+                    1,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(stockPost.pluginPostEntityKey()))
+                        .size,
+                )
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(gpgPost.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+
+                harness.gateNextRuntimeCall(stockId)
+                val latePost = createSamplePost(text = "Check \$NVDA")
+                harness.service.submitPosts(listOf(latePost))
+                harness.presenter.setTimelineProcessorEnabled(stockId, false)
+                harness.releaseGatedRuntimeCall(stockId)
+                harness.awaitIdle()
+
+                assertTrue(harness.service.widgetsForPost(latePost).isEmpty())
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(latePost.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+            }
+        }
+
+    @Test
+    fun localAiAuthoredTimelineProcessorStartsDisabledAndReDisablesWhenHttpOriginsExpand() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val created = harness.authoring.create("timeline_processor_ai_test_key_01")
+                harness.writeAiTimelineProcessor(created.id, expectedRevision = 0L, httpOrigins = listOf("https://api.one.example"))
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == created.id }
+                        .timelineProcessorEnabled,
+                )
+
+                harness.presenter.setTimelineProcessorEnabled(created.id, true)
+                assertTrue(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == created.id }
+                        .timelineProcessorEnabled,
+                )
+
+                harness.writeAiTimelineProcessor(
+                    created.id,
+                    expectedRevision = 1L,
+                    httpOrigins = listOf("https://api.one.example", "https://exfil.two.example"),
+                )
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == created.id }
+                        .timelineProcessorEnabled,
+                )
+            }
+        }
+
+    @Test
+    fun localAiProcessorRequiresManualApprovalAfterAddingOnlyRemoteMedia() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId = harness.authoring.create("timeline_processor_media_grant").id
+                harness.writeAiTimelineProcessor(pluginId, expectedRevision = 0L, httpOrigins = emptyList())
+                harness.presenter.setTimelineProcessorEnabled(pluginId, true)
+                val post = createSamplePost(text = "Timeline media permission")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+
+                harness.writeAiTimelineProcessor(pluginId, expectedRevision = 1L, httpOrigins = emptyList(), mediaNetwork = true)
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == pluginId }
+                        .timelineProcessorEnabled,
+                )
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+
+                harness.presenter.setTimelineProcessorEnabled(pluginId, true)
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(2, harness.invocationCount(pluginId))
+                val cards = harness.service.widgetsForPost(post)
+                assertEquals(pluginId, cards.single().pluginId)
+            }
+        }
+
+    @Test
+    fun filterCombinesAllFieldsWithLogicalAndAcrossContentWarningAndCardMetadata() {
+        val filter =
+            PluginTimelineFilterManifestV1(
+                containsAny = listOf("fed decision"),
+                regex = "rate\\s+cut",
+                linkHosts = listOf("polymarket.com"),
+                requireLinks = true,
+            )
+        val matchingCwAndCard =
+            createSamplePost(
+                text = "Discussion thread",
+                contentWarning = "Possible rate cut ahead",
+                card = UiCard(url = "https://polymarket.com/event/fed", title = "Fed Decision 2026", description = null, media = null),
+            ).extractPluginPostInput()
+        val missingRegex =
+            createSamplePost(
+                text = "No pattern here",
+                card = UiCard(url = "https://polymarket.com/event/fed", title = "Fed Decision 2026", description = null, media = null),
+            ).extractPluginPostInput()
+        val wrongHost =
+            createSamplePost(
+                text = "Fed decision rate cut",
+                link = "https://other.example.com/fed",
+            ).extractPluginPostInput()
+
+        assertTrue(filter.matches(matchingCwAndCard))
+        assertFalse(filter.matches(missingRegex))
+        assertFalse(filter.matches(wrongHost))
+    }
+
+    @Test
+    fun discardsMidFlightUncancelledBatchWhenDisabledAndClearsDbOnUninstall() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.midflight",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "disk", ttlSeconds: 60 }, cards: [{ id: "m1", body: [{ type: "text", text: "live" }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val firstPost = createSamplePost(text = "First post")
+                harness.service.submitPosts(listOf(firstPost))
+                harness.awaitIdle()
+                assertEquals(
+                    1,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(firstPost.pluginPostEntityKey()))
+                        .size,
+                )
+
+                // Gate the runtime call AFTER QuickJS has produced the valid result, right before returning to the service.
+                harness.gateNextRuntimeCallNonCancellable(pluginId)
+                val inFlightPost = createSamplePost(text = "In-flight post")
+                harness.service.submitPosts(listOf(inFlightPost))
+                harness.awaitRuntimeCallEntered(pluginId)
+
+                harness.presenter.setTimelineProcessorEnabled(pluginId, false)
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+
+                assertTrue(harness.service.widgetsForPost(firstPost).isEmpty())
+                assertTrue(harness.service.widgetsForPost(inFlightPost).isEmpty())
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(firstPost.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(inFlightPost.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+
+                // Re-enable, populate DB, then uninstall and verify grant + DB rows are removed.
+                harness.presenter.setTimelineProcessorEnabled(pluginId, true)
+                harness.service.submitPosts(listOf(firstPost))
+                harness.awaitIdle()
+                assertEquals(
+                    1,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(firstPost.pluginPostEntityKey()))
+                        .size,
+                )
+
+                harness.presenter.uninstall(pluginId)
+                harness.awaitIdle()
+                assertTrue(harness.service.widgetsForPost(firstPost).isEmpty())
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(firstPost.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+                assertFalse(pluginId in harness.currentSettings().enabledTimelineProcessorPlugins)
+            }
+        }
+
+    @Test
+    fun ordersCardsByPluginIdCapsAtEightSupportsCollapsibleToggleManualRefreshCooldownAndMaintenance() =
+        runTest {
+            withTimelineProcessorTestHarness(initialExpiredRowCount = 2) { harness ->
+                harness.awaitIdle()
+                // Startup maintenance pruned rows expired more than 7 days ago.
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf("expired_post_1", "expired_post_2"))
+                        .isEmpty(),
+                )
+
+                var shouldFailZeta = true
+                harness.failPluginCallsWhen("org.example.zeta") { shouldFailZeta }
+
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.zeta",
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cache: { policy: "disk", ttlSeconds: 30 },
+                                cards: [
+                                  { id: "z1", refreshable: true, body: [{ type: "collapsible", id: "sec", summary: "Details", defaultExpanded: false, children: [{ type: "text", text: "Body" }] }] },
+                                  { id: "z2", body: [{ type: "text", text: "Z2" }] },
+                                  { id: "z3", body: [{ type: "text", text: "Z3" }] },
+                                  { id: "z4", body: [{ type: "text", text: "Z4" }] }
+                                ]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.alpha",
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cards: [
+                                  { id: "a1", body: [{ type: "text", text: "A1" }] },
+                                  { id: "a2", body: [{ type: "text", text: "A2" }] },
+                                  { id: "a3", body: [{ type: "text", text: "A3" }] }
+                                ]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.middle",
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cards: [
+                                  { id: "m1", body: [{ type: "text", text: "M1" }] },
+                                  { id: "m2", body: [{ type: "text", text: "M2" }] },
+                                  { id: "m3", body: [{ type: "text", text: "M3" }] }
+                                ]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+
+                val post = createSamplePost(text = "Multi plugin post")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+
+                // Zeta failed -> recorded transient cooldown in memory ONLY (no SQLite row for zeta).
+                val dbRowsAfterFailure = harness.db.pluginPostWidgetDao().getByPostKeys(listOf(post.pluginPostEntityKey()))
+                assertEquals(setOf("org.example.alpha", "org.example.middle"), dbRowsAfterFailure.map { it.pluginId }.toSet())
+
+                // Re-submitting within 60s cooldown does not retry zeta automatically, but manual refreshPostPlugin retries immediately.
+                shouldFailZeta = false
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(6, harness.service.widgetsForPost(post).size)
+
+                harness.service.refreshPostPlugin(post, "org.example.zeta")
+                harness.awaitIdle()
+
+                // 3 (alpha) + 3 (middle) + 4 (zeta) = 10 -> capped at 8, sorted by pluginId ascending then card order!
+                val cards = harness.service.widgetsForPost(post)
+                assertEquals(8, cards.size)
+                assertEquals(listOf("a1", "a2", "a3", "m1", "m2", "m3", "z1", "z2"), cards.map { it.id })
+                assertNull(cards.first { it.id == "a1" }.onRefresh)
+                assertNotNull(cards.first { it.id == "z1" }.onRefresh)
+
+                val collapsibleBefore = cards.first { it.id == "z1" }.body.single() as UiWidgetNode.Collapsible
+                assertFalse(collapsibleBefore.expanded)
+                checkNotNull(collapsibleBefore.onToggle).invoke()
+
+                val collapsibleAfter =
+                    harness.service
+                        .widgetsForPost(post)
+                        .first { it.id == "z1" }
+                        .body
+                        .single() as UiWidgetNode.Collapsible
+                assertTrue(collapsibleAfter.expanded)
+            }
+        }
+
+    @Test
+    fun updatePreservesDisabledGrantUnlessAddingTimelineProcessorForFirstTimeAndEmitsSensitivePermission() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val id = "org.example.updatable"
+                harness.installAndConfirmTimelineProcessor(
+                    id = id,
+                    version = "1.0.0",
+                    httpOrigins = listOf("https://api.one.example"),
+                    script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
+                )
+                assertTrue(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == id }
+                        .timelineProcessorEnabled,
+                )
+
+                // User explicitly disables timelineProcessor; updating to 1.1.0 must preserve disabled state.
+                harness.presenter.setTimelineProcessorEnabled(id, false)
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == id }
+                        .timelineProcessorEnabled,
+                )
+
+                harness.installAndConfirmTimelineProcessor(
+                    id = id,
+                    version = "1.1.0",
+                    httpOrigins = listOf("https://api.one.example"),
+                    script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
+                )
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == id }
+                        .timelineProcessorEnabled,
+                )
+
+                // Installing a settings-only plugin and then updating to add timelineProcessor warns TimelinePostAccess and enables on confirm.
+                val upgradeId = "org.example.upgrade"
+                val settingsFpp = harness.writeSettingsOnlyFpp(upgradeId, version = "1.0.0")
+                val initialReview = harness.presenter.inspect(settingsFpp.toString())
+                assertFalse(initialReview.permissions.any { it.type == PluginPermissionType.TimelinePostAccess })
+                harness.presenter.confirmInstall()
+                assertFalse(
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == upgradeId }
+                        .hasTimelineProcessor,
+                )
+
+                val upgradedFpp =
+                    harness.writeTimelineProcessorFpp(
+                        id = upgradeId,
+                        version = "2.0.0",
+                        mediaNetwork = true,
+                        script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
+                    )
+                val upgradeReview = harness.presenter.inspect(upgradedFpp.toString())
+                val timelinePermission = PluginPermission(PluginPermissionType.TimelinePostAccess, "*")
+                assertTrue(timelinePermission in upgradeReview.permissions)
+                assertTrue(
+                    upgradeReview.warnings.any {
+                        it.type == PluginInstallWarningTypeV1.AddedPermission && it.permission == timelinePermission
+                    },
+                )
+                val manifest =
+                    harness.subsystem.installer
+                        .let { upgradeReview }
+                assertNotNull(manifest)
+                harness.presenter.confirmInstall()
+                val upgradedItem =
+                    harness.presenter.state.value.items
+                        .single { it.pluginId == upgradeId }
+                assertTrue(upgradedItem.hasTimelineProcessor)
+                assertTrue(upgradedItem.timelineProcessorEnabled)
+
+                val installedManifest =
+                    harness.subsystem.stateStore.desired.value.plugins
+                        .getValue(upgradeId)
+                        .manifest
+                assertTrue(timelinePermission in installedManifest.sensitivePermissions())
+
+                // Also verify storageNamespaces cache invalidation on watched namespace write.
+                val storagePluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.storage",
+                        storageNamespaces = listOf("options"),
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                const snap = await flare.storage.open("options").read();
+                                const prefix = snap.values.prefix || "v1";
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cards: [{ id: "s1", body: [{ type: "text", text: String(prefix) }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val post = createSamplePost(text = "Storage post")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(
+                    "v1",
+                    (
+                        harness.service
+                            .widgetsForPost(post)
+                            .single()
+                            .body
+                            .single() as UiWidgetNode.Text
+                    ).text,
+                )
+
+                harness.subsystem.storage
+                    .access(storagePluginId) {}
+                    .write("options", PluginStorageChangesV1(set = mapOf("prefix" to JsonPrimitive("v2"))))
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(
+                    "v2",
+                    (
+                        harness.service
+                            .widgetsForPost(post)
+                            .single()
+                            .body
+                            .single() as UiWidgetNode.Text
+                    ).text,
+                )
+            }
+        }
+
+    @Test
+    fun hydratesFromSqliteRefetchesOnTtlExpiryEvictsAiExpandedOriginsAndSupportsDevReload() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val ttlPluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.ttl",
+                        script =
+                            """
+                            let seq = 0;
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                seq += 1;
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "disk", ttlSeconds: 20 }, cards: [{ id: "t1", body: [{ type: "text", text: "run-" + seq }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val post = createSamplePost(text = "TTL post")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(
+                    "run-1",
+                    (
+                        harness.service
+                            .widgetsForPost(post)
+                            .single()
+                            .body
+                            .single() as UiWidgetNode.Text
+                    ).text,
+                )
+                assertEquals(1, harness.invocationCount(ttlPluginId))
+
+                // Cold second service sharing the same DAO hydrates from SQLite with zero runtime calls.
+                val coldService = harness.createColdService()
+                try {
+                    coldService.submitPosts(listOf(post))
+                    coldService.awaitIdleForTesting()
+                    assertEquals(
+                        "run-1",
+                        (
+                            coldService
+                                .widgetsForPost(post)
+                                .single()
+                                .body
+                                .single() as UiWidgetNode.Text
+                        ).text,
+                    )
+                    assertEquals(1, harness.invocationCount(ttlPluginId))
+                } finally {
+                    coldService.close()
+                }
+
+                // Advance clock past 20s TTL -> expired entry is omitted and re-submitting invokes runtime again.
+                harness.nowMillis.addAndGet(25_000L)
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(
+                    "run-2",
+                    (
+                        harness.service
+                            .widgetsForPost(post)
+                            .single()
+                            .body
+                            .single() as UiWidgetNode.Text
+                    ).text,
+                )
+                assertEquals(2, harness.invocationCount(ttlPluginId))
+
+                // AI plugin enabled -> caches widget -> expanding httpOrigins evicts cached widgets in RAM & SQLite.
+                val ai = harness.authoring.create("timeline_processor_ai_eviction_01")
+                harness.writeAiTimelineProcessor(ai.id, expectedRevision = 0L, httpOrigins = listOf("https://api.one.example"))
+                harness.presenter.setTimelineProcessorEnabled(ai.id, true)
+                val aiPost = createSamplePost(text = "AI post")
+                harness.service.submitPosts(listOf(aiPost))
+                harness.awaitIdle()
+                assertTrue(harness.service.widgetsForPost(aiPost).any { it.pluginId == ai.id })
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(aiPost.pluginPostEntityKey()))
+                        .any { it.pluginId == ai.id },
+                )
+
+                harness.writeAiTimelineProcessor(
+                    ai.id,
+                    expectedRevision = 1L,
+                    httpOrigins = listOf("https://api.one.example", "https://exfil.two.example"),
+                )
+                harness.awaitIdle()
+                assertFalse(harness.service.widgetsForPost(aiPost).any { it.pluginId == ai.id })
+                assertFalse(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(aiPost.pluginPostEntityKey()))
+                        .any { it.pluginId == ai.id },
+                )
+
+                // Confirmed development reload grants timelineProcessor httpOrigins and stop() restores baseline (absent).
+                val devDir = harness.writeDevelopmentDirectory(id = "org.example.devproc", httpOrigins = listOf("https://dev.example"))
+                harness.subsystem.development.open(devDir.toString())
+                harness.subsystem.development.reload(confirmed = false)
+                assertNotNull(harness.subsystem.development.state.value.reviewHash)
+                harness.subsystem.development.reload(confirmed = true)
+                assertEquals(setOf("https://dev.example"), harness.currentSettings().enabledTimelineProcessorPlugins["org.example.devproc"])
+                harness.subsystem.development.stop()
+                assertFalse("org.example.devproc" in harness.currentSettings().enabledTimelineProcessorPlugins)
+            }
+        }
+
+    @Test
+    fun coldStartUnhydratedGrantStoreProcessesInitialBatchPreservesSqliteCacheAndAwaitsHydration() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val stockId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.coldstock",
+                        httpOrigins = listOf("https://api.stock.example"),
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "disk", ttlSeconds: 120 }, cards: [{ id: "cs", body: [{ type: "text", text: "live-" + i.postKey.id }] }] })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val cachedPost = createSamplePost(id = "cold-cached", text = "Cached stock")
+                val freshPost = createSamplePost(id = "cold-fresh", text = "Fresh stock")
+                harness.service.submitPosts(listOf(cachedPost))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(stockId))
+                assertEquals(
+                    1,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(cachedPost.pluginPostEntityKey()))
+                        .size,
+                )
+
+                val coldScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val hydrationGate = CompletableDeferred<Unit>()
+                val persistedGrants =
+                    MutableStateFlow(
+                        mapOf(
+                            stockId to setOf("https://api.stock.example"),
+                            "org.example.other" to setOf("https://other.example"),
+                        ),
+                    )
+                val delayedBacking =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                            flow {
+                                hydrationGate.await()
+                                emitAll(persistedGrants)
+                            }
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            hydrationGate.await()
+                            var nextMap: Map<String, Set<String>> = emptyMap()
+                            persistedGrants.update { current ->
+                                nextMap = transform(current)
+                                nextMap
+                            }
+                            return nextMap
+                        }
+                    }
+
+                val coldGrantStore = PluginTimelineGrantStoreV1(backing = { delayedBacking }, scope = { coldScope })
+                val coldAccounts = PluginTestAccounts()
+                lateinit var coldSubsystemRef: PluginSubsystemV1
+                val coldRegistry by lazy { testPluginRegistry(coldSubsystemRef, coldScope) }
+                val coldSubsystem =
+                    PluginSubsystemV1(
+                        appFiles = harness.subsystem.appFiles,
+                        pendingStore =
+                            object : PluginOAuthPendingStoreV1 {
+                                override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                                override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                                override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                            },
+                        registryProvider = { coldRegistry },
+                        accountsProvider = { coldAccounts },
+                        scopeProvider = { coldScope },
+                        timelineGrants = coldGrantStore,
+                    ).also { coldSubsystemRef = it }
+
+                val coldService =
+                    PluginTimelineProcessorServiceV1(
+                        subsystem = coldSubsystem,
+                        dao = harness.db.pluginPostWidgetDao(),
+                        grants = coldGrantStore,
+                        scope = coldScope,
+                        ioDispatcher = Dispatchers.Default,
+                        workDispatcher = Dispatchers.Default,
+                        nowEpochMillis = harness.nowMillis::get,
+                        coalesceDelayMillis = 10L,
+                    )
+                try {
+                    assertTrue(coldGrantStore.current.isEmpty())
+
+                    // replaceRunning before hydration must NOT wipe SQLite cache for persisted enabled plugins.
+                    val runningPlugin =
+                        coldSubsystem.running.value.plugins
+                            .getValue(stockId)
+                    coldSubsystem.replaceRunning(stockId, runningPlugin)
+                    coldService.awaitIdleForTesting()
+                    assertEquals(
+                        1,
+                        harness.db
+                            .pluginPostWidgetDao()
+                            .getByPostKeys(listOf(cachedPost.pluginPostEntityKey()))
+                            .size,
+                    )
+
+                    // Async toggle before hydration must fold onto persisted map rather than dropping other plugins.
+                    coldGrantStore.setEnabledAsync(
+                        "org.example.early",
+                        PluginPermissionsV1(httpOrigins = setOf("https://early.example")),
+                        coldScope,
+                    )
+
+                    // Initial viewport batch submitted BEFORE DataStore emits must NOT be dropped.
+                    coldService.submitPosts(listOf(cachedPost, freshPost))
+
+                    hydrationGate.complete(Unit)
+                    coldService.awaitIdleForTesting()
+
+                    assertEquals(1, coldService.widgetsForPost(cachedPost).size)
+                    assertEquals(1, coldService.widgetsForPost(freshPost).size)
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000L) {
+                            persistedGrants.first { "org.example.early" in it }
+                        }
+                    }
+                    assertEquals(setOf("https://other.example"), persistedGrants.value["org.example.other"])
+                    assertEquals(setOf("https://api.stock.example"), persistedGrants.value[stockId])
+                } finally {
+                    coldService.close()
+                    coldSubsystem.runtimePool.close()
+                    coldScope.cancel()
+                }
+
+                // Also verify confirmInstall() update on an unhydrated store preserves enabled state rather than treating as disabled.
+                val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val updateGrantsState = MutableStateFlow(mapOf(stockId to setOf("https://api.stock.example")))
+                val slowUpdateBacking =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                            flow {
+                                delay(60L)
+                                emitAll(updateGrantsState)
+                            }
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            var nextMap: Map<String, Set<String>> = emptyMap()
+                            updateGrantsState.update { current ->
+                                nextMap = transform(current)
+                                nextMap
+                            }
+                            return nextMap
+                        }
+                    }
+                val updateGrantStore = PluginTimelineGrantStoreV1(backing = { slowUpdateBacking }, scope = { updateScope })
+                val updateAccounts = PluginTestAccounts()
+                lateinit var updateSubsystemRef: PluginSubsystemV1
+                val updateRegistry by lazy { testPluginRegistry(updateSubsystemRef, updateScope) }
+                val updateSubsystem =
+                    PluginSubsystemV1(
+                        appFiles = harness.subsystem.appFiles,
+                        pendingStore =
+                            object : PluginOAuthPendingStoreV1 {
+                                override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                                override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                                override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                            },
+                        registryProvider = { updateRegistry },
+                        accountsProvider = { updateAccounts },
+                        scopeProvider = { updateScope },
+                        timelineGrants = updateGrantStore,
+                    ).also { updateSubsystemRef = it }
+                val updatePresenter =
+                    PluginManagementPresenterV1(
+                        subsystem = updateSubsystem,
+                        scope = updateScope,
+                        registry = { updateRegistry },
+                        accounts = { updateAccounts },
+                    )
+                try {
+                    val upgradedFpp =
+                        harness.writeTimelineProcessorFpp(
+                            id = stockId,
+                            version = "1.1.0",
+                            httpOrigins = listOf("https://api.stock.example", "https://api.v2.stock.example"),
+                            mediaNetwork = true,
+                            script = "defineFlareTimelineProcessorPlugin({ async processBatch() { return { results: [] }; } });",
+                        )
+                    updatePresenter.inspect(upgradedFpp.toString())
+                    updatePresenter.confirmInstall()
+                    assertEquals(
+                        setOf("https://api.stock.example", "https://api.v2.stock.example", "mediaNetwork"),
+                        updateGrantsState.value[stockId],
+                    )
+                } finally {
+                    updatePresenter.close()
+                    updateSubsystem.runtimePool.close()
+                    updateScope.cancel()
+                }
+
+                // Also verify development.reload(confirmed = true) + stop() on an unhydrated store preserves baseline grant.
+                val devScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                val baselineOrigins = setOf("https://api.stock.example", "https://api.v2.stock.example")
+                val devGrantsState = MutableStateFlow(mapOf(stockId to baselineOrigins))
+                val slowDevBacking =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                            flow {
+                                delay(60L)
+                                emitAll(devGrantsState)
+                            }
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            var nextMap: Map<String, Set<String>> = emptyMap()
+                            devGrantsState.update { current ->
+                                nextMap = transform(current)
+                                nextMap
+                            }
+                            return nextMap
+                        }
+                    }
+                val devGrantStore = PluginTimelineGrantStoreV1(backing = { slowDevBacking }, scope = { devScope })
+                val devAccounts = PluginTestAccounts()
+                lateinit var devSubsystemRef: PluginSubsystemV1
+                val devRegistry by lazy { testPluginRegistry(devSubsystemRef, devScope) }
+                val devSubsystem =
+                    PluginSubsystemV1(
+                        appFiles = harness.subsystem.appFiles,
+                        pendingStore =
+                            object : PluginOAuthPendingStoreV1 {
+                                override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                                override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                                override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                            },
+                        registryProvider = { devRegistry },
+                        accountsProvider = { devAccounts },
+                        scopeProvider = { devScope },
+                        timelineGrants = devGrantStore,
+                    ).also { devSubsystemRef = it }
+                try {
+                    val installedManifest =
+                        devSubsystem.running.value.plugins
+                            .getValue(stockId)
+                            .installed.manifest
+                    assertTrue(installedManifest.permissions.mediaNetwork)
+                    val devDir =
+                        harness.writeDevelopmentDirectory(
+                            id = stockId,
+                            httpOrigins = listOf("https://dev.temp.example"),
+                            mediaNetwork = true,
+                        )
+                    devSubsystem.development.open(devDir.toString())
+                    devSubsystem.development.reload(confirmed = false)
+                    devSubsystem.development.reload(confirmed = true)
+                    assertEquals(setOf("https://dev.temp.example", "mediaNetwork"), devGrantsState.value[stockId])
+                    devSubsystem.development.stop()
+                    assertEquals(baselineOrigins, devGrantsState.value[stockId])
+                    assertFalse(devGrantStore.isEnabled(stockId, installedManifest))
+                } finally {
+                    devSubsystem.runtimePool.close()
+                    devScope.cancel()
+                }
+            }
+        }
+
+    @Test
+    fun rapidSetEnabledAsyncOnThenOffSerializesInFifoOrderWithoutReEnabling() =
+        runTest {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val pluginId = "org.example.rapid"
+                val origins = setOf("https://api.rapid.example")
+                val persistedState = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+                val writeHistory = ArrayList<Map<String, Set<String>>>()
+                val historyMutex = Mutex()
+                val writeCallCount = AtomicInteger(0)
+
+                val backing =
+                    object : TimelineProcessorSettingsBacking {
+                        override val enabledPlugins: Flow<Map<String, Set<String>>> = persistedState
+
+                        override suspend fun updateEnabledPlugins(
+                            transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+                        ): Map<String, Set<String>> {
+                            val callNum = writeCallCount.incrementAndGet()
+                            if (callNum % 2 == 1) {
+                                // Slow down ON writes to maximize scheduling contention with immediate OFF writes.
+                                delay(25L)
+                            }
+                            var next: Map<String, Set<String>> = emptyMap()
+                            persistedState.update { current ->
+                                next = transform(current)
+                                next
+                            }
+                            historyMutex.withLock {
+                                writeHistory.add(next)
+                            }
+                            return next
+                        }
+                    }
+
+                val store = PluginTimelineGrantStoreV1(backing = { backing }, scope = { scope })
+                withContext(Dispatchers.Default) {
+                    repeat(15) {
+                        store.setEnabledAsync(pluginId, PluginPermissionsV1(httpOrigins = origins), scope)
+                        store.setEnabledAsync(pluginId, null, scope)
+                        assertFalse(pluginId in store.current)
+                    }
+                    withTimeout(5_000L) {
+                        while (historyMutex.withLock { writeHistory.size } < 30) {
+                            delay(10L)
+                        }
+                    }
+                }
+
+                assertFalse(pluginId in store.current)
+                assertFalse(pluginId in persistedState.value)
+                val snapshotHistory = historyMutex.withLock { writeHistory.toList() }
+                assertEquals(30, snapshotHistory.size)
+                snapshotHistory.forEachIndexed { index, map ->
+                    if (index % 2 == 0) {
+                        assertEquals(origins, map[pluginId])
+                    } else {
+                        assertFalse(pluginId in map)
+                    }
+                }
+            } finally {
+                scope.cancel()
+            }
+        }
+
+    @Test
+    fun clearFailureCooldownsBumpsOverlayRevisionAndAllowsImmediateBatchRetry() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                var shouldFail = true
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.pullrefresh",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return {
+                                  results: req.items.map(i => ({
+                                    itemId: i.itemId,
+                                    cards: [{ id: "pr-1", body: [{ type: "text", text: "Recovered" }] }]
+                                  }))
+                                };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                harness.failPluginCallsWhen(pluginId) { shouldFail }
+
+                val post = createSamplePost(text = "Transient failure post")
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+
+                // Within 60s transient failure cooldown, ordinary re-submission is suppressed.
+                shouldFail = false
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+                assertTrue(harness.service.widgetsForPost(post).isEmpty())
+
+                // Pull-to-refresh clears cooldowns, bumps overlayRevision once, and allows immediate retry.
+                val revisionBeforeClear = harness.service.overlayRevision.value
+                harness.service.clearFailureCooldowns()
+                val revisionAfterClear = harness.service.overlayRevision.value
+                assertEquals(revisionBeforeClear + 1L, revisionAfterClear)
+
+                // Clearing again with no remaining cooldowns is a no-op on overlayRevision.
+                harness.service.clearFailureCooldowns()
+                assertEquals(revisionAfterClear, harness.service.overlayRevision.value)
+
+                harness.service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals(2, harness.invocationCount(pluginId))
+                val cards = harness.service.widgetsForPost(post)
+                assertEquals(1, cards.size)
+                assertEquals("Recovered", (cards.single().body.single() as UiWidgetNode.Text).text)
+            }
+        }
+
+    @Test
+    fun sequentialSinglePostSubmissionsCoalesceIntoOneDbLookupAndAtMostOneHydrationRevisionBump() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.paging",
+                        maxBatchSize = 30,
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return {
+                                  results: req.items.map(i => ({
+                                    itemId: i.itemId,
+                                    cache: { policy: "disk", ttlSeconds: 300 },
+                                    cards: [{ id: "card-" + i.postKey.id, body: [{ type: "text", text: "cached-" + i.postKey.id }] }]
+                                  }))
+                                };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val pagePosts = (1..25).map { idx -> createSamplePost(id = "page-post-$idx", text = "Post $idx") }
+                harness.service.submitPosts(pagePosts)
+                harness.awaitIdle()
+                assertEquals(1, harness.invocationCount(pluginId))
+
+                val countingDao = harness.rawDao()
+                val coldService = harness.createColdService()
+                try {
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000L) {
+                            coldService.overlayRevision.first { it >= 1L }
+                        }
+                    }
+                    coldService.awaitIdleForTesting()
+                    countingDao.resetGetByPostKeysCount()
+                    val revisionBefore = coldService.overlayRevision.value
+
+                    // Simulate PagingData.map calling submitPosts(listOf(post)) 25 times sequentially.
+                    pagePosts.forEach { post ->
+                        coldService.submitPosts(listOf(post))
+                    }
+                    coldService.awaitIdleForTesting()
+
+                    assertEquals(
+                        1,
+                        countingDao.getByPostKeysCount(),
+                        "Expected 25 single-post submitPosts calls to coalesce into 1 DB read",
+                    )
+                    val revisionDelta = coldService.overlayRevision.value - revisionBefore
+                    assertTrue(revisionDelta <= 1L, "Expected overlayRevision to bump at most once on hydration, got +$revisionDelta")
+                    assertEquals(1L, revisionDelta)
+                    assertEquals(1, harness.invocationCount(pluginId), "Cold hydration from SQLite must not re-invoke runtime")
+                    pagePosts.forEach { post ->
+                        assertEquals(1, coldService.widgetsForPost(post).size)
+                    }
+                } finally {
+                    coldService.close()
+                }
+            }
+        }
+
+    @Test
+    fun autoAndManualBatchesRespectEncodedBytesAndCountWhileSkippingOnlyOversizedPosts() =
+        runTest {
+            withTimelineProcessorTestHarness(workDispatcher = StandardTestDispatcher(testScheduler)) { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.batchbytes",
+                        maxBatchSize = 4,
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({
+                                  itemId: i.itemId,
+                                  cards: [{
+                                    id: "c", title: req.trigger + "/" + req.items.length, body: [{ type: "text", text: i.postKey.id }]
+                                  }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val largeText = "界\"".repeat(118_000)
+                val posts =
+                    listOf(
+                        createSamplePost(text = largeText),
+                        createSamplePost(text = largeText),
+                        createSamplePost(text = "\u0001".repeat(175_000)),
+                    ) + (1..5).map { createSamplePost(text = "small $it") }
+
+                fun assertBatches(trigger: String) {
+                    assertEquals(
+                        listOf("$trigger/1", "$trigger/1", null, "$trigger/1") + List(4) { "$trigger/4" },
+                        posts.map { service.widgetsForPost(it).singleOrNull()?.title },
+                    )
+                }
+                service.submitPosts(posts)
+                harness.awaitIdle()
+                assertBatches("auto")
+                assertEquals(4, harness.invocationCount(pluginId))
+
+                posts.forEach { service.refreshPostPlugin(it, pluginId) }
+                harness.awaitIdle()
+                assertBatches("manualRefresh")
+                assertEquals(8, harness.invocationCount(pluginId))
+            }
+        }
+
+    @Test
+    fun postMetadataAndNormalizedRequestLocaleControlMemoryAndColdCacheHits() =
+        runTest {
+            val locale = AtomicReference(" en_US ")
+            withTimelineProcessorTestHarness(localeProvider = locale::get) { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.cacheinput",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => ({
+                                  itemId: i.itemId, cards: [{ id: "c", title: req.locale, body: [{ type: "text", text: i.postKey.id }] }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val author = createSampleUser().copy(nameInternal = "First name".toUiPlainText())
+                var post = createSamplePost(text = "same text").copy(user = author)
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                val edits: List<(UiTimelineV2.Post) -> UiTimelineV2.Post> =
+                    listOf(
+                        { it.copy(user = checkNotNull(it.user).copy(handle = UiHandle("renamed", "example.org"))) },
+                        { it.copy(user = checkNotNull(it.user).copy(nameInternal = "New name".toUiPlainText())) },
+                        { it.copy(sourceLanguages = persistentListOf("ja", "en")) },
+                        { it.copy(sourceLanguages = persistentListOf("en", "ja")) },
+                        { it.copy(createdAt = Instant.fromEpochSeconds(1_700_000_001L).toUi()) },
+                        { it.copy(platformId = "another-platform") },
+                    )
+                for ((index, edit) in edits.withIndex()) {
+                    post = edit(post)
+                    assertTrue(service.widgetsForPost(post).isEmpty())
+                    service.submitPosts(listOf(post))
+                    harness.awaitIdle()
+                    assertEquals(index + 2, harness.invocationCount(pluginId))
+                    assertEquals("en-US", service.widgetsForPost(post).single().title)
+                }
+                for ((hostLocale, expectedLocale) in listOf("en-US" to "en-US", "fr_CA" to "fr-CA")) {
+                    locale.set(hostLocale)
+                    val cold = harness.createColdService()
+                    try {
+                        cold.submitPosts(listOf(post))
+                        cold.awaitIdleForTesting()
+                        assertEquals(expectedLocale, cold.widgetsForPost(post).single().title)
+                        val expectedCalls = edits.size + if (hostLocale == "en-US") 1 else 2
+                        assertEquals(expectedCalls, harness.invocationCount(pluginId))
+                    } finally {
+                        cold.close()
+                    }
+                }
+                assertTrue(service.widgetsForPost(post).isEmpty())
+            }
+        }
+
+    @Test
+    fun identicalCardsNotifyOverlayAfterPostEditsExpiryAndLocaleChanges() =
+        runTest {
+            val locale = AtomicReference("en")
+            withTimelineProcessorTestHarness(localeProvider = locale::get) { harness ->
+                val service = harness.service
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.samecards",
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return { results: req.items.map(i => ({
+                              itemId: i.itemId, cache: { ttlSeconds: 15 }, cards: [{ id: "c", body: [{ type: "text", text: "same" }] }]
+                            })) };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+                val post = createSamplePost(text = "original")
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                val edited = post.copy(sourceLanguages = persistentListOf("de"))
+
+                suspend fun assertRestored() {
+                    assertTrue(service.widgetsForPost(edited).isEmpty())
+                    val previousRevision = service.overlayRevision.value
+                    service.submitPosts(listOf(edited))
+                    harness.awaitIdle()
+                    assertTrue(service.overlayRevision.value > previousRevision)
+                    assertEquals("c", service.widgetsForPost(edited).single().id)
+                }
+                assertRestored()
+                harness.nowMillis.addAndGet(15_000L)
+                assertRestored()
+                locale.set("de")
+                assertRestored()
+            }
+        }
+
+    @Test
+    fun processorStorageWritesKeepResultsAndConcurrentSettingsChangesInvalidateThem() =
+        runTest {
+            withTimelineProcessorTestHarness(workDispatcher = StandardTestDispatcher(testScheduler)) { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.stats",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                const store = flare.storage.open("stats");
+                                const { values } = await store.read();
+                                await store.write({ set: { calls: (values.calls || 0) + 1 } });
+                                return { results: req.items.map(i => ({ itemId: i.itemId,
+                                  cards: [{ id: "stats", body: [{ type: "text", text: values.label || "original" }] }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val revision = service.processingRevision.first { it > 0L }
+                val post = createSamplePost(text = "one post")
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                testScheduler.advanceUntilIdle()
+
+                fun label() =
+                    (
+                        service
+                            .widgetsForPost(post)
+                            .single()
+                            .body
+                            .single() as UiWidgetNode.Text
+                    ).text
+                assertEquals("original", label())
+                assertEquals(revision, service.processingRevision.value)
+
+                harness.gateNextRuntimeCallNonCancellable(pluginId)
+                service.refreshPostPlugin(post, pluginId)
+                harness.awaitRuntimeCallEntered(pluginId)
+                val settings = harness.subsystem.storage.access(pluginId) {}
+                settings.write("stats", PluginStorageChangesV1(mapOf("label" to JsonPrimitive("updated"))))
+                service.processingRevision.first { it > revision }
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+                assertTrue(service.widgetsForPost(post).isEmpty())
+
+                service.submitPosts(listOf(post))
+                harness.awaitIdle()
+                assertEquals("updated", label())
+                assertEquals(3, harness.invocationCount(pluginId))
+                assertEquals(revision + 1L, service.processingRevision.value)
+            }
+        }
+
+    @Test
+    fun queuedRefreshUsesEditedInputAndCoalescesMatchingInFlightReads() =
+        runTest {
+            withTimelineProcessorTestHarness(workDispatcher = StandardTestDispatcher(testScheduler)) { harness ->
+                val service = harness.service
+                val pluginId = harness.installAndConfirmTimelineProcessor(id = "org.example.edits", script = echoInputScript)
+                val original = createSamplePost(id = "edited", text = "original")
+                val edited = createSamplePost(id = "edited", text = "corrected")
+                service.submitPosts(listOf(original))
+                harness.awaitIdle()
+                harness.gateNextRuntimeCall(pluginId)
+                service.submitPosts(listOf(createSamplePost(text = "other work")))
+                harness.awaitRuntimeCallEntered(pluginId)
+                service.refreshPostPlugin(original, pluginId)
+                testScheduler.runCurrent()
+                service.submitPosts(listOf(edited))
+                testScheduler.advanceUntilIdle()
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+
+                fun assertManual(
+                    post: UiTimelineV2.Post,
+                    text: String,
+                ) {
+                    val card = service.widgetsForPost(post).single()
+                    assertEquals("manualRefresh", card.title)
+                    assertEquals(text, (card.body.single() as UiWidgetNode.Text).text)
+                }
+                assertManual(edited, "corrected")
+                assertTrue(service.widgetsForPost(original).isEmpty())
+                assertEquals(3, harness.invocationCount(pluginId))
+
+                val latest = createSamplePost(id = "edited", text = "latest")
+                harness.gateNextRuntimeCall(pluginId)
+                service.refreshPostPlugin(latest, pluginId)
+                harness.awaitRuntimeCallEntered(pluginId)
+                service.submitPosts(listOf(latest))
+                testScheduler.advanceUntilIdle()
+                harness.releaseGatedRuntimeCall(pluginId)
+                harness.awaitIdle()
+                assertManual(latest, "latest")
+                assertEquals(4, harness.invocationCount(pluginId))
+            }
+        }
+
+    @OptIn(InternalCoroutinesApi::class)
+    @Test
+    fun queuedRefreshUsesTheLaterSubmissionWhenTheFirstDispatchRunsLast() =
+        runTest {
+            val delegate = StandardTestDispatcher(testScheduler)
+            val holdNext = AtomicReference<CompletableDeferred<Runnable>?>(null)
+            val dispatcher =
+                object : CoroutineDispatcher(), Delay by delegate {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) {
+                        val gate = holdNext.getAndSet(null)
+                        if (gate == null) delegate.dispatch(context, block) else gate.complete(block)
+                    }
+                }
+            withTimelineProcessorTestHarness(workDispatcher = dispatcher) { harness ->
+                val service = harness.service
+                val id = harness.installAndConfirmTimelineProcessor(id = "org.example.order", script = echoInputScript)
+                for ((manualFirst, finishAutoFirst) in listOf(true to false, false to false, true to true)) {
+                    val key = "row-$manualFirst-$finishAutoFirst"
+                    val older = createSamplePost(id = key, text = "old")
+                    val newer = createSamplePost(id = key, text = "new")
+                    service.submitPosts(listOf(if (manualFirst) older else createSamplePost(id = key, text = "cached")))
+                    harness.awaitIdle()
+                    harness.gateNextRuntimeCall(id)
+                    service.submitPosts(listOf(createSamplePost(text = "other work")))
+                    harness.awaitRuntimeCallEntered(id)
+                    val calls = harness.invocationCount(id)
+                    val held = CompletableDeferred<Runnable>().also(holdNext::set)
+                    if (manualFirst) service.refreshPostPlugin(older, id) else service.submitPosts(listOf(older))
+                    val firstDispatch = held.await()
+                    if (manualFirst) service.submitPosts(listOf(newer)) else service.refreshPostPlugin(newer, id)
+                    testScheduler.advanceUntilIdle()
+                    if (finishAutoFirst) {
+                        harness.releaseGatedRuntimeCall(id)
+                        service.overlayRevision.first { service.widgetsForPost(newer).isNotEmpty() }
+                        testScheduler.advanceUntilIdle()
+                    }
+                    delegate.dispatch(EmptyCoroutineContext, firstDispatch)
+                    testScheduler.advanceUntilIdle()
+                    if (!finishAutoFirst) harness.releaseGatedRuntimeCall(id)
+                    harness.awaitIdle()
+
+                    val card = service.widgetsForPost(newer).single()
+                    assertEquals(if (finishAutoFirst) "auto" else "manualRefresh", card.title)
+                    assertEquals("new", (card.body.single() as UiWidgetNode.Text).text)
+                    assertTrue(service.widgetsForPost(older).isEmpty())
+                    assertFalse(card.isRefreshing)
+                    assertEquals(calls + 1, harness.invocationCount(id))
+                    if (finishAutoFirst) {
+                        service.refreshPostPlugin(newer, id)
+                        harness.awaitIdle()
+                        assertEquals("manualRefresh", service.widgetsForPost(newer).single().title)
+                        assertEquals(calls + 2, harness.invocationCount(id))
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun concurrentCachedReadsRefreshRecencyAndEvictedRowsRunAgainOnRevisit() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.recency",
+                        maxBatchSize = 50,
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              processBatch(req) {
+                                return { results: req.items.map(i => ({ itemId: i.itemId, cache: { policy: "memoryOnly" },
+                                  cards: [{ id: "row", body: [{ type: "text", text: i.postKey.id }] }]
+                                })) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val posts = List(1_024) { createSamplePost(id = "row-$it", text = "row") }
+                service.submitPosts(posts)
+                harness.awaitIdle()
+                val initialCalls = harness.invocationCount(pluginId)
+                coroutineScope {
+                    repeat(4) { index ->
+                        launch(Dispatchers.Default) { repeat(30) { service.submitPosts(listOf(posts[index])) } }
+                    }
+                }
+                service.submitPosts(listOf(createSamplePost(text = "one more row")))
+                harness.awaitIdle()
+                assertEquals(initialCalls + 1, harness.invocationCount(pluginId))
+                assertTrue(posts.take(4).all { service.widgetsForPost(it).isNotEmpty() })
+                assertTrue(service.widgetsForPost(posts[4]).isEmpty())
+                service.submitPosts(listOf(posts[4]))
+                harness.awaitIdle()
+                assertEquals("row", service.widgetsForPost(posts[4]).single().id)
+                assertEquals(initialCalls + 2, harness.invocationCount(pluginId))
+            }
+        }
+
+    @Test
+    fun nonDiskResponsesDeletePriorRowsInMixedBatchesAndSingleManualRefreshes() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val service = harness.service
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.cachepolicy",
+                        script =
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                return { results: req.items.map(i => {
+                                  const policy = req.trigger === "manualRefresh" ? "none" : i.contentPlain.split(" ")[0];
+                                  return {
+                                    itemId: i.itemId, cache: { policy },
+                                    cards: [{ id: "c", title: policy, body: [{ type: "text", text: i.postKey.id }] }]
+                                  };
+                                }) };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+                val original = (1..4).map { createSamplePost(id = "policy-$it", text = "disk") }
+                val keys = original.map { it.pluginPostEntityKey() }
+                val dao = harness.db.pluginPostWidgetDao()
+                service.submitPosts(original)
+                harness.awaitIdle()
+                assertEquals(4, dao.getByPostKeys(keys).size)
+
+                val policies = listOf("memoryOnly", "none", "disk")
+                val mixed =
+                    policies.mapIndexed { index, policy ->
+                        createSamplePost(id = original[index].statusKey.id, text = "$policy edited")
+                    }
+                service.submitPosts(mixed)
+                harness.awaitIdle()
+                assertEquals(2, harness.invocationCount(pluginId))
+                assertEquals(policies, mixed.map { service.widgetsForPost(it).single().title })
+                assertEquals(keys.takeLast(2).toSet(), dao.getByPostKeys(keys).map { it.postEntityKey }.toSet())
+
+                service.refreshPostPlugin(original.last(), pluginId)
+                harness.awaitIdle()
+                assertEquals("none", service.widgetsForPost(original.last()).single().title)
+                assertEquals(keys[2], dao.getByPostKeys(keys).single().postEntityKey)
+
+                val cold = harness.createColdService()
+                try {
+                    cold.submitPosts(listOf(original.last()))
+                    cold.awaitIdleForTesting()
+                    assertEquals(4, harness.invocationCount(pluginId))
+                    assertEquals("disk", cold.widgetsForPost(original.last()).single().title)
+                } finally {
+                    cold.close()
+                }
+            }
+        }
+
+    @Test
+    fun corruptSqliteDaoNeverThrowsUncaughtCoroutineExceptionAndPreservesInMemoryDeliveryAndRefreshReset() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                val pluginId =
+                    harness.installAndConfirmTimelineProcessor(
+                        id = "org.example.corruptdb",
+                        script =
+                            """
+                            let n = 0;
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch(req) {
+                                n += 1;
+                                return {
+                                  results: req.items.map(i => ({
+                                    itemId: i.itemId,
+                                    cache: { policy: req.trigger === "manualRefresh" ? "memoryOnly" : "disk", ttlSeconds: 60 },
+                                    cards: [{ id: "c1", refreshable: true, body: [{ type: "text", text: "v" + n }] }]
+                                  }))
+                                };
+                              }
+                            });
+                            """.trimIndent(),
+                    )
+
+                val uncaught = ConcurrentHashMap.newKeySet<Throwable>()
+                val customScope =
+                    CoroutineScope(
+                        SupervisorJob() +
+                            Dispatchers.Default +
+                            CoroutineExceptionHandler { _, throwable -> uncaught += throwable },
+                    )
+                val corruptDao =
+                    object : PluginPostWidgetDao {
+                        override suspend fun getByPostKeysChunk(postEntityKeys: List<String>): List<DbPluginPostWidget> =
+                            throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun upsertAll(items: List<DbPluginPostWidget>): Unit =
+                            throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteByPluginId(pluginId: String): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteByPluginAndPostKeys(
+                            pluginId: String,
+                            postEntityKeys: List<String>,
+                        ): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteByPostKeyRange(
+                            prefix: String,
+                            upperBound: String,
+                        ): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteExpiredBefore(cutoffMillis: Long): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun trimOldestKeepingQuery(maxRows: Int): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+
+                        override suspend fun deleteAll(): Unit = throw IllegalStateException("SQLITE_CORRUPT")
+                    }
+
+                val resilientService = harness.createColdService(daoOverride = corruptDao, scopeOverride = customScope)
+                try {
+                    val post = createSamplePost(id = "corrupt-post-1", text = "Resilient post")
+                    resilientService.submitPosts(listOf(post))
+                    resilientService.awaitIdleForTesting()
+
+                    val initialCard = resilientService.widgetsForPost(post).single()
+                    assertEquals("v1", (initialCard.body.single() as UiWidgetNode.Text).text)
+                    assertFalse(initialCard.isRefreshing)
+
+                    // The manual refresh still clears its spinner when deleting the old disk row fails.
+                    harness.gateNextRuntimeCall(pluginId)
+                    resilientService.refreshPostPlugin(post, pluginId)
+                    assertTrue(resilientService.widgetsForPost(post).single().isRefreshing)
+
+                    harness.releaseGatedRuntimeCall(pluginId)
+                    resilientService.awaitIdleForTesting()
+
+                    val refreshedCard = resilientService.widgetsForPost(post).single()
+                    assertFalse(refreshedCard.isRefreshing)
+                    assertEquals("v2", (refreshedCard.body.single() as UiWidgetNode.Text).text)
+
+                    resilientService.clearPlugin(pluginId)
+                    resilientService.awaitIdleForTesting()
+                    assertTrue(uncaught.isEmpty(), "Expected zero uncaught coroutine exceptions, got: $uncaught")
+                } finally {
+                    resilientService.close()
+                    customScope.cancel()
+                }
+            }
+        }
+
+    @Test
+    fun clearAccountAndClearAllImmediatelyEvictDiskAndMemoryOnlyWidgetsAndBumpOverlayRevision() =
+        runTest {
+            withTimelineProcessorTestHarness { harness ->
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.disk",
+                    containsAny = listOf("STOCK"),
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cache: { policy: "disk", ttlSeconds: 300 },
+                                cards: [{ id: "d", body: [{ type: "text", text: "disk-" + i.postKey.id }] }]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+                harness.installAndConfirmTimelineProcessor(
+                    id = "org.example.mem",
+                    containsAny = listOf("SECRET"),
+                    script =
+                        """
+                        defineFlareTimelineProcessorPlugin({
+                          async processBatch(req) {
+                            return {
+                              results: req.items.map(i => ({
+                                itemId: i.itemId,
+                                cache: { policy: "memoryOnly" },
+                                cards: [{ id: "m", body: [{ type: "text", text: "mem-" + i.postKey.id }] }]
+                              }))
+                            };
+                          }
+                        });
+                        """.trimIndent(),
+                )
+
+                val accountA = AccountType.Specific(MicroBlogKey("alice", "one.social"))
+                val accountB = AccountType.Specific(MicroBlogKey("bob", "two.social"))
+
+                val aDisk = createSamplePost(id = "a-disk", text = "STOCK AAPL", accountType = accountA)
+                val aMem = createSamplePost(id = "a-mem", text = "SECRET PAYLOAD", accountType = accountA)
+                val bDisk = createSamplePost(id = "b-disk", text = "STOCK NVDA", accountType = accountB)
+                val bMem = createSamplePost(id = "b-mem", text = "SECRET OTHER", accountType = accountB)
+                val guestDisk = createSamplePost(id = "g-disk", text = "STOCK MSFT", accountType = AccountType.Guest)
+
+                harness.service.submitPosts(listOf(aDisk, aMem, bDisk, bMem, guestDisk))
+                harness.awaitIdle()
+
+                assertEquals(1, harness.service.widgetsForPost(aDisk).size)
+                assertEquals(1, harness.service.widgetsForPost(aMem).size)
+                assertEquals(1, harness.service.widgetsForPost(bDisk).size)
+                assertEquals(1, harness.service.widgetsForPost(bMem).size)
+                assertEquals(1, harness.service.widgetsForPost(guestDisk).size)
+
+                // clearAccount(accountA) immediately evicts both disk and memoryOnly cards for accountA, bumps overlayRevision,
+                // deletes accountA rows from SQLite, and preserves accountB + Guest.
+                val revBeforeAccountClear = harness.service.overlayRevision.value
+                harness.service.clearAccount(accountA)
+                assertTrue(harness.service.widgetsForPost(aDisk).isEmpty())
+                assertTrue(harness.service.widgetsForPost(aMem).isEmpty())
+                assertEquals(revBeforeAccountClear + 1L, harness.service.overlayRevision.value)
+                assertEquals(1, harness.service.widgetsForPost(bDisk).size)
+                assertEquals(1, harness.service.widgetsForPost(bMem).size)
+                assertEquals(1, harness.service.widgetsForPost(guestDisk).size)
+
+                harness.awaitIdle()
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(aDisk.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+                assertEquals(
+                    2,
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(bDisk.pluginPostEntityKey(), guestDisk.pluginPostEntityKey()))
+                        .size,
+                )
+
+                // clearAll() immediately evicts all remaining disk and memoryOnly cards, bumps overlayRevision, and clears SQLite.
+                val revBeforeClearAll = harness.service.overlayRevision.value
+                harness.service.clearAll()
+                assertTrue(harness.service.widgetsForPost(bDisk).isEmpty())
+                assertTrue(harness.service.widgetsForPost(bMem).isEmpty())
+                assertTrue(harness.service.widgetsForPost(guestDisk).isEmpty())
+                assertEquals(revBeforeClearAll + 1L, harness.service.overlayRevision.value)
+
+                harness.awaitIdle()
+                assertTrue(
+                    harness.db
+                        .pluginPostWidgetDao()
+                        .getByPostKeys(listOf(bDisk.pluginPostEntityKey(), guestDisk.pluginPostEntityKey()))
+                        .isEmpty(),
+                )
+            }
+        }
+}
+
+private val nextPostId = AtomicInteger(1)
+
+private val echoInputScript =
+    """
+    defineFlareTimelineProcessorPlugin({
+      processBatch(req) {
+        return { results: req.items.map(i => ({ itemId: i.itemId, cards: [{
+          id: "c", title: req.trigger, body: [{ type: "text", text: i.contentPlain }]
+        }] })) };
+      }
+    });
+    """.trimIndent()
+
+private fun createSamplePost(
+    id: String = "post-${nextPostId.getAndIncrement()}",
+    host: String = "sampleHost",
+    text: String? = null,
+    link: String? = null,
+    card: UiCard? = null,
+    contentWarning: String? = null,
+    accountType: AccountType = AccountType.Guest,
+): UiTimelineV2.Post {
+    val user = createSampleUser().copy(key = MicroBlogKey("sampleKey", host))
+    val base =
+        createSampleStatus(user).copy(
+            statusKey = MicroBlogKey(id = id, host = host),
+            accountType = accountType,
+            createdAt = Instant.fromEpochSeconds(1_700_000_000L).toUi(),
+            card = card,
+            contentWarning =
+                contentWarning?.let {
+                    UiTranslatableText(
+                        original = uiRichTextOf(renderRuns = listOf(RenderContent.Text(persistentListOf(RenderRun.Text(it))))),
+                    )
+                },
+        )
+    if (text == null && link == null) {
+        return base
+    }
+    val runs =
+        buildList {
+            if (text != null) {
+                add(RenderRun.Text(text))
+            }
+            if (link != null) {
+                if (text != null) {
+                    add(RenderRun.Text(" "))
+                }
+                add(RenderRun.Text(link, RenderTextStyle(link = link)))
+            }
+        }
+    return base.copy(
+        content =
+            UiTranslatableText(
+                original = uiRichTextOf(renderRuns = listOf(RenderContent.Text(persistentListOf(*runs.toTypedArray())))),
+            ),
+    )
+}
+
+private class InMemoryPluginPostWidgetDao(
+    initialRows: List<DbPluginPostWidget> = emptyList(),
+) : PluginPostWidgetDao {
+    private val mutex = Mutex()
+    private val rows = LinkedHashMap<Pair<String, String>, DbPluginPostWidget>()
+    private val getByPostKeysCounter = AtomicInteger(0)
+
+    init {
+        initialRows.forEach { row ->
+            rows[row.postEntityKey to row.pluginId] = row
+        }
+    }
+
+    fun getByPostKeysCount(): Int = getByPostKeysCounter.get()
+
+    fun resetGetByPostKeysCount() {
+        getByPostKeysCounter.set(0)
+    }
+
+    override suspend fun getByPostKeys(postEntityKeys: List<String>): List<DbPluginPostWidget> {
+        getByPostKeysCounter.incrementAndGet()
+        return super.getByPostKeys(postEntityKeys)
+    }
+
+    override suspend fun getByPostKeysChunk(postEntityKeys: List<String>): List<DbPluginPostWidget> =
+        mutex.withLock {
+            val keySet = postEntityKeys.toSet()
+            rows.values.filter { it.postEntityKey in keySet }
+        }
+
+    override suspend fun upsertAll(items: List<DbPluginPostWidget>) {
+        mutex.withLock {
+            items.forEach { item ->
+                rows[item.postEntityKey to item.pluginId] = item
+            }
+        }
+    }
+
+    override suspend fun deleteByPluginId(pluginId: String) {
+        mutex.withLock {
+            val iterator = rows.entries.iterator()
+            while (iterator.hasNext()) {
+                if (iterator.next().value.pluginId == pluginId) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
+    override suspend fun deleteByPluginAndPostKeys(
+        pluginId: String,
+        postEntityKeys: List<String>,
+    ) {
+        mutex.withLock {
+            postEntityKeys.forEach { rows.remove(it to pluginId) }
+        }
+    }
+
+    override suspend fun deleteByPostKeyRange(
+        prefix: String,
+        upperBound: String,
+    ) {
+        mutex.withLock {
+            val iterator = rows.entries.iterator()
+            while (iterator.hasNext()) {
+                val key = iterator.next().value.postEntityKey
+                if (key >= prefix && key < upperBound) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
+    override suspend fun deleteExpiredBefore(cutoffMillis: Long) {
+        mutex.withLock {
+            val iterator = rows.entries.iterator()
+            while (iterator.hasNext()) {
+                val expires = iterator.next().value.expiresAtMillis
+                if (expires != null && expires < cutoffMillis) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
+    override suspend fun trimOldestKeepingQuery(maxRows: Int) {
+        mutex.withLock {
+            if (rows.size <= maxRows) return@withLock
+            val keepKeys =
+                rows.values
+                    .sortedWith(
+                        compareByDescending<DbPluginPostWidget> { it.createdAtMillis }
+                            .thenByDescending { it.postEntityKey }
+                            .thenByDescending { it.pluginId },
+                    ).take(maxRows)
+                    .map { it.postEntityKey to it.pluginId }
+                    .toSet()
+            val iterator = rows.entries.iterator()
+            while (iterator.hasNext()) {
+                if (iterator.next().key !in keepKeys) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
+    override suspend fun deleteAll() {
+        mutex.withLock {
+            rows.clear()
+        }
+    }
+}
+
+private class TestCacheDatabaseFacade(
+    private val dao: InMemoryPluginPostWidgetDao,
+) {
+    fun pluginPostWidgetDao(): PluginPostWidgetDao = dao
+}
+
+private class GateEntry(
+    val nonCancellable: Boolean,
+) {
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+}
+
+private class TimelineProcessorTestHarness(
+    val root: Path,
+    val subsystem: PluginSubsystemV1,
+    val presenter: PluginManagementPresenterV1,
+    val authoring: PluginAuthoringServiceV1,
+    val service: PluginTimelineProcessorServiceV1,
+    val db: TestCacheDatabaseFacade,
+    private val rawDaoInstance: InMemoryPluginPostWidgetDao,
+    private val appSettingsState: MutableStateFlow<AppSettings>,
+    private val gates: ConcurrentHashMap<String, GateEntry>,
+    private val failurePredicates: ConcurrentHashMap<String, () -> Boolean>,
+    private val invocationCounters: ConcurrentHashMap<String, AtomicInteger>,
+    private val coldServiceFactory: (PluginPostWidgetDao?, CoroutineScope?) -> PluginTimelineProcessorServiceV1,
+    val nowMillis: AtomicLong,
+) {
+    private val packageCounter = AtomicInteger(1)
+
+    fun currentSettings(): AppSettings = appSettingsState.value
+
+    fun rawDao(): InMemoryPluginPostWidgetDao = rawDaoInstance
+
+    fun invocationCount(pluginId: String): Int = invocationCounters[pluginId]?.get() ?: 0
+
+    fun createColdService(
+        daoOverride: PluginPostWidgetDao? = null,
+        scopeOverride: CoroutineScope? = null,
+    ): PluginTimelineProcessorServiceV1 = coldServiceFactory(daoOverride, scopeOverride)
+
+    fun writeDevelopmentDirectory(
+        id: String,
+        httpOrigins: List<String> = emptyList(),
+        mediaNetwork: Boolean = false,
+        script: String =
+            """
+            defineFlareTimelineProcessorPlugin({
+              async processBatch() { return { results: [] }; }
+            });
+            """.trimIndent(),
+    ): Path {
+        val dir = root / "dev-${packageCounter.getAndIncrement()}"
+        val fs = subsystem.appFiles.fileSystem
+        fs.createDirectories(dir / "assets")
+        val manifest = buildTimelineProcessorManifestJson(id = id, httpOrigins = httpOrigins, mediaNetwork = mediaNetwork)
+        fs.write(dir / "manifest.json") { writeUtf8(manifest) }
+        fs.write(dir / "plugin.js") { writeUtf8(script) }
+        fs.write(dir / "assets" / "icon.png") { write(TestFppFactory.validPng) }
+        return dir
+    }
+
+    fun gateNextRuntimeCall(pluginId: String) {
+        gates[pluginId] = GateEntry(nonCancellable = false)
+    }
+
+    fun gateNextRuntimeCallNonCancellable(pluginId: String) {
+        gates[pluginId] = GateEntry(nonCancellable = true)
+    }
+
+    suspend fun awaitRuntimeCallEntered(pluginId: String) {
+        val gate = checkNotNull(gates[pluginId]) { "No gate registered for $pluginId" }
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000L) {
+                gate.entered.await()
+            }
+        }
+    }
+
+    fun releaseGatedRuntimeCall(pluginId: String) {
+        gates.remove(pluginId)?.release?.complete(Unit)
+    }
+
+    fun failPluginCallsWhen(
+        pluginId: String,
+        predicate: () -> Boolean,
+    ) {
+        failurePredicates[pluginId] = predicate
+    }
+
+    suspend fun awaitIdle() {
+        service.awaitIdleForTesting()
+    }
+
+    fun writeSettingsOnlyFpp(
+        id: String,
+        version: String = "1.0.0",
+    ): Path {
+        val fppPath = root / "pkg-${packageCounter.getAndIncrement()}.fpp"
+        val manifest =
+            """
+            {
+              "apiVersion": 2,
+              "id": "$id",
+              "version": "$version",
+              "name": "$id",
+              "settings": { "entry": "settings/index.html" }
+            }
+            """.trimIndent()
+        TestFppFactory.write(
+            fppPath,
+            listOf(
+                "manifest.json" to manifest.encodeToByteArray(),
+                "assets/icon.png" to TestFppFactory.validPng,
+                "settings/index.html" to "<!doctype html><title>Settings</title>".encodeToByteArray(),
+            ),
+        )
+        return fppPath
+    }
+
+    fun writeTimelineProcessorFpp(
+        id: String,
+        version: String = "1.0.0",
+        containsAny: List<String> = emptyList(),
+        regex: String? = null,
+        linkHosts: List<String> = emptyList(),
+        requireLinks: Boolean = false,
+        httpOrigins: List<String> = emptyList(),
+        mediaNetwork: Boolean = false,
+        storageNamespaces: List<String>? = null,
+        maxBatchSize: Int = 20,
+        script: String,
+    ): Path {
+        val fppPath = root / "pkg-${packageCounter.getAndIncrement()}.fpp"
+        val manifest =
+            buildTimelineProcessorManifestJson(
+                id = id,
+                version = version,
+                containsAny = containsAny,
+                regex = regex,
+                linkHosts = linkHosts,
+                requireLinks = requireLinks,
+                httpOrigins = httpOrigins,
+                mediaNetwork = mediaNetwork,
+                storageNamespaces = storageNamespaces,
+                maxBatchSize = maxBatchSize,
+            )
+        TestFppFactory.write(
+            fppPath,
+            listOf(
+                "manifest.json" to manifest.encodeToByteArray(),
+                "plugin.js" to script.encodeToByteArray(),
+                "assets/icon.png" to TestFppFactory.validPng,
+            ),
+        )
+        return fppPath
+    }
+
+    suspend fun installAndConfirmTimelineProcessor(
+        id: String,
+        version: String = "1.0.0",
+        containsAny: List<String> = emptyList(),
+        regex: String? = null,
+        linkHosts: List<String> = emptyList(),
+        requireLinks: Boolean = false,
+        httpOrigins: List<String> = emptyList(),
+        mediaNetwork: Boolean = false,
+        storageNamespaces: List<String>? = null,
+        maxBatchSize: Int = 20,
+        script: String,
+    ): String {
+        val fppPath =
+            writeTimelineProcessorFpp(
+                id = id,
+                version = version,
+                containsAny = containsAny,
+                regex = regex,
+                linkHosts = linkHosts,
+                requireLinks = requireLinks,
+                httpOrigins = httpOrigins,
+                mediaNetwork = mediaNetwork,
+                storageNamespaces = storageNamespaces,
+                maxBatchSize = maxBatchSize,
+                script = script,
+            )
+        presenter.inspect(fppPath.toString())
+        presenter.confirmInstall()
+        return id
+    }
+
+    suspend fun writeAiTimelineProcessor(
+        pluginId: String,
+        expectedRevision: Long,
+        httpOrigins: List<String>,
+        mediaNetwork: Boolean = false,
+        script: String =
+            """
+            defineFlareTimelineProcessorPlugin({
+              async processBatch(req) {
+                return { results: req.items.map(i => ({ itemId: i.itemId, cards: [{ id: "ai", body: [{ type: "text", text: "AI" }] }] })) };
+              }
+            });
+            """.trimIndent(),
+    ) {
+        val targetVersion = "0.1.${expectedRevision + 1}"
+        val manifest =
+            buildTimelineProcessorManifestJson(
+                id = pluginId,
+                version = targetVersion,
+                httpOrigins = httpOrigins,
+                mediaNetwork = mediaNetwork,
+            )
+        authoring.write(
+            pluginId = pluginId,
+            expectedRevision = expectedRevision,
+            files = mapOf("manifest.json" to manifest, "plugin.js" to script),
+            iconUrl = null,
+        )
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000L) {
+                authoring.plugins.first { list ->
+                    val item = list.firstOrNull { it.id == pluginId }
+                    item != null && item.revision == expectedRevision + 1 && item.phase == PluginAuthoringPhase.Applied
+                }
+                presenter.state.first { state ->
+                    state.items.firstOrNull { it.pluginId == pluginId }?.version == targetVersion
+                }
+            }
+        }
+    }
+}
+
+private fun buildTimelineProcessorManifestJson(
+    id: String,
+    version: String = "1.0.0",
+    containsAny: List<String> = emptyList(),
+    regex: String? = null,
+    linkHosts: List<String> = emptyList(),
+    requireLinks: Boolean = false,
+    httpOrigins: List<String> = emptyList(),
+    mediaNetwork: Boolean = false,
+    storageNamespaces: List<String>? = null,
+    maxBatchSize: Int = 20,
+): String =
+    buildJsonObject {
+        put("apiVersion", 2)
+        put("id", id)
+        put("version", version)
+        put("name", id)
+        put(
+            "permissions",
+            buildJsonObject {
+                put("httpOrigins", JsonArray(httpOrigins.map(::JsonPrimitive)))
+                put("mediaNetwork", mediaNetwork)
+            },
+        )
+        put(
+            "timelineProcessor",
+            buildJsonObject {
+                put("apiVersion", 1)
+                put("maxBatchSize", maxBatchSize)
+                if (containsAny.isNotEmpty() || regex != null || linkHosts.isNotEmpty() || requireLinks) {
+                    put(
+                        "filter",
+                        buildJsonObject {
+                            if (containsAny.isNotEmpty()) {
+                                put("containsAny", JsonArray(containsAny.map(::JsonPrimitive)))
+                            }
+                            if (regex != null) {
+                                put("regex", regex)
+                            }
+                            if (linkHosts.isNotEmpty()) {
+                                put("linkHosts", JsonArray(linkHosts.map(::JsonPrimitive)))
+                            }
+                            if (requireLinks) {
+                                put("requireLinks", true)
+                            }
+                        },
+                    )
+                }
+                if (storageNamespaces != null) {
+                    put(
+                        "cache",
+                        buildJsonObject {
+                            put("storageNamespaces", JsonArray(storageNamespaces.map(::JsonPrimitive)))
+                        },
+                    )
+                }
+            },
+        )
+    }.toString()
+
+private suspend fun withTimelineProcessorTestHarness(
+    initialExpiredRowCount: Int = 0,
+    localeProvider: () -> String = { Locale.language },
+    workDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    block: suspend (TimelineProcessorTestHarness) -> Unit,
+) {
+    val files = FileSystem.SYSTEM
+    val root = Files.createTempDirectory("timeline-processor-test").toOkioPath()
+    val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val nowMillis = AtomicLong(1_750_000_000_000L)
+    val appSettingsState = MutableStateFlow(AppSettings(version = "test"))
+    val backing =
+        object : TimelineProcessorSettingsBacking {
+            override val enabledPlugins: Flow<Map<String, Set<String>>> =
+                appSettingsState.map { it.enabledTimelineProcessorPlugins }
+
+            override suspend fun updateEnabledPlugins(
+                transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+            ): Map<String, Set<String>> {
+                var result: Map<String, Set<String>> = emptyMap()
+                appSettingsState.update { current ->
+                    val next = transform(current.enabledTimelineProcessorPlugins)
+                    result = next
+                    current.copy(enabledTimelineProcessorPlugins = next)
+                }
+                return result
+            }
+        }
+    val grantStore = PluginTimelineGrantStoreV1(backing = { backing }, scope = { serviceScope })
+    val accounts = PluginTestAccounts()
+    lateinit var subsystemRef: PluginSubsystemV1
+    val registry by lazy { testPluginRegistry(subsystemRef, serviceScope) }
+    val subsystem =
+        PluginSubsystemV1(
+            appFiles =
+                object : AppFileStore {
+                    override val fileSystem = files
+
+                    override fun directory(name: String) = root / name
+                },
+            pendingStore =
+                object : PluginOAuthPendingStoreV1 {
+                    override suspend fun save(pending: PluginOAuthPendingV1) = Unit
+
+                    override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                    override suspend fun consume(pending: PluginOAuthPendingV1) = false
+                },
+            registryProvider = { registry },
+            accountsProvider = { accounts },
+            scopeProvider = { serviceScope },
+            timelineGrants = grantStore,
+        ).also { subsystemRef = it }
+
+    val expiredCutoffSeed =
+        (1..initialExpiredRowCount).map { idx ->
+            DbPluginPostWidget(
+                postEntityKey = "expired_post_$idx",
+                pluginId = "org.example.old",
+                pluginCacheKey = "k",
+                sourceHash = "h",
+                cardsJson = "[]",
+                createdAtMillis = nowMillis.get() - 10L * 24 * 60 * 60 * 1_000L,
+                expiresAtMillis = nowMillis.get() - 8L * 24 * 60 * 60 * 1_000L,
+            )
+        }
+    val dao = InMemoryPluginPostWidgetDao(expiredCutoffSeed)
+    val gates = ConcurrentHashMap<String, GateEntry>()
+    val failurePredicates = ConcurrentHashMap<String, () -> Boolean>()
+    val invocationCounters = ConcurrentHashMap<String, AtomicInteger>()
+    val invoker: TimelineBatchRuntimeInvoker = { plugin, key, context, request, validate ->
+        val pluginId = plugin.installed.pluginId
+        invocationCounters.computeIfAbsent(pluginId) { AtomicInteger(0) }.incrementAndGet()
+        if (failurePredicates[pluginId]?.invoke() == true) {
+            error("Simulated plugin failure for $pluginId")
+        }
+        val gate = gates[pluginId]
+        if (gate != null && gate.nonCancellable) {
+            withContext(NonCancellable) {
+                val response =
+                    subsystem.runtimePool.invokeJson(
+                        plugin = plugin,
+                        key = key,
+                        context = context,
+                        method = "timelineProcessor.processBatch",
+                        request = request,
+                        timeout = PluginCallTimeoutV1.Extended,
+                        validate = validate,
+                    )
+                gate.entered.complete(Unit)
+                gate.release.await()
+                gates.remove(pluginId, gate)
+                response
+            }
+        } else {
+            if (gate != null) {
+                gate.entered.complete(Unit)
+                gate.release.await()
+                gates.remove(pluginId, gate)
+            }
+            subsystem.runtimePool.invokeJson(
+                plugin = plugin,
+                key = key,
+                context = context,
+                method = "timelineProcessor.processBatch",
+                request = request,
+                timeout = PluginCallTimeoutV1.Extended,
+                validate = validate,
+            )
+        }
+    }
+    val createService: (PluginPostWidgetDao?, CoroutineScope?) -> PluginTimelineProcessorServiceV1 = { daoOverride, scopeOverride ->
+        PluginTimelineProcessorServiceV1(
+            subsystem = subsystem,
+            dao = daoOverride ?: dao,
+            grants = grantStore,
+            scope = scopeOverride ?: serviceScope,
+            ioDispatcher = Dispatchers.Default,
+            workDispatcher = workDispatcher,
+            nowEpochMillis = nowMillis::get,
+            localeProvider = localeProvider,
+            coalesceDelayMillis = 10L,
+            runtimeInvoker = invoker,
+        )
+    }
+    val service = createService(null, null)
+    val presenter =
+        PluginManagementPresenterV1(
+            subsystem = subsystem,
+            scope = serviceScope,
+            registry = { registry },
+            accounts = { accounts },
+        )
+    try {
+        block(
+            TimelineProcessorTestHarness(
+                root = root,
+                subsystem = subsystem,
+                presenter = presenter,
+                authoring = subsystem.authoring,
+                service = service,
+                db = TestCacheDatabaseFacade(dao),
+                rawDaoInstance = dao,
+                appSettingsState = appSettingsState,
+                gates = gates,
+                failurePredicates = failurePredicates,
+                invocationCounters = invocationCounters,
+                coldServiceFactory = createService,
+                nowMillis = nowMillis,
+            ),
+        )
+    } finally {
+        presenter.close()
+        service.close()
+        serviceScope.cancel()
+        subsystem.runtimePool.close()
+        files.deleteRecursively(root, mustExist = false)
+    }
+}

@@ -123,6 +123,7 @@ internal class PluginRuntimeSwitcherV1(
                         subsystem.replaceRunning(pluginId, null)
                         subsystem.storage.remove(pluginId)
                         subsystem.extensionState.remove(pluginId)
+                        subsystem.timelineGrants.updateSuspend { it - pluginId }
                         subsystem.stateStore.uninstall(pluginId)
                     } else {
                         subsystem.stateStore.install(installed)

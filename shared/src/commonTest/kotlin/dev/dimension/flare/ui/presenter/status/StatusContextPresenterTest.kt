@@ -190,6 +190,51 @@ class StatusContextPresenterTest {
         assertIs<PagingState.Empty<UiTimelineV2>>(resolvedSingle.listState)
     }
 
+    @Test
+    fun detailOnlySourceWithoutContextPagingUsesFallbackPostWithoutSyntheticContextError() {
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val emptyPaging = PagingState.Empty<UiTimelineV2> {}
+
+        val loading =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = emptyPaging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Loading(),
+                supportsContextPaging = false,
+                onRefresh = {},
+            )
+        assertIs<UiState.Loading<UiTimelineV2>>(loading.current)
+        assertTrue(loading.header.isEmpty())
+        assertIs<PagingState.Loading<UiTimelineV2>>(loading.listState)
+
+        val loaded =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = emptyPaging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Success(focal),
+                supportsContextPaging = false,
+                onRefresh = {},
+            )
+        assertEquals<UiState<UiTimelineV2>>(UiState.Success(focal), loaded.current)
+        assertEquals<List<UiTimelineV2>>(listOf(focal), loaded.header)
+        assertIs<PagingState.Empty<UiTimelineV2>>(loaded.listState)
+
+        val failure = IllegalStateException("Detail failed")
+        val errored =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = emptyPaging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Error(failure),
+                supportsContextPaging = false,
+                onRefresh = {},
+            )
+        assertEquals(failure, assertIs<UiState.Error<UiTimelineV2>>(errored.current).throwable)
+        assertEquals(failure, assertIs<PagingState.Error<UiTimelineV2>>(errored.listState).error)
+    }
+
     private fun createPost(
         id: String,
         createdAt: String,
