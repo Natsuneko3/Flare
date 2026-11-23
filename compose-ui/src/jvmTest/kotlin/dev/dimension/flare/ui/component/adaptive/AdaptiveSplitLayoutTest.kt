@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -199,5 +201,53 @@ class AdaptiveSplitLayoutTest {
         composeRule.waitForIdle()
         assertTrue(observedOuterChromeIsSplit)
         composeRule.onNodeWithTag("profile-primary").assertWidthIsEqualTo(464.dp)
+    }
+
+    @Test
+    fun derivedTitleAlphaReactsToDynamicFoldSplitChangesWithoutRememberStaleness() {
+        var hinge by mutableStateOf<FoldHinge?>(null)
+        var observedTitleAlpha by mutableStateOf(-1f)
+
+        composeRule.setContent {
+            CompositionLocalProvider(
+                LocalWindowSizeClass provides WindowSizeClass.Medium,
+                LocalFoldHingeOverride provides hinge,
+            ) {
+                val splitState = rememberSplitPaneState()
+                val titleAlpha by remember(splitState) {
+                    derivedStateOf {
+                        calculateProfileTitleAlpha(
+                            offset = 0f,
+                            maxOffset = -200f,
+                            isSplit = splitState.mode.isSplit,
+                        )
+                    }
+                }
+                observedTitleAlpha = titleAlpha
+                Box(Modifier.size(width = 700.dp, height = 700.dp)) {
+                    AdaptiveSplitLayout(
+                        primaryWidthStrategy = PrimaryWidthStrategy.Fixed(364.dp),
+                        state = splitState,
+                        compactContent = { Box(Modifier.fillMaxSize()) },
+                        primaryPane = { _, _ -> Box(Modifier.fillMaxSize()) },
+                        secondaryPane = { _, _ -> Box(Modifier.fillMaxSize()) },
+                    )
+                }
+            }
+        }
+
+        assertEquals(0f, observedTitleAlpha)
+
+        composeRule.runOnIdle {
+            hinge = FoldHinge(Rect(0f, 320f, 700f, 336f), isVertical = false)
+        }
+        composeRule.waitForIdle()
+        assertEquals(1f, observedTitleAlpha)
+
+        composeRule.runOnIdle {
+            hinge = null
+        }
+        composeRule.waitForIdle()
+        assertEquals(0f, observedTitleAlpha)
     }
 }

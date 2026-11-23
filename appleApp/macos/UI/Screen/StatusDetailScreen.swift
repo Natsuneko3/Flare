@@ -34,7 +34,7 @@ struct StatusDetailScreen: View {
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                         headerItems(header, current: state.current, state: state, splitFallback: false)
-                        replySection(state, hasHeader: !header.isEmpty)
+                        replySection(state, hasHeader: !header.isEmpty, suppressMirroredHeaderError: false)
                     }
                 }
                 .detectScrolling()
@@ -50,7 +50,7 @@ struct StatusDetailScreen: View {
             secondaryPane: { _ in
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        replySection(state, hasHeader: !header.isEmpty)
+                        replySection(state, hasHeader: !header.isEmpty, suppressMirroredHeaderError: true)
                     }
                 }
                 .detectScrolling()
@@ -103,20 +103,32 @@ struct StatusDetailScreen: View {
     }
 
     @ViewBuilder
-    private func replySection(_ state: StatusContextPresenterState, hasHeader: Bool) -> some View {
+    private func replySection(
+        _ state: StatusContextPresenterState,
+        hasHeader: Bool,
+        suppressMirroredHeaderError: Bool
+    ) -> some View {
+        let isMirroredHeaderError: Bool = {
+            if !hasHeader, case .error = onEnum(of: state.current) { return true }
+            return false
+        }()
         Section {
-            switch onEnum(of: state.listState) {
-            case .empty where hasHeader && state.selectedFilterId != state.defaultFilterId:
-                Text("status_detail_filter_empty")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-            case .empty where hasHeader && state.tabs.isEmpty:
+            if suppressMirroredHeaderError && isMirroredHeaderError {
                 EmptyView()
-            default:
-                TimelinePagingContent(data: state.listState, detailStatusKey: statusKey)
+            } else {
+                switch onEnum(of: state.listState) {
+                case .empty where hasHeader && state.selectedFilterId != state.defaultFilterId:
+                    Text("status_detail_filter_empty")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(16)
+                        .frame(maxWidth: .infinity)
+                case .empty where hasHeader && state.tabs.isEmpty:
+                    EmptyView()
+                default:
+                    TimelinePagingContent(data: state.listState, detailStatusKey: statusKey)
+                }
             }
         } header: {
             if hasHeader, state.tabs.count > 1 || !state.filters.isEmpty {

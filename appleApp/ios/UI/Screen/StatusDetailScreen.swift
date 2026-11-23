@@ -22,7 +22,13 @@ struct StatusDetailScreen: View {
         let hasHeader = !state.header.isEmpty
         let isEmpty = hasHeader && isEmptyList(state.listState)
         let isFilteredEmpty = isEmpty && state.selectedFilterId != state.defaultFilterId
-        let hidesList = isEmpty && (state.tabs.isEmpty || isFilteredEmpty)
+        let panePolicy = StatusDetailPanePolicy(
+            hasHeader: hasHeader,
+            isListEmpty: isEmpty,
+            tabsEmpty: state.tabs.isEmpty,
+            isFilteredEmpty: isFilteredEmpty,
+            isCurrentError: isCurrentError(state.current)
+        )
         let contentKey = state.selectedTabId.map { AnyHashable([$0, state.selectedFilterId ?? ""]) }
 
         AdaptiveSplitContainer(
@@ -46,9 +52,9 @@ struct StatusDetailScreen: View {
             compactContent: {
                 ZStack {
                     UITimelineCollectionView(
-                        data: hidesList ? nil : state.listState,
+                        data: panePolicy.hidesCompactList ? nil : state.listState,
                         detailStatusKey: statusKey,
-                        headerState: state.current,
+                        headerState: panePolicy.compactUsesHeaderState ? state.current : nil,
                         leadingPosts: state.header,
                         accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
                         suppressInitialRefreshIndicator: true,
@@ -84,7 +90,7 @@ struct StatusDetailScreen: View {
                 GeometryReader { paneProxy in
                     let columnCount = TimelineColumnPolicy.adaptive.columnCount(for: paneProxy.size.width)
                     UITimelineCollectionView(
-                        data: hidesList ? nil : state.listState,
+                        data: panePolicy.hidesSplitSecondaryList ? nil : state.listState,
                         detailStatusKey: statusKey,
                         columnCount: columnCount,
                         accessoryItems: controls(state, isFilteredEmpty: isFilteredEmpty),
@@ -101,6 +107,11 @@ struct StatusDetailScreen: View {
         .background(Color(timelineDisplayMode == .plain ? .clear : .systemGroupedBackground))
         .navigationTitle("status_detail_title")
         .refreshable { try? await presenter.state.refresh() }
+    }
+
+    private func isCurrentError(_ state: UiState<UiTimelineV2>) -> Bool {
+        if case .error = onEnum(of: state) { return true }
+        return false
     }
 
     private func isEmptyList(_ state: PagingState<UiTimelineV2>) -> Bool {

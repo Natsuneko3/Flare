@@ -184,6 +184,7 @@ internal fun StatusDetailScreenContent(
                                 statusKey = statusKey,
                                 tabs = { StatusDetailTabs(state) },
                                 controlsDivider = { HorizontalDivider() },
+                                suppressMirroredHeaderError = true,
                             )
                         }
                     },

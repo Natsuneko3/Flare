@@ -92,6 +92,7 @@ import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabRowIndicator
 import dev.dimension.flare.ui.component.adaptive.AdaptiveSplitLayout
 import dev.dimension.flare.ui.component.adaptive.SplitPaneMode
+import dev.dimension.flare.ui.component.adaptive.calculateProfileTitleAlpha
 import dev.dimension.flare.ui.component.adaptive.rememberProfilePrimaryWidthStrategy
 import dev.dimension.flare.ui.component.adaptive.rememberSplitPaneState
 import dev.dimension.flare.ui.component.placeholder
@@ -326,18 +327,13 @@ internal fun ProfileScreen(
                 .contentWindowInsets
                 .exclude(WindowInsets.statusBars),
         topBar = {
-            val titleAlpha by remember {
+            val titleAlpha by remember(nestedScrollState, splitState) {
                 derivedStateOf {
-                    if (nestedScrollState.offset == nestedScrollState.maxOffset ||
-                        isSplit
-                    ) {
-                        1f
-                    } else {
-                        max(
-                            0f,
-                            nestedScrollState.offset / nestedScrollState.maxOffset,
-                        )
-                    }
+                    calculateProfileTitleAlpha(
+                        offset = nestedScrollState.offset,
+                        maxOffset = nestedScrollState.maxOffset,
+                        isSplit = splitState.mode.isSplit,
+                    )
                 }
             }
             Box {

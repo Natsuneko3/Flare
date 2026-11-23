@@ -50,6 +50,19 @@ public fun rememberProfilePrimaryWidthStrategy(horizontalPadding: Dp = 0.dp): Pr
     }
 }
 
+public fun calculateProfileTitleAlpha(
+    offset: Float,
+    maxOffset: Float,
+    isSplit: Boolean,
+): Float =
+    if (offset == maxOffset || isSplit) {
+        1f
+    } else if (maxOffset == 0f || !maxOffset.isFinite() || !offset.isFinite()) {
+        0f
+    } else {
+        kotlin.math.max(0f, offset / maxOffset)
+    }
+
 @Immutable
 public sealed interface SplitPaneMode {
     public val isSplit: Boolean

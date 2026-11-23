@@ -105,7 +105,11 @@ public fun LazyStaggeredGridScope.statusDetailBodyItems(
     statusKey: MicroBlogKey,
     tabs: @Composable () -> Unit = { StatusDetailTabs(state) },
     controlsDivider: @Composable () -> Unit = {},
+    suppressMirroredHeaderError: Boolean = false,
 ) {
+    if (suppressMirroredHeaderError && state.header.isEmpty() && state.current is UiState.Error) {
+        return
+    }
     // Keep the controls from becoming the scroll anchor before the post arrives.
     if (state.header.isNotEmpty() && (state.tabs.size > 1 || state.filters.isNotEmpty())) {
         item(key = "status_detail_controls", span = StaggeredGridItemSpan.FullLine) {

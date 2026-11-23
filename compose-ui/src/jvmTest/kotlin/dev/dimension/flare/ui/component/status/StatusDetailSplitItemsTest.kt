@@ -215,6 +215,70 @@ class StatusDetailSplitItemsTest {
     }
 
     @Test
+    fun splitModeSuppressesDuplicateMirroredErrorInSecondaryPaneWhileCompactShowsSingleError() {
+        var useSplit by mutableStateOf(true)
+        val statusKey = MicroBlogKey("broken-root", "x.com")
+        val failure = IllegalStateException("Root load failed")
+        val mirroredErrorFlow = kotlinx.coroutines.flow.flow<List<UiTimelineV2>> { throw failure }
+
+        compose.setContent {
+            val mirroredErrorPaging = mirroredErrorFlow.collectPagingState().value
+            val state =
+                fakeDetailState(
+                    current = UiState.Error(failure),
+                    header = persistentListOf(),
+                    tabs = persistentListOf(),
+                    filters = persistentListOf(),
+                    listState = mirroredErrorPaging,
+                )
+            FluentTheme {
+                CompositionLocalProvider(
+                    LocalWindowSizeClass provides if (useSplit) WindowSizeClass.Expanded else WindowSizeClass.Compact,
+                    LocalTimelineAppearance provides TimelineAppearance(showTranslateButton = false),
+                ) {
+                    Box(Modifier.size(width = 1000.dp, height = 700.dp)) {
+                        AdaptiveSplitLayout(
+                            primaryWidthStrategy = PrimaryWidthStrategy.PostDetailDefault,
+                            compactContent = { padding ->
+                                LazyStatusVerticalStaggeredGrid(
+                                    columns = StaggeredGridCells.Fixed(1),
+                                    contentPadding = padding,
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    statusDetail(state, statusKey)
+                                }
+                            },
+                            primaryPane = { _, padding ->
+                                LazyStatusVerticalStaggeredGrid(
+                                    columns = StaggeredGridCells.Fixed(1),
+                                    contentPadding = padding,
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    statusDetailHeaderItems(state, statusKey, splitFallback = true)
+                                }
+                            },
+                            secondaryPane = { _, padding ->
+                                LazyStatusVerticalStaggeredGrid(
+                                    contentPadding = padding,
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    statusDetailBodyItems(state, statusKey, suppressMirroredHeaderError = true)
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        assertEquals(1, compose.onAllNodesWithText("Root load failed").fetchSemanticsNodes().size)
+
+        compose.runOnIdle { useSplit = false }
+        compose.waitForIdle()
+        assertEquals(1, compose.onAllNodesWithText("Root load failed").fetchSemanticsNodes().size)
+    }
+
+    @Test
     fun deckModeCompactOverrideKeepsSingleColumnInsideWideWindow() {
         val anchor = samplePost("deck-1", "Maya", "Single column inside Deck pane.")
         val emptyPagingFlow = flowOf(emptyList<UiTimelineV2>())

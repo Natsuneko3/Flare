@@ -117,4 +117,37 @@ final class AdaptiveSplitLayoutPolicyTests: XCTestCase {
         )
         XCTAssertEqual(horizontalNearEdge.mode, .compact)
     }
+
+    func testStatusDetailPanePolicyAvoidsDuplicateHeaderAndMirroredErrors() {
+        let initialError = StatusDetailPanePolicy(
+            hasHeader: false,
+            isListEmpty: false,
+            tabsEmpty: false,
+            isFilteredEmpty: false,
+            isCurrentError: true
+        )
+        XCTAssertFalse(initialError.compactUsesHeaderState)
+        XCTAssertFalse(initialError.hidesCompactList)
+        XCTAssertTrue(initialError.hidesSplitSecondaryList)
+
+        let initialLoadingWithCatalogError = StatusDetailPanePolicy(
+            hasHeader: false,
+            isListEmpty: false,
+            tabsEmpty: true,
+            isFilteredEmpty: false,
+            isCurrentError: false
+        )
+        XCTAssertFalse(initialLoadingWithCatalogError.compactUsesHeaderState)
+        XCTAssertFalse(initialLoadingWithCatalogError.hidesSplitSecondaryList)
+
+        let untabbedPostWithoutReplies = StatusDetailPanePolicy(
+            hasHeader: true,
+            isListEmpty: true,
+            tabsEmpty: true,
+            isFilteredEmpty: false,
+            isCurrentError: false
+        )
+        XCTAssertTrue(untabbedPostWithoutReplies.hidesCompactList)
+        XCTAssertTrue(untabbedPostWithoutReplies.hidesSplitSecondaryList)
+    }
 }

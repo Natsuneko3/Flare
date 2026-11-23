@@ -97,6 +97,7 @@ internal fun StatusScreen(
                         statusDetailBodyItems(
                             state = state.state,
                             statusKey = statusKey,
+                            suppressMirroredHeaderError = true,
                         )
                     }
                 }

@@ -5,6 +5,7 @@ import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.ClickEvent
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.render.toUi
@@ -152,6 +153,41 @@ class StatusContextPresenterTest {
             listOf(olderParent.statusKey, detail.statusKey, newerParent.statusKey),
             post.presentation.inlineParents.map { it.statusKey },
         )
+    }
+
+    @Test
+    fun untabbedContextSplitsParentsAndFocalPostIntoHeaderAndKeepsOnlyRepliesInChildren() {
+        val parent = createPost("parent", "2024-01-01T00:00:00Z")
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val reply = createPost("reply", "2024-01-01T00:02:00Z")
+        val paging = PagingState.Success.ImmutableSuccess<UiTimelineV2>(persistentListOf(parent, focal, reply))
+
+        val resolved =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = paging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Loading(),
+                onRefresh = {},
+            )
+
+        assertEquals<UiState<UiTimelineV2>>(UiState.Success(focal), resolved.current)
+        assertEquals<List<UiTimelineV2>>(listOf(parent, focal), resolved.header)
+        val children = assertIs<PagingState.Success<UiTimelineV2>>(resolved.listState)
+        assertEquals(1, children.itemCount)
+        assertEquals(reply, children[0])
+
+        val singlePostOnly = PagingState.Success.ImmutableSuccess<UiTimelineV2>(persistentListOf(focal))
+        val resolvedSingle =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = singlePostOnly,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Success(focal),
+                onRefresh = {},
+            )
+        assertEquals<List<UiTimelineV2>>(listOf(focal), resolvedSingle.header)
+        assertIs<PagingState.Empty<UiTimelineV2>>(resolvedSingle.listState)
     }
 
     private fun createPost(

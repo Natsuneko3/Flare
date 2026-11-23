@@ -73,3 +73,22 @@ nonisolated struct ProfileLayoutPolicy: Equatable {
         )
     }
 }
+
+nonisolated struct StatusDetailPanePolicy: Equatable {
+    let compactUsesHeaderState: Bool
+    let hidesCompactList: Bool
+    let hidesSplitSecondaryList: Bool
+
+    init(
+        hasHeader: Bool,
+        isListEmpty: Bool,
+        tabsEmpty: Bool,
+        isFilteredEmpty: Bool,
+        isCurrentError: Bool
+    ) {
+        let hidesForEmpty = hasHeader && isListEmpty && (tabsEmpty || isFilteredEmpty)
+        self.compactUsesHeaderState = false
+        self.hidesCompactList = hidesForEmpty
+        self.hidesSplitSecondaryList = hidesForEmpty || (!hasHeader && isCurrentError)
+    }
+}

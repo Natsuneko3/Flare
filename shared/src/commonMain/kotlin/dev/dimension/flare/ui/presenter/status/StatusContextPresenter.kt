@@ -150,15 +150,44 @@ public class StatusContextPresenter(
                 val tabs = result.data.tabs
                 if (tabs == null) {
                     var revision by remember { mutableIntStateOf(0) }
-                    val current = currentPost(source, revision)
-                    val timeline = remember { timeline(source.capabilities.post?.context(statusKey) ?: notSupported(), seed = true) }.body()
-                    DetailState(
-                        current = current,
-                        listState = timeline.listState,
-                        onRefresh = {
+                    val fallbackCurrent = currentPost(source, revision)
+                    val timeline =
+                        remember {
+                            timeline(
+                                remote = source.capabilities.post?.context(statusKey) ?: notSupported(),
+                                seed = true,
+                                context = true,
+                            )
+                        }.body()
+                    LaunchedEffect(source) {
+                        accountRepository.publishedReplies.collect { (account, post) ->
+                            if (accountType != AccountType.Specific(account) || post != statusKey) return@collect
                             revision++
                             timeline.refresh()
-                        },
+                        }
+                    }
+                    val refresh: suspend () -> Unit = {
+                        revision++
+                        timeline.refresh()
+                    }
+                    val resolved =
+                        resolveUntabbedContextDetail(
+                            statusKey = statusKey,
+                            timelineListState = timeline.listState,
+                            cachedPost = cachedPost,
+                            fallbackCurrentPost = fallbackCurrent,
+                            onRefresh = { scope.launch { refresh() } },
+                        )
+                    if (resolved.appendFrom != null) {
+                        LaunchedEffect(timeline.listState) {
+                            (timeline.listState as? PagingState.Success)?.get(resolved.appendFrom)
+                        }
+                    }
+                    DetailState(
+                        current = resolved.current,
+                        header = resolved.header,
+                        listState = resolved.listState,
+                        onRefresh = refresh,
                         refreshScope = { scope.launch { it() } },
                     )
                 } else {
@@ -401,6 +430,45 @@ internal data class PostDetailSections(
     val children: PagingState<UiTimelineV2>,
     val appendFrom: Int? = null,
 )
+
+internal data class UntabbedContextResolution(
+    val current: UiState<UiTimelineV2>,
+    val header: ImmutableList<UiTimelineV2>,
+    val listState: PagingState<UiTimelineV2>,
+    val appendFrom: Int?,
+)
+
+internal fun resolveUntabbedContextDetail(
+    statusKey: MicroBlogKey,
+    timelineListState: PagingState<UiTimelineV2>,
+    cachedPost: UiTimelineV2?,
+    fallbackCurrentPost: UiState<UiTimelineV2>,
+    onRefresh: () -> Unit,
+): UntabbedContextResolution {
+    val sections = timelineListState.splitPostDetail(statusKey, onRefresh)
+    val contextPost = sections.post
+    val contextError = sections.children as? PagingState.Error
+    val current =
+        when {
+            contextPost != null -> UiState.Success(contextPost)
+            cachedPost != null -> UiState.Success(cachedPost)
+            contextError != null -> fallbackCurrentPost.takeSuccess()?.let { UiState.Success(it) } ?: UiState.Error(contextError.error)
+            else -> fallbackCurrentPost.takeSuccess()?.let { UiState.Success(it) } ?: UiState.Loading()
+        }
+    val header = current.takeSuccess()?.let { detailHeader(sections.parents, it) } ?: persistentListOf()
+    val listState =
+        when {
+            current is UiState.Error && header.isEmpty() -> PagingState.Error(current.throwable, onRefresh)
+            header.isEmpty() -> PagingState.Loading()
+            else -> sections.children
+        }
+    return UntabbedContextResolution(
+        current = current,
+        header = header,
+        listState = listState,
+        appendFrom = sections.appendFrom,
+    )
+}
 
 internal fun PagingState<UiTimelineV2>.splitPostDetail(
     statusKey: MicroBlogKey,
