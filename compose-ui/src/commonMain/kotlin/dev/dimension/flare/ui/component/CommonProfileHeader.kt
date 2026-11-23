@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.profile_banner
@@ -46,6 +47,15 @@ internal fun CommonProfileHeader(
     handle: UiHandle,
     modifier: Modifier = Modifier,
     useCard: Boolean = !isBigScreen(),
+    includeStatusBarInset: Boolean = true,
+    statusBarTopInset: Dp =
+        if (includeStatusBarInset) {
+            with(LocalDensity.current) {
+                WindowInsets.statusBars.getTop(this).toDp()
+            }
+        } else {
+            0.dp
+        },
     onAvatarClick: (() -> Unit)? = null,
     onBannerClick: (() -> Unit)? = null,
     headerTrailing: @Composable RowScope.() -> Unit = {},
@@ -53,13 +63,9 @@ internal fun CommonProfileHeader(
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
     val profileName = displayName.raw.ifBlank { handle.display }
-    val statusBarHeight =
-        with(LocalDensity.current) {
-            WindowInsets.statusBars.getTop(this).toDp()
-        }
     val actualBannerHeight =
-        remember(statusBarHeight) {
-            ProfileHeaderConstants.BANNER_HEIGHT.dp + statusBarHeight
+        remember(statusBarTopInset, includeStatusBarInset) {
+            ProfileHeaderConstants.BANNER_HEIGHT.dp + if (includeStatusBarInset) statusBarTopInset else 0.dp
         }
     Box(
         modifier =
