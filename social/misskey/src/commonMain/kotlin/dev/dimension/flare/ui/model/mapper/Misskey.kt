@@ -866,6 +866,7 @@ internal fun UserLite.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
         platformId = MISSKEY_PLATFORM_ID,
         platformIcon = UiIcon.Misskey.asType(),
+        url = username.takeIf { it.isNotBlank() }?.let { "https://$remoteHost/@$it" },
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -940,6 +941,7 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
                 },
         platformId = MISSKEY_PLATFORM_ID,
         platformIcon = UiIcon.Misskey.asType(),
+        url = url?.trim()?.takeIf { it.isNotEmpty() } ?: username.takeIf { it.isNotBlank() }?.let { "https://$remoteHost/@$it" },
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile

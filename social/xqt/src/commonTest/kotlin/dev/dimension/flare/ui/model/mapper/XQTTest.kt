@@ -2,13 +2,18 @@ package dev.dimension.flare.ui.model.mapper
 
 import dev.dimension.flare.common.isWebPlatform
 import dev.dimension.flare.data.network.xqt.XQT_JSON
+import dev.dimension.flare.data.network.xqt.model.Admin
+import dev.dimension.flare.data.network.xqt.model.AudioSpace
+import dev.dimension.flare.data.network.xqt.model.AudioUserResults
 import dev.dimension.flare.data.network.xqt.model.Entities
 import dev.dimension.flare.data.network.xqt.model.Hashtag
+import dev.dimension.flare.data.network.xqt.model.Metadata
 import dev.dimension.flare.data.network.xqt.model.NoteTweet
 import dev.dimension.flare.data.network.xqt.model.NoteTweetResult
 import dev.dimension.flare.data.network.xqt.model.NoteTweetResultData
 import dev.dimension.flare.data.network.xqt.model.NoteTweetResultRichText
 import dev.dimension.flare.data.network.xqt.model.NoteTweetResultRichTextTag
+import dev.dimension.flare.data.network.xqt.model.Participants
 import dev.dimension.flare.data.network.xqt.model.Tweet
 import dev.dimension.flare.data.network.xqt.model.TweetLegacy
 import dev.dimension.flare.data.network.xqt.model.TwitterArticle
@@ -31,6 +36,7 @@ import dev.dimension.flare.data.network.xqt.model.UserResultCore
 import dev.dimension.flare.data.network.xqt.model.UserResults
 import dev.dimension.flare.data.network.xqt.model.XqtUrl
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.model.xqtHost
 import dev.dimension.flare.ui.model.UiArticleAuthor
 import dev.dimension.flare.ui.model.UiArticleBlock
 import dev.dimension.flare.ui.render.RenderContent
@@ -44,6 +50,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -68,6 +75,45 @@ class XQTTest {
 
         assertEquals("@flare_dev@x.com", user.handle.canonical)
         assertEquals(if (isWebPlatform) "@flare_dev@x.com" else "@flare_dev", user.handle.display)
+    }
+
+    @Test
+    fun renderUserAndAdminPopulateCanonicalProfileUrl() {
+        val xqtAccount = MicroBlogKey("account", xqtHost)
+        val validUser = createUser(id = "1", screenName = "flare_app").render(xqtAccount)
+        val blankUser = createUser(id = "2", screenName = "").render(xqtAccount)
+        val whitespaceUser = createUser(id = "3", screenName = "   ").render(xqtAccount)
+        val podcast =
+            AudioSpace(
+                metadata =
+                    Metadata(
+                        restID = "space-1",
+                        title = "Space",
+                        creatorResults = UserResults(result = createUser(id = "creator-1", screenName = "creator_handle")),
+                    ),
+                participants =
+                    Participants(
+                        admins =
+                            listOf(
+                                Admin(
+                                    twitterScreenName = "space_admin",
+                                    displayName = "Admin",
+                                    userResults = AudioUserResults(restID = "admin-1"),
+                                ),
+                                Admin(
+                                    twitterScreenName = "   ",
+                                    displayName = "Blank",
+                                    userResults = AudioUserResults(restID = "admin-2"),
+                                ),
+                            ),
+                    ),
+            ).render(xqtAccount, null)
+
+        assertEquals("https://$xqtHost/flare_app", validUser.url)
+        assertNull(blankUser.url)
+        assertNull(whitespaceUser.url)
+        assertEquals("https://$xqtHost/space_admin", podcast.hosts[0].url)
+        assertNull(podcast.hosts[1].url)
     }
 
     @Test

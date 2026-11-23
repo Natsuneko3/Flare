@@ -1105,6 +1105,11 @@ private fun blueskyProfileName(
         .ifBlank { handle.removeSuffix(".bsky.social") }
         .toUiPlainText()
 
+private fun blueskyProfileUrl(
+    handle: String,
+    did: String,
+): String = "https://bsky.app/profile/${handle.takeIf { it.isNotBlank() && it != "handle.invalid" } ?: did}"
+
 internal fun chat.bsky.actor.ProfileViewBasic.render(accountKey: MicroBlogKey): UiProfile {
     val userKey =
         MicroBlogKey(
@@ -1133,6 +1138,7 @@ internal fun chat.bsky.actor.ProfileViewBasic.render(accountKey: MicroBlogKey): 
         bottomContent = null,
         platformId = BLUESKY_PLATFORM_ID,
         platformIcon = UiIcon.Bluesky.asType(),
+        url = blueskyProfileUrl(handle.handle, did.did),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1172,6 +1178,7 @@ internal fun ProfileViewBasic.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
         platformId = BLUESKY_PLATFORM_ID,
         platformIcon = UiIcon.Bluesky.asType(),
+        url = blueskyProfileUrl(handle.handle, did.did),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1211,6 +1218,7 @@ internal fun ProfileView.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
         platformId = BLUESKY_PLATFORM_ID,
         platformIcon = UiIcon.Bluesky.asType(),
+        url = blueskyProfileUrl(handle.handle, did.did),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1250,6 +1258,7 @@ internal fun ProfileViewDetailed.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
         platformId = BLUESKY_PLATFORM_ID,
         platformIcon = UiIcon.Bluesky.asType(),
+        url = blueskyProfileUrl(handle.handle, did.did),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile

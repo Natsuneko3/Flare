@@ -1,5 +1,8 @@
 package dev.dimension.flare.ui.model.mapper
 
+import app.bsky.actor.ProfileView
+import app.bsky.actor.ProfileViewBasic
+import app.bsky.actor.ProfileViewDetailed
 import app.bsky.richtext.Facet
 import app.bsky.richtext.FacetByteSlice
 import app.bsky.richtext.FacetFeatureUnion
@@ -16,6 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import sh.christian.ozone.api.Did
+import sh.christian.ozone.api.Handle
 import sh.christian.ozone.api.Uri
 import sh.christian.ozone.api.model.JsonContent.Companion.encodeAsJsonContent
 import kotlin.test.Test
@@ -90,5 +94,35 @@ class BlueskyUiMappingTest {
         val result = parseBlueskyJson(json, accountKey)
         assertEquals("plain text", result.innerText)
         assertEquals("plain text", result.raw)
+    }
+
+    @Test
+    fun profileRenderVariantsUseValidHandleOrFallbackToDid() {
+        val validDid = Did("did:plc:alice")
+        val validHandle = Handle("alice.bsky.social")
+        val invalidDid = Did("did:plc:123")
+        val invalidHandle = Handle("handle.invalid")
+
+        listOf(
+            ProfileViewDetailed(did = validDid, handle = validHandle).render(accountKey),
+            ProfileView(did = validDid, handle = validHandle).render(accountKey),
+            ProfileViewBasic(did = validDid, handle = validHandle).render(accountKey),
+            chat.bsky.actor
+                .ProfileViewBasic(did = validDid, handle = validHandle)
+                .render(accountKey),
+        ).forEach { profile ->
+            assertEquals("https://bsky.app/profile/alice.bsky.social", profile.url)
+        }
+
+        listOf(
+            ProfileViewDetailed(did = invalidDid, handle = invalidHandle).render(accountKey),
+            ProfileView(did = invalidDid, handle = invalidHandle).render(accountKey),
+            ProfileViewBasic(did = invalidDid, handle = invalidHandle).render(accountKey),
+            chat.bsky.actor
+                .ProfileViewBasic(did = invalidDid, handle = invalidHandle)
+                .render(accountKey),
+        ).forEach { profile ->
+            assertEquals("https://bsky.app/profile/did:plc:123", profile.url)
+        }
     }
 }

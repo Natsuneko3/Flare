@@ -123,6 +123,7 @@ class PluginWireMapperV1Test {
         assertEquals(listOf(UiProfile.Mark.Verified, UiProfile.Mark.Cat), profile.mark)
         assertEquals(listOf("en"), profile.sourceLanguages)
         assertEquals(listOf(avatar), profile.name.imageUrls)
+        assertEquals("https://remote.example/alice", profile.url)
         val guest = createMapper(null, mediaNetwork = false, profileAvailable = false)
         assertEquals(
             ClickEvent.Deeplink(DeeplinkRoute.OpenLinkDirectly(requireNotNull(value.url))),
@@ -138,6 +139,16 @@ class PluginWireMapperV1Test {
         assertEquals(author.key.id, mapped.creator?.key?.id)
         assertEquals(true, mapped.readonly)
         assertFailsWith<IllegalArgumentException> { guest.socialList(list) }
+    }
+
+    @Test
+    fun profileMapsCanonicalUrlAndNormalizesBlankToNull() {
+        assertEquals(
+            "https://plugin.example/@u",
+            mapper.profile(author.copy(url = "https://plugin.example/@u")).url,
+        )
+        assertNull(mapper.profile(author.copy(url = "   ")).url)
+        assertNull(mapper.profile(author.copy(url = null)).url)
     }
 
     @Test

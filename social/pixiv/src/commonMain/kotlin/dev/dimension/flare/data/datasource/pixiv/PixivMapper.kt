@@ -162,6 +162,7 @@ internal fun PixivUser.toUiProfile(accountKey: MicroBlogKey? = null): UiProfile 
         nameInternal = name.toUiPlainText(),
         platformId = PIXIV_PLATFORM_ID,
         platformIcon = UiIcon.Pixiv.asType(),
+        url = "https://www.pixiv.net/users/$id",
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile.User(
@@ -194,6 +195,7 @@ internal fun PixivCredential.toUiProfile(accountKey: MicroBlogKey? = null): UiPr
         nameInternal = (userName ?: userAccount ?: userId.toString()).toUiPlainText(),
         platformId = PIXIV_PLATFORM_ID,
         platformIcon = UiIcon.Pixiv.asType(),
+        url = "https://www.pixiv.net/users/$userId",
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile.User(

@@ -589,6 +589,7 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
                 },
         platformId = VVO_PLATFORM_ID,
         platformIcon = UiIcon.Weibo.asType(),
+        url = id?.let { "https://$vvoHostLong/u/$it" },
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile.User(

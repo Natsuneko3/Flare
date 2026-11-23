@@ -6,6 +6,8 @@ import dev.dimension.flare.data.network.pixiv.model.PixivImageUrls
 import dev.dimension.flare.data.network.pixiv.model.PixivMetaPage
 import dev.dimension.flare.data.network.pixiv.model.PixivMetaSinglePage
 import dev.dimension.flare.data.network.pixiv.model.PixivUser
+import dev.dimension.flare.data.network.pixiv.model.PixivUserDetailResponse
+import dev.dimension.flare.data.platform.PixivCredential
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.TranslationDisplayState
 import dev.dimension.flare.ui.model.UiIcon
@@ -127,6 +129,24 @@ class PixivMapperTest {
         assertEquals(TranslationDisplayState.Hidden, detail.translation?.state)
         assertEquals(null, detail.translation?.content)
         assertEquals(post.contentWarning?.original?.raw, detail.title)
+    }
+
+    @Test
+    fun profileMappersPopulateCanonicalPixivUrl() {
+        val user = PixivUser(id = 42L, name = "Artist", account = "artist")
+        val credential =
+            PixivCredential(
+                accessToken = "token",
+                refreshToken = "refresh",
+                expiresAtEpochSeconds = 1L,
+                userId = 42L,
+                userAccount = "artist",
+            )
+        val detail = PixivUserDetailResponse(user = user)
+
+        assertEquals("https://www.pixiv.net/users/42", user.toUiProfile().url)
+        assertEquals("https://www.pixiv.net/users/42", credential.toUiProfile().url)
+        assertEquals("https://www.pixiv.net/users/42", detail.toUiProfile().url)
     }
 
     private fun pixivIllust(

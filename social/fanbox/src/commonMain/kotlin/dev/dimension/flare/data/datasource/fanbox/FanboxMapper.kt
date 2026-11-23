@@ -226,6 +226,7 @@ internal fun FanboxCreatorDetailBody.toUiProfile(
         nameInternal = (userEntity?.name ?: creatorId).toUiPlainText(),
         platformId = FANBOX_PLATFORM_ID,
         platformIcon = UiIcon.Fanbox.asType(),
+        url = fanboxProfileUrl(creatorId),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile.User(
@@ -284,6 +285,7 @@ internal fun FanboxCredential.toUiProfile(
         nameInternal = (name ?: profileId).toUiPlainText(),
         platformId = FANBOX_PLATFORM_ID,
         platformIcon = UiIcon.Fanbox.asType(),
+        url = fanboxProfileUrl(creatorId),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile.User(
@@ -323,6 +325,7 @@ private fun FanboxUserEntity.toUiProfile(
         nameInternal = (name.ifBlank { profileId }).toUiPlainText(),
         platformId = FANBOX_PLATFORM_ID,
         platformIcon = UiIcon.Fanbox.asType(),
+        url = fanboxProfileUrl(creatorId),
         clickEvent = ClickEvent.Deeplink(profileRoute(accountKey, creatorId)),
         banner = null,
         description = null,
@@ -336,6 +339,9 @@ private fun FanboxUserEntity.toUiProfile(
         bottomContent = null,
     ).withProxy(ProxyRef.forAccount(accountKey))
 }
+
+private fun fanboxProfileUrl(creatorId: String?): String? =
+    creatorId?.trim()?.takeIf { it.isNotEmpty() }?.let { "https://www.fanbox.cc/@$it" }
 
 private fun FanboxUserEntity.profileRoute(
     accountKey: MicroBlogKey,

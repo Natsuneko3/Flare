@@ -8,6 +8,7 @@ import dev.dimension.flare.data.network.misskey.api.model.DriveFile
 import dev.dimension.flare.data.network.misskey.api.model.DriveFileProperties
 import dev.dimension.flare.data.network.misskey.api.model.Note
 import dev.dimension.flare.data.network.misskey.api.model.Notification
+import dev.dimension.flare.data.network.misskey.api.model.User
 import dev.dimension.flare.data.network.misskey.api.model.UserLite
 import dev.dimension.flare.data.network.misskey.api.model.Visibility
 import dev.dimension.flare.model.MicroBlogKey
@@ -27,6 +28,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MisskeyRenderTest {
@@ -329,6 +331,39 @@ class MisskeyRenderTest {
         val withoutEmbeddedParent = notification.copy(note = reply.copy(reply = null))
         val withoutParent = assertIs<UiTimelineV2.TimelinePostItem>(withoutEmbeddedParent.render(accountKey))
         assertEquals(emptyList(), withoutParent.presentation.inlineParents)
+    }
+
+    @Test
+    fun userAndUserLiteRenderPopulateCanonicalProfileUrl() {
+        val baseUser =
+            User(
+                id = "1",
+                username = "alice",
+                host = "fed.example",
+                url = "https://fed.example/users/alice",
+                createdAt = "2024-01-01T00:00:00Z",
+                isLocked = false,
+                isSilenced = false,
+                isSuspended = false,
+                fields = emptyList(),
+                followersCount = 0.0,
+                followingCount = 0.0,
+                notesCount = 0.0,
+                pinnedNoteIds = emptyList(),
+                pinnedNotes = emptyList(),
+                publicReactions = false,
+            )
+        val userWithExplicitUrl = baseUser.render(accountKey)
+        val userWithNullUrl = baseUser.copy(id = "2", username = "bob", host = "misskey.io", url = null).render(accountKey)
+        val userWithBlankUrlAndUsername = baseUser.copy(id = "3", username = "  ", host = null, url = "  ").render(accountKey)
+        val userLiteLocal = UserLite(id = "4", username = "carol", host = null).render(accountKey)
+        val userLiteBlank = UserLite(id = "5", username = "  ", host = null).render(accountKey)
+
+        assertEquals("https://fed.example/users/alice", userWithExplicitUrl.url)
+        assertEquals("https://misskey.io/@bob", userWithNullUrl.url)
+        assertNull(userWithBlankUrlAndUsername.url)
+        assertEquals("https://${accountKey.host}/@carol", userLiteLocal.url)
+        assertNull(userLiteBlank.url)
     }
 
     private fun createFile(
