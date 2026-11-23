@@ -1650,7 +1650,20 @@ final class MangaScreenTests: XCTestCase {
         )
         XCTAssertNotEqual(firstValue, distinctAccountValue)
 
-        // Escape priority: first Escape resets zoom without invoking onBackHandler; second Escape invokes onBackHandler
+        // Stale revision close is ignored; matching revision close removes request cleanly
+        coordinator.close(value: firstValue, matchingRevision: 1)
+        XCTAssertNotNil(
+            coordinator.request(for: firstValue),
+            "Closing with stale revision 1 must not clobber active revision 2 request"
+        )
+        coordinator.close(value: firstValue, matchingRevision: 2)
+        XCTAssertNil(
+            coordinator.request(for: firstValue),
+            "Closing with matching revision 2 must remove window request"
+        )
+        XCTAssertNotNil(coordinator.request(for: distinctMangaValue))
+
+        // Escape priority: overlay dismissal -> zoom reset -> onBackHandler (and step/jump keys yield while overlay is open)
         let pages = makeMacSamplePages(count: 4)
         let slots: [any ReaderSlot] = (0..<4).map { ReaderSlotSingle(pageIndex: Int32($0)) }
         let fakeState = FakeMacMangaReaderState(direction: .ltr, pages: pages, slots: slots)
@@ -1666,7 +1679,28 @@ final class MangaScreenTests: XCTestCase {
             defer: false
         )
         window.isReleasedWhenClosed = false
-        let hostingView = NSHostingView(rootView: MacReaderTestHostView(model: hostModel))
+        @MainActor
+        struct OverlayCanvasHost: View {
+            @Bindable var model: MacReaderTestHostModel
+            var body: some View {
+                MangaReaderCanvas(
+                    state: model.snapshot,
+                    hudVisible: model.hudVisible,
+                    onToggleHud: { model.hudVisible.toggle() },
+                    onBack: { model.onBack?() },
+                    isOverlayPresented: model.isOverlayPresented,
+                    onDismissOverlay: {
+                        guard model.isOverlayPresented else { return false }
+                        model.isOverlayPresented = false
+                        return true
+                    },
+                    controller: model.controller
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onPreferenceChange(MangaReaderPageFramesPreferenceKey.self) { model.pageFrames = $0 }
+            }
+        }
+        let hostingView = NSHostingView(rootView: OverlayCanvasHost(model: hostModel))
         hostingView.sizingOptions = []
         window.contentView = hostingView
         window.makeKeyAndOrderFront(nil)
@@ -1685,12 +1719,30 @@ final class MangaScreenTests: XCTestCase {
         controller.handleDoubleTap(at: CGPoint(x: 480, y: 410))
         try await eventually(window: window) { controller.zoomResetHandler != nil }
 
+        // Present overlay while zoomed
+        hostModel.isOverlayPresented = true
+        try await eventually(window: window) { controller.isOverlayPresented }
+
+        // Step/jump keys yield (return false) without turning pages behind open overlay
+        XCTAssertFalse(controller.handleKey(.rightArrow))
+        XCTAssertFalse(controller.handleKey(.pageDown))
+        XCTAssertFalse(controller.handleKey(.end))
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+
+        // 1st Escape dismisses overlay while preserving zoom and not calling onBack
+        XCTAssertTrue(controller.handleKey(.escape))
+        try await eventually(window: window) { !hostModel.isOverlayPresented && !controller.isOverlayPresented }
+        XCTAssertNotNil(controller.zoomResetHandler, "First Escape with open overlay must preserve zoom")
+        XCTAssertEqual(backCallCount, 0)
+
+        // 2nd Escape resets zoom without invoking onBackHandler
         XCTAssertTrue(controller.handleKey(.escape))
         try await eventually(window: window) { controller.zoomResetHandler == nil }
-        XCTAssertEqual(backCallCount, 0, "First Escape while zoomed must reset zoom without invoking onBackHandler")
+        XCTAssertEqual(backCallCount, 0, "Second Escape while zoomed must reset zoom without invoking onBackHandler")
 
+        // 3rd Escape once unzoomed with no overlay invokes onBackHandler
         XCTAssertTrue(controller.handleKey(.escape))
-        XCTAssertEqual(backCallCount, 1, "Second Escape once unzoomed must invoke onBackHandler")
+        XCTAssertEqual(backCallCount, 1, "Third Escape once unzoomed must invoke onBackHandler")
     }
 
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {
@@ -1783,6 +1835,7 @@ private final class MacReaderTestHostModel {
     let controller: MangaReaderInteractionController
     let deferSnapshotDelivery: Bool
     var hudVisible = true
+    var isOverlayPresented = false
     var pageFrames: [Int: CGRect] = [:]
     var retryPageIds: Set<String> = []
     var scrubberLeadingLabelFrame: CGRect?

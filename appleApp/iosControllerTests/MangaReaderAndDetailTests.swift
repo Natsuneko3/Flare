@@ -2117,6 +2117,56 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertTrue(controller.handleKey(.pageUp))
         XCTAssertEqual(fakeState.currentSlotIndex, 0)
 
+        // Verify iOS overlay Escape/key priority without triggering UIKit modal sheet transition race
+        var iosBackCount = 0
+        let overlayController = MangaReaderInteractionController()
+        @MainActor
+        struct IOSOverlayCanvasHost: View {
+            @Bindable var model: ReaderTestHostModel
+            let controller: MangaReaderInteractionController
+            let onBack: () -> Void
+            var body: some View {
+                MangaReaderCanvas(
+                    state: model.snapshot,
+                    hudVisible: true,
+                    onToggleHud: {},
+                    onBack: onBack,
+                    isOverlayPresented: model.isOverlayPresented,
+                    onDismissOverlay: {
+                        guard model.isOverlayPresented else { return false }
+                        model.isOverlayPresented = false
+                        return true
+                    },
+                    controller: controller
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        window.rootViewController = UIHostingController(
+            rootView: IOSOverlayCanvasHost(
+                model: hostModel,
+                controller: overlayController,
+                onBack: { iosBackCount += 1 }
+            )
+        )
+        try await eventually(window: window) { overlayController.isBound && overlayController.doubleTapZoomHandler != nil }
+        overlayController.handleDoubleTap(at: CGPoint(x: 400, y: 300))
+        try await eventually(window: window) { overlayController.zoomResetHandler != nil }
+        hostModel.isOverlayPresented = true
+        try await eventually(window: window) { overlayController.isOverlayPresented }
+        XCTAssertFalse(overlayController.handleKey(.leftArrow))
+        XCTAssertFalse(overlayController.handleKey(.end))
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+        XCTAssertTrue(overlayController.handleKey(.escape))
+        try await eventually(window: window) { !hostModel.isOverlayPresented && !overlayController.isOverlayPresented }
+        XCTAssertNotNil(overlayController.zoomResetHandler)
+        XCTAssertEqual(iosBackCount, 0)
+        XCTAssertTrue(overlayController.handleKey(.escape))
+        try await eventually(window: window) { overlayController.zoomResetHandler == nil }
+        XCTAssertEqual(iosBackCount, 0)
+        XCTAssertTrue(overlayController.handleKey(.escape))
+        XCTAssertEqual(iosBackCount, 1)
+
         // Verify IOSMangaReaderShareButtonVisiblePreferenceKey still reports true for Gif and false for Ugoira
         let gifMedia = UiMediaGif(
             url: "https://manga.example/ch-1/p0.gif",
@@ -2373,6 +2423,7 @@ private final class ReaderTestHostModel {
     let controller: MangaReaderInteractionController
     let deferSnapshotDelivery: Bool
     var hudVisible = true
+    var isOverlayPresented = false
     var pageFrames: [Int: CGRect] = [:]
     var retryPageIds: Set<String> = []
     var scrubberLeadingLabelFrame: CGRect?

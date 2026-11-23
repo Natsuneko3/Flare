@@ -91,6 +91,8 @@ public final class MangaReaderInteractionController {
     @ObservationIgnored var hudVisibleProvider: (() -> Bool)?
     @ObservationIgnored var onToggleHudHandler: (() -> Void)?
     @ObservationIgnored var onBackHandler: (() -> Void)?
+    @ObservationIgnored var isOverlayPresentedProvider: (() -> Bool)?
+    @ObservationIgnored var onDismissOverlayHandler: (() -> Bool)?
     @ObservationIgnored var pagedStepForward: (() -> Void)?
     @ObservationIgnored var pagedStepBackward: (() -> Void)?
     @ObservationIgnored var pagedScrollToBoundary: ((Bool) -> Void)?
@@ -109,6 +111,10 @@ public final class MangaReaderInteractionController {
 
     var hasUnconsumedUserScroll: Bool {
         activeInteractionTracker?.hasUnconsumedUserScroll ?? false
+    }
+
+    var isOverlayPresented: Bool {
+        isOverlayPresentedProvider?() == true
     }
 
     #if os(iOS)
@@ -148,7 +154,34 @@ public final class MangaReaderInteractionController {
 
     @discardableResult
     public func handleKey(_ key: MangaReaderKeyInput) -> Bool {
-        guard let readerState = stateProvider?() else { return false }
+        if key == .escape {
+            if onDismissOverlayHandler?() == true {
+                return true
+            }
+            if onDismissOverlayHandler == nil && isOverlayPresentedProvider?() == true {
+                return false
+            }
+            guard stateProvider?() != nil else { return false }
+            if let zoomResetHandler {
+                zoomResetHandler()
+                return true
+            }
+            if let onBackHandler {
+                onBackHandler()
+                return true
+            }
+            if hudVisibleProvider?() == true {
+                onToggleHudHandler?()
+                return true
+            }
+            return false
+        }
+
+        guard isOverlayPresentedProvider?() != true,
+              let readerState = stateProvider?() else {
+            return false
+        }
+
         switch key {
         case .leftArrow:
             if readerState.direction == .rtl {
@@ -183,18 +216,6 @@ public final class MangaReaderInteractionController {
             return true
 
         case .escape:
-            if let zoomResetHandler {
-                zoomResetHandler()
-                return true
-            }
-            if let onBackHandler {
-                onBackHandler()
-                return true
-            }
-            if hudVisibleProvider?() == true {
-                onToggleHudHandler?()
-                return true
-            }
             return false
 
         case .pageDown:
@@ -333,6 +354,8 @@ public struct MangaReaderCanvas: View {
     public let onToggleHud: () -> Void
     public let onBack: (() -> Void)?
     public let onOpenExternalURL: ((String) -> Void)?
+    public let isOverlayPresented: Bool
+    public let onDismissOverlay: (() -> Bool)?
     public let pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
     @State private var fallbackController = MangaReaderInteractionController()
     @State private var canvasID = UUID()
@@ -348,6 +371,8 @@ public struct MangaReaderCanvas: View {
         onToggleHud: @escaping () -> Void,
         onBack: (() -> Void)? = nil,
         onOpenExternalURL: ((String) -> Void)? = nil,
+        isOverlayPresented: Bool = false,
+        onDismissOverlay: (() -> Bool)? = nil,
         controller: MangaReaderInteractionController? = nil,
         pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)? = nil
     ) {
@@ -356,6 +381,8 @@ public struct MangaReaderCanvas: View {
         self.onToggleHud = onToggleHud
         self.onBack = onBack
         self.onOpenExternalURL = onOpenExternalURL
+        self.isOverlayPresented = isOverlayPresented
+        self.onDismissOverlay = onDismissOverlay
         self.externalController = controller
         self.pageContextMenu = pageContextMenu
     }
@@ -458,7 +485,10 @@ public struct MangaReaderCanvas: View {
             .clipped()
             .coordinateSpace(name: "manga_reader_canvas")
             .background {
-                MangaReaderHardwareKeyboardBridge(controller: controller)
+                MangaReaderHardwareKeyboardBridge(
+                    controller: controller,
+                    isOverlayPresented: isOverlayPresented
+                )
             }
             .onAppear {
                 bindController(controller)
@@ -482,6 +512,8 @@ public struct MangaReaderCanvas: View {
             controller.hudVisibleProvider = nil
             controller.onToggleHudHandler = nil
             controller.onBackHandler = nil
+            controller.isOverlayPresentedProvider = nil
+            controller.onDismissOverlayHandler = nil
             controller.isBound = false
         }
         .mangaPrefetchMedia(state: state)
@@ -494,6 +526,8 @@ public struct MangaReaderCanvas: View {
         controller.hudVisibleProvider = { [hudVisible] in hudVisible }
         controller.onToggleHudHandler = onToggleHud
         controller.onBackHandler = onBack
+        controller.isOverlayPresentedProvider = { [isOverlayPresented] in isOverlayPresented }
+        controller.onDismissOverlayHandler = onDismissOverlay
     }
 
     private func openLockedURL(_ rawURL: String) {
@@ -3101,6 +3135,7 @@ private extension View {
 
 private struct MangaReaderHardwareKeyboardBridge: View {
     let controller: MangaReaderInteractionController
+    let isOverlayPresented: Bool
 
     var body: some View {
         #if os(macOS)
@@ -3108,9 +3143,12 @@ private struct MangaReaderHardwareKeyboardBridge: View {
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
         #elseif os(iOS)
-        IOSReaderKeyCommandRepresentable(controller: controller)
-            .frame(width: 0, height: 0)
-            .accessibilityHidden(true)
+        IOSReaderKeyCommandRepresentable(
+            controller: controller,
+            isOverlayPresented: isOverlayPresented
+        )
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
         #endif
     }
 }
@@ -3175,13 +3213,19 @@ private final class MacReaderKeyMonitorCoordinator {
     private func handleKeyDown(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> Bool {
         guard let hostView,
               let window = hostView.window,
-              window.isKeyWindow || NSApp.keyWindow == nil,
+              let controller,
+              window.isKeyWindow || NSApp.keyWindow == nil || NSApp.keyWindow?.parent === window,
               !(window.firstResponder is NSText),
+              !(NSApp.keyWindow?.firstResponder is NSText),
               window.attachedSheet == nil,
               !modifierFlags.contains(.command),
               !modifierFlags.contains(.control),
-              !modifierFlags.contains(.option),
-              let controller else {
+              !modifierFlags.contains(.option) else {
+            return false
+        }
+
+        let hasVisibleChildWindows = !(window.childWindows ?? []).filter(\.isVisible).isEmpty
+        if hasVisibleChildWindows && !controller.isOverlayPresented {
             return false
         }
 
@@ -3218,6 +3262,7 @@ private final class MacReaderKeyMonitorCoordinator {
 #elseif os(iOS)
 private struct IOSReaderKeyCommandRepresentable: UIViewControllerRepresentable {
     let controller: MangaReaderInteractionController
+    let isOverlayPresented: Bool
 
     func makeUIViewController(context: Context) -> IOSReaderKeyCommandViewController {
         let viewController = IOSReaderKeyCommandViewController()
@@ -3227,6 +3272,9 @@ private struct IOSReaderKeyCommandRepresentable: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: IOSReaderKeyCommandViewController, context: Context) {
         uiViewController.controller = controller
+        if !isOverlayPresented, uiViewController.view.window != nil, !uiViewController.isFirstResponder {
+            uiViewController.becomeFirstResponder()
+        }
     }
 }
 
@@ -3242,7 +3290,28 @@ private final class IOSReaderKeyCommandViewController: UIViewController {
         }
     }
 
+    private var hasExternalPresentedModal: Bool {
+        var root: UIViewController = self
+        while let parent = root.parent {
+            root = parent
+        }
+        return root.presentedViewController != nil
+    }
+
     override var keyCommands: [UIKeyCommand]? {
+        let overlayOpen = controller?.isOverlayPresented == true
+        if !overlayOpen && hasExternalPresentedModal {
+            return nil
+        }
+        if overlayOpen {
+            let escapeCommand = UIKeyCommand(
+                input: UIKeyCommand.inputEscape,
+                modifierFlags: [],
+                action: #selector(handleEscape)
+            )
+            escapeCommand.wantsPriorityOverSystemBehavior = true
+            return [escapeCommand]
+        }
         let commands: [(String, UIKeyModifierFlags, Selector)] = [
             (UIKeyCommand.inputLeftArrow, [], #selector(handleLeftArrow)),
             (UIKeyCommand.inputRightArrow, [], #selector(handleRightArrow)),

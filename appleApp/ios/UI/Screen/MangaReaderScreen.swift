@@ -338,6 +338,13 @@ struct MangaReaderContentView: View {
                     },
                     onBack: goBack,
                     onOpenExternalURL: onOpenExternalURL,
+                    isOverlayPresented: showChapters || showSettings,
+                    onDismissOverlay: {
+                        guard showChapters || showSettings else { return false }
+                        showChapters = false
+                        showSettings = false
+                        return true
+                    },
                     controller: controller,
                     pageContextMenu: { page, ready in
                         AnyView(pageContextMenuContent(page: page, ready: ready))

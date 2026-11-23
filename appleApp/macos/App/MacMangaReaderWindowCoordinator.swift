@@ -81,10 +81,18 @@ final class MacMangaReaderWindowCoordinator {
         return requests[value]
     }
 
-    func close(value: MacMangaReaderWindowValue?) {
+    func close(value: MacMangaReaderWindowValue?, matchingRevision: Int? = nil) {
         guard let value else { return }
+        if let matchingRevision {
+            guard requests[value]?.revision == matchingRevision else { return }
+        }
         requests.removeValue(forKey: value)
     }
+}
+
+@MainActor
+private final class MacMangaReaderRevisionBox {
+    var latestRevision: Int = 0
 }
 
 @MainActor
@@ -95,6 +103,7 @@ struct MacMangaReaderWindowRoot: View {
 
     let value: MacMangaReaderWindowValue?
     let coordinator: MacMangaReaderWindowCoordinator
+    @State private var revisionBox = MacMangaReaderRevisionBox()
 
     init(
         value: MacMangaReaderWindowValue?,
@@ -106,6 +115,8 @@ struct MacMangaReaderWindowRoot: View {
 
     var body: some View {
         if let request = coordinator.request(for: value) {
+            let activeValue = request.value
+            let _ = { revisionBox.latestRevision = request.revision }()
             NavigationStack {
                 MangaReaderScreen(
                     accountType: request.accountType,
@@ -124,6 +135,9 @@ struct MacMangaReaderWindowRoot: View {
             }
             .frame(minWidth: 560, idealWidth: 960, minHeight: 520, idealHeight: 820)
             .background(MangaReaderWindowConfigurator(revision: request.revision))
+            .onDisappear {
+                coordinator.close(value: activeValue, matchingRevision: revisionBox.latestRevision)
+            }
             .id(request.value)
         } else {
             EmptyView()
