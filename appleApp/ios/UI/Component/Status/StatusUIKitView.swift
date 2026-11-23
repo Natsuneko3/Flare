@@ -552,11 +552,18 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        hitTestActions(at: point, with: event) ?? super.hitTest(point, with: event)
+        hitTestOutsetControls(at: point, with: event) ?? super.hitTest(point, with: event)
     }
 
-    func hitTestActions(at point: CGPoint, with event: UIEvent?) -> UIView? {
+    func hitTestOutsetControls(at point: CGPoint, with event: UIEvent?) -> UIView? {
         guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+        if let header = currentHeaderView, header.superview === self,
+           !header.isHidden, header.alpha > 0.01, header.isUserInteractionEnabled,
+           let topEnd = topEndViewStorage, topEnd.isDescendant(of: header),
+           isInteractiveInHierarchy(topEnd, upTo: header),
+           let control = topEnd.hitTest(convert(point, to: topEnd), with: event) as? UIControl {
+            return control
+        }
         // Action slots extend 4pt into the post padding and must remain tappable there.
         if let container = actionsContainerStorage, container.superview === self,
            !container.isHidden, container.alpha > 0.01, container.isUserInteractionEnabled,
@@ -566,11 +573,21 @@ final class StatusUIKitView: UIView, UIGestureRecognizerDelegate, ManualLayoutMe
         }
         for case let parent as ParentContainerView in activeParents.reversed()
             where !parent.isHidden && parent.alpha > 0.01 && parent.isUserInteractionEnabled {
-            if let control = parent.child.hitTestActions(at: convert(point, to: parent.child), with: event) {
+            if let control = parent.child.hitTestOutsetControls(at: convert(point, to: parent.child), with: event) {
                 return control
             }
         }
         return nil
+    }
+
+    private func isInteractiveInHierarchy(_ view: UIView, upTo ancestor: UIView) -> Bool {
+        var current: UIView? = view
+        while let node = current {
+            guard !node.isHidden, node.alpha > 0.01, node.isUserInteractionEnabled else { return false }
+            if node === ancestor { return true }
+            current = node.superview
+        }
+        return false
     }
 
     override func sizeThatFits(_ size: CGSize) -> CGSize {

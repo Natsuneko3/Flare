@@ -19,11 +19,11 @@ public struct TranslateStatusComponent: View {
             case .translating: ProgressView()
                     .progressViewStyle(.circular)
                 #if os(macOS)
-                    .scaleEffect(iconSize.map { $0 / 20 } ?? 0.5)
+                    .controlSize(.small)
+                    .scaleEffect((iconSize ?? 12) / 16)
                 #else
-                    .scaleEffect(iconSize.map { $0 / 20 } ?? 1)
+                    .scaleEffect((iconSize ?? 12) / 20)
                 #endif
-                    .scaledToFit()
                     .frame(width: iconSize ?? 12, height: iconSize ?? 12)
             default: EmptyView()
             }

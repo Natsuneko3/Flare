@@ -68,11 +68,11 @@
 			<div class="feed-meta">
 				{#if appearance.showTranslateButton && feed.translationDisplayState !== 'Hidden'}
 					<span class="meta-icon translation-meta" title={translationLabel(feed.translationDisplayState)}>
-						<FaIcon name="Translate" size={16} />
+						<FaIcon name="Translate" size="1em" />
 						{#if feed.translationDisplayState === 'Translating'}
-							<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+							<span class="loading loading-spinner meta-spinner" aria-hidden="true"></span>
 						{:else if feed.translationDisplayState === 'Failed'}
-							<FaIcon name="CircleExclamation" size={12} />
+							<FaIcon name="CircleExclamation" size="1em" />
 						{/if}
 					</span>
 				{/if}
@@ -183,6 +183,12 @@
 		align-items: center;
 		gap: 0.25rem;
 		line-height: 1;
+	}
+
+	.meta-spinner {
+		width: 1em;
+		height: 1em;
+		flex: 0 0 auto;
 	}
 
 	.feed-title {

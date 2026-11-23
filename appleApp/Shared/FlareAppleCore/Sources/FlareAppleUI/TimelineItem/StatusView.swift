@@ -531,7 +531,7 @@ public struct StatusView: View {
         .font(.body)
         .lineSpacing(1)
         .environment(\.isPostContent, true)
-        .contentShape(.rect)
+        .background { Color.clear.contentShape(.rect) }
         .if(isClickable) { view in
             view.onTapGesture {
                 data.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
@@ -607,21 +607,15 @@ public struct StatusView: View {
     ) -> some View {
         HStack(spacing: 4) {
             if let visibility {
-                StatusVisibilityView(data: visibility)
-                    .font(.system(size: 20))
-                    .frame(width: 20, height: 20)
-                    .scaleEffect(topEndIconSize / 20)
-                    .frame(width: topEndIconSize, height: topEndIconSize)
+                StatusVisibilityView(data: visibility, iconSize: topEndIconSize)
                     .flareSecondaryText()
             }
             if translationDisplayState != .hidden {
                 TranslateStatusComponent(data: translationDisplayState, iconSize: topEndIconSize)
-                    .font(.system(size: topEndIconSize))
                     .flareSecondaryText()
             }
             if showPlatformLogo {
                 TabIcon(icon: platformIcon, size: topEndIconSize)
-                    .font(.system(size: topEndIconSize))
                     .flareSecondaryText()
                     .accessibilityLabel(
                         Text(
@@ -640,6 +634,8 @@ public struct StatusView: View {
                     .flareSecondaryText()
             }
             if agentEnabled, !isQuote {
+                let insightHitSize = max(24, topEndIconSize + 4)
+                let insightHitInset = (insightHitSize - topEndIconSize) / 2
                 Button {
                     let route = DeeplinkRoute.StatusInsight(
                         accountType: accountType,
@@ -653,10 +649,12 @@ public struct StatusView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: topEndIconSize, height: topEndIconSize)
-                        .frame(width: max(24, topEndIconSize + 4), height: max(24, topEndIconSize + 4))
+                        .frame(width: insightHitSize, height: insightHitSize)
+                        .contentShape(Rectangle())
                         .flareSecondaryText()
                 }
                 .buttonStyle(.plain)
+                .padding(-insightHitInset)
                 .accessibilityLabel(Text("status_insight_title", bundle: FlareAppleUILocalization.bundle))
             }
         }
