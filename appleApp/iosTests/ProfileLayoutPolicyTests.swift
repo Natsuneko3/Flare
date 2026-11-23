@@ -1,6 +1,9 @@
 import CoreGraphics
 import SwiftUI
 import XCTest
+#if canImport(FlareAppleUI)
+import FlareAppleUI
+#endif
 
 final class ProfileLayoutPolicyTests: XCTestCase {
     func testCardModeStartsWhenTheTimelineHasTwoColumns() {
@@ -14,6 +17,7 @@ final class ProfileLayoutPolicyTests: XCTestCase {
         XCTAssertFalse(layout.usesCard)
         XCTAssertEqual(layout.profileWidth, 400)
         XCTAssertEqual(layout.columnSpacing, 8)
+        XCTAssertEqual(layout.mode, .horizontalSplit(primaryWidth: 400, spacing: 8, isFoldDriven: false))
         XCTAssertEqual(1_000 - layout.profileWidth - layout.columnSpacing, 592)
     }
 
@@ -26,6 +30,7 @@ final class ProfileLayoutPolicyTests: XCTestCase {
         XCTAssertFalse(layout.usesCard)
         XCTAssertEqual(layout.profileWidth, 456)
         XCTAssertEqual(layout.columnSpacing, 32)
+        XCTAssertEqual(layout.mode, .horizontalSplit(primaryWidth: 456, spacing: 32, isFoldDriven: true))
         XCTAssertEqual(944 - layout.profileWidth - layout.columnSpacing, 456)
     }
 
@@ -52,7 +57,7 @@ final class ProfileLayoutPolicyTests: XCTestCase {
         XCTAssertEqual(880 - layout.profileWidth, 488)
     }
 
-    func testMultipleTimelineColumnsKeepTheCardWhenFolded() {
+    func testMultipleTimelineColumnsKeepTheCardWhenVerticallyFolded() {
         let layout = ProfileLayoutPolicy(
             width: 1_440,
             division: CGRect(x: 704, y: 0, width: 32, height: 900)
@@ -61,17 +66,40 @@ final class ProfileLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(layout.usesCard)
         XCTAssertEqual(layout.profileWidth, 400)
         XCTAssertEqual(layout.columnSpacing, 8)
+        XCTAssertEqual(layout.mode, .horizontalSplit(primaryWidth: 400, spacing: 8, isFoldDriven: false))
     }
 
-    func testHorizontalInactiveAndOutsideDivisionsKeepTheUnfoldedLayout() {
-        let unfolded = ProfileLayoutPolicy(width: 944)
+    func testHorizontalTabletopFoldSplitsTopAndBottomOnCompactAndWideScreens() {
+        let compactTabletop = ProfileLayoutPolicy(
+            size: CGSize(width: 390, height: 844),
+            isRegularWidth: false,
+            division: CGRect(x: 0, y: 406, width: 390, height: 32)
+        )
+        XCTAssertFalse(compactTabletop.usesCard)
+        XCTAssertEqual(compactTabletop.mode, .verticalSplit(primaryHeight: 406, spacing: 32))
+
+        let wideTabletop = ProfileLayoutPolicy(
+            size: CGSize(width: 1_440, height: 900),
+            isRegularWidth: true,
+            division: CGRect(x: 0, y: 434, width: 1_440, height: 32)
+        )
+        XCTAssertFalse(wideTabletop.usesCard)
+        XCTAssertEqual(wideTabletop.mode, .verticalSplit(primaryHeight: 434, spacing: 32))
+    }
+
+    func testZeroOutsideAndSliverDivisionsKeepTheUnfoldedLayout() {
+        let unfolded = ProfileLayoutPolicy(size: CGSize(width: 944, height: 600), isRegularWidth: true)
         for division in [
-            CGRect(x: 0, y: 284, width: 944, height: 32),
             CGRect(x: 472, y: 0, width: 0, height: 600),
+            CGRect(x: 0, y: 284, width: 944, height: 0),
             CGRect(x: -32, y: 0, width: 32, height: 600),
-            CGRect(x: 944, y: 0, width: 32, height: 600)
+            CGRect(x: 944, y: 0, width: 32, height: 600),
+            CGRect(x: 0, y: 100, width: 944, height: 32),
         ] {
-            XCTAssertEqual(ProfileLayoutPolicy(width: 944, division: division), unfolded)
+            XCTAssertEqual(
+                ProfileLayoutPolicy(size: CGSize(width: 944, height: 600), isRegularWidth: true, division: division),
+                unfolded
+            )
         }
     }
 }

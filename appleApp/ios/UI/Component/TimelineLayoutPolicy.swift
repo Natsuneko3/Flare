@@ -1,6 +1,9 @@
 import SwiftUI
+#if canImport(FlareAppleUI)
+import FlareAppleUI
+#endif
 
-enum TimelineColumnPolicy {
+nonisolated enum TimelineColumnPolicy {
     case adaptive
     case single
 
@@ -11,22 +14,50 @@ enum TimelineColumnPolicy {
     }
 }
 
-struct ProfileLayoutPolicy: Equatable {
+nonisolated struct ProfileLayoutPolicy: Equatable {
+    let mode: AdaptiveSplitMode
     let usesCard: Bool
     let profileWidth: CGFloat
     let columnSpacing: CGFloat
 
-    init(width: CGFloat, division: CGRect? = nil, layoutDirection: LayoutDirection = .leftToRight) {
+    init(
+        size: CGSize,
+        isRegularWidth: Bool = true,
+        division: CGRect? = nil,
+        layoutDirection: LayoutDirection = .leftToRight
+    ) {
         // Classify before fold displacement so resizing a pane cannot switch modes.
-        usesCard = TimelineColumnPolicy.adaptive.columnCount(for: width - 400 - 8) > 1
-        if !usesCard, let division,
-           division.width > 0, division.height > division.width,
-           division.minX > 0, division.maxX < width {
-            profileWidth = layoutDirection == .rightToLeft ? width - division.maxX : division.minX
-            columnSpacing = division.width
-        } else {
-            profileWidth = 400
-            columnSpacing = 8
+        let multiColumnUnfolded = TimelineColumnPolicy.adaptive.columnCount(for: size.width - 400 - 8) > 1
+        let policy = AdaptiveSplitLayoutPolicy(
+            size: size,
+            division: division,
+            isUnfoldedSplitEligible: isRegularWidth,
+            primaryWidthStrategy: .profileDefault,
+            unfoldedSpacing: 8,
+            layoutDirection: layoutDirection,
+            skipVerticalFoldForUnfoldedRemainingWidth: { remainingWidth in
+                TimelineColumnPolicy.adaptive.columnCount(for: remainingWidth) > 1
+            }
+        )
+        self.mode = policy.mode
+        switch policy.mode {
+        case let .horizontalSplit(primaryWidth, spacing, _):
+            self.usesCard = multiColumnUnfolded
+            self.profileWidth = primaryWidth
+            self.columnSpacing = spacing
+        case .verticalSplit, .compact:
+            self.usesCard = false
+            self.profileWidth = 400
+            self.columnSpacing = 8
         }
+    }
+
+    init(width: CGFloat, division: CGRect? = nil, layoutDirection: LayoutDirection = .leftToRight) {
+        self.init(
+            size: CGSize(width: width, height: 800),
+            isRegularWidth: true,
+            division: division,
+            layoutDirection: layoutDirection
+        )
     }
 }
