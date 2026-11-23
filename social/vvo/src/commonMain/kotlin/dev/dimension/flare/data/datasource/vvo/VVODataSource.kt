@@ -15,6 +15,7 @@ import dev.dimension.flare.data.datasource.microblog.ComposeDataSource
 import dev.dimension.flare.data.datasource.microblog.ComposeType
 import dev.dimension.flare.data.datasource.microblog.DatabaseUpdater
 import dev.dimension.flare.data.datasource.microblog.DirectMessageDataSource
+import dev.dimension.flare.data.datasource.microblog.MicroblogCacheLookup
 import dev.dimension.flare.data.datasource.microblog.NotificationFilter
 import dev.dimension.flare.data.datasource.microblog.NotificationTimelineDataSource
 import dev.dimension.flare.data.datasource.microblog.PostDetailFilter
@@ -29,6 +30,7 @@ import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimeline
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabSection
 import dev.dimension.flare.data.datasource.microblog.datasource.PostDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.RelationDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.TimelinePageDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.TimelineTabConfigurationDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.UserDataSource
 import dev.dimension.flare.data.datasource.microblog.handler.DirectMessageHandler
@@ -48,6 +50,7 @@ import dev.dimension.flare.data.model.IconType
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.model.tab.ShortcutSpec
 import dev.dimension.flare.data.model.tab.TimelineSpec
+import dev.dimension.flare.data.network.ktorClient
 import dev.dimension.flare.data.network.vvo.VVOService
 import dev.dimension.flare.data.network.vvo.model.StatusDetailItem
 import dev.dimension.flare.data.platform.CommonTimelineSpecs
@@ -69,12 +72,17 @@ import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.contentPostOrNull
 import dev.dimension.flare.ui.model.map
+import dev.dimension.flare.ui.model.mapper.VVO_COMMENT_ID_PARAM
+import dev.dimension.flare.ui.model.mapper.VVO_COMMENT_REPLIES_PAGE_ID
+import dev.dimension.flare.ui.model.mapper.VVO_ROOT_STATUS_ID_PARAM
 import dev.dimension.flare.ui.model.mapper.render
 import dev.dimension.flare.ui.model.mapper.renderVVOText
 import dev.dimension.flare.ui.model.mapper.withVvoExtendedText
 import dev.dimension.flare.ui.model.toUi
 import dev.dimension.flare.ui.presenter.compose.ComposeStatus
 import dev.dimension.flare.ui.route.DeeplinkRoute
+import io.ktor.client.HttpClient
+import io.ktor.client.HttpClientConfig
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
@@ -82,8 +90,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 
 private val MEDIA_COMPRESSION =
     ComposeConfig.Media.Compression(
@@ -119,6 +130,7 @@ internal class VVODataSource(
     override val accountKey: MicroBlogKey,
     credentialFlow: Flow<VVoCredential>,
     private val updateCredential: suspend (VVoCredential) -> Unit = {},
+    private val httpClientFactory: ((HttpClientConfig<*>.() -> Unit) -> HttpClient)? = null,
 ) : AuthenticatedMicroblogDataSource,
     NotificationTimelineDataSource,
     ComposeDataSource,
@@ -127,11 +139,17 @@ internal class VVODataSource(
     RelationDataSource,
     TimelineTabConfigurationDataSource,
     PinnableTimelineTabDataSource,
+    TimelinePageDataSource,
     PostDataSource,
     DirectMessageDataSource,
     AccountHttpCapability,
     PostEventHandler.Handler,
     AutoCloseable {
+    override val pluginId: String = VVO_PLATFORM_ID
+    override val packageHash: String = ""
+    private val timelinePageRevision = MutableStateFlow(0L)
+    override val revision: StateFlow<Long> = timelinePageRevision
+
     override val accountOrigin = "https://m.weibo.cn"
     override val origins: Set<String> = setOf("https://m.weibo.cn", "https://weibo.com")
 
@@ -140,10 +158,13 @@ internal class VVODataSource(
     override suspend fun authenticateMedia(url: String): Map<String, String> = service.directMessageImageHeaders(url)
 
     private val imageCompressor: ImageCompressor by koinInject()
+    private val cacheLookup: MicroblogCacheLookup by koinInject()
     private val service by lazy {
+        val proxy = ProxyRef.forAccount(accountKey)
         VVOService(
-            proxy = ProxyRef.forAccount(accountKey),
+            proxy = proxy,
             credentialFlow = credentialFlow,
+            httpClientFactory = httpClientFactory ?: { ktorClient(proxy, config = it) },
             refreshCookieWhenStale = true,
             onCredentialRefreshed = { credential ->
                 updateCredential(credential)
@@ -560,7 +581,7 @@ internal class VVODataSource(
         data: ComposeData,
         progress: () -> Unit,
     ) {
-        val visible = requireNotNull(data.visibility).toVvoVisible()
+        val visible = data.visibility?.toVvoVisible()
         val st = ensureLogin()
 
         val mediaIds =
@@ -582,6 +603,7 @@ internal class VVODataSource(
                 st = st,
                 picId = mediaId,
             )
+            timelinePageRevision.update { it + 1 }
         } else if (composeStatus is ComposeStatus.Reply) {
             service.commentStatus(
                 id = composeStatus.statusKey.id,
@@ -681,6 +703,26 @@ internal class VVODataSource(
             statusKey = statusKey,
         )
 
+    override fun timelinePage(
+        pageId: String,
+        parameters: Map<String, String>,
+    ): RemoteLoader<UiTimelineV2> {
+        require(pageId == VVO_COMMENT_REPLIES_PAGE_ID) { "Unknown Weibo timeline page: $pageId" }
+        val commentId =
+            parameters[VVO_COMMENT_ID_PARAM]?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("Missing commentId parameter")
+        val commentKey = MicroBlogKey(id = commentId, host = accountKey.host)
+        return CommentChildRemoteMediator(
+            service = service,
+            accountKey = accountKey,
+            commentKey = commentKey,
+            rootStatusId = parameters[VVO_ROOT_STATUS_ID_PARAM],
+            cachedRootComment = {
+                runCatching { cacheLookup.findPost(AccountType.Specific(accountKey), commentKey) }.getOrNull()
+            },
+        )
+    }
+
     fun commentChild(commentKey: MicroBlogKey): RemoteLoader<UiTimelineV2> =
         CommentChildRemoteMediator(
             service = service,
@@ -705,13 +747,6 @@ internal class VVODataSource(
             val st = ensureLogin()
             val response = service.getStatusExtend(statusKey.id, st)
             response.data?.longTextContent.orEmpty()
-        }.toUi()
-
-    fun status(statusKey: MicroBlogKey): Flow<UiState<UiTimelineV2>> =
-        MemCacheable(
-            "vvo_status_$statusKey",
-        ) {
-            loadStatusDetail(statusKey)
         }.toUi()
 
     private suspend fun uploadMedia(
