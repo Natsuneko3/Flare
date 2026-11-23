@@ -1541,6 +1541,158 @@ final class MangaScreenTests: XCTestCase {
         )
     }
 
+    func testMacWebtoonConstrainedWidthPreservesScrubberJumpOn1200Viewport() async throws {
+        _ = NSApplication.shared
+        let webtoonPages = makeMacSamplePages(count: 6)
+        let webtoonSlots: [any ReaderSlot] = (0..<6).map { ReaderSlotSingle(pageIndex: Int32($0)) }
+        let webtoonState = FakeMacMangaReaderState(
+            direction: .webtoon,
+            pages: webtoonPages,
+            slots: webtoonSlots
+        )
+        webtoonState.webtoonConstrainWidthOnWideScreen = true
+
+        let controller = MangaReaderInteractionController()
+        let hostModel = MacReaderTestHostModel(state: webtoonState, controller: controller)
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let hostingView = NSHostingView(rootView: MacReaderTestHostView(model: hostModel))
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        try await eventually(window: window) {
+            controller.isBound && hostModel.pageFrames[0] != nil
+        }
+
+        let constrainedPage0 = try XCTUnwrap(hostModel.pageFrames[0])
+        XCTAssertEqual(constrainedPage0.width, 800, accuracy: 1.5)
+        XCTAssertEqual(constrainedPage0.minX, 200, accuracy: 1.5)
+
+        // Scrubber / programmatic jump to last page (5) lands inside viewport with constrained width
+        webtoonState.goToPage(pageIndex: 5)
+        try await eventually(window: window) {
+            guard let page5 = hostModel.pageFrames[5] else { return false }
+            return page5.minY < 800 && page5.maxY > 0 && webtoonState.currentPageIndex == 5
+        }
+        let constrainedPage5 = try XCTUnwrap(hostModel.pageFrames[5])
+        XCTAssertEqual(constrainedPage5.width, 800, accuracy: 1.5)
+        XCTAssertEqual(constrainedPage5.minX, 200, accuracy: 1.5)
+
+        // Return to page 0 and flip webtoonConstrainWidthOnWideScreen = false -> expands to full 1200pt viewport width
+        webtoonState.goToPage(pageIndex: 0)
+        try await eventually(window: window) {
+            guard let page0 = hostModel.pageFrames[0] else { return false }
+            return page0.minY < 800 && page0.maxY > 0 && webtoonState.currentPageIndex == 0
+        }
+        webtoonState.setWebtoonConstrainWidthOnWideScreen(enabled: false)
+        try await eventually(window: window) {
+            guard let page0 = hostModel.pageFrames[0] else { return false }
+            return abs(page0.width - 1200) <= 1.5 && abs(page0.minX) <= 1.5
+        }
+    }
+
+    func testMacReaderWindowCoordinatorReuseAndEscapePriority() async throws {
+        _ = NSApplication.shared
+        let coordinator = MacMangaReaderWindowCoordinator()
+        let accountA = AccountType.Specific(accountKey: MicroBlogKey(id: "user-1", host: "manga.example"))
+        let accountGuest = AccountType.GuestPlugin(platformId: "manga-plat", host: "manga.example")
+        let manga1 = MicroBlogKey(id: "manga-1", host: "manga.example")
+        let manga2 = MicroBlogKey(id: "manga-2", host: "manga.example")
+
+        let firstValue = coordinator.open(
+            accountType: accountA,
+            mangaKey: manga1,
+            chapterId: "ch-1",
+            initialPage: nil
+        )
+        let firstRequest = try XCTUnwrap(coordinator.request(for: firstValue))
+        XCTAssertEqual(firstRequest.chapterId, "ch-1")
+        XCTAssertNil(firstRequest.initialPage)
+        XCTAssertEqual(firstRequest.revision, 1)
+
+        let secondValue = coordinator.open(
+            accountType: accountA,
+            mangaKey: manga1,
+            chapterId: "ch-2",
+            initialPage: 4
+        )
+        XCTAssertEqual(firstValue, secondValue)
+        XCTAssertEqual(firstValue.hashValue, secondValue.hashValue)
+
+        let updatedRequest = try XCTUnwrap(coordinator.request(for: secondValue))
+        XCTAssertEqual(updatedRequest.chapterId, "ch-2")
+        XCTAssertEqual(updatedRequest.initialPage, 4)
+        XCTAssertEqual(updatedRequest.revision, 2)
+
+        let distinctMangaValue = coordinator.open(
+            accountType: accountA,
+            mangaKey: manga2,
+            chapterId: "ch-1",
+            initialPage: nil
+        )
+        XCTAssertNotEqual(firstValue, distinctMangaValue)
+        XCTAssertEqual(try XCTUnwrap(coordinator.request(for: distinctMangaValue)).revision, 1)
+        XCTAssertEqual(try XCTUnwrap(coordinator.request(for: firstValue)).chapterId, "ch-2")
+
+        let distinctAccountValue = coordinator.open(
+            accountType: accountGuest,
+            mangaKey: manga1,
+            chapterId: "ch-1",
+            initialPage: nil
+        )
+        XCTAssertNotEqual(firstValue, distinctAccountValue)
+
+        // Escape priority: first Escape resets zoom without invoking onBackHandler; second Escape invokes onBackHandler
+        let pages = makeMacSamplePages(count: 4)
+        let slots: [any ReaderSlot] = (0..<4).map { ReaderSlotSingle(pageIndex: Int32($0)) }
+        let fakeState = FakeMacMangaReaderState(direction: .ltr, pages: pages, slots: slots)
+        let controller = MangaReaderInteractionController()
+        let hostModel = MacReaderTestHostModel(state: fakeState, controller: controller)
+        var backCallCount = 0
+        hostModel.onBack = { backCallCount += 1 }
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 960, height: 820),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let hostingView = NSHostingView(rootView: MacReaderTestHostView(model: hostModel))
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        try await eventually(window: window) {
+            controller.isBound && hostModel.pageFrames[0] != nil && controller.doubleTapZoomHandler != nil
+        }
+
+        // Verify Home and End keyboard shortcuts jump to first and last page
+        XCTAssertTrue(controller.handleKey(.end))
+        XCTAssertEqual(fakeState.currentPageIndex, 3)
+        XCTAssertTrue(controller.handleKey(.home))
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+
+        controller.handleDoubleTap(at: CGPoint(x: 480, y: 410))
+        try await eventually(window: window) { controller.zoomResetHandler != nil }
+
+        XCTAssertTrue(controller.handleKey(.escape))
+        try await eventually(window: window) { controller.zoomResetHandler == nil }
+        XCTAssertEqual(backCallCount, 0, "First Escape while zoomed must reset zoom without invoking onBackHandler")
+
+        XCTAssertTrue(controller.handleKey(.escape))
+        XCTAssertEqual(backCallCount, 1, "Second Escape once unzoomed must invoke onBackHandler")
+    }
+
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -1635,6 +1787,7 @@ private final class MacReaderTestHostModel {
     var retryPageIds: Set<String> = []
     var scrubberLeadingLabelFrame: CGRect?
     var scrubberTrailingLabelFrame: CGRect?
+    var onBack: (() -> Void)?
     private var stateGeneration = 0
 
     init(
@@ -1691,6 +1844,12 @@ private final class MacMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     let nextBoundary: any ChapterBoundary
     let prefetchMedia: [UiMediaImage]
     let imageTranslation: any ImageTranslationPresenterState
+    let chapterGroups: [UiMangaChapterGroup]
+    let selectedChapterGroupId: String?
+    let chapterSortDescending: Bool
+    let chapterItems: [ReaderChapterItem]
+    let webtoonConstrainWidthOnWideScreen: Bool
+    let volumeKeysNavigation: Bool
     let lockedChapter: ChapterBoundaryLocked?
 
     init(backing: FakeMacMangaReaderState) {
@@ -1711,6 +1870,12 @@ private final class MacMangaStateSnapshot: NSObject, MangaReaderPresenterState {
         self.nextBoundary = backing.nextBoundary
         self.prefetchMedia = backing.prefetchMedia
         self.imageTranslation = backing.imageTranslation
+        self.chapterGroups = backing.chapterGroups
+        self.selectedChapterGroupId = backing.selectedChapterGroupId
+        self.chapterSortDescending = backing.chapterSortDescending
+        self.chapterItems = backing.chapterItems
+        self.webtoonConstrainWidthOnWideScreen = backing.webtoonConstrainWidthOnWideScreen
+        self.volumeKeysNavigation = backing.volumeKeysNavigation
         self.lockedChapter = backing.lockedChapter
     }
 
@@ -1728,6 +1893,21 @@ private final class MacMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     func setDirection(direction: MangaReadingDirection) { backing.setDirection(direction: direction) }
     func setDoublePageSpread(enabled: Bool) { backing.setDoublePageSpread(enabled: enabled) }
     func setSpreadCoverSinglePage(enabled: Bool) { backing.setSpreadCoverSinglePage(enabled: enabled) }
+    func selectChapterGroup(groupId: String) { backing.selectChapterGroup(groupId: groupId) }
+    func toggleChapterSort() { backing.toggleChapterSort() }
+    func selectChapter(chapterId: String) { backing.selectChapter(chapterId: chapterId) }
+    func openChapter(chapterId: String, initialPage: KotlinInt?) {
+        backing.openChapter(chapterId: chapterId, initialPage: initialPage)
+    }
+    func resolveChapterOpenUrl(chapter: UiMangaChapter) -> String? {
+        backing.resolveChapterOpenUrl(chapter: chapter)
+    }
+    func setWebtoonConstrainWidthOnWideScreen(enabled: Bool) {
+        backing.setWebtoonConstrainWidthOnWideScreen(enabled: enabled)
+    }
+    func setVolumeKeysNavigation(enabled: Bool) {
+        backing.setVolumeKeysNavigation(enabled: enabled)
+    }
 }
 
 @MainActor
@@ -1738,7 +1918,7 @@ private struct MacReaderTestHostView: View {
         MangaReaderContentView(
             state: model.snapshot,
             hudVisible: $model.hudVisible,
-            goBack: {},
+            goBack: { model.onBack?() },
             controller: model.controller
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1806,12 +1986,21 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
     var nextBoundary: any ChapterBoundary
     var prefetchMedia: [UiMediaImage] = []
     let imageTranslation: any ImageTranslationPresenterState = NoopMacImageTranslationState()
+    var chapterGroups: [UiMangaChapterGroup] = []
+    var selectedChapterGroupId: String?
+    var chapterSortDescending: Bool = true
+    var chapterItems: [ReaderChapterItem] = []
+    var webtoonConstrainWidthOnWideScreen: Bool = true
+    var volumeKeysNavigation: Bool = false
     var lockedChapter: ChapterBoundaryLocked? { nil }
 
     var lastWideViewport: Bool?
     var stepForwardCount = 0
     var stepBackwardCount = 0
     var openedBoundaryChapterId: String?
+    var selectedChapterId: String?
+    var toggleChapterSortCount = 0
+    var openedChapterRequests: [(String, Int32?)] = []
     var retriedPageIds: [String] = []
 
     init(
@@ -1909,6 +2098,47 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
 
     func setSpreadCoverSinglePage(enabled: Bool) {
         spreadCoverSinglePage = enabled
+        onStateMutated?()
+    }
+
+    func selectChapterGroup(groupId: String) {
+        selectedChapterGroupId = groupId
+        onStateMutated?()
+    }
+
+    func toggleChapterSort() {
+        toggleChapterSortCount += 1
+        chapterSortDescending.toggle()
+        chapterItems.reverse()
+        onStateMutated?()
+    }
+
+    func selectChapter(chapterId: String) {
+        selectedChapterId = chapterId
+        activeChapterId = chapterId
+        onStateMutated?()
+    }
+
+    func openChapter(chapterId: String, initialPage: KotlinInt?) {
+        openedChapterRequests.append((chapterId, initialPage?.int32Value))
+        activeChapterId = chapterId
+        if let page = initialPage?.int32Value {
+            currentPageIndex = page
+        }
+        onStateMutated?()
+    }
+
+    func resolveChapterOpenUrl(chapter: UiMangaChapter) -> String? {
+        chapter.openUrl(mangaUrl: chapterUrl)
+    }
+
+    func setWebtoonConstrainWidthOnWideScreen(enabled: Bool) {
+        webtoonConstrainWidthOnWideScreen = enabled
+        onStateMutated?()
+    }
+
+    func setVolumeKeysNavigation(enabled: Bool) {
+        volumeKeysNavigation = enabled
         onStateMutated?()
     }
 

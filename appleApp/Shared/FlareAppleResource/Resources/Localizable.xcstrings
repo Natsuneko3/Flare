@@ -228790,6 +228790,30 @@
       "zh-Hans": { "stringUnit": { "state": "translated", "value": "重试本页" } },
       "zh-Hant": { "stringUnit": { "state": "translated", "value": "重試本頁" } }
     }
+  },
+  "manga_reader_chapters": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Chapters" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "チャプター" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "章节" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "章節" } }
+    }
+  },
+  "manga_reader_constrain_webtoon_width": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Constrain webtoon width" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "縦スクロールの幅を制限" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "限制条漫宽度" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "限制條漫寬度" } }
+    }
+  },
+  "manga_reader_copy_image": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Copy image" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "画像をコピー" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "复制图片" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "複製圖片" } }
+    }
   }
 
   },

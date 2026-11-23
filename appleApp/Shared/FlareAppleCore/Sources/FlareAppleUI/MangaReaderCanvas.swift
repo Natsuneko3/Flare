@@ -12,6 +12,7 @@ import AppKit
 #endif
 
 private let mangaWideViewportBreakpoint: CGFloat = 720
+private let mangaMaxConstrainedWebtoonWidth: CGFloat = 800
 private let mangaLeftTapZoneFraction: CGFloat = 0.30
 private let mangaRightTapZoneFraction: CGFloat = 0.70
 private let mangaMaxReaderZoom: CGFloat = 4.0
@@ -24,6 +25,10 @@ public nonisolated enum MangaReaderKeyInput: Equatable, Sendable {
     case rightArrow
     case upArrow
     case downArrow
+    case pageUp
+    case pageDown
+    case home
+    case end
     case space(shift: Bool)
     case escape
 }
@@ -89,6 +94,7 @@ public final class MangaReaderInteractionController {
     @ObservationIgnored var pagedStepForward: (() -> Void)?
     @ObservationIgnored var pagedStepBackward: (() -> Void)?
     @ObservationIgnored var pagedScrollToBoundary: ((Bool) -> Void)?
+    @ObservationIgnored var pagedJumpToEdge: ((Bool) -> Void)?
     @ObservationIgnored var webtoonStepForward: (() -> Void)?
     @ObservationIgnored var webtoonStepBackward: (() -> Void)?
     @ObservationIgnored var webtoonZoomPanHandler: ((CGSize) -> Void)?
@@ -190,6 +196,34 @@ public final class MangaReaderInteractionController {
                 return true
             }
             return false
+
+        case .pageDown:
+            performStepForward(readerState)
+            return true
+
+        case .pageUp:
+            performStepBackward(readerState)
+            return true
+
+        case .home:
+            if !readerState.pages.isEmpty {
+                if readerState.direction != .webtoon, let pagedJumpToEdge {
+                    pagedJumpToEdge(false)
+                } else {
+                    readerState.goToPage(pageIndex: 0)
+                }
+            }
+            return true
+
+        case .end:
+            if !readerState.pages.isEmpty {
+                if readerState.direction != .webtoon, let pagedJumpToEdge {
+                    pagedJumpToEdge(true)
+                } else {
+                    readerState.goToPage(pageIndex: Int32(readerState.pages.count - 1))
+                }
+            }
+            return true
         }
     }
 
@@ -243,6 +277,7 @@ public final class MangaReaderInteractionController {
         pagedStepForward = nil
         pagedStepBackward = nil
         pagedScrollToBoundary = nil
+        pagedJumpToEdge = nil
         activeInteractionTracker = nil
     }
 
@@ -298,6 +333,7 @@ public struct MangaReaderCanvas: View {
     public let onToggleHud: () -> Void
     public let onBack: (() -> Void)?
     public let onOpenExternalURL: ((String) -> Void)?
+    public let pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
     @State private var fallbackController = MangaReaderInteractionController()
     @State private var canvasID = UUID()
     private let externalController: MangaReaderInteractionController?
@@ -312,7 +348,8 @@ public struct MangaReaderCanvas: View {
         onToggleHud: @escaping () -> Void,
         onBack: (() -> Void)? = nil,
         onOpenExternalURL: ((String) -> Void)? = nil,
-        controller: MangaReaderInteractionController? = nil
+        controller: MangaReaderInteractionController? = nil,
+        pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)? = nil
     ) {
         self.state = state
         self.hudVisible = hudVisible
@@ -320,6 +357,7 @@ public struct MangaReaderCanvas: View {
         self.onBack = onBack
         self.onOpenExternalURL = onOpenExternalURL
         self.externalController = controller
+        self.pageContextMenu = pageContextMenu
     }
 
     public var body: some View {
@@ -398,7 +436,8 @@ public struct MangaReaderCanvas: View {
                                 state: state,
                                 viewportSize: viewportSize,
                                 controller: controller,
-                                onOpenLockedUrl: openLockedURL
+                                onOpenLockedUrl: openLockedURL,
+                                pageContextMenu: pageContextMenu
                             )
                         } else {
                             let pagedKey = "\(state.activeChapterId)|\(state.direction == .rtl)"
@@ -406,7 +445,8 @@ public struct MangaReaderCanvas: View {
                                 state: state,
                                 viewportSize: viewportSize,
                                 controller: controller,
-                                onOpenLockedUrl: openLockedURL
+                                onOpenLockedUrl: openLockedURL,
+                                pageContextMenu: pageContextMenu
                             )
                             .id(pagedKey)
                         }
@@ -503,6 +543,7 @@ private struct MangaPagedCanvas: View {
     let viewportSize: CGSize
     let controller: MangaReaderInteractionController
     let onOpenLockedUrl: (String) -> Void
+    let pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
 
     @State private var activePagerPage: Int?
     @State private var programmaticScrollTarget: Int?
@@ -522,12 +563,14 @@ private struct MangaPagedCanvas: View {
         state: any MangaReaderPresenterState,
         viewportSize: CGSize,
         controller: MangaReaderInteractionController,
-        onOpenLockedUrl: @escaping (String) -> Void
+        onOpenLockedUrl: @escaping (String) -> Void,
+        pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
     ) {
         self.state = state
         self.viewportSize = viewportSize
         self.controller = controller
         self.onOpenLockedUrl = onOpenLockedUrl
+        self.pageContextMenu = pageContextMenu
         self._lastObservedPageIndex = State(initialValue: state.currentPageIndex)
 
         let hasPrev = !(state.previousBoundary is ChapterBoundaryNone)
@@ -987,6 +1030,7 @@ private struct MangaPagedCanvas: View {
                 viewportSize: viewportSize,
                 isActivePagerPage: isActive,
                 controller: controller,
+                pageContextMenu: pageContextMenu,
                 onZoomChanged: { zoomed, resetAction in
                     if isActive && controller.activeInteractionTracker === interactionTracker {
                         if isCurrentPageZoomed != zoomed {
@@ -1151,6 +1195,24 @@ private struct MangaPagedCanvas: View {
             } else if !isNext, prevBoundaryPage >= 0 {
                 scrollProgrammatically(to: prevBoundaryPage, animated: false, scrollProxy: scrollProxy)
             }
+        }
+
+        controller.pagedJumpToEdge = { isEnd in
+            guard !state.pages.isEmpty else { return }
+            if activeFrozenLayout != nil {
+                frozenLayout = nil
+            }
+            clearPendingSlotCommit()
+            let targetPage: Int32 = isEnd ? Int32(state.pages.count - 1) : 0
+            state.goToPage(pageIndex: targetPage)
+            guard !state.slots.isEmpty else { return }
+            let slotIdx = Int(
+                MangaSpreadLayoutSolver.shared.slotIndexForPage(
+                    slots: state.slots,
+                    pageIndex: targetPage
+                )
+            )
+            scrollProgrammatically(to: startBoundaryOffset + slotIdx, animated: false, scrollProxy: scrollProxy)
         }
     }
 
@@ -1877,6 +1939,7 @@ private struct ZoomablePagedSlot: View {
     let viewportSize: CGSize
     let isActivePagerPage: Bool
     let controller: MangaReaderInteractionController
+    let pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
     let onZoomChanged: (Bool, @escaping () -> Void) -> Void
 
     @State private var committedScale: CGFloat = 1.0
@@ -1912,7 +1975,8 @@ private struct ZoomablePagedSlot: View {
                         page: pages[pageIndex],
                         state: state,
                         contentMode: .fit,
-                        alignment: .center
+                        alignment: .center,
+                        pageContextMenu: pageContextMenu
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1924,7 +1988,8 @@ private struct ZoomablePagedSlot: View {
                             page: pages[leftIndex],
                             state: state,
                             contentMode: .fit,
-                            alignment: .trailing
+                            alignment: .trailing,
+                            pageContextMenu: pageContextMenu
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     }
@@ -1935,7 +2000,8 @@ private struct ZoomablePagedSlot: View {
                             page: pages[rightIndex],
                             state: state,
                             contentMode: .fit,
-                            alignment: .leading
+                            alignment: .leading,
+                            pageContextMenu: pageContextMenu
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     }
@@ -2313,6 +2379,7 @@ private struct MangaWebtoonStrip: View {
     let viewportSize: CGSize
     let controller: MangaReaderInteractionController
     let onOpenLockedUrl: (String) -> Void
+    let pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
 
     @State private var syncBox: WebtoonScrollSyncBox
     @State private var scrollController = WebtoonScrollController()
@@ -2326,13 +2393,22 @@ private struct MangaWebtoonStrip: View {
         state: any MangaReaderPresenterState,
         viewportSize: CGSize,
         controller: MangaReaderInteractionController,
-        onOpenLockedUrl: @escaping (String) -> Void
+        onOpenLockedUrl: @escaping (String) -> Void,
+        pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
     ) {
         self.state = state
         self.viewportSize = viewportSize
         self.controller = controller
         self.onOpenLockedUrl = onOpenLockedUrl
+        self.pageContextMenu = pageContextMenu
         self._syncBox = State(initialValue: WebtoonScrollSyncBox(initialPage: Int(state.currentPageIndex)))
+    }
+
+    private var effectiveStripWidth: CGFloat {
+        if viewportSize.width >= mangaWideViewportBreakpoint && state.webtoonConstrainWidthOnWideScreen {
+            return min(viewportSize.width, mangaMaxConstrainedWebtoonWidth)
+        }
+        return viewportSize.width
     }
 
     private var hasPrevBoundary: Bool {
@@ -2398,6 +2474,13 @@ private struct MangaWebtoonStrip: View {
                 }
                 .onChange(of: isZoomed) { _, _ in
                     bindZoomHandlers()
+                }
+                .onChange(of: state.webtoonConstrainWidthOnWideScreen) { _, _ in
+                    let targetPage = Int(state.currentPageIndex)
+                    guard !state.pages.isEmpty, state.pages.indices.contains(targetPage) else { return }
+                    syncBox.programmaticTargetPage = targetPage
+                    syncBox.settledCenterPage = nil
+                    scrollToWebtoonPage(targetPage, using: scrollProxy)
                 }
                 .onChange(of: clampedOffset) { _, newOffset in
                     controller.updateZoomMetrics(scale: effectiveScale, offset: newOffset)
@@ -2542,9 +2625,11 @@ private struct MangaWebtoonStrip: View {
                 scale: effectiveScale,
                 offsetX: currentOffset.width,
                 offsetY: currentOffset.height
-            )
+            ),
+            pageContextMenu: pageContextMenu
         )
         .aspectRatio(ratio, contentMode: .fit)
+        .frame(width: max(effectiveStripWidth, 1))
         .frame(maxWidth: .infinity)
         .background { webtoonFrame(pageIdx) }
         .id(pageIdx)
@@ -2759,7 +2844,8 @@ private struct MangaWebtoonStrip: View {
     }
 
     private func webtoonHeight(_ pages: ArraySlice<ReaderPageState>) -> CGFloat {
-        pages.reduce(0) { $0 + viewportSize.width / webtoonAspectRatio($1.aspectRatio?.floatValue) }
+        let stripWidth = max(effectiveStripWidth, 1)
+        return pages.reduce(0) { $0 + stripWidth / webtoonAspectRatio($1.aspectRatio?.floatValue) }
     }
 
     private func scrollToWebtoonPage(_ page: Int, using proxy: ScrollViewProxy) {
@@ -2787,6 +2873,7 @@ private struct ReaderPageCell: View {
     let contentMode: SwiftUI.ContentMode
     let alignment: Alignment
     var zoomGeometryToken: ZoomGeometryToken = .init()
+    var pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)? = nil
 
     @State private var failedOriginalURL: String?
     @State private var retryNonce = 0
@@ -2841,6 +2928,14 @@ private struct ReaderPageCell: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+                    .contentShape(Rectangle())
+                    .modifier(
+                        ReaderPageContextMenuModifier(
+                            page: page,
+                            ready: ready,
+                            pageContextMenu: pageContextMenu
+                        )
+                    )
                     .onAppear {
                         if !ready.displayed.isRemote {
                             imageLoaded = true
@@ -2898,6 +2993,23 @@ private struct ReaderPageCell: View {
             )
             .originalImage()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+        }
+    }
+}
+
+private struct ReaderPageContextMenuModifier: ViewModifier {
+    let page: ReaderPageState
+    let ready: PageMediaStatusReady
+    let pageContextMenu: ((ReaderPageState, PageMediaStatusReady) -> AnyView)?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let pageContextMenu {
+            content.contextMenu {
+                pageContextMenu(page, ready)
+            }
+        } else {
+            content
         }
     }
 }
@@ -3083,6 +3195,14 @@ private final class MacReaderKeyMonitorCoordinator {
             mapped = .upArrow
         case 125:
             mapped = .downArrow
+        case 116:
+            mapped = .pageUp
+        case 121:
+            mapped = .pageDown
+        case 115:
+            mapped = .home
+        case 119:
+            mapped = .end
         case 49:
             mapped = .space(shift: modifierFlags.contains(.shift))
         case 53:
@@ -3128,6 +3248,10 @@ private final class IOSReaderKeyCommandViewController: UIViewController {
             (UIKeyCommand.inputRightArrow, [], #selector(handleRightArrow)),
             (UIKeyCommand.inputUpArrow, [], #selector(handleUpArrow)),
             (UIKeyCommand.inputDownArrow, [], #selector(handleDownArrow)),
+            (UIKeyCommand.inputPageUp, [], #selector(handlePageUp)),
+            (UIKeyCommand.inputPageDown, [], #selector(handlePageDown)),
+            (UIKeyCommand.inputHome, [], #selector(handleHome)),
+            (UIKeyCommand.inputEnd, [], #selector(handleEnd)),
             (" ", [], #selector(handleSpace)),
             (" ", [.shift], #selector(handleShiftSpace)),
             (UIKeyCommand.inputEscape, [], #selector(handleEscape)),
@@ -3153,6 +3277,22 @@ private final class IOSReaderKeyCommandViewController: UIViewController {
 
     @objc private func handleDownArrow() {
         controller?.handleKey(.downArrow)
+    }
+
+    @objc private func handlePageUp() {
+        controller?.handleKey(.pageUp)
+    }
+
+    @objc private func handlePageDown() {
+        controller?.handleKey(.pageDown)
+    }
+
+    @objc private func handleHome() {
+        controller?.handleKey(.home)
+    }
+
+    @objc private func handleEnd() {
+        controller?.handleKey(.end)
     }
 
     @objc private func handleSpace() {

@@ -292,6 +292,7 @@ targets:
       - path: macosTests
       - path: macos
         includes:
+          - App/MacMangaReaderWindowCoordinator.swift
           - UI/Component/TimelineReadingScrollView.swift
           - UI/Navigation/Route.swift
           - UI/Screen/MangaDetailScreen.swift

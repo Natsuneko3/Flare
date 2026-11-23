@@ -1270,6 +1270,7 @@ public struct MangaReaderScrubberView: View {
                 }
         }
         .environment(\.layoutDirection, isRtl ? .rightToLeft : .leftToRight)
+        .mangaScrubberSelectionFeedback(trigger: displayedPage)
         .onChange(of: currentPageIndex) { _, newIndex in
             if !isDragging {
                 let target = Double(min(max(newIndex, 0), maxPage))
@@ -1278,6 +1279,17 @@ public struct MangaReaderScrubberView: View {
                 }
             }
         }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func mangaScrubberSelectionFeedback(trigger: Int) -> some View {
+        #if os(iOS)
+        sensoryFeedback(.selection, trigger: trigger)
+        #else
+        self
+        #endif
     }
 }
 
@@ -1366,10 +1378,306 @@ public struct MangaReaderSettingsView: View {
                     }
                     .accessibilityIdentifier("manga_reader_single_cover_toggle")
                 }
+            } else if isWideViewport && state.direction == .webtoon {
+                Toggle(
+                    isOn: Binding(
+                        get: { state.webtoonConstrainWidthOnWideScreen },
+                        set: { state.setWebtoonConstrainWidthOnWideScreen(enabled: $0) }
+                    )
+                ) {
+                    Text(
+                        verbatim: FlareAppleUILocalization.string(
+                            "manga_reader_constrain_webtoon_width",
+                            fallback: "Constrain webtoon width"
+                        )
+                    )
+                }
+                .accessibilityIdentifier("manga_reader_webtoon_constrain_width_toggle")
             }
         }
         .padding(20)
         .frame(minWidth: 280, alignment: .leading)
+    }
+}
+
+public struct MangaReaderChapterListView: View {
+    @Environment(\.openURL) private var openURL
+    public let state: any MangaReaderPresenterState
+    public let onDismiss: (() -> Void)?
+    public let onOpenExternalURL: ((String) -> Void)?
+
+    @State private var pendingLockedChapter: UiMangaChapter?
+
+    public init(
+        state: any MangaReaderPresenterState,
+        onDismiss: (() -> Void)? = nil,
+        onOpenExternalURL: ((String) -> Void)? = nil
+    ) {
+        self.state = state
+        self.onDismiss = onDismiss
+        self.onOpenExternalURL = onOpenExternalURL
+    }
+
+    private var showsGroupPills: Bool {
+        state.chapterGroups.count > 1 || state.chapterGroups.contains { $0.title != nil }
+    }
+
+    static func handleToggleSort(state: any MangaReaderPresenterState) {
+        state.toggleChapterSort()
+    }
+
+    @discardableResult
+    static func handleChapterTap(
+        _ item: ReaderChapterItem,
+        state: any MangaReaderPresenterState,
+        onDismiss: (() -> Void)?
+    ) -> UiMangaChapter? {
+        if item.chapter.locked {
+            return item.chapter
+        }
+        state.selectChapter(chapterId: item.chapter.id)
+        onDismiss?()
+        return nil
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                let chaptersTitle = FlareAppleUILocalization.string(
+                    "manga_reader_chapters",
+                    fallback: "Chapters"
+                )
+                Text(verbatim: "\(chaptersTitle) (\(state.chapterItems.count))")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    Self.handleToggleSort(state: state)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: state.chapterSortDescending ? "arrow.down" : "arrow.up")
+                            .font(.caption.weight(.semibold))
+                        Text(
+                            verbatim: state.chapterSortDescending
+                                ? FlareAppleUILocalization.string("manga_detail_sort_descending", fallback: "Descending")
+                                : FlareAppleUILocalization.string("manga_detail_sort_ascending", fallback: "Ascending")
+                        )
+                        .font(.subheadline)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityIdentifier("manga_reader_chapter_sort_toggle")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+
+            if showsGroupPills {
+                MangaFlowLayout(horizontalSpacing: 8, verticalSpacing: 6) {
+                    ForEach(state.chapterGroups, id: \.id) { group in
+                        let label = group.title?.text.trimmedNonBlank ?? group.id
+                        let isSelected = group.id == state.selectedChapterGroupId
+                        Button {
+                            state.selectChapterGroup(groupId: group.id)
+                        } label: {
+                            Text(verbatim: label)
+                                .font(.caption.weight(isSelected ? .semibold : .regular))
+                                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    isSelected ? Color.accentColor : Color.secondary.opacity(0.16),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("manga_reader_chapter_group_\(group.id)")
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
+            Divider()
+
+            if state.chapterItems.isEmpty {
+                Text(
+                    verbatim: FlareAppleUILocalization.string(
+                        "manga_detail_empty_chapters",
+                        fallback: "No chapters available"
+                    )
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .padding(24)
+            } else {
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        Group {
+                            if state.chapterItems.count > 80 {
+                                LazyVStack(alignment: .leading, spacing: 4) {
+                                    chapterRows
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    chapterRows
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    }
+                    .onAppear {
+                        scrollToActiveChapter(scrollProxy)
+                    }
+                    .onChange(of: state.activeChapterId) { _, _ in
+                        scrollToActiveChapter(scrollProxy)
+                    }
+                    .onChange(of: state.selectedChapterGroupId) { _, _ in
+                        scrollToActiveChapter(scrollProxy)
+                    }
+                }
+            }
+        }
+        .alert(
+            FlareAppleUILocalization.string("manga_locked_chapter_title", fallback: "Locked chapter"),
+            isPresented: Binding(
+                get: { pendingLockedChapter != nil },
+                set: { if !$0 { pendingLockedChapter = nil } }
+            ),
+            presenting: pendingLockedChapter
+        ) { chapter in
+            Button(FlareAppleUILocalization.string("Cancel", fallback: "Cancel"), role: .cancel) {
+                pendingLockedChapter = nil
+            }
+            if let resolvedURL = resolveLockedURL(for: chapter) {
+                Button(FlareAppleUILocalization.string("manga_open_in_browser", fallback: "Open in browser")) {
+                    pendingLockedChapter = nil
+                    launchExternalURL(resolvedURL)
+                    onDismiss?()
+                }
+            }
+        } message: { chapter in
+            Text(
+                verbatim: FlareAppleUILocalization.string(
+                    "manga_locked_chapter_message",
+                    fallback: "%@ is locked. Open in browser to view on the original site?",
+                    arguments: [chapter.title]
+                )
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var chapterRows: some View {
+        ForEach(state.chapterItems, id: \.chapter.id) { item in
+            let isCurrent = item.isCurrent || item.chapter.id == state.activeChapterId
+            let isLocked = item.chapter.locked
+            let titleColor: Color = isCurrent
+                ? .accentColor
+                : (item.isRead || isLocked ? .secondary : .primary)
+
+            Button {
+                pendingLockedChapter = Self.handleChapterTap(item, state: state, onDismiss: onDismiss)
+            } label: {
+                HStack(spacing: 10) {
+                    if isCurrent {
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: 3, height: 20)
+                            .accessibilityHidden(true)
+                    }
+
+                    if isLocked {
+                        Image(fontAwesome: .lock)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    } else if item.isRead && !isCurrent {
+                        Image(fontAwesome: .check)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: item.chapter.title)
+                            .font(.body.weight(isCurrent ? .semibold : .regular))
+                            .foregroundStyle(titleColor)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+
+                        if item.chapter.subtitle?.trimmedNonBlank != nil || item.chapter.uploadedAt != nil {
+                            HStack(spacing: 8) {
+                                if let subtitle = item.chapter.subtitle?.trimmedNonBlank {
+                                    Text(verbatim: subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                if let uploadedAt = item.chapter.uploadedAt {
+                                    DateTimeText(data: uploadedAt)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    isCurrent ? Color.accentColor.opacity(0.14) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: MangaChapterFramesPreferenceKey.self,
+                        value: [item.chapter.id: proxy.frame(in: .global)]
+                    )
+                }
+            }
+            .id(item.chapter.id)
+            .accessibilityIdentifier("manga_reader_chapter_row_\(item.chapter.id)")
+        }
+    }
+
+    private func scrollToActiveChapter(_ proxy: ScrollViewProxy) {
+        let activeId = state.activeChapterId
+        guard !activeId.isEmpty, state.chapterItems.contains(where: { $0.chapter.id == activeId }) else {
+            return
+        }
+        proxy.scrollTo(activeId, anchor: .center)
+    }
+
+    private func resolveLockedURL(for chapter: UiMangaChapter) -> String? {
+        if let resolved = state.resolveChapterOpenUrl(chapter: chapter)?.trimmedNonBlank {
+            return resolved
+        }
+        return chapter.openUrl(mangaUrl: state.chapterUrl)?.trimmedNonBlank
+    }
+
+    private func launchExternalURL(_ rawURL: String) {
+        if let onOpenExternalURL {
+            onOpenExternalURL(rawURL)
+            return
+        }
+        let uri = DeeplinkRoute.OpenLinkDirectly(url: rawURL).toUri()
+        if let url = URL(string: uri) {
+            openURL(url)
+        } else if let direct = URL(string: rawURL) {
+            openURL(direct)
+        }
     }
 }
 

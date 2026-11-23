@@ -165,13 +165,16 @@ final class MangaReaderAndDetailTests: XCTestCase {
 
         let wideHeight = wideSettingsHost.sizeThatFits(in: CGSize(width: 360, height: 600)).height
         let narrowHeight = narrowSettingsHost.sizeThatFits(in: CGSize(width: 360, height: 600)).height
-        let webtoonHeight = webtoonSettingsHost.sizeThatFits(in: CGSize(width: 360, height: 600)).height
         XCTAssertLessThan(narrowHeight, wideHeight - 40)
-        XCTAssertEqual(narrowHeight, webtoonHeight, accuracy: 1.0)
 
         window.rootViewController = wideSettingsHost
         try await eventually(window: window) {
             self.countSubviews(ofType: UISwitch.self, in: wideSettingsHost.view) == 2
+        }
+
+        window.rootViewController = webtoonSettingsHost
+        try await eventually(window: window) {
+            self.countSubviews(ofType: UISwitch.self, in: webtoonSettingsHost.view) == 1
         }
 
         window.rootViewController = narrowSettingsHost
@@ -2019,6 +2022,251 @@ final class MangaReaderAndDetailTests: XCTestCase {
         }
     }
 
+    func testIOSReaderChapterSheetMoreMenuAndSpreadPageActions() async throws {
+        let ch1 = UiMangaChapter(id: "ch-1", title: "Chapter 1: Dawn", subtitle: "Vol. 1", uploadedAt: nil, locked: false, url: "https://manga.example/ch/1")
+        let ch2 = UiMangaChapter(id: "ch-2", title: "Chapter 2: Horizon", subtitle: "Vol. 1", uploadedAt: nil, locked: false, url: "https://manga.example/ch/2")
+        let ch3Locked = UiMangaChapter(id: "ch-3", title: "Chapter 3: VIP", subtitle: nil, uploadedAt: nil, locked: true, url: "https://manga.example/ch/3")
+
+        let pages = makeSamplePages(count: 4)
+        let spreadSlots: [any ReaderSlot] = [
+            ReaderSlotDouble(leftPageIndex: 1, rightPageIndex: 0, primaryPageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 3, rightPageIndex: 2, primaryPageIndex: 2),
+        ]
+        let fakeState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: pages,
+            slots: spreadSlots
+        )
+        fakeState.chapterGroups = [
+            UiMangaChapterGroup(id: "main", title: UiTextRaw(string: "Main Story"), chapters: [ch1, ch2, ch3Locked]),
+            UiMangaChapterGroup(id: "extra", title: UiTextRaw(string: "Extras"), chapters: [ch1]),
+        ]
+        fakeState.selectedChapterGroupId = "main"
+        fakeState.chapterSortDescending = true
+        fakeState.chapterItems = [
+            ReaderChapterItem(chapter: ch3Locked, isCurrent: false, isRead: false, lastPageIndex: 0),
+            ReaderChapterItem(chapter: ch2, isCurrent: false, isRead: false, lastPageIndex: 0),
+            ReaderChapterItem(chapter: ch1, isCurrent: true, isRead: true, lastPageIndex: 3),
+        ]
+
+        let controller = MangaReaderInteractionController()
+        let hostModel = ReaderTestHostModel(state: fakeState, controller: controller)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        // 1. Streamlined topHudBar: chapters switcher + settings + overflow Menu (no loose download/safari buttons),
+        //    while IOSMangaReaderShareButtonVisiblePreferenceKey reports true for Image/Gif and false for Ugoira.
+        var shareVisibleForImage = false
+        var savedPageIndices: [Int] = []
+        var sharedPageIndices: [Int] = []
+        let readerHost = UIHostingController(
+            rootView: MangaReaderContentView(
+                state: hostModel.snapshot,
+                hudVisible: .constant(true),
+                goBack: {},
+                controller: controller,
+                onSavePage: { _, _, pageIdx in savedPageIndices.append(pageIdx) },
+                onSharePage: { _, _, pageIdx in sharedPageIndices.append(pageIdx) }
+            )
+            .onPreferenceChange(IOSMangaReaderShareButtonVisiblePreferenceKey.self) { shareVisibleForImage = $0 }
+        )
+        window.rootViewController = readerHost
+        window.makeKeyAndVisible()
+
+        try await eventually(window: window) {
+            controller.isBound &&
+                shareVisibleForImage &&
+                self.visibleSubviews(ofType: UIButton.self, in: readerHost.view).contains(where: \.showsMenuAsPrimaryAction)
+        }
+
+        let topBarButtons = visibleSubviews(ofType: UIButton.self, in: readerHost.view).filter { button in
+            button.convert(button.bounds, to: nil).minY <= 120
+        }
+        let looseNonMenuButtons = topBarButtons.filter { !$0.showsMenuAsPrimaryAction }
+        XCTAssertTrue(
+            looseNonMenuButtons.isEmpty,
+            "Top HUD must not mount loose non-Menu UIButtons for safari/download: \(looseNonMenuButtons)"
+        )
+        let moreMenuButton = try XCTUnwrap(topBarButtons.first(where: \.showsMenuAsPrimaryAction))
+        XCTAssertTrue(moreMenuButton.showsMenuAsPrimaryAction)
+        if let menu = moreMenuButton.menu {
+            let actionTitles = menu.children.compactMap { ($0 as? UIAction)?.title }
+            if !actionTitles.isEmpty {
+                XCTAssertTrue(actionTitles.contains { $0.contains("(P2)") }, "Expected left spread page action in Menu: \(actionTitles)")
+                XCTAssertTrue(actionTitles.contains { $0.contains("(P1)") }, "Expected right spread page action in Menu: \(actionTitles)")
+            }
+        }
+        let spreadTargets = MangaReaderContentView.resolveVisibleReadyPageTargets(state: hostModel.snapshot)
+        XCTAssertEqual(spreadTargets.map(\.pageIndex), [1, 0])
+
+        // Verify Home, End, PageDown, and PageUp keyboard shortcuts
+        XCTAssertTrue(controller.handleKey(.end))
+        XCTAssertEqual(fakeState.currentPageIndex, 3)
+        XCTAssertTrue(controller.handleKey(.home))
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+        XCTAssertTrue(controller.handleKey(.pageDown))
+        XCTAssertEqual(fakeState.currentSlotIndex, 1)
+        XCTAssertTrue(controller.handleKey(.pageUp))
+        XCTAssertEqual(fakeState.currentSlotIndex, 0)
+
+        // Verify IOSMangaReaderShareButtonVisiblePreferenceKey still reports true for Gif and false for Ugoira
+        let gifMedia = UiMediaGif(
+            url: "https://manga.example/ch-1/p0.gif",
+            previewUrl: "https://manga.example/ch-1/p0.gif",
+            description: nil,
+            height: 140,
+            width: 100,
+            customHeaders: nil,
+            proxy: ProxyRef.Unbound.shared
+        )
+        let gifState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: [
+                ReaderPageState(
+                    id: "gif-0",
+                    index: 0,
+                    status: PageMediaStatusReady(original: gifMedia, displayed: gifMedia),
+                    aspectRatio: KotlinFloat(value: 0.71)
+                ),
+            ],
+            slots: [ReaderSlotSingle(pageIndex: 0)]
+        )
+        var shareVisibleForGif = false
+        window.rootViewController = UIHostingController(
+            rootView: MangaReaderContentView(
+                state: gifState,
+                hudVisible: .constant(true),
+                goBack: {},
+                onSharePage: { _, _, _ in }
+            )
+            .onPreferenceChange(IOSMangaReaderShareButtonVisiblePreferenceKey.self) { shareVisibleForGif = $0 }
+        )
+        try await eventually(window: window) { shareVisibleForGif }
+
+        let ugoiraAccount = MicroBlogKey(id: "u1", host: "pixiv.net")
+        let ugoiraMedia = UiMediaUgoira(
+            statusKey: MicroBlogKey(id: "s1", host: "pixiv.net"),
+            accountKey: ugoiraAccount,
+            previewUrl: "https://manga.example/ch-1/p0.png",
+            originalFrameUrl: nil,
+            description: nil,
+            height: 140,
+            width: 100,
+            sensitive: false,
+            customHeaders: nil,
+            proxy: ProxyRef.companion.forAccount(accountKey: ugoiraAccount),
+            sourceUrl: nil
+        )
+        let ugoiraState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: [
+                ReaderPageState(
+                    id: "ugoira-0",
+                    index: 0,
+                    status: PageMediaStatusReady(original: ugoiraMedia, displayed: ugoiraMedia),
+                    aspectRatio: KotlinFloat(value: 0.71)
+                ),
+            ],
+            slots: [ReaderSlotSingle(pageIndex: 0)]
+        )
+        var shareVisibleForUgoira = true
+        window.rootViewController = UIHostingController(
+            rootView: MangaReaderContentView(
+                state: ugoiraState,
+                hudVisible: .constant(true),
+                goBack: {},
+                onSharePage: { _, _, _ in }
+            )
+            .onPreferenceChange(IOSMangaReaderShareButtonVisiblePreferenceKey.self) { shareVisibleForUgoira = $0 }
+        )
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(shareVisibleForUgoira)
+
+        // 2. MangaReaderChapterListView renders chapters, toggles sort order, and selects unlocked chapter
+        let descendingLabel = FlareAppleUILocalization.string("manga_detail_sort_descending", fallback: "Descending")
+        let ascendingLabel = FlareAppleUILocalization.string("manga_detail_sort_ascending", fallback: "Ascending")
+        let initialChapterPDF = try renderPDFText(
+            MangaReaderChapterListView(state: hostModel.snapshot),
+            width: 390,
+            height: 520
+        )
+        XCTAssertTrue(initialChapterPDF.contains(descendingLabel), initialChapterPDF)
+        XCTAssertTrue(initialChapterPDF.contains("Main Story"), initialChapterPDF)
+        XCTAssertTrue(initialChapterPDF.contains("Extras"), initialChapterPDF)
+
+        var chapterRowFrames: [String: CGRect] = [:]
+        @MainActor
+        struct ChapterListTestHost: View {
+            @Bindable var model: ReaderTestHostModel
+            let onFrames: ([String: CGRect]) -> Void
+
+            var body: some View {
+                MangaReaderChapterListView(state: model.snapshot)
+                    .onPreferenceChange(MangaChapterFramesPreferenceKey.self, perform: onFrames)
+            }
+        }
+        window.rootViewController = UIHostingController(
+            rootView: ChapterListTestHost(model: hostModel) { chapterRowFrames = $0 }
+        )
+        try await eventually(window: window) {
+            chapterRowFrames["ch-1"] != nil &&
+                chapterRowFrames["ch-2"] != nil &&
+                chapterRowFrames["ch-3"] != nil
+        }
+        XCTAssertLessThan(
+            try XCTUnwrap(chapterRowFrames["ch-3"]).minY,
+            try XCTUnwrap(chapterRowFrames["ch-1"]).minY,
+            "Descending chapter list should place ch-3 above ch-1"
+        )
+
+        XCTAssertTrue(fakeState.chapterSortDescending)
+        MangaReaderChapterListView.handleToggleSort(state: hostModel.snapshot)
+        XCTAssertFalse(fakeState.chapterSortDescending)
+        XCTAssertEqual(fakeState.toggleChapterSortCount, 1)
+
+        try await eventually(window: window) {
+            guard let ch1Rect = chapterRowFrames["ch-1"],
+                  let ch3Rect = chapterRowFrames["ch-3"] else { return false }
+            return ch1Rect.minY < ch3Rect.minY
+        }
+
+        let ascendingChapterPDF = try renderPDFText(
+            MangaReaderChapterListView(state: hostModel.snapshot),
+            width: 390,
+            height: 520
+        )
+        XCTAssertTrue(ascendingChapterPDF.contains(ascendingLabel), ascendingChapterPDF)
+
+        var dismissedChapterSheet = false
+        let lockedPrompt = MangaReaderChapterListView.handleChapterTap(
+            ReaderChapterItem(chapter: ch3Locked, isCurrent: false, isRead: false, lastPageIndex: 0),
+            state: hostModel.snapshot,
+            onDismiss: { dismissedChapterSheet = true }
+        )
+        XCTAssertEqual(lockedPrompt?.id, "ch-3")
+        XCTAssertNil(fakeState.selectedChapterId)
+        XCTAssertFalse(dismissedChapterSheet)
+
+        let unlockedPrompt = MangaReaderChapterListView.handleChapterTap(
+            ReaderChapterItem(chapter: ch2, isCurrent: false, isRead: false, lastPageIndex: 0),
+            state: hostModel.snapshot,
+            onDismiss: { dismissedChapterSheet = true }
+        )
+        XCTAssertNil(unlockedPrompt)
+        XCTAssertEqual(fakeState.selectedChapterId, "ch-2")
+        XCTAssertTrue(dismissedChapterSheet)
+        _ = (savedPageIndices, sharedPageIndices)
+    }
+
     private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -2185,6 +2433,12 @@ private final class IOSMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     let nextBoundary: any ChapterBoundary
     let prefetchMedia: [UiMediaImage]
     let imageTranslation: any ImageTranslationPresenterState
+    let chapterGroups: [UiMangaChapterGroup]
+    let selectedChapterGroupId: String?
+    let chapterSortDescending: Bool
+    let chapterItems: [ReaderChapterItem]
+    let webtoonConstrainWidthOnWideScreen: Bool
+    let volumeKeysNavigation: Bool
     let lockedChapter: ChapterBoundaryLocked?
 
     init(backing: FakeMangaReaderState) {
@@ -2205,6 +2459,12 @@ private final class IOSMangaStateSnapshot: NSObject, MangaReaderPresenterState {
         self.nextBoundary = backing.nextBoundary
         self.prefetchMedia = backing.prefetchMedia
         self.imageTranslation = backing.imageTranslation
+        self.chapterGroups = backing.chapterGroups
+        self.selectedChapterGroupId = backing.selectedChapterGroupId
+        self.chapterSortDescending = backing.chapterSortDescending
+        self.chapterItems = backing.chapterItems
+        self.webtoonConstrainWidthOnWideScreen = backing.webtoonConstrainWidthOnWideScreen
+        self.volumeKeysNavigation = backing.volumeKeysNavigation
         self.lockedChapter = backing.lockedChapter
     }
 
@@ -2222,6 +2482,21 @@ private final class IOSMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     func setDirection(direction: MangaReadingDirection) { backing.setDirection(direction: direction) }
     func setDoublePageSpread(enabled: Bool) { backing.setDoublePageSpread(enabled: enabled) }
     func setSpreadCoverSinglePage(enabled: Bool) { backing.setSpreadCoverSinglePage(enabled: enabled) }
+    func selectChapterGroup(groupId: String) { backing.selectChapterGroup(groupId: groupId) }
+    func toggleChapterSort() { backing.toggleChapterSort() }
+    func selectChapter(chapterId: String) { backing.selectChapter(chapterId: chapterId) }
+    func openChapter(chapterId: String, initialPage: KotlinInt?) {
+        backing.openChapter(chapterId: chapterId, initialPage: initialPage)
+    }
+    func resolveChapterOpenUrl(chapter: UiMangaChapter) -> String? {
+        backing.resolveChapterOpenUrl(chapter: chapter)
+    }
+    func setWebtoonConstrainWidthOnWideScreen(enabled: Bool) {
+        backing.setWebtoonConstrainWidthOnWideScreen(enabled: enabled)
+    }
+    func setVolumeKeysNavigation(enabled: Bool) {
+        backing.setVolumeKeysNavigation(enabled: enabled)
+    }
 }
 
 private struct ReaderTestHostView: View {
@@ -2295,12 +2570,21 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
     var nextBoundary: any ChapterBoundary
     var prefetchMedia: [UiMediaImage] = []
     let imageTranslation: any ImageTranslationPresenterState = NoopImageTranslationState()
+    var chapterGroups: [UiMangaChapterGroup] = []
+    var selectedChapterGroupId: String?
+    var chapterSortDescending: Bool = true
+    var chapterItems: [ReaderChapterItem] = []
+    var webtoonConstrainWidthOnWideScreen: Bool = true
+    var volumeKeysNavigation: Bool = false
     var lockedChapter: ChapterBoundaryLocked? { nil }
 
     var lastWideViewport: Bool?
     var stepForwardCount = 0
     var stepBackwardCount = 0
     var openedBoundaryChapterId: String?
+    var selectedChapterId: String?
+    var toggleChapterSortCount = 0
+    var openedChapterRequests: [(String, Int32?)] = []
     var retriedPageIds: [String] = []
     var loadedPageIds: Set<String> = []
 
@@ -2399,6 +2683,47 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
 
     func setSpreadCoverSinglePage(enabled: Bool) {
         spreadCoverSinglePage = enabled
+        onStateMutated?()
+    }
+
+    func selectChapterGroup(groupId: String) {
+        selectedChapterGroupId = groupId
+        onStateMutated?()
+    }
+
+    func toggleChapterSort() {
+        toggleChapterSortCount += 1
+        chapterSortDescending.toggle()
+        chapterItems.reverse()
+        onStateMutated?()
+    }
+
+    func selectChapter(chapterId: String) {
+        selectedChapterId = chapterId
+        activeChapterId = chapterId
+        onStateMutated?()
+    }
+
+    func openChapter(chapterId: String, initialPage: KotlinInt?) {
+        openedChapterRequests.append((chapterId, initialPage?.int32Value))
+        activeChapterId = chapterId
+        if let page = initialPage?.int32Value {
+            currentPageIndex = page
+        }
+        onStateMutated?()
+    }
+
+    func resolveChapterOpenUrl(chapter: UiMangaChapter) -> String? {
+        chapter.openUrl(mangaUrl: chapterUrl)
+    }
+
+    func setWebtoonConstrainWidthOnWideScreen(enabled: Bool) {
+        webtoonConstrainWidthOnWideScreen = enabled
+        onStateMutated?()
+    }
+
+    func setVolumeKeysNavigation(enabled: Bool) {
+        volumeKeysNavigation = enabled
         onStateMutated?()
     }
 
