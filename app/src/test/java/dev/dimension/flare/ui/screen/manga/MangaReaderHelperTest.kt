@@ -17,6 +17,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -219,6 +220,40 @@ class MangaReaderHelperTest {
         )
         assertEquals(1, stepBackwardCount)
         assertEquals(1, stepForwardCount)
+    }
+
+    @Test(timeout = 10_000)
+    fun longPressGuardAndTargetResolutionRejectNonReadyAndStalePages() {
+        val readyPage = readyReaderPage(index = 1)
+        val loadingPage =
+            readyPage.copy(
+                index = 2,
+                status =
+                    PageMediaStatus.Loading(
+                        previewUrl = null,
+                        customHeaders = null,
+                        proxy = ProxyRef.Unbound,
+                    ),
+            )
+        val failedPage =
+            readyPage.copy(
+                index = 3,
+                status = PageMediaStatus.Failed(IllegalStateException("decode failed")),
+            )
+
+        assertTrue(shouldAcceptAndroidPageLongPress(readyPage))
+        assertFalse(shouldAcceptAndroidPageLongPress(loadingPage))
+        assertFalse(shouldAcceptAndroidPageLongPress(failedPage))
+
+        val pages = listOf(readyReaderPage(index = 0), readyPage, loadingPage, failedPage)
+        assertNull(resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = null))
+        assertEquals(
+            AndroidReadyPageTarget(page = readyPage, ready = readyPage.status as PageMediaStatus.Ready),
+            resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = 1),
+        )
+        assertNull(resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = 2))
+        assertNull(resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = 3))
+        assertNull(resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = 99))
     }
 }
 

@@ -63,6 +63,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -159,6 +160,23 @@ internal data class AndroidSpreadPageTarget(
     val pageIndex: Int,
     val ready: PageMediaStatus.Ready,
 )
+
+internal data class AndroidReadyPageTarget(
+    val page: ReaderPageState,
+    val ready: PageMediaStatus.Ready,
+)
+
+internal fun shouldAcceptAndroidPageLongPress(page: ReaderPageState): Boolean = page.status is PageMediaStatus.Ready
+
+internal fun resolveLongPressedReadyPageTarget(
+    pages: List<ReaderPageState>,
+    longPressedPageIndex: Int?,
+): AndroidReadyPageTarget? {
+    val pageIndex = longPressedPageIndex ?: return null
+    val targetPage = pages.firstOrNull { it.index == pageIndex } ?: pages.getOrNull(pageIndex) ?: return null
+    val targetReady = targetPage.status as? PageMediaStatus.Ready ?: return null
+    return AndroidReadyPageTarget(page = targetPage, ready = targetReady)
+}
 
 internal fun resolveVisibleReadyPageTargets(state: MangaReaderPresenter.State): List<AndroidSpreadPageTarget> {
     if (state.pages.isEmpty()) return emptyList()
@@ -339,18 +357,31 @@ internal fun MangaReaderContent(
     val latestState by rememberUpdatedState(state)
 
     LaunchedEffect(state.activeChapterId) {
+        showMoreMenu = false
+        scrubPreviewPage = null
         lockedPromptChapter = null
         longPressedPageIndex = null
     }
 
     ImmersiveSystemBarsEffect(hudVisible = hudVisible)
 
+    val longPressedTarget =
+        resolveLongPressedReadyPageTarget(
+            pages = state.pages,
+            longPressedPageIndex = longPressedPageIndex,
+        )
+    LaunchedEffect(longPressedPageIndex, longPressedTarget == null) {
+        if (longPressedPageIndex != null && longPressedTarget == null) {
+            longPressedPageIndex = null
+        }
+    }
+
     val anyOverlayOpen =
         showSettingsSheet ||
             showChapterSheet ||
             showMoreMenu ||
             lockedPromptChapter != null ||
-            longPressedPageIndex != null
+            longPressedTarget != null
     val volumeKeysEnabled = state.volumeKeysNavigation && !anyOverlayOpen
 
     DisposableEffect(view, volumeKeysEnabled) {
@@ -404,6 +435,7 @@ internal fun MangaReaderContent(
             onToggleHud = { hudVisible = !hudVisible },
             onBack = onBack,
             onPageLongPress = { page, _ ->
+                if (!shouldAcceptAndroidPageLongPress(page)) return@MangaReaderCanvas
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                 longPressedPageIndex = page.index
             },
@@ -756,14 +788,17 @@ internal fun MangaReaderContent(
                             )
                         }
 
-                        AndroidMangaPageSlider(
-                            pageCount = state.pages.size,
-                            currentPageIndex = state.currentPageIndex,
-                            isRtl = isRtl,
-                            onPageSelected = state::goToPage,
-                            modifier = Modifier.weight(1f),
-                            onScrubPageChanged = { scrubPreviewPage = it },
-                        )
+                        key(state.activeChapterId) {
+                            AndroidMangaPageSlider(
+                                activeChapterId = state.activeChapterId,
+                                pageCount = state.pages.size,
+                                currentPageIndex = state.currentPageIndex,
+                                isRtl = isRtl,
+                                onPageSelected = state::goToPage,
+                                modifier = Modifier.weight(1f),
+                                onScrubPageChanged = { scrubPreviewPage = it },
+                            )
+                        }
 
                         IconButton(
                             onClick = { rightChapterTarget?.let(state::openAdjacentChapter) },
@@ -864,24 +899,18 @@ internal fun MangaReaderContent(
         )
     }
 
-    longPressedPageIndex?.let { pageIndex ->
-        val targetPage = state.pages.firstOrNull { it.index == pageIndex } ?: state.pages.getOrNull(pageIndex)
-        val targetReady = targetPage?.status as? PageMediaStatus.Ready
-        if (targetPage != null && targetReady != null) {
-            ModalBottomSheet(
-                onDismissRequest = { longPressedPageIndex = null },
-            ) {
-                AndroidMangaPageActionSheet(
-                    page = targetPage,
-                    ready = targetReady,
-                    state = state,
-                    onSavePage = onSavePage,
-                    onSharePage = onSharePage,
-                    onDismiss = { longPressedPageIndex = null },
-                )
-            }
-        } else {
-            longPressedPageIndex = null
+    longPressedTarget?.let { target ->
+        ModalBottomSheet(
+            onDismissRequest = { longPressedPageIndex = null },
+        ) {
+            AndroidMangaPageActionSheet(
+                page = target.page,
+                ready = target.ready,
+                state = state,
+                onSavePage = onSavePage,
+                onSharePage = onSharePage,
+                onDismiss = { longPressedPageIndex = null },
+            )
         }
     }
 
@@ -934,6 +963,7 @@ private tailrec fun Context.findActivity(): Activity? =
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AndroidMangaPageSlider(
+    activeChapterId: String,
     pageCount: Int,
     currentPageIndex: Int,
     isRtl: Boolean,
@@ -944,26 +974,27 @@ private fun AndroidMangaPageSlider(
     val maxPage = (pageCount - 1).coerceAtLeast(0)
     val hapticFeedback = LocalHapticFeedback.current
     val latestOnScrubPageChanged by rememberUpdatedState(onScrubPageChanged)
-    var isDragging by remember { mutableStateOf(false) }
-    var lastDragHapticPage by remember { mutableIntStateOf(-1) }
+    var isDragging by remember(activeChapterId, pageCount) { mutableStateOf(false) }
+    var lastDragHapticPage by remember(activeChapterId, pageCount) { mutableIntStateOf(-1) }
     val sliderState =
-        remember(pageCount) {
+        remember(activeChapterId, pageCount) {
             SliderState(
                 value = currentPageIndex.coerceIn(0, maxPage).toFloat(),
                 steps = if (pageCount <= 30) (pageCount - 2).coerceAtLeast(0) else 0,
                 trackRange = 0f..maxPage.coerceAtLeast(1).toFloat(),
             )
         }
-    LaunchedEffect(currentPageIndex, maxPage, isDragging) {
+    LaunchedEffect(activeChapterId, currentPageIndex, maxPage, isDragging) {
         if (!isDragging) {
             sliderState.value = currentPageIndex.coerceIn(0, maxPage).toFloat()
         }
     }
     val displayedPage = sliderState.value.roundToInt().coerceIn(0, maxPage)
-    LaunchedEffect(isDragging, displayedPage) {
-        latestOnScrubPageChanged(if (isDragging) displayedPage else null)
+    val effectiveDragging = isDragging && maxPage > 0
+    LaunchedEffect(activeChapterId, pageCount, effectiveDragging, displayedPage) {
+        latestOnScrubPageChanged(if (effectiveDragging) displayedPage else null)
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(activeChapterId, pageCount) {
         onDispose {
             latestOnScrubPageChanged(null)
         }
