@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -179,6 +180,7 @@ public fun MangaReaderCanvas(
             content: @Composable () -> Unit,
         ) -> Unit
     )? = null,
+    onStepHandlersChanged: ((stepForward: () -> Unit, stepBackward: () -> Unit) -> Unit)? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -189,14 +191,14 @@ public fun MangaReaderCanvas(
     val currentOnBack by rememberUpdatedState(onBack)
 
     var activeZoomReset by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var activeWebtoonListState by remember { mutableStateOf<LazyListState?>(null) }
+    var activeWebtoonListState by remember(state.activeChapterId) { mutableStateOf<LazyListState?>(null) }
     var activePagedStepHandlers by remember { mutableStateOf<PagedStepHandlers?>(null) }
     var viewportHeightPx by remember { mutableFloatStateOf(0f) }
 
     val webtoonStepForward: () -> Unit = {
         val readerState = currentState
         val listState = activeWebtoonListState
-        if (listState != null) {
+        if (listState != null && listState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
             if (listState.canScrollForward) {
                 val delta = (viewportHeightPx * 0.8f).coerceAtLeast(1f)
                 scope.launch { listState.animateScrollBy(delta) }
@@ -206,15 +208,13 @@ public fun MangaReaderCanvas(
                 }
                 readerState.stepForward()
             }
-        } else {
-            readerState.stepForward()
         }
     }
 
     val webtoonStepBackward: () -> Unit = {
         val readerState = currentState
         val listState = activeWebtoonListState
-        if (listState != null) {
+        if (listState != null && listState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
             if (listState.canScrollBackward) {
                 val delta = (viewportHeightPx * 0.8f).coerceAtLeast(1f)
                 scope.launch { listState.animateScrollBy(-delta) }
@@ -224,8 +224,6 @@ public fun MangaReaderCanvas(
                 }
                 readerState.stepBackward()
             }
-        } else {
-            readerState.stepBackward()
         }
     }
 
@@ -247,6 +245,10 @@ public fun MangaReaderCanvas(
             pagedHandlers != null -> pagedHandlers.stepBackward()
             else -> readerState.stepBackward()
         }
+    }
+
+    SideEffect {
+        onStepHandlersChanged?.invoke(performStepForward, performStepBackward)
     }
 
     val openExternalUrl: (String) -> Unit =
@@ -1380,7 +1382,7 @@ private fun MangaWebtoonStrip(
 
             items(
                 items = state.pages,
-                key = { it.id },
+                key = { "page_${it.id}" },
             ) { page ->
                 Box(
                     modifier = Modifier.fillMaxWidth(),

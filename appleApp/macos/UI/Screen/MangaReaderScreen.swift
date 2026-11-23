@@ -2,14 +2,58 @@ import AppKit
 import FlareAppleCore
 import FlareAppleUI
 import Foundation
+import ImageIO
 import Kingfisher
 @preconcurrency import KotlinSharedUI
 import SwiftUI
 import SwiftUIBackports
+import UniformTypeIdentifiers
 
 @MainActor
 final class MacMangaShareAnchorBox {
     weak var view: NSView?
+}
+
+@MainActor
+func copyMangaPageToPasteboard(_ media: any UiMedia, pasteboard: NSPasteboard = .general) async throws {
+    let localURL: URL?
+    if media.isRemote {
+        localURL = nil
+    } else {
+        guard let url = URL(string: media.url), ImageTranslationExportFile.isOwned(url) else {
+            throw URLError(.unsupportedURL)
+        }
+        localURL = url
+    }
+
+    if media is UiMediaGif {
+        let data: Data?
+        if let localURL {
+            data = try Data(contentsOf: localURL)
+        } else {
+            data = try await ProxyMediaImages.shared.retrieve(media).data()
+        }
+        guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetType(source) as String? == UTType.gif.identifier else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        try Task.checkCancellation()
+        pasteboard.clearContents()
+        pasteboard.setData(data, forType: .init(UTType.gif.identifier))
+    } else {
+        let image: NSImage
+        if let localURL {
+            guard let localImage = NSImage(contentsOf: localURL) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            image = localImage
+        } else {
+            image = try await ProxyMediaImages.shared.retrieve(media).image
+        }
+        try Task.checkCancellation()
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image])
+    }
 }
 
 @MainActor
@@ -117,30 +161,12 @@ struct MangaReaderScreen: View {
 
     private func copyPage(displayed: any UiMedia) {
         guard displayed is UiMediaImage || displayed is UiMediaGif else { return }
-        if !displayed.isRemote || URL(string: displayed.url)?.isFileURL == true {
-            guard let localURL = URL(string: displayed.url),
-                  localURL.isFileURL,
-                  ImageTranslationExportFile.isOwned(localURL),
-                  let image = NSImage(contentsOf: localURL) else {
-                exportAlert = MacMangaExportAlert(
-                    title: FlareAppleUILocalization.string("manga_reader_copy_image", fallback: "Copy image"),
-                    message: URLError(.unsupportedURL).localizedDescription
-                )
-                return
-            }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([image])
-            return
-        }
         guard !isCopyingPage else { return }
         isCopyingPage = true
         Task { @MainActor in
             defer { isCopyingPage = false }
             do {
-                let result = try await ProxyMediaImages.shared.retrieve(displayed)
-                guard !Task.isCancelled else { return }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([result.image])
+                try await copyMangaPageToPasteboard(displayed)
             } catch {
                 guard !Task.isCancelled else { return }
                 exportAlert = MacMangaExportAlert(
@@ -573,27 +599,13 @@ struct MangaReaderContentView: View {
     }
 
     private func copyImageFallback(_ displayed: any UiMedia) {
-        if !displayed.isRemote || URL(string: displayed.url)?.isFileURL == true {
-            guard let localURL = URL(string: displayed.url),
-                  localURL.isFileURL,
-                  ImageTranslationExportFile.isOwned(localURL),
-                  let image = NSImage(contentsOf: localURL) else {
-                return
-            }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([image])
-            return
-        }
-        Task { @MainActor in
-            if let result = try? await ProxyMediaImages.shared.retrieve(displayed) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([result.image])
-            }
+        Task {
+            try? await copyMangaPageToPasteboard(displayed)
         }
     }
 
     private func topHudBar(isWideViewport: Bool) -> some View {
-        let hasChapterDirectory = !state.chapterItems.isEmpty
+        let hasChapterDirectory = state.chapterGroups.contains { !$0.chapters.isEmpty }
         return HStack(spacing: 8) {
             Button(action: goBack) {
                 Image(systemName: "chevron.backward")
@@ -843,7 +855,7 @@ private struct MacReaderWindowToolbarModifier: ViewModifier {
         if isEnabled {
             let prevUnlocked = state.previousBoundary as? ChapterBoundaryUnlocked
             let nextUnlocked = state.nextBoundary as? ChapterBoundaryUnlocked
-            let hasChapterDirectory = !state.chapterItems.isEmpty
+            let hasChapterDirectory = state.chapterGroups.contains { !$0.chapters.isEmpty }
             let chaptersHelp = FlareAppleUILocalization.string("manga_reader_chapters", fallback: "Chapters")
             let prevHelp = FlareAppleUILocalization.string("manga_reader_previous_chapter", fallback: "Previous chapter")
             let nextHelp = FlareAppleUILocalization.string("manga_reader_next_chapter", fallback: "Next chapter")

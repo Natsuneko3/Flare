@@ -431,7 +431,7 @@ struct MangaReaderContentView: View {
     }
 
     private func topHudBar(isWideViewport: Bool) -> some View {
-        let hasChapterDirectory = !state.chapterItems.isEmpty
+        let hasChapterDirectory = state.chapterGroups.contains { !$0.chapters.isEmpty }
         return HStack(spacing: 8) {
             Button(action: goBack) {
                 Image(systemName: "chevron.backward")

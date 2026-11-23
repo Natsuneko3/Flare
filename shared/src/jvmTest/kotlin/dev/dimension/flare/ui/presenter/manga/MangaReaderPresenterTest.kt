@@ -56,6 +56,7 @@ import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -83,6 +84,7 @@ import okio.FileSystem
 import okio.Path.Companion.toPath
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import java.io.IOException
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -519,7 +521,17 @@ class MangaReaderPresenterTest {
                     .setQueryCoroutineContext(dispatcher)
                     .build()
             var now = 10_000L
-            val progressRepository = MangaProgressRepository(cacheDatabase) { now++ }
+            var failNextWrite = false
+            var failedWrites = 0
+            val progressRepository =
+                MangaProgressRepository(cacheDatabase) {
+                    if (failNextWrite) {
+                        failNextWrite = false
+                        failedWrites++
+                        throw IOException("Transient progress write failure")
+                    }
+                    now++
+                }
             val mockClient = HttpClient(MockEngine { respond(ByteArray(0)) })
             val imageTranslationRepository =
                 ImageTranslationRepository(
@@ -649,7 +661,8 @@ class MangaReaderPresenterTest {
             }
 
             val readerJob = SupervisorJob()
-            val readerScope = CoroutineScope(dispatcher + readerJob)
+            val writeErrors = mutableListOf<Throwable>()
+            val readerScope = CoroutineScope(dispatcher + readerJob + CoroutineExceptionHandler { _, error -> writeErrors.add(error) })
             var activePresenter: MangaReaderPresenter? = null
             try {
                 appDataStore.appSettingsStore.updateData {
@@ -750,12 +763,21 @@ class MangaReaderPresenterTest {
                             it.pages.firstOrNull()?.status is PageMediaStatus.Ready
                     }
 
-                // Override direction to Webtoon and navigate to page 1, then dispose immediately (< 300ms) -> flushes page 1 on dispose!
                 ch2Recovered.setDirection(MangaReadingDirection.Webtoon)
-                ch2Recovered.goToPage(1)
                 Snapshot.sendApplyNotifications()
                 runCurrent()
+                val webtoon = awaitReaderState(states) { it.direction == MangaReadingDirection.Webtoon }
+                failNextWrite = true
+                webtoon.goToPage(1)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                advanceTimeBy(301)
+                runCurrent()
+                assertEquals(1, failedWrites)
+
                 readerJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                assertTrue(writeErrors.isEmpty())
 
                 val finalProgress =
                     withContext(Dispatchers.Default) {
@@ -1378,6 +1400,7 @@ class MangaReaderPresenterTest {
                     "ex-1" to readyPages(count = 3, prefix = "ex1"),
                 )
             val chapterPageLoads = CopyOnWriteArrayList<String>()
+            val releaseExtraPages = CompletableDeferred<Unit>()
             val detailCache = MutableStateFlow<UiMangaDetail?>(null)
             val mangaDataSource =
                 object : MangaDataSource {
@@ -1392,6 +1415,7 @@ class MangaReaderPresenterTest {
                         chapterId: String,
                     ): ImmutableList<UiMangaPage> {
                         chapterPageLoads += chapterId
+                        if (chapterId == "ex-1") releaseExtraPages.await()
                         return pagesByChapter.getValue(chapterId)
                     }
 
@@ -1516,25 +1540,28 @@ class MangaReaderPresenterTest {
                 Snapshot.sendApplyNotifications()
                 runCurrent()
 
-                // 5. openChapter("ex-1", initialPage = 1) switches to ex-1 at page 1 and aligns selectedChapterGroupId to "group-extra";
-                //    calling openChapter("ex-1", initialPage = 0) on already-active ex-1 jumps to page 0 without reloading pages.
                 states.value!!.openChapter("ex-1", initialPage = 1)
                 Snapshot.sendApplyNotifications()
                 runCurrent()
-                val ex1AtPage1 =
+                val loadingExtra = awaitReaderState(states) { it.activeChapterId == "ex-1" && it.loadState is UiState.Loading }
+                assertEquals(listOf("ch-1", "ch-2", "ex-1"), chapterPageLoads.toList())
+                loadingExtra.openChapter("ex-1", initialPage = 2)
+                loadingExtra.openChapter("ex-1", initialPage = null)
+                releaseExtraPages.complete(Unit)
+                val loadedExtra =
                     awaitReaderState(states) {
                         it.activeChapterId == "ex-1" &&
-                            it.loadState is UiState.Success &&
-                            it.currentPageIndex == 1
+                            it.loadState is UiState.Success
                     }
-                assertEquals("group-extra", ex1AtPage1.selectedChapterGroupId)
+                assertEquals(2, loadedExtra.currentPageIndex)
+                assertEquals("group-extra", loadedExtra.selectedChapterGroupId)
                 assertEquals(
                     listOf(ReaderChapterItem(chapter = ex1, isCurrent = true, isRead = false, lastPageIndex = 0)),
-                    ex1AtPage1.chapterItems,
+                    loadedExtra.chapterItems,
                 )
                 assertEquals(listOf("ch-1", "ch-2", "ex-1"), chapterPageLoads.toList())
 
-                ex1AtPage1.openChapter("ex-1", initialPage = 0)
+                loadedExtra.openChapter("ex-1", initialPage = 0)
                 Snapshot.sendApplyNotifications()
                 runCurrent()
                 val ex1AtPage0 = awaitReaderState(states) { it.activeChapterId == "ex-1" && it.currentPageIndex == 0 }

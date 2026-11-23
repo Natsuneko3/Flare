@@ -386,12 +386,11 @@ public class MangaReaderPresenter(
         val activeSessionHolder = remember { ActiveSessionRef() }
         val session =
             if (rawDetail != null && !isChapterLocked && currentDataSource != null) {
-                remember(chapterTarget, currentDataSource, effectiveMangaKey) {
+                remember(activeChapterId, chapterTarget.attempt, currentDataSource, effectiveMangaKey) {
                     ChapterPagesSession(
                         mangaKey = effectiveMangaKey,
-                        chapterId = chapterTarget.chapterId,
-                        landing = chapterTarget.landing,
-                        initialPageHint = (chapterTarget.landing as? ChapterLanding.Initial)?.initialPage ?: 0,
+                        chapterId = activeChapterId,
+                        attempt = chapterTarget.attempt,
                         parentContext = scope.coroutineContext,
                         proxyRef = proxyRef,
                     )
@@ -417,8 +416,10 @@ public class MangaReaderPresenter(
                     currentCoroutineContext().ensureActive()
                     val resolvedProgress = latestLoadedProgress ?: progressFlow.first()
                     currentCoroutineContext().ensureActive()
+                    val latestTarget = chapterTarget
+                    if (latestTarget.attempt != currentSession.attempt) return@LaunchedEffect
                     val landingIndex =
-                        when (val landing = currentSession.landing) {
+                        when (val landing = latestTarget.landing) {
                             is ChapterLanding.Initial -> {
                                 val saved = resolvedProgress.chapters[currentSession.chapterId]
                                 val target =
@@ -692,16 +693,16 @@ public class MangaReaderPresenter(
         val flushState = remember { ProgressFlushTracker() }
 
         fun computeLiveProgressRecord(targetSession: ChapterPagesSession? = activeSessionHolder.session): PendingProgressRecord? {
-            val progressSnapshot = loadedProgress ?: seedProgress ?: return null
+            val progressSnapshot = latestLoadedProgress ?: seedProgress ?: return null
             val currentSession = targetSession ?: return null
-            if (currentSession.chapterId != chapterTarget.chapterId) return null
+            if (currentSession.attempt != chapterTarget.attempt) return null
             val loaded = (currentSession.pagesLoadState as? UiState.Success)?.data ?: return null
             if (loaded.isEmpty()) return null
             val pageIdx = currentSession.currentPageIndex.coerceIn(0, loaded.lastIndex)
             val liveDirection =
                 optimisticDirectionOverride
                     ?: progressSnapshot.readerModeOverride
-                    ?: rawDetail?.readingDirection
+                    ?: latestRawDetail?.readingDirection
                     ?: settings.mangaReaderConfig.defaultDirection
             val liveSpreadSetting =
                 optimisticDoublePageSpread ?: settings.mangaReaderConfig.doublePageSpreadOnWideScreen
@@ -740,18 +741,24 @@ public class MangaReaderPresenter(
         }
 
         fun flushRecord(record: PendingProgressRecord) {
-            if (flushState.lastFlushed == record) return
-            flushState.lastFlushed = record
             writeScope.launch {
-                writeMutex.withLock {
-                    progressRepository.recordPage(
-                        accountType = accountType,
-                        mangaKey = record.mangaKey,
-                        chapterId = record.chapterId,
-                        pageIndex = record.pageIndex,
-                        pageCount = record.pageCount,
-                        isCompleted = record.isCompleted,
-                    )
+                try {
+                    writeMutex.withLock {
+                        if (flushState.lastFlushed == record) return@withLock
+                        progressRepository.recordPage(
+                            accountType = accountType,
+                            mangaKey = record.mangaKey,
+                            chapterId = record.chapterId,
+                            pageIndex = record.pageIndex,
+                            pageCount = record.pageCount,
+                            isCompleted = record.isCompleted,
+                        )
+                        flushState.lastFlushed = record
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    error.printStackTrace()
                 }
             }
         }
@@ -789,7 +796,7 @@ public class MangaReaderPresenter(
             chapterTarget =
                 ChapterTarget(
                     chapterId = targetChapterId,
-                    attempt = 0,
+                    attempt = chapterTarget.attempt + 1,
                     landing = landing,
                 )
         }
@@ -1052,7 +1059,12 @@ public class MangaReaderPresenter(
             ) {
                 if (chapterId == chapterTarget.chapterId) {
                     if (initialPage != null) {
-                        goToPage(initialPage)
+                        val currentSession = activeSessionHolder.session
+                        if (currentSession?.attempt == chapterTarget.attempt && currentSession.pagesLoadState is UiState.Success) {
+                            goToPage(initialPage)
+                        } else {
+                            chapterTarget = chapterTarget.copy(landing = ChapterLanding.Initial(initialPage))
+                        }
                     }
                     return
                 }
@@ -1196,8 +1208,7 @@ private data class PendingProgressRecord(
 private class ChapterPagesSession(
     val mangaKey: MicroBlogKey,
     val chapterId: String,
-    val landing: ChapterLanding,
-    initialPageHint: Int,
+    val attempt: Int,
     parentContext: CoroutineContext,
     private val proxyRef: ProxyRef,
 ) {
@@ -1206,7 +1217,7 @@ private class ChapterPagesSession(
     private val semaphore = Semaphore(3)
     private val inFlightJobs = mutableMapOf<String, Job>()
 
-    var currentPageIndex by mutableIntStateOf(initialPageHint.coerceAtLeast(0))
+    var currentPageIndex by mutableIntStateOf(0)
     var hasStartedLoad: Boolean = false
     var pagesLoadState by mutableStateOf<UiState<ImmutableList<UiMangaPage>>>(UiState.Loading())
     var resolvedMedia by mutableStateOf<Map<String, UiMedia>>(emptyMap())

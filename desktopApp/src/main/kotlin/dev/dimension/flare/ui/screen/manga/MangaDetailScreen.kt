@@ -704,7 +704,7 @@ private fun MangaChaptersSection(
                     } else {
                         items(
                             items = state.chapters,
-                            key = { it.chapter.id },
+                            key = { "chapter_${it.chapter.id}" },
                         ) { item ->
                             MangaChapterRow(
                                 item = item,
@@ -759,7 +759,7 @@ private fun MangaChaptersSection(
                     } else {
                         items(
                             count = state.chapters.size,
-                            key = { index -> state.chapters[index].chapter.id },
+                            key = { index -> "chapter_${state.chapters[index].chapter.id}" },
                         ) { index ->
                             val item = state.chapters[index]
                             MangaChapterRow(

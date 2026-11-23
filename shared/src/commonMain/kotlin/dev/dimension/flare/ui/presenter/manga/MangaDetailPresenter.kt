@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +25,7 @@ import dev.dimension.flare.common.toPagingState
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.mapper.saveToDatabase
 import dev.dimension.flare.data.datasource.microblog.capabilities
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.TimelinePagingMapper
 import dev.dimension.flare.data.datasource.microblog.paging.toTimelinePagingSource
 import dev.dimension.flare.data.datasource.microblog.pagingConfig
@@ -40,6 +42,7 @@ import dev.dimension.flare.ui.model.UiMangaChapter
 import dev.dimension.flare.ui.model.UiMangaDetail
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.collectAsUiState
 import dev.dimension.flare.ui.model.flatMapLatestUiState
 import dev.dimension.flare.ui.model.flattenUiState
 import dev.dimension.flare.ui.model.map
@@ -107,19 +110,10 @@ public class MangaDetailPresenter(
         accountService.accountServiceFlow(accountType)
     }
 
-    private val mangaDataSourceFlow by lazy {
-        serviceFlow.map { service -> service.capabilities.manga }
-    }
-
     private val refreshTrigger = MutableStateFlow(0)
 
-    private val detailCacheFlow by lazy {
-        combine(serviceFlow, refreshTrigger) { service, refreshCount ->
-            service to refreshCount
-        }.flatMapLatestUiState { (service, refreshCount) ->
-            val mangaDataSource =
-                service.capabilities.manga
-                    ?: error("Current service does not support manga data source")
+    private fun buildDetailFlow(mangaDataSource: MangaDataSource) =
+        refreshTrigger.flatMapLatestUiState { refreshCount ->
             val cacheable = mangaDataSource.mangaDetail(mangaKey)
             if (refreshCount == 0) {
                 cacheable
@@ -146,7 +140,6 @@ public class MangaDetailPresenter(
                 }
             }
         }
-    }
 
     @Immutable
     public interface State {
@@ -193,18 +186,31 @@ public class MangaDetailPresenter(
             }
         }
 
-        val detailState by detailCacheFlow.flattenUiState()
+        val serviceState = key(accountType, mangaKey) { serviceFlow.collectAsUiState().value }
+        val currentDataSource = serviceState.takeSuccess()?.capabilities?.manga
+        val latestDataSource by rememberUpdatedState(currentDataSource)
+        val detailState =
+            if (currentDataSource != null) {
+                key(accountType, mangaKey, currentDataSource) {
+                    remember { buildDetailFlow(currentDataSource) }.flattenUiState().value
+                }
+            } else {
+                when (val service = serviceState) {
+                    is UiState.Loading -> UiState.Loading()
+                    is UiState.Error -> UiState.Error(service.throwable)
+                    is UiState.Success -> UiState.Error(IllegalStateException("Current service does not support manga data source"))
+                }
+            }
         val rawDetail = detailState.takeSuccess()
-        val currentDataSource by mangaDataSourceFlow.collectAsState(null)
 
-        var lastLoadedDetail by remember(accountType, mangaKey) { mutableStateOf<UiMangaDetail?>(null) }
+        var lastLoadedDetail by remember(accountType, mangaKey, currentDataSource) { mutableStateOf<UiMangaDetail?>(null) }
         if (rawDetail != null) {
             lastLoadedDetail = rawDetail
         }
         val effectiveRawDetail = rawDetail ?: lastLoadedDetail
         val hasLoadedDetail = lastLoadedDetail != null
 
-        var resolvedMangaKey by remember(accountType, mangaKey) { mutableStateOf(mangaKey) }
+        var resolvedMangaKey by remember(accountType, mangaKey, currentDataSource) { mutableStateOf(mangaKey) }
         if (effectiveRawDetail != null && effectiveRawDetail.mangaKey != resolvedMangaKey) {
             resolvedMangaKey = effectiveRawDetail.mangaKey
         }
@@ -318,11 +324,10 @@ public class MangaDetailPresenter(
         val supportsRecommendations = currentDataSource?.supportsRecommendations == true
 
         val comments =
-            if (supportsComments && hasLoadedDetail && currentDataSource != null) {
-                val source = currentDataSource!!
-                remember(source, effectiveMangaKey, scope) {
+            if (supportsComments && hasLoadedDetail) {
+                remember(currentDataSource, effectiveMangaKey, scope) {
                     Pager(config = pagingConfig) {
-                        source.mangaComments(effectiveMangaKey).toTimelinePagingSource()
+                        currentDataSource.mangaComments(effectiveMangaKey).toTimelinePagingSource()
                     }.flow.cachedIn(scope)
                 }.collectAsLazyPagingItems().toPagingState()
             } else if (supportsComments && detailState is UiState.Loading) {
@@ -332,11 +337,10 @@ public class MangaDetailPresenter(
             }
 
         val recommendations =
-            if (supportsRecommendations && hasLoadedDetail && currentDataSource != null) {
-                val source = currentDataSource!!
-                remember(source, effectiveMangaKey, scope) {
+            if (supportsRecommendations && hasLoadedDetail) {
+                remember(currentDataSource, effectiveMangaKey, scope) {
                     Pager(config = pagingConfig) {
-                        source.mangaRecommendations(effectiveMangaKey).toTimelinePagingSource()
+                        currentDataSource.mangaRecommendations(effectiveMangaKey).toTimelinePagingSource()
                     }.flow.cachedIn(scope)
                 }.collectAsLazyPagingItems().toPagingState()
             } else if (supportsRecommendations && detailState is UiState.Loading) {
@@ -390,6 +394,7 @@ public class MangaDetailPresenter(
             }
 
             override fun toggleChapterSort() {
+                if (effectiveRawDetail == null || currentDataSource !== latestDataSource) return
                 val targetMangaKey = latestEffectiveMangaKey
                 val base = optimisticProgress ?: observedProgress
                 val nextDescending = !base.chapterSortDescending
@@ -421,6 +426,7 @@ public class MangaDetailPresenter(
                 chapterId: String,
                 isRead: Boolean,
             ) {
+                if (effectiveRawDetail == null || currentDataSource !== latestDataSource) return
                 val targetMangaKey = latestEffectiveMangaKey
                 val base = optimisticProgress ?: observedProgress
                 optimisticProgress = base.optimisticSetChapterRead(chapterId = chapterId, isRead = isRead)

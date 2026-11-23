@@ -963,6 +963,7 @@ class MangaReaderCanvasTest {
 
     @Test
     fun webtoonTallStripStepsByEightyPercentViewportBeforeAdvancingChapter() {
+        lateinit var stepForward: () -> Unit
         val nextChapter = UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = null)
         val tallMedia = UiMedia.Image("local-tall-strip", "local-tall-strip", null, 4000f, 800f, false)
         val fakeState =
@@ -971,7 +972,7 @@ class MangaReaderCanvasTest {
                 initialPages =
                     persistentListOf(
                         ReaderPageState(
-                            id = "tall-0",
+                            id = "webtoon_boundary_next",
                             index = 0,
                             status = PageMediaStatus.Ready(original = tallMedia, displayed = tallMedia),
                             aspectRatio = 0.2f,
@@ -989,6 +990,7 @@ class MangaReaderCanvasTest {
                         hudVisible = false,
                         onToggleHud = {},
                         modifier = Modifier.testTag("reader_canvas"),
+                        onStepHandlersChanged = { forward, _ -> stepForward = forward },
                     )
                 }
             }
@@ -1028,12 +1030,10 @@ class MangaReaderCanvasTest {
                 .y
         assertTrue(abs(posAfterBackTap) <= 6f, "Expected left tap to scroll back to top=0, got $posAfterBackTap")
 
-        // 3. Repeated Spacebar presses scroll down in ~80% increments and only open nextChapter after reaching the bottom
+        // 3. External step controls, including volume keys, only advance after reaching the bottom.
         var presses = 0
         while (fakeState.openedBoundaryChapterId == null && presses < 10) {
-            composeRule.onNodeWithTag("reader_canvas").performKeyInput {
-                pressKey(Key.Spacebar)
-            }
+            composeRule.runOnIdle { stepForward() }
             composeRule.runOnIdle {}
             presses++
         }

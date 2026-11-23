@@ -530,6 +530,7 @@ class MangaScreenTest {
 
     @Test
     fun adaptiveChapterGridReflowsBetweenMultiColumnAndSingleColumn() {
+        val chapterMatchingHeaderKey = "chapters_header"
         val mangaKey = MicroBlogKey("manga-grid-1", "manga.example")
         val accountType = AccountType.GuestPlugin(platformId = "manga-plat", host = "manga.example")
         val detail =
@@ -558,7 +559,7 @@ class MangaScreenTest {
                             chapters =
                                 persistentListOf(
                                     UiMangaChapter(
-                                        id = "ch-1",
+                                        id = chapterMatchingHeaderKey,
                                         title = "Chapter 1: Dawn",
                                         subtitle = "24p",
                                         uploadedAt = null,
@@ -602,7 +603,7 @@ class MangaScreenTest {
         }
 
         // 1. At viewportWidth = 1100.dp (chapters pane = 720.dp >= 520.dp): multi-column grid
-        val row1 = compose.onNodeWithTag("manga_chapter_row_ch-1").fetchSemanticsNode().boundsInRoot
+        val row1 = compose.onNodeWithTag("manga_chapter_row_$chapterMatchingHeaderKey").fetchSemanticsNode().boundsInRoot
         val row2 = compose.onNodeWithTag("manga_chapter_row_ch-2").fetchSemanticsNode().boundsInRoot
         assertEquals(row1.top, row2.top, 2f)
         assertTrue(
@@ -614,7 +615,7 @@ class MangaScreenTest {
         compose.runOnIdle {
             viewportWidth = 820.dp
         }
-        val stacked1 = compose.onNodeWithTag("manga_chapter_row_ch-1").fetchSemanticsNode().boundsInRoot
+        val stacked1 = compose.onNodeWithTag("manga_chapter_row_$chapterMatchingHeaderKey").fetchSemanticsNode().boundsInRoot
         val stacked2 = compose.onNodeWithTag("manga_chapter_row_ch-2").fetchSemanticsNode().boundsInRoot
         assertTrue(
             "Expected stacked ch-1 bottom (${stacked1.bottom}) <= ch-2 top (${stacked2.top}) + 2f",

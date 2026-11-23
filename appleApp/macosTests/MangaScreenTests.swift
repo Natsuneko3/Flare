@@ -2,10 +2,13 @@ import AppKit
 import FlareAppleCore
 @testable import FlareAppleUI
 import Foundation
+import ImageIO
+import Kingfisher
 import KotlinSharedUI
 import Observation
 import PDFKit
 import SwiftUI
+import UniformTypeIdentifiers
 import XCTest
 
 @MainActor
@@ -22,6 +25,28 @@ final class MangaScreenTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         _ = Self.servicesReady
+    }
+
+    func testCopyMangaGIFKeepsBothFramesOnPasteboard() async throws {
+        let gif = try XCTUnwrap(Data(base64Encoded:
+            "R0lGODlhAQABAIAAAP8AAAAA/yH5BAAKAAAALAAAAAABAAEAAAICRAEAIfkEAAoAAAAsAAAAAAEAAQAAAgJMAQA7"
+        ))
+        let url = "https://manga.example/\(UUID().uuidString).gif"
+        let media = UiMediaGif(
+            url: url, previewUrl: url, description: nil,
+            height: 1, width: 1, customHeaders: nil, proxy: ProxyRef.Global.shared
+        )
+        try await KingfisherManager.shared.cache.storeToDisk(gif, forKey: media.cacheKey)
+        defer { Task { try? await KingfisherManager.shared.cache.removeImage(forKey: media.cacheKey) } }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+
+        try await copyMangaPageToPasteboard(media, pasteboard: pasteboard)
+
+        let copied = try XCTUnwrap(pasteboard.data(forType: .init(UTType.gif.identifier)))
+        XCTAssertEqual(copied, gif)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(copied as CFData, nil))
+        XCTAssertEqual(CGImageSourceGetCount(source), 2)
     }
 
     func testMangaDeepLinkRoutesMapSpecificAndGuestPluginAccounts() {

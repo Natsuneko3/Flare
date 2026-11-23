@@ -884,7 +884,7 @@ private fun MangaAndroidChaptersTab(
         } else {
             itemsIndexed(
                 items = state.chapters,
-                key = { _, item -> item.chapter.id },
+                key = { _, item -> "chapter_${item.chapter.id}" },
             ) { index, item ->
                 MangaAndroidChapterRow(
                     item = item,

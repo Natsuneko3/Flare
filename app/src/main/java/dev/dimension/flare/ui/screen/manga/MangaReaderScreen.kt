@@ -369,7 +369,8 @@ internal fun MangaReaderContent(
     val uriHandler = LocalUriHandler.current
     val hapticFeedback = LocalHapticFeedback.current
     val view = LocalView.current
-    val latestState by rememberUpdatedState(state)
+    var stepForward by remember { mutableStateOf<() -> Unit>({}) }
+    var stepBackward by remember { mutableStateOf<() -> Unit>({}) }
 
     LaunchedEffect(state.activeChapterId) {
         showMoreMenu = false
@@ -407,8 +408,8 @@ internal fun MangaReaderContent(
                         enabled = true,
                         keyCode = event.keyCode,
                         action = event.action,
-                        onStepBackward = { latestState.stepBackward() },
-                        onStepForward = { latestState.stepForward() },
+                        onStepBackward = stepBackward,
+                        onStepForward = stepForward,
                         repeatCount = event.repeatCount,
                     )
                 }
@@ -437,8 +438,8 @@ internal fun MangaReaderContent(
                         enabled = volumeKeysEnabled,
                         keyCode = nativeEvent.keyCode,
                         action = nativeEvent.action,
-                        onStepBackward = { latestState.stepBackward() },
-                        onStepForward = { latestState.stepForward() },
+                        onStepBackward = stepBackward,
+                        onStepForward = stepForward,
                         repeatCount = nativeEvent.repeatCount,
                     )
                 },
@@ -449,6 +450,10 @@ internal fun MangaReaderContent(
             hudVisible = hudVisible,
             onToggleHud = { hudVisible = !hudVisible },
             onBack = onBack,
+            onStepHandlersChanged = { forward, backward ->
+                stepForward = forward
+                stepBackward = backward
+            },
             onPageLongPress = { page, _ ->
                 if (!shouldAcceptAndroidPageLongPress(page)) return@MangaReaderCanvas
                 hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -474,7 +479,7 @@ internal fun MangaReaderContent(
                 slideOutVertically(motionScheme.defaultSpatialSpec()) { -it } +
                     fadeOut(motionScheme.defaultEffectsSpec()),
         ) {
-            val canOpenChapters = state.chapterItems.isNotEmpty()
+            val canOpenChapters = state.chapterGroups.any { it.chapters.isNotEmpty() }
             val saveTargets =
                 if (onSavePage != null) {
                     visibleTargets.filter { it.ready.original !is UiMedia.Ugoira }

@@ -356,7 +356,7 @@ class MangaDetailPresenterTest {
                     onComments = { commentCalls++ },
                     onRecommendations = { recommendationCalls++ },
                 )
-            val serviceState = MutableStateFlow<MangaDataSource>(unsupportedSource)
+            val serviceState = MutableStateFlow<MangaDataSource?>(unsupportedSource)
             val accountService = FakeDynamicMangaAccountService(accountKey, serviceState)
             val presenterJob = SupervisorJob()
             val presenterScope = CoroutineScope(dispatcher + presenterJob)
@@ -464,6 +464,17 @@ class MangaDetailPresenterTest {
                 assertEquals(1, (withSocial.recommendations as PagingState.Success).itemCount)
                 assertTrue(commentCalls >= 1)
                 assertTrue(recommendationCalls >= 1)
+
+                val previousSource = serviceState.value
+                serviceState.value = null
+                val unavailable = awaitState(states) { !it.supportsComments && !it.supportsRecommendations }
+                assertIs<UiState.Error<UiMangaDetail>>(awaitState(states) { it.detail !is UiState.Loading }.detail)
+                assertTrue(unavailable.chapters.isEmpty())
+                assertNull(unavailable.primaryReadTarget)
+
+                serviceState.value = previousSource
+                val restored = awaitState(states) { it.detail is UiState.Success && it.supportsRecommendations }
+                assertEquals("oneshot", restored.primaryReadTarget?.chapterId)
             } finally {
                 presenterJob.cancelAndJoin()
                 presenter.awaitPendingWrites()
@@ -1442,7 +1453,7 @@ private class FakeMangaAccountService(
 
 private class FakeDynamicMangaAccountService(
     private val accountKey: MicroBlogKey,
-    private val mangaSourceFlow: Flow<MangaDataSource>,
+    private val mangaSourceFlow: Flow<MangaDataSource?>,
 ) : AccountService {
     override suspend fun deleteAccounts(
         platformId: String,

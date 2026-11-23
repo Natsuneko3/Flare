@@ -753,7 +753,7 @@ struct MangaDetailContentView: View {
     }
 
     private func openPostMedia(post: UiTimelineV2.Post, media: UiMedia) {
-        let medias = post.images.filter { $0 is UiMediaImage || $0 is UiMediaUgoira }
+        let medias = Array(post.images)
         let index = medias.firstIndex { $0.url == media.url } ?? 0
         onNavigate(.mediaRaw(medias, index, media.mediaPreviewURL))
     }
