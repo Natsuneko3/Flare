@@ -14,17 +14,21 @@ import dev.dimension.flare.ui.model.mapper.extractStatusMid
 import dev.dimension.flare.ui.model.mapper.render
 import dev.dimension.flare.ui.model.mapper.renderRootComment
 import kotlinx.collections.immutable.persistentListOf
+import kotlin.concurrent.Volatile
 
 @OptIn(ExperimentalPagingApi::class)
 internal class CommentChildRemoteMediator(
     private val service: VVOService,
     private val commentKey: MicroBlogKey,
     private val accountKey: MicroBlogKey,
-    private val rootStatusId: String? = null,
+    rootStatusId: String? = null,
     private val cachedRootComment: (suspend () -> UiTimelineV2?)? = null,
 ) : CacheableRemoteLoader<UiTimelineV2> {
     override val pagingKey: String = "status_comments_child_${commentKey}_$accountKey"
     override val collapseReplyChains: Boolean = false
+
+    @Volatile
+    private var resolvedRootStatusId: String? = rootStatusId
 
     override suspend fun load(
         pageSize: Int,
@@ -42,7 +46,8 @@ internal class CommentChildRemoteMediator(
             PagingRequest.Refresh -> {
                 val response = service.getHotFlowChild(cid = commentKey.id)
                 val root = response.rootComment?.firstOrNull()
-                val effectiveRootId = root?.extractStatusMid(rootStatusId) ?: rootStatusId
+                val effectiveRootId = root?.extractStatusMid(resolvedRootStatusId) ?: resolvedRootStatusId
+                resolvedRootStatusId = effectiveRootId
                 val rootItem =
                     root?.renderRootComment(accountKey, effectiveRootId)
                         ?: cachedRootComment?.invoke()?.asRootCommentItem()
@@ -51,7 +56,9 @@ internal class CommentChildRemoteMediator(
                     endOfPaginationReached = maxId == null,
                     data =
                         listOfNotNull(rootItem) +
-                            response.data.orEmpty().map { it.render(accountKey, effectiveRootId) },
+                            response.data.orEmpty().map {
+                                it.render(accountKey, rootStatusId = effectiveRootId, parentCommentKey = commentKey)
+                            },
                     nextKey = maxId?.toString(),
                 )
             }
@@ -69,10 +76,16 @@ internal class CommentChildRemoteMediator(
                         cid = commentKey.id,
                         maxId = cursor,
                     )
+                val effectiveRootId =
+                    response.rootComment?.firstOrNull()?.extractStatusMid(resolvedRootStatusId) ?: resolvedRootStatusId
+                resolvedRootStatusId = effectiveRootId
                 val maxId = response.maxID?.takeIf { it > 0L && it != cursor }
                 PagingResult(
                     endOfPaginationReached = maxId == null,
-                    data = response.data.orEmpty().map { it.render(accountKey, rootStatusId) },
+                    data =
+                        response.data.orEmpty().map {
+                            it.render(accountKey, rootStatusId = effectiveRootId, parentCommentKey = commentKey)
+                        },
                     nextKey = maxId?.toString(),
                 )
             }

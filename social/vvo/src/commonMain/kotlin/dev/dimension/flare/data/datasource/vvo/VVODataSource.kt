@@ -84,6 +84,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -717,7 +718,13 @@ internal class VVODataSource(
             commentKey = commentKey,
             rootStatusId = parameters[VVO_ROOT_STATUS_ID_PARAM],
             cachedRootComment = {
-                runCatching { cacheLookup.findPost(AccountType.Specific(accountKey), commentKey) }.getOrNull()
+                try {
+                    cacheLookup.findPost(AccountType.Specific(accountKey), commentKey)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
             },
         )
     }

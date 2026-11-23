@@ -60,7 +60,8 @@ internal fun Status.render(accountKey: MicroBlogKey): UiTimelineV2 = renderStatu
 internal fun Comment.render(
     accountKey: MicroBlogKey,
     rootStatusId: String? = null,
-): UiTimelineV2 = renderStatusV2(accountKey, rootStatusId)
+    parentCommentKey: MicroBlogKey? = null,
+): UiTimelineV2 = renderStatusV2(accountKey, rootStatusId, parentCommentKey)
 
 internal fun Comment.extractStatusMid(rootStatusId: String? = null): String? =
     rootStatusId ?: status?.mid ?: analysis_extra
@@ -413,6 +414,7 @@ private fun Status.renderStatusV2(accountKey: MicroBlogKey): UiTimelineV2 {
 private fun Comment.renderStatusV2(
     accountKey: MicroBlogKey,
     rootStatusId: String? = null,
+    parentCommentKey: MicroBlogKey? = null,
 ): UiTimelineV2 {
     val statusKey = MicroBlogKey(id = id, host = accountKey.host)
     val statusMid = extractStatusMid(rootStatusId)
@@ -446,19 +448,9 @@ private fun Comment.renderStatusV2(
 
     val quote =
         commentList
-            ?.map {
-                it.renderStatusV2(accountKey, rootStatusId).contentPostOrNull()?.copy(
-                    clickEvent =
-                        ClickEvent.Deeplink(
-                            vvoCommentRepliesRoute(
-                                accountKey = accountKey,
-                                commentKey = statusKey,
-                                rootStatusId = statusMid,
-                            ),
-                        ),
-                )
-            }?.filterNotNull()
-            ?.toImmutableList()
+            ?.mapNotNull {
+                it.renderStatusV2(accountKey, statusMid, parentCommentKey = statusKey).contentPostOrNull()
+            }?.toImmutableList()
             ?: listOfNotNull(status?.renderStatusV2(accountKey)?.contentPostOrNull()).toImmutableList()
 
     val post =
@@ -561,7 +553,7 @@ private fun Comment.renderStatusV2(
                     } else {
                         vvoCommentRepliesRoute(
                             accountKey = accountKey,
-                            commentKey = statusKey,
+                            commentKey = parentCommentKey ?: statusKey,
                             rootStatusId = statusMid,
                         )
                     },

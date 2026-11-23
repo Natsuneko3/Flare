@@ -55,6 +55,62 @@ class CacheDatabaseDestructiveMigrationTest {
         }
 
     @Test
+    fun migration54To55PurgesWeiboStatusesWhilePreservingHistoryAndOtherAccounts() =
+        runTest {
+            val databasePath = Files.createTempFile("flare-cache-v54", ".db")
+            val path = databasePath.toString()
+            val mastoOwner = AccountType.Specific(MicroBlogKey("me", "mastodon.social"))
+            val weiboOwner = AccountType.Specific(MicroBlogKey("23", "m.weibo.cn"))
+            val profile = MicroBlogKey("alice", "mastodon.social")
+            val emoji = DbEmojiHistory(mastoOwner, "tada", 789)
+            try {
+                withCache(path) { database ->
+                    database.userDao().insertHistory(DbUserHistory(profile, mastoOwner, 321))
+                    database.emojiDao().insertHistory(emoji)
+                    database.userDao().insertProfileTabs(DbProfileTabs(mastoOwner, profile, "[]"))
+                }
+                BundledSQLiteDriver().open(path).use { connection ->
+                    connection.execSQL(
+                        "INSERT INTO DbStatus (statusKey, accountType, content, contentFingerprint, renderHash, text, id) " +
+                            "VALUES ('100@m.weibo.cn', '${weiboOwner}', X'00', 1, 1, 'weibo', '${weiboOwner}_100@m.weibo.cn')",
+                    )
+                    connection.execSQL(
+                        "INSERT INTO DbPagingTimeline (pagingKey, statusId, sortId, isGap, message, messageRenderHash, " +
+                            "semanticReferenceSignature, presentationReferenceSignature, contentRevision, notificationKey, _id) " +
+                            "VALUES ('home_23@m.weibo.cn', '${weiboOwner}_100@m.weibo.cn', 1, 0, NULL, NULL, '', '', 0, NULL, 'row1')",
+                    )
+                    connection.execSQL(
+                        "INSERT INTO DbStatus (statusKey, accountType, content, contentFingerprint, renderHash, text, id) " +
+                            "VALUES ('200@mastodon.social', '${mastoOwner}', X'00', 2, 2, 'masto', '${mastoOwner}_200@mastodon.social')",
+                    )
+                    connection.execSQL("PRAGMA user_version = 54")
+                }
+
+                withCache(path) { database ->
+                    assertEquals(listOf(emoji), database.emojiDao().getHistory(mastoOwner))
+                    assertEquals(DbProfileTabs(mastoOwner, profile, "[]"), database.userDao().getProfileTabsSync(mastoOwner, profile))
+                }
+
+                BundledSQLiteDriver().open(path).use { connection ->
+                    connection.prepare("SELECT COUNT(*) FROM DbStatus WHERE accountType LIKE '%weibo.%'").use { query ->
+                        assertTrue(query.step())
+                        assertEquals(0L, query.getLong(0))
+                    }
+                    connection.prepare("SELECT COUNT(*) FROM DbPagingTimeline WHERE pagingKey LIKE '%weibo.%'").use { query ->
+                        assertTrue(query.step())
+                        assertEquals(0L, query.getLong(0))
+                    }
+                    connection.prepare("SELECT COUNT(*) FROM DbStatus WHERE accountType LIKE '%mastodon.social%'").use { query ->
+                        assertTrue(query.step())
+                        assertEquals(1L, query.getLong(0))
+                    }
+                }
+            } finally {
+                Files.deleteIfExists(databasePath)
+            }
+        }
+
+    @Test
     fun cachesWithUiIconPlatformFieldsAreRebuilt() =
         runTest {
             assertCacheIsRebuilt(fromVersion = 52)

@@ -29,8 +29,10 @@ internal fun provideCacheDatabase(driverFactory: DriverFactory): CacheDatabase =
 
 internal fun buildCacheDatabase(builder: RoomDatabase.Builder<CacheDatabase>): CacheDatabase =
     builder
-        .addMigrations(CacheDatabase.MIGRATION_53_54)
-        .fallbackToDestructiveMigration(dropAllTables = true)
+        .addMigrations(
+            CacheDatabase.MIGRATION_53_54,
+            CacheDatabase.MIGRATION_54_55,
+        ).fallbackToDestructiveMigration(dropAllTables = true)
         .addCallback(TimelineRevisionCallback)
         .setDriver(createDatabaseDriver())
         .setQueryCoroutineContext(PlatformDispatchers.IO)

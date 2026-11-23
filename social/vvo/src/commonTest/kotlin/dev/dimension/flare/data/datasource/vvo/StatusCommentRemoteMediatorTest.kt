@@ -330,6 +330,111 @@ class StatusCommentRemoteMediatorTest {
             assertEquals(1L, pages.revision.value)
         }
 
+    @Test
+    fun childCommentsTargetParentFloorRouteInsteadOfSelf() =
+        runTest {
+            val source =
+                VVODataSource(
+                    accountKey = accountKey,
+                    credentialFlow = flowOf(VVoCredential(chocolate = "MLOGIN=1; SUB=example")),
+                    httpClientFactory = mockClient {
+                        """
+                        {
+                          "ok": 1,
+                          "rootComment": [{"id": "900", "text": "顶楼评论"}],
+                          "data": [{"id": "901", "text": "子评论"}],
+                          "max_id": 0
+                        }
+                        """.trimIndent()
+                    },
+                )
+            val loader =
+                source.capabilities.timelinePage!!
+                    .timelinePage("comment_replies", mapOf("commentId" to "900", "rootStatusId" to statusKey.id))
+            val page = loader.load(20, PagingRequest.Refresh)
+            val child = assertNotNull(page.data[1].contentPostOrNull())
+            val childRoute =
+                assertIs<DeeplinkRoute.Timeline.Page>(
+                    DeeplinkRoute.parse(assertIs<ClickEvent.Deeplink>(child.clickEvent).url),
+                )
+            assertEquals("900", childRoute.parameters["commentId"])
+            assertEquals(MicroBlogKey("900", accountKey.host), childRoute.detailStatusKey)
+        }
+
+    @Test
+    fun appendRetainsRootStatusIdResolvedFromRefreshRootComment() =
+        runTest {
+            val loader =
+                CommentChildRemoteMediator(
+                    service =
+                        service { request ->
+                            if (request.url.parameters["max_id"] == null) {
+                                """
+                                {
+                                  "ok": 1,
+                                  "rootComment": [{"id": "900", "text": "顶楼", "status": {"id": "${statusKey.id}", "mid": "${statusKey.id}"}}],
+                                  "data": [],
+                                  "max_id": 100
+                                }
+                                """.trimIndent()
+                            } else {
+                                """{"ok": 1, "data": [{"id": "902", "text": "第二页子评论"}], "max_id": 0}"""
+                            }
+                        },
+                    commentKey = MicroBlogKey("900", accountKey.host),
+                    accountKey = accountKey,
+                )
+            val first = loader.load(20, PagingRequest.Refresh)
+            val second = loader.load(20, PagingRequest.Append(assertNotNull(first.nextKey)))
+            val appendedChild = assertNotNull(second.data.single().contentPostOrNull())
+            val replyAction =
+                appendedChild.actions.filterIsInstance<ActionMenu.Item>().single { it.actionFamily == PostActionFamily.Comment }
+            val replyRoute =
+                assertIs<DeeplinkRoute.Compose.VVOReplyComment>(
+                    DeeplinkRoute.parse(assertIs<ClickEvent.Deeplink>(replyAction.clickEvent).url),
+                )
+            assertEquals(statusKey.id, replyRoute.rootId)
+        }
+
+    @Test
+    fun cachedRootLookupPropagatesCancellationException() =
+        runTest {
+            org.koin.core.context.startKoin {
+                modules(
+                    org.koin.dsl.module {
+                        single<dev.dimension.flare.data.datasource.microblog.MicroblogCacheLookup> {
+                            object : dev.dimension.flare.data.datasource.microblog.MicroblogCacheLookup {
+                                override suspend fun findProfiles(
+                                    keys: Collection<MicroBlogKey>,
+                                ): Map<MicroBlogKey, dev.dimension.flare.ui.model.UiProfile> = emptyMap()
+
+                                override suspend fun findPost(
+                                    accountType: dev.dimension.flare.model.AccountType,
+                                    statusKey: MicroBlogKey,
+                                ): UiTimelineV2.Post = throw kotlinx.coroutines.CancellationException("cancelled")
+                            }
+                        }
+                    },
+                )
+            }
+            try {
+                val source =
+                    VVODataSource(
+                        accountKey = accountKey,
+                        credentialFlow = flowOf(VVoCredential(chocolate = "MLOGIN=1; SUB=example")),
+                        httpClientFactory = mockClient {
+                            """<!DOCTYPE html><html><head><title>微博-出错了</title></head><body><p class="h5-4con">暂无数据</p></body></html>"""
+                        },
+                    )
+                val loader = source.capabilities.timelinePage!!.timelinePage("comment_replies", mapOf("commentId" to "900"))
+                assertFailsWith<kotlinx.coroutines.CancellationException> {
+                    loader.load(20, PagingRequest.Refresh)
+                }
+            } finally {
+                org.koin.core.context.stopKoin()
+            }
+        }
+
     private fun mockClient(webResponse: (HttpRequestData) -> String): (io.ktor.client.HttpClientConfig<*>.() -> Unit) -> HttpClient =
         { config ->
             HttpClient(

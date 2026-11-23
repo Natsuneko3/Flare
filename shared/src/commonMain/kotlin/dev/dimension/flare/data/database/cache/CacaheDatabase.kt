@@ -80,6 +80,32 @@ internal abstract class CacheDatabase : RoomDatabase() {
                     )
                 }
             }
+
+        val MIGRATION_54_55 =
+            object : Migration(54, 55) {
+                override suspend fun migrate(connection: SQLiteConnection) {
+                    val weiboStatusIds = "SELECT id FROM DbStatus WHERE accountType LIKE '%weibo.%'"
+                    connection.executeSQL(
+                        "DELETE FROM timeline_item_presentation_reference WHERE pagingKey IN (" +
+                            "SELECT pagingKey FROM DbPagingTimeline WHERE statusId IN ($weiboStatusIds)" +
+                            ") OR referenceStatusId IN ($weiboStatusIds)",
+                    )
+                    connection.executeSQL(
+                        "DELETE FROM DbPagingKey WHERE pagingKey IN (" +
+                            "SELECT pagingKey FROM DbPagingTimeline WHERE statusId IN ($weiboStatusIds)" +
+                            ") OR pagingKey LIKE '%weibo.%' OR accountKeys LIKE '%weibo.%'",
+                    )
+                    connection.executeSQL(
+                        "DELETE FROM DbPagingTimeline WHERE statusId IN ($weiboStatusIds) OR pagingKey LIKE '%weibo.%'",
+                    )
+                    connection.executeSQL(
+                        "DELETE FROM status_reference WHERE statusId IN ($weiboStatusIds) OR referenceStatusId IN ($weiboStatusIds)",
+                    )
+                    connection.executeSQL(
+                        "DELETE FROM DbStatus WHERE accountType LIKE '%weibo.%'",
+                    )
+                }
+            }
     }
 }
 
