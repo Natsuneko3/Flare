@@ -5,10 +5,7 @@ import androidx.room3.ConstructedBy
 import androidx.room3.Database
 import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
-import androidx.room3.migration.Migration
 import androidx.room3.withWriteTransaction
-import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.async.executeSQL
 
 // Removed legacy VVOStatus and VVOComment DeeplinkRoute variants from cached status payloads.
 internal const val CACHE_DATABASE_VERSION = 56
@@ -69,71 +66,6 @@ internal abstract class CacheDatabase : RoomDatabase() {
     abstract fun translationDao(): dev.dimension.flare.data.database.cache.dao.TranslationDao
 
     abstract fun pluginPostWidgetDao(): dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
-
-    companion object {
-        val MIGRATION_53_54 =
-            object : Migration(53, 54) {
-                override suspend fun migrate(connection: SQLiteConnection) {
-                    connection.executeSQL(
-                        "CREATE TABLE DbProfileTabs (accountType TEXT NOT NULL, userKey TEXT NOT NULL, " +
-                            "tabsJson TEXT NOT NULL, PRIMARY KEY(accountType, userKey))",
-                    )
-                    connection.executeSQL(
-                        "CREATE UNIQUE INDEX index_DbProfileTabs_accountType_userKey ON DbProfileTabs(accountType, userKey)",
-                    )
-                }
-            }
-
-        val MIGRATION_54_55 =
-            object : Migration(54, 55) {
-                override suspend fun migrate(connection: SQLiteConnection) {
-                    connection.executeSQL(
-                        "CREATE TABLE IF NOT EXISTS DbPluginPostWidget (" +
-                            "postEntityKey TEXT NOT NULL, " +
-                            "pluginId TEXT NOT NULL, " +
-                            "pluginCacheKey TEXT NOT NULL, " +
-                            "sourceHash TEXT NOT NULL, " +
-                            "cardsJson TEXT NOT NULL, " +
-                            "createdAtMillis INTEGER NOT NULL, " +
-                            "expiresAtMillis INTEGER, " +
-                            "PRIMARY KEY(postEntityKey, pluginId)" +
-                            ")",
-                    )
-                    connection.executeSQL(
-                        "CREATE INDEX IF NOT EXISTS index_DbPluginPostWidget_pluginId ON DbPluginPostWidget(pluginId)",
-                    )
-                    connection.executeSQL(
-                        "CREATE INDEX IF NOT EXISTS index_DbPluginPostWidget_expiresAtMillis ON DbPluginPostWidget(expiresAtMillis)",
-                    )
-                }
-            }
-
-        val MIGRATION_55_56 =
-            object : Migration(55, 56) {
-                override suspend fun migrate(connection: SQLiteConnection) {
-                    val weiboStatusIds = "SELECT id FROM DbStatus WHERE accountType LIKE '%weibo.%'"
-                    connection.executeSQL(
-                        "DELETE FROM timeline_item_presentation_reference WHERE pagingKey IN (" +
-                            "SELECT pagingKey FROM DbPagingTimeline WHERE statusId IN ($weiboStatusIds)" +
-                            ") OR referenceStatusId IN ($weiboStatusIds)",
-                    )
-                    connection.executeSQL(
-                        "DELETE FROM DbPagingKey WHERE pagingKey IN (" +
-                            "SELECT pagingKey FROM DbPagingTimeline WHERE statusId IN ($weiboStatusIds)" +
-                            ") OR pagingKey LIKE '%weibo.%' OR accountKeys LIKE '%weibo.%'",
-                    )
-                    connection.executeSQL(
-                        "DELETE FROM DbPagingTimeline WHERE statusId IN ($weiboStatusIds) OR pagingKey LIKE '%weibo.%'",
-                    )
-                    connection.executeSQL(
-                        "DELETE FROM status_reference WHERE statusId IN ($weiboStatusIds) OR referenceStatusId IN ($weiboStatusIds)",
-                    )
-                    connection.executeSQL(
-                        "DELETE FROM DbStatus WHERE accountType LIKE '%weibo.%'",
-                    )
-                }
-            }
-    }
 }
 
 internal suspend fun CacheDatabase.clearHomeTimelinesForAccount(accountKey: dev.dimension.flare.model.MicroBlogKey) {

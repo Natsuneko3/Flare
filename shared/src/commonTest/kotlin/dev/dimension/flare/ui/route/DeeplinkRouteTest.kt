@@ -122,7 +122,7 @@ class DeeplinkRouteTest {
                 accountType = AccountType.Specific(MicroBlogKey("23", "m.weibo.cn")),
             )
         assertEquals("/23@m.weibo.cn/status/5357831171867297@m.weibo.cn", route.toWebPath())
-        assertEquals(55, dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION)
+        assertEquals(56, dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION)
     }
 
     @Test
