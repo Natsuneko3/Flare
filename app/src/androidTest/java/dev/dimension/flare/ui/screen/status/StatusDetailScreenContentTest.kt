@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ComposeUiFlags
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -37,6 +38,10 @@ import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
+import dev.dimension.flare.ui.component.adaptive.FoldHinge
+import dev.dimension.flare.ui.component.adaptive.LocalFoldHingeOverride
+import dev.dimension.flare.ui.component.platform.LocalWindowSizeClass
+import dev.dimension.flare.ui.component.platform.WindowSizeClass
 import dev.dimension.flare.ui.component.resolveText
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiHandle
@@ -295,6 +300,46 @@ class StatusDetailScreenContentTest {
         compose.onNodeWithText(oldestReply).assertIsDisplayed()
     }
 
+    @Test
+    fun bigScreenAndFoldPosturesSplitPostAndCommentsIntoSeparatePanes() {
+        val rootText = "Half-folded and big-screen layouts keep the post beside or above comments."
+        val replyText = "Independent scroll pane for replies."
+        val root = post("Bluesky", "bsky.social", "fold-post", "Maya Patel", rootText)
+        val windowSizeClass = mutableStateOf<WindowSizeClass?>(WindowSizeClass.Expanded)
+        val foldHinge = mutableStateOf<FoldHinge?>(null)
+        show(
+            root = root,
+            primaryTab = UiStrings.Replies,
+            secondaryTab = UiStrings.Quotes,
+            filterOptions = listOf(UiStrings.Relevance),
+            contents = mapOf(UiStrings.Relevance to page(root, "replies", replyText, "Second reply")),
+            windowSizeClass = { windowSizeClass.value },
+            foldHinge = { foldHinge.value },
+        )
+
+        compose.onNodeWithText(rootText).assertIsDisplayed()
+        compose.onNodeWithText(replyText).assertIsDisplayed()
+        val scrollContainers =
+            compose
+                .onAllNodes(hasScrollAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+                .fetchSemanticsNodes()
+        assertEquals(2, scrollContainers.size)
+
+        compose.runOnIdle {
+            windowSizeClass.value = WindowSizeClass.Medium
+            foldHinge.value = FoldHinge(boundsInWindow = Rect(0f, 500f, 1080f, 520f), isVertical = false)
+        }
+        compose.onNodeWithText(rootText).assertIsDisplayed()
+        compose.onNodeWithText(replyText).assertIsDisplayed()
+        assertEquals(
+            2,
+            compose
+                .onAllNodes(hasScrollAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+                .fetchSemanticsNodes()
+                .size,
+        )
+    }
+
     private fun show(
         root: UiTimelineV2.Post,
         primaryTab: UiStrings,
@@ -304,6 +349,8 @@ class StatusDetailScreenContentTest {
         additionalTabs: List<UiStrings> = emptyList(),
         parents: List<UiTimelineV2> = emptyList(),
         isPostLoaded: () -> Boolean = { true },
+        windowSizeClass: () -> WindowSizeClass? = { null },
+        foldHinge: () -> FoldHinge? = { null },
     ) {
         val flows = contents.mapValues { (_, posts) -> flowOf(posts) }
         val loading = emptyFlow<List<UiTimelineV2>>()
@@ -343,10 +390,20 @@ class StatusDetailScreenContentTest {
 
                     override suspend fun refresh() = Unit
                 }
-            CompositionLocalProvider(
-                LocalGlobalAppearance provides GlobalAppearance(bottomBarBehavior = BottomBarBehavior.AlwaysShow),
-                LocalTimelineAppearance provides TimelineAppearance(showTranslateButton = false),
-            ) {
+            val overriddenSizeClass = windowSizeClass()
+            val overriddenHinge = foldHinge()
+            val providers =
+                buildList {
+                    add(LocalGlobalAppearance provides GlobalAppearance(bottomBarBehavior = BottomBarBehavior.AlwaysShow))
+                    add(LocalTimelineAppearance provides TimelineAppearance(showTranslateButton = false))
+                    if (overriddenSizeClass != null) {
+                        add(LocalWindowSizeClass provides overriddenSizeClass)
+                    }
+                    if (overriddenHinge != null) {
+                        add(LocalFoldHingeOverride provides overriddenHinge)
+                    }
+                }.toTypedArray()
+            CompositionLocalProvider(*providers) {
                 FlareTheme(darkTheme = false, dynamicColor = false) {
                     StatusDetailScreenContent(root.statusKey, state, onBack = {}, isRefreshing = false, onRefresh = {})
                 }

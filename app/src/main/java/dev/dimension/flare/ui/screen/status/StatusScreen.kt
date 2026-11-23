@@ -1,8 +1,6 @@
 package dev.dimension.flare.ui.screen.status
 
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -12,6 +10,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,10 +35,14 @@ import dev.dimension.flare.ui.component.FlareTopAppBar
 import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.RefreshContainer
-import dev.dimension.flare.ui.component.platform.isBigScreen
+import dev.dimension.flare.ui.component.adaptive.AdaptiveSplitLayout
+import dev.dimension.flare.ui.component.adaptive.PrimaryWidthStrategy
+import dev.dimension.flare.ui.component.adaptive.SplitPaneMode
 import dev.dimension.flare.ui.component.platform.isCompatScreen
 import dev.dimension.flare.ui.component.status.LazyStatusVerticalStaggeredGrid
 import dev.dimension.flare.ui.component.status.statusDetail
+import dev.dimension.flare.ui.component.status.statusDetailBodyItems
+import dev.dimension.flare.ui.component.status.statusDetailHeaderItems
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.status.StatusContextPresenter
 import dev.dimension.flare.ui.theme.isLightTheme
@@ -68,7 +71,7 @@ internal fun StatusDetailScreenContent(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
 ) {
-    val isBigScreen = isBigScreen()
+    val plainMode = LocalTimelineAppearance.current.timelineDisplayMode == TimelineDisplayMode.Plain
     val topAppBarScrollBehavior =
         if (LocalGlobalAppearance.current.bottomBarBehavior == BottomBarBehavior.AlwaysShow) {
             TopAppBarDefaults.pinnedScrollBehavior()
@@ -106,36 +109,85 @@ internal fun StatusDetailScreenContent(
             )
         },
         modifier = Modifier.nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
-    ) {
-        RefreshContainer(
-            onRefresh = onRefresh,
-            isRefreshing = isRefreshing,
-            contentAlignment = Alignment.TopCenter,
-            modifier = Modifier.fillMaxSize(),
-            indicatorPadding = it,
-            content = {
+    ) { scaffoldPadding ->
+        AdaptiveSplitLayout(
+            primaryWidthStrategy = PrimaryWidthStrategy.PostDetailDefault,
+            unfoldedGap = if (plainMode) 0.dp else 8.dp,
+            contentPadding = scaffoldPadding,
+            divider = { mode ->
+                when (mode) {
+                    is SplitPaneMode.HorizontalSplit -> {
+                        if (plainMode && mode.gapWidth == 0.dp) {
+                            VerticalDivider()
+                        }
+                    }
+
+                    is SplitPaneMode.VerticalSplit -> {
+                        if (mode.gapHeight == 0.dp) {
+                            HorizontalDivider()
+                        }
+                    }
+
+                    SplitPaneMode.Compact -> Unit
+                }
+            },
+            compactContent = { padding ->
+                RefreshContainer(
+                    onRefresh = onRefresh,
+                    isRefreshing = isRefreshing,
+                    contentAlignment = Alignment.TopCenter,
+                    modifier = Modifier.fillMaxSize(),
+                    indicatorPadding = padding,
+                    content = {
+                        LazyStatusVerticalStaggeredGrid(
+                            columns = StaggeredGridCells.Fixed(1),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = padding,
+                        ) {
+                            statusDetail(
+                                state = state,
+                                statusKey = statusKey,
+                                tabs = { StatusDetailTabs(state) },
+                                controlsDivider = { HorizontalDivider() },
+                            )
+                        }
+                    },
+                )
+            },
+            primaryPane = { _, padding ->
                 LazyStatusVerticalStaggeredGrid(
                     columns = StaggeredGridCells.Fixed(1),
-                    modifier =
-                        Modifier
-                            .let {
-                                if (isBigScreen) {
-                                    it
-                                        .fillMaxHeight()
-                                        .widthIn(max = 480.dp)
-                                } else {
-                                    it.fillMaxSize()
-                                }
-                            },
-                    contentPadding = it,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = padding,
                 ) {
-                    statusDetail(
+                    statusDetailHeaderItems(
                         state = state,
                         statusKey = statusKey,
-                        tabs = { StatusDetailTabs(state) },
-                        controlsDivider = { HorizontalDivider() },
+                        splitFallback = true,
                     )
                 }
+            },
+            secondaryPane = { _, padding ->
+                RefreshContainer(
+                    onRefresh = onRefresh,
+                    isRefreshing = isRefreshing,
+                    contentAlignment = Alignment.TopCenter,
+                    modifier = Modifier.fillMaxSize(),
+                    indicatorPadding = padding,
+                    content = {
+                        LazyStatusVerticalStaggeredGrid(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = padding,
+                        ) {
+                            statusDetailBodyItems(
+                                state = state,
+                                statusKey = statusKey,
+                                tabs = { StatusDetailTabs(state) },
+                                controlsDivider = { HorizontalDivider() },
+                            )
+                        }
+                    },
+                )
             },
         )
     }

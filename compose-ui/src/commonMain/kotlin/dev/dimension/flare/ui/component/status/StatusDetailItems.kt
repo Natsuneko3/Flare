@@ -26,12 +26,14 @@ import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.status_detail_filter_empty
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.Text
 import dev.dimension.flare.ui.component.UnderlinedTabs
 import dev.dimension.flare.ui.component.platform.PlatformDropdownMenu
 import dev.dimension.flare.ui.component.platform.PlatformDropdownMenuItem
 import dev.dimension.flare.ui.component.platform.PlatformTextButton
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.presenter.status.StatusContextPresenter
 import org.jetbrains.compose.resources.stringResource
 
@@ -41,13 +43,69 @@ public fun LazyStaggeredGridScope.statusDetail(
     tabs: @Composable () -> Unit = { StatusDetailTabs(state) },
     controlsDivider: @Composable () -> Unit = {},
 ) {
-    state.header.forEachIndexed { index, post ->
-        item(key = post.stableItemKey) {
-            AdaptiveCard(index = index, totalCount = state.header.size, respectTimelineMode = true) {
-                StatusItem(post, detailStatusKey = statusKey)
+    statusDetailHeaderItems(
+        state = state,
+        statusKey = statusKey,
+        splitFallback = false,
+    )
+    statusDetailBodyItems(
+        state = state,
+        statusKey = statusKey,
+        tabs = tabs,
+        controlsDivider = controlsDivider,
+    )
+}
+
+public fun LazyStaggeredGridScope.statusDetailHeaderItems(
+    state: StatusContextPresenter.State,
+    statusKey: MicroBlogKey,
+    splitFallback: Boolean = true,
+) {
+    if (state.header.isNotEmpty()) {
+        state.header.forEachIndexed { index, post ->
+            item(key = post.stableItemKey) {
+                AdaptiveCard(index = index, totalCount = state.header.size, respectTimelineMode = true) {
+                    StatusItem(post, detailStatusKey = statusKey)
+                }
+            }
+        }
+    } else if (splitFallback) {
+        when (val current = state.current) {
+            is UiState.Loading -> {
+                item(key = "status_detail_header_loading") {
+                    AdaptiveCard(index = 0, totalCount = 1, respectTimelineMode = true) {
+                        StatusItem(item = null)
+                    }
+                }
+            }
+
+            is UiState.Error -> {
+                item(key = "status_detail_header_error", span = StaggeredGridItemSpan.FullLine) {
+                    ErrorContent(
+                        error = current.throwable,
+                        onRetry = state::refreshAsync,
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    )
+                }
+            }
+
+            is UiState.Success -> {
+                item(key = current.data.stableItemKey) {
+                    AdaptiveCard(index = 0, totalCount = 1, respectTimelineMode = true) {
+                        StatusItem(current.data, detailStatusKey = statusKey)
+                    }
+                }
             }
         }
     }
+}
+
+public fun LazyStaggeredGridScope.statusDetailBodyItems(
+    state: StatusContextPresenter.State,
+    statusKey: MicroBlogKey,
+    tabs: @Composable () -> Unit = { StatusDetailTabs(state) },
+    controlsDivider: @Composable () -> Unit = {},
+) {
     // Keep the controls from becoming the scroll anchor before the post arrives.
     if (state.header.isNotEmpty() && (state.tabs.size > 1 || state.filters.isNotEmpty())) {
         item(key = "status_detail_controls", span = StaggeredGridItemSpan.FullLine) {
