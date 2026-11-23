@@ -1743,6 +1743,131 @@ final class MangaScreenTests: XCTestCase {
         // 3rd Escape once unzoomed with no overlay invokes onBackHandler
         XCTAssertTrue(controller.handleKey(.escape))
         XCTAssertEqual(backCallCount, 1, "Third Escape once unzoomed must invoke onBackHandler")
+
+        // Native Full Screen toolbar child NSWindow + nested NSPanel popover / external NSPanel regression checks
+        let keyMonitor = try XCTUnwrap(
+            findMacSubviews(ofType: MacReaderKeyMonitorHostView.self, in: hostingView).first?.coordinator
+        )
+        fakeState.goToPage(pageIndex: 0)
+        try await eventually(window: window) { fakeState.currentPageIndex == 0 }
+
+        // 1) Visible non-NSPanel child NSWindow (simulating AppKit's NSToolbarFullScreenWindow) must NOT block shortcuts
+        let toolbarChildWindow = NSWindow(
+            contentRect: CGRect(x: 0, y: 780, width: 960, height: 40),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        toolbarChildWindow.isReleasedWhenClosed = false
+        window.addChildWindow(toolbarChildWindow, ordered: .above)
+        defer {
+            window.removeChildWindow(toolbarChildWindow)
+            toolbarChildWindow.close()
+        }
+        XCTAssertTrue(toolbarChildWindow.isVisible)
+        XCTAssertFalse(toolbarChildWindow is NSPanel)
+
+        XCTAssertTrue(
+            keyMonitor.handleKeyDown(keyCode: 124, modifierFlags: [], activeKeyWindow: window),
+            "Visible non-NSPanel child window (NSToolbarFullScreenWindow) must not disable Right Arrow shortcut"
+        )
+        XCTAssertEqual(fakeState.currentPageIndex, 1)
+        XCTAssertTrue(
+            keyMonitor.handleKeyDown(keyCode: 123, modifierFlags: [], activeKeyWindow: toolbarChildWindow),
+            "Reader shortcuts must remain active when NSToolbarFullScreenWindow holds key focus"
+        )
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+
+        // 2) Nested NSPanel child under toolbarChildWindow (simulating full-screen toolbar popover / share picker)
+        let nestedPopoverPanel = NSPanel(
+            contentRect: CGRect(x: 600, y: 400, width: 320, height: 360),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        nestedPopoverPanel.isReleasedWhenClosed = false
+        nestedPopoverPanel.hidesOnDeactivate = false
+        toolbarChildWindow.addChildWindow(nestedPopoverPanel, ordered: .above)
+        nestedPopoverPanel.makeKeyAndOrderFront(nil)
+        defer {
+            toolbarChildWindow.removeChildWindow(nestedPopoverPanel)
+            nestedPopoverPanel.close()
+        }
+        XCTAssertTrue(nestedPopoverPanel.isVisible)
+        XCTAssertTrue(nestedPopoverPanel.parent === toolbarChildWindow)
+        XCTAssertTrue(nestedPopoverPanel.parent?.parent === window)
+
+        // When !isOverlayPresented (untracked NSPanel such as NSSharingServicePicker), shortcuts must yield
+        XCTAssertFalse(controller.isOverlayPresented)
+        XCTAssertFalse(
+            keyMonitor.handleKeyDown(keyCode: 124, modifierFlags: [], activeKeyWindow: window),
+            "Untracked nested NSPanel must block page-step keys when !isOverlayPresented"
+        )
+        XCTAssertFalse(
+            keyMonitor.handleKeyDown(keyCode: 53, modifierFlags: [], activeKeyWindow: nestedPopoverPanel),
+            "Untracked nested NSPanel must yield Escape when !isOverlayPresented"
+        )
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+        XCTAssertEqual(backCallCount, 1)
+
+        // When isOverlayPresented == true (Chapters/Settings popover opened from full-screen toolbar, 2 levels deep),
+        // arrow keys yield while Escape dismisses the overlay even when nestedPopoverPanel is key
+        hostModel.isOverlayPresented = true
+        try await eventually(window: window) { controller.isOverlayPresented }
+        XCTAssertFalse(
+            keyMonitor.handleKeyDown(keyCode: 124, modifierFlags: [], activeKeyWindow: nestedPopoverPanel),
+            "Arrow keys must yield to nested full-screen toolbar popover while isOverlayPresented"
+        )
+        XCTAssertEqual(fakeState.currentPageIndex, 0)
+        XCTAssertTrue(
+            keyMonitor.handleKeyDown(keyCode: 53, modifierFlags: [], activeKeyWindow: nestedPopoverPanel),
+            "Escape must dismiss nested full-screen toolbar popover when nestedPopoverPanel (parent?.parent === window) is key"
+        )
+        try await eventually(window: window) { !hostModel.isOverlayPresented && !controller.isOverlayPresented }
+        XCTAssertEqual(backCallCount, 1)
+
+        toolbarChildWindow.removeChildWindow(nestedPopoverPanel)
+        nestedPopoverPanel.orderOut(nil)
+
+        // 3) Direct untracked NSPanel child of reader window also blocks shortcuts when !isOverlayPresented,
+        //    and unrelated external NSWindow key focus never triggers background reader shortcuts
+        let directSharePanel = NSPanel(
+            contentRect: CGRect(x: 500, y: 400, width: 280, height: 240),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        directSharePanel.isReleasedWhenClosed = false
+        directSharePanel.hidesOnDeactivate = false
+        window.addChildWindow(directSharePanel, ordered: .above)
+        defer {
+            window.removeChildWindow(directSharePanel)
+            directSharePanel.close()
+        }
+        XCTAssertTrue(directSharePanel.isVisible)
+        XCTAssertFalse(
+            keyMonitor.handleKeyDown(keyCode: 124, modifierFlags: [], activeKeyWindow: window),
+            "Direct untracked NSPanel child must block reader shortcuts when !isOverlayPresented"
+        )
+        window.removeChildWindow(directSharePanel)
+        directSharePanel.orderOut(nil)
+
+        let unrelatedWindow = NSWindow(
+            contentRect: CGRect(x: 50, y: 50, width: 400, height: 300),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        unrelatedWindow.isReleasedWhenClosed = false
+        unrelatedWindow.makeKeyAndOrderFront(nil)
+        defer { unrelatedWindow.close() }
+        XCTAssertFalse(
+            keyMonitor.handleKeyDown(keyCode: 124, modifierFlags: [], activeKeyWindow: unrelatedWindow),
+            "Unrelated key window must not trigger background reader shortcuts"
+        )
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(keyMonitor.handleKeyDown(keyCode: 124, modifierFlags: [], activeKeyWindow: window))
+        XCTAssertEqual(fakeState.currentPageIndex, 1)
     }
 
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {

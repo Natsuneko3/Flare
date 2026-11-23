@@ -3154,6 +3154,10 @@ private struct MangaReaderHardwareKeyboardBridge: View {
 }
 
 #if os(macOS)
+final class MacReaderKeyMonitorHostView: NSView {
+    weak var coordinator: MacReaderKeyMonitorCoordinator?
+}
+
 private struct MacReaderKeyEventMonitorRepresentable: NSViewRepresentable {
     let controller: MangaReaderInteractionController
 
@@ -3161,23 +3165,26 @@ private struct MacReaderKeyEventMonitorRepresentable: NSViewRepresentable {
         MacReaderKeyMonitorCoordinator()
     }
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+    func makeNSView(context: Context) -> MacReaderKeyMonitorHostView {
+        let view = MacReaderKeyMonitorHostView()
+        view.coordinator = context.coordinator
         context.coordinator.attach(to: view, controller: controller)
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
+    func updateNSView(_ nsView: MacReaderKeyMonitorHostView, context: Context) {
+        nsView.coordinator = context.coordinator
         context.coordinator.attach(to: nsView, controller: controller)
     }
 
-    static func dismantleNSView(_ nsView: NSView, coordinator: MacReaderKeyMonitorCoordinator) {
+    static func dismantleNSView(_ nsView: MacReaderKeyMonitorHostView, coordinator: MacReaderKeyMonitorCoordinator) {
+        nsView.coordinator = nil
         coordinator.detach()
     }
 }
 
 @MainActor
-private final class MacReaderKeyMonitorCoordinator {
+final class MacReaderKeyMonitorCoordinator {
     private weak var hostView: NSView?
     private weak var controller: MangaReaderInteractionController?
     private nonisolated(unsafe) var monitor: Any?
@@ -3210,13 +3217,52 @@ private final class MacReaderKeyMonitorCoordinator {
         }
     }
 
-    private func handleKeyDown(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> Bool {
+    private static func isWindowOrDescendant(_ candidate: NSWindow?, of ancestor: NSWindow) -> Bool {
+        var current = candidate
+        var visited = Set<ObjectIdentifier>()
+        while let node = current, visited.insert(ObjectIdentifier(node)).inserted {
+            if node === ancestor {
+                return true
+            }
+            current = node.parent
+        }
+        return false
+    }
+
+    private static func hasVisibleDescendantPanel(in root: NSWindow) -> Bool {
+        var visited = Set<ObjectIdentifier>()
+        return hasVisibleDescendantPanel(in: root, visited: &visited)
+    }
+
+    private static func hasVisibleDescendantPanel(
+        in root: NSWindow,
+        visited: inout Set<ObjectIdentifier>
+    ) -> Bool {
+        guard visited.insert(ObjectIdentifier(root)).inserted else { return false }
+        for child in root.childWindows ?? [] {
+            if child.isVisible && child.alphaValue > 0 && child is NSPanel {
+                return true
+            }
+            if hasVisibleDescendantPanel(in: child, visited: &visited) {
+                return true
+            }
+        }
+        return false
+    }
+
+    func handleKeyDown(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags,
+        activeKeyWindow: NSWindow? = NSApp.keyWindow
+    ) -> Bool {
         guard let hostView,
               let window = hostView.window,
               let controller,
-              window.isKeyWindow || NSApp.keyWindow == nil || NSApp.keyWindow?.parent === window,
+              activeKeyWindow == nil
+                  ? (window.isKeyWindow || NSApp.keyWindow == nil)
+                  : Self.isWindowOrDescendant(activeKeyWindow, of: window),
               !(window.firstResponder is NSText),
-              !(NSApp.keyWindow?.firstResponder is NSText),
+              !(activeKeyWindow?.firstResponder is NSText),
               window.attachedSheet == nil,
               !modifierFlags.contains(.command),
               !modifierFlags.contains(.control),
@@ -3224,8 +3270,7 @@ private final class MacReaderKeyMonitorCoordinator {
             return false
         }
 
-        let hasVisibleChildWindows = !(window.childWindows ?? []).filter(\.isVisible).isEmpty
-        if hasVisibleChildWindows && !controller.isOverlayPresented {
+        if !controller.isOverlayPresented && Self.hasVisibleDescendantPanel(in: window) {
             return false
         }
 
@@ -3267,41 +3312,98 @@ private struct IOSReaderKeyCommandRepresentable: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> IOSReaderKeyCommandViewController {
         let viewController = IOSReaderKeyCommandViewController()
         viewController.controller = controller
+        viewController.isOverlayPresented = isOverlayPresented
         return viewController
     }
 
     func updateUIViewController(_ uiViewController: IOSReaderKeyCommandViewController, context: Context) {
         uiViewController.controller = controller
-        if !isOverlayPresented, uiViewController.view.window != nil, !uiViewController.isFirstResponder {
-            uiViewController.becomeFirstResponder()
+        uiViewController.isOverlayPresented = isOverlayPresented
+        if isOverlayPresented {
+            uiViewController.cancelFirstResponderRestoration()
+        } else {
+            uiViewController.ensureFirstResponderWhenReady()
         }
+    }
+
+    static func dismantleUIViewController(_ uiViewController: IOSReaderKeyCommandViewController, coordinator: ()) {
+        uiViewController.cancelFirstResponderRestoration()
     }
 }
 
-private final class IOSReaderKeyCommandViewController: UIViewController {
+@MainActor
+final class IOSReaderKeyCommandViewController: UIViewController {
     weak var controller: MangaReaderInteractionController?
+    var isOverlayPresented: Bool = false
+    private nonisolated(unsafe) var firstResponderRetryTask: Task<Void, Never>?
 
     override var canBecomeFirstResponder: Bool { true }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if view.window != nil {
-            becomeFirstResponder()
+        ensureFirstResponderWhenReady()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if isMovingFromParent || navigationController?.isBeingDismissed == true {
+            cancelFirstResponderRestoration()
         }
     }
 
-    private var hasExternalPresentedModal: Bool {
-        var root: UIViewController = self
-        while let parent = root.parent {
-            root = parent
+    deinit {
+        firstResponderRetryTask?.cancel()
+    }
+
+    func cancelFirstResponderRestoration() {
+        firstResponderRetryTask?.cancel()
+        firstResponderRetryTask = nil
+    }
+
+    func ensureFirstResponderWhenReady() {
+        cancelFirstResponderRestoration()
+        guard !isOverlayPresented else { return }
+        if viewIfLoaded?.window != nil, presentedViewController == nil {
+            if !isFirstResponder {
+                _ = becomeFirstResponder()
+            }
+            if isFirstResponder {
+                return
+            }
         }
-        return root.presentedViewController != nil
+        if let coordinator = presentedViewController?.transitionCoordinator {
+            coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.ensureFirstResponderWhenReady()
+                }
+            }
+        }
+        firstResponderRetryTask = Task { @MainActor [weak self] in
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(25))
+                guard !Task.isCancelled, let self, !self.isOverlayPresented else {
+                    return
+                }
+                if self.viewIfLoaded?.window != nil, self.presentedViewController == nil {
+                    if !self.isFirstResponder {
+                        _ = self.becomeFirstResponder()
+                    }
+                    if self.isFirstResponder {
+                        self.firstResponderRetryTask = nil
+                        return
+                    }
+                }
+            }
+            self?.firstResponderRetryTask = nil
+        }
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        let overlayOpen = controller?.isOverlayPresented == true
-        if !overlayOpen && hasExternalPresentedModal {
-            return nil
+        let overlayOpen = controller?.isOverlayPresented == true || isOverlayPresented
+        if let presented = presentedViewController {
+            if !overlayOpen || presented.presentedViewController != nil {
+                return nil
+            }
         }
         if overlayOpen {
             let escapeCommand = UIKeyCommand(
@@ -3373,7 +3475,13 @@ private final class IOSReaderKeyCommandViewController: UIViewController {
     }
 
     @objc private func handleEscape() {
-        controller?.handleKey(.escape)
+        _ = controller?.handleKey(.escape)
+        if let overlayOpen = controller?.isOverlayPresented {
+            isOverlayPresented = overlayOpen
+        }
+        if !isOverlayPresented {
+            ensureFirstResponderWhenReady()
+        }
     }
 }
 #endif

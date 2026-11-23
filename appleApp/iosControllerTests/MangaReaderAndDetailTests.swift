@@ -2167,6 +2167,129 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertTrue(overlayController.handleKey(.escape))
         XCTAssertEqual(iosBackCount, 1)
 
+        // Verify real UIKit modal presentation & animated programmatic dismissal restores IOSReaderKeyCommandViewController.isFirstResponder,
+        // and stacked modal/alert over open overlay (plus external modal when !isOverlayPresented) yields keyCommands == nil
+        func findKeyCommandVC(in root: UIViewController?) -> IOSReaderKeyCommandViewController? {
+            guard let root else { return nil }
+            if let match = root as? IOSReaderKeyCommandViewController {
+                return match
+            }
+            for child in root.children {
+                if let match = findKeyCommandVC(in: child) {
+                    return match
+                }
+            }
+            return nil
+        }
+
+        final class ModalFocusTargetView: UIView {
+            override var canBecomeFirstResponder: Bool { true }
+        }
+
+        final class FocusStealingModalViewController: UIViewController {
+            let focusView = ModalFocusTargetView(frame: CGRect(x: 0, y: 0, width: 100, height: 44))
+            override func viewDidLoad() {
+                super.viewDidLoad()
+                view.backgroundColor = .systemBackground
+                view.addSubview(focusView)
+            }
+            override func viewDidAppear(_ animated: Bool) {
+                super.viewDidAppear(animated)
+                _ = focusView.becomeFirstResponder()
+            }
+        }
+
+        let overlayRootVC = try XCTUnwrap(window.rootViewController)
+        let keyCommandVC = try XCTUnwrap(findKeyCommandVC(in: overlayRootVC))
+        try await eventually(window: window) {
+            keyCommandVC.isFirstResponder && keyCommandVC.keyCommands?.count == 11
+        }
+
+        // Present modal sheet representing showChapters / showSettings while isOverlayPresented == true
+        let modalSheetVC = FocusStealingModalViewController()
+        modalSheetVC.modalPresentationStyle = .pageSheet
+        hostModel.isOverlayPresented = true
+        overlayRootVC.present(modalSheetVC, animated: false)
+        try await eventually(window: window) {
+            overlayController.isOverlayPresented &&
+                keyCommandVC.presentedViewController === modalSheetVC &&
+                modalSheetVC.focusView.isFirstResponder &&
+                !keyCommandVC.isFirstResponder
+        }
+        XCTAssertEqual(keyCommandVC.keyCommands?.map(\.input), [UIKeyCommand.inputEscape])
+
+        // Stacked modal/alert presented on top of open overlay must yield keyCommands == nil so system dismisses top alert first
+        let stackedAlertVC = UIAlertController(title: "Locked Chapter", message: nil, preferredStyle: .alert)
+        modalSheetVC.present(stackedAlertVC, animated: false)
+        try await eventually(window: window) {
+            modalSheetVC.presentedViewController === stackedAlertVC
+        }
+        XCTAssertNil(
+            keyCommandVC.keyCommands,
+            "Stacked modal/alert over open overlay must yield keyCommands == nil"
+        )
+        await withCheckedContinuation { continuation in
+            stackedAlertVC.dismiss(animated: false) {
+                continuation.resume()
+            }
+        }
+        XCTAssertEqual(keyCommandVC.keyCommands?.map(\.input), [UIKeyCommand.inputEscape])
+
+        // Programmatic overlay dismissal: flip isOverlayPresented = false synchronously BEFORE UIKit finishes animated dismissal
+        hostModel.isOverlayPresented = false
+        window.layoutIfNeeded()
+        XCTAssertNotNil(
+            keyCommandVC.presentedViewController,
+            "UIKit modal is still presented when SwiftUI synchronously updates IOSReaderKeyCommandRepresentable"
+        )
+        XCTAssertFalse(
+            keyCommandVC.isFirstResponder,
+            "IOSReaderKeyCommandViewController must defer becomeFirstResponder until presentedViewController finishes dismissing"
+        )
+        modalSheetVC.dismiss(animated: true)
+        try await eventually(window: window) {
+            keyCommandVC.presentedViewController == nil &&
+                keyCommandVC.isFirstResponder &&
+                keyCommandVC.keyCommands?.count == 11
+        }
+
+        // Also verify fullScreen modal dismissal where UIKit detaches the underlying view until animated dismissal completes
+        let fullScreenOverlayVC = FocusStealingModalViewController()
+        fullScreenOverlayVC.modalPresentationStyle = .fullScreen
+        hostModel.isOverlayPresented = true
+        try await eventually(window: window) { overlayController.isOverlayPresented }
+        overlayRootVC.present(fullScreenOverlayVC, animated: false)
+        try await eventually(window: window) {
+            keyCommandVC.presentedViewController === fullScreenOverlayVC &&
+                !keyCommandVC.isFirstResponder
+        }
+        hostModel.isOverlayPresented = false
+        fullScreenOverlayVC.dismiss(animated: true)
+        try await eventually(window: window) {
+            keyCommandVC.presentedViewController == nil &&
+                !overlayController.isOverlayPresented &&
+                keyCommandVC.isFirstResponder &&
+                keyCommandVC.keyCommands?.count == 11
+        }
+
+        // External modal presented while !isOverlayPresented (e.g. UIActivityViewController, including on intermediate definesPresentationContext) yields keyCommands == nil
+        let externalShareModalVC = FocusStealingModalViewController()
+        externalShareModalVC.modalPresentationStyle = .pageSheet
+        overlayRootVC.present(externalShareModalVC, animated: false)
+        try await eventually(window: window) {
+            keyCommandVC.presentedViewController === externalShareModalVC
+        }
+        XCTAssertNil(
+            keyCommandVC.keyCommands,
+            "External presented modal while !isOverlayPresented must yield keyCommands == nil"
+        )
+        await withCheckedContinuation { continuation in
+            externalShareModalVC.dismiss(animated: false) {
+                continuation.resume()
+            }
+        }
+        try await eventually(window: window) { keyCommandVC.presentedViewController == nil }
+
         // Verify IOSMangaReaderShareButtonVisiblePreferenceKey still reports true for Gif and false for Ugoira
         let gifMedia = UiMediaGif(
             url: "https://manga.example/ch-1/p0.gif",
