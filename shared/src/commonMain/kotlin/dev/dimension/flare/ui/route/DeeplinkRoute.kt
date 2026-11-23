@@ -40,6 +40,7 @@ public sealed class DeeplinkRoute {
             val pageId: String,
             val title: UiText,
             val parameters: Map<String, String> = emptyMap(),
+            val detailStatusKey: MicroBlogKey? = null,
         ) : Timeline()
 
         @Serializable
