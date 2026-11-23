@@ -1,11 +1,15 @@
 package dev.dimension.flare.ui.component.adaptive
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import dev.dimension.flare.ui.component.platform.adaptiveSideContentSize
 
 @Immutable
 public sealed interface PrimaryWidthStrategy {
@@ -35,6 +39,14 @@ public sealed interface PrimaryWidthStrategy {
     public companion object {
         public val PostDetailDefault: PrimaryWidthStrategy =
             Proportional(fraction = 0.46f, min = 420.dp, max = 580.dp)
+    }
+}
+
+@Composable
+public fun rememberProfilePrimaryWidthStrategy(horizontalPadding: Dp = 0.dp): PrimaryWidthStrategy {
+    val sideWidth by adaptiveSideContentSize()
+    return remember(sideWidth, horizontalPadding) {
+        PrimaryWidthStrategy.Fixed(sideWidth + horizontalPadding)
     }
 }
 
