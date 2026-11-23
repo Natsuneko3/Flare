@@ -197,6 +197,19 @@ internal fun resolveVisibleReadyPageTargets(state: MangaReaderPresenter.State): 
     }
 }
 
+internal fun resolveAndroidTranslationErrorMedia(
+    state: MangaReaderPresenter.State,
+    visibleTargets: List<AndroidSpreadPageTarget> = resolveVisibleReadyPageTargets(state),
+): UiMedia? =
+    (
+        visibleTargets.asSequence().map { it.ready.original } +
+            state.pages.asSequence().mapNotNull { (it.status as? PageMediaStatus.Ready)?.original }
+    ).distinctBy { it.cacheKey }
+        .firstOrNull { media ->
+            val item = state.imageTranslation.item(media)
+            item.error != null || item.errorDetailsVisible
+        }
+
 internal fun consumeAndroidReaderVolumeKeyEvent(
     enabled: Boolean,
     keyCode: Int,
@@ -845,14 +858,12 @@ internal fun MangaReaderContent(
         }
     }
 
-    visibleTargets
-        .distinctBy { it.ready.original.cacheKey }
-        .forEach { target ->
-            ImageTranslationErrorDialog(
-                translation = state.imageTranslation,
-                media = target.ready.original,
-            )
-        }
+    resolveAndroidTranslationErrorMedia(state = state, visibleTargets = visibleTargets)?.let { errorTarget ->
+        ImageTranslationErrorDialog(
+            translation = state.imageTranslation,
+            media = errorTarget,
+        )
+    }
 
     if (showChapterSheet) {
         ModalBottomSheet(
@@ -953,7 +964,7 @@ private fun ImmersiveSystemBarsEffect(hudVisible: Boolean) {
     }
 }
 
-private tailrec fun Context.findActivity(): Activity? =
+private tailrec fun Context?.findActivity(): Activity? =
     when (this) {
         is Activity -> this
         is ContextWrapper -> baseContext.findActivity()

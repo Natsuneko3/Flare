@@ -990,33 +990,51 @@ private fun ZoomablePagedSlot(
                         },
                 ).pointerInput(slot) {
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        val firstDown = awaitFirstDown(requireUnconsumed = false)
+                        val downId = firstDown.id
+                        val downPos = firstDown.position
+                        val touchSlop = viewConfiguration.touchSlop
+                        var pastSinglePanSlop = false
                         do {
                             val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
                             val consumedUpstream = initialEvent.changes.any { it.isConsumed }
                             val event = awaitPointerEvent(PointerEventPass.Main)
                             val pressed = event.changes.count { it.pressed }
-                            if (!consumedUpstream && (pressed >= 2 || scale > ZOOM_EPSILON)) {
-                                val zoomChange = event.calculateZoom()
-                                val panChange = event.calculatePan()
-                                val newScale = (scale * zoomChange).coerceIn(1f, MAX_READER_ZOOM)
-                                if (newScale <= ZOOM_EPSILON) {
-                                    scale = 1f
-                                    offset = Offset.Zero
-                                } else {
-                                    val maxX = (size.width * (newScale - 1f)) / 2f
-                                    val maxY = (size.height * (newScale - 1f)) / 2f
-                                    scale = newScale
-                                    offset =
-                                        Offset(
-                                            x = (offset.x + panChange.x).coerceIn(-maxX, maxX),
-                                            y = (offset.y + panChange.y).coerceIn(-maxY, maxY),
-                                        )
+                            if (!consumedUpstream) {
+                                if (pressed >= 2) {
+                                    pastSinglePanSlop = true
+                                } else if (pressed == 1 && scale > ZOOM_EPSILON && !pastSinglePanSlop) {
+                                    val movedPastSlop =
+                                        event.changes.any { change ->
+                                            change.pressed &&
+                                                (change.id != downId || (change.position - downPos).getDistance() > touchSlop)
+                                        }
+                                    if (movedPastSlop) {
+                                        pastSinglePanSlop = true
+                                    }
                                 }
-                                if (pressed >= 2 || scale > ZOOM_EPSILON) {
-                                    event.changes.forEach { change ->
-                                        if (change.positionChanged()) {
-                                            change.consume()
+                                if (pressed >= 2 || (scale > ZOOM_EPSILON && pastSinglePanSlop)) {
+                                    val zoomChange = event.calculateZoom()
+                                    val panChange = event.calculatePan()
+                                    val newScale = (scale * zoomChange).coerceIn(1f, MAX_READER_ZOOM)
+                                    if (newScale <= ZOOM_EPSILON) {
+                                        scale = 1f
+                                        offset = Offset.Zero
+                                    } else {
+                                        val maxX = (size.width * (newScale - 1f)) / 2f
+                                        val maxY = (size.height * (newScale - 1f)) / 2f
+                                        scale = newScale
+                                        offset =
+                                            Offset(
+                                                x = (offset.x + panChange.x).coerceIn(-maxX, maxX),
+                                                y = (offset.y + panChange.y).coerceIn(-maxY, maxY),
+                                            )
+                                    }
+                                    if (pressed >= 2 || scale > ZOOM_EPSILON) {
+                                        event.changes.forEach { change ->
+                                            if (change.positionChanged()) {
+                                                change.consume()
+                                            }
                                         }
                                     }
                                 }
@@ -1256,50 +1274,68 @@ private fun MangaWebtoonStrip(
                         },
                 ).pointerInput(listState) {
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        val firstDown = awaitFirstDown(requireUnconsumed = false)
+                        val downId = firstDown.id
+                        val downPos = firstDown.position
+                        val touchSlop = viewConfiguration.touchSlop
+                        var pastSinglePanSlop = false
                         do {
                             val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
                             val consumedUpstream = initialEvent.changes.any { it.isConsumed }
                             val event = awaitPointerEvent(PointerEventPass.Main)
                             val pressed = event.changes.count { it.pressed }
-                            if (!consumedUpstream && (pressed >= 2 || scale > ZOOM_EPSILON)) {
-                                val zoomChange = event.calculateZoom()
-                                val panChange = event.calculatePan()
-                                val newScale = (scale * zoomChange).coerceIn(1f, MAX_READER_ZOOM)
-                                if (newScale <= ZOOM_EPSILON) {
-                                    scale = 1f
-                                    offsetX = 0f
-                                    offsetY = 0f
-                                } else {
-                                    val maxX = (size.width * (newScale - 1f)) / 2f
-                                    val maxY = (size.height * (newScale - 1f)) / 2f
-                                    scale = newScale
-                                    offsetX = (offsetX + panChange.x).coerceIn(-maxX, maxX)
-                                    var nextOffsetY = offsetY.coerceIn(-maxY, maxY)
-                                    if (panChange.y != 0f) {
-                                        var remY = panChange.y
-                                        if (nextOffsetY != 0f && nextOffsetY * remY < 0f) {
-                                            val drained =
-                                                if (nextOffsetY > 0f) {
-                                                    maxOf(remY, -nextOffsetY)
-                                                } else {
-                                                    minOf(remY, -nextOffsetY)
-                                                }
-                                            nextOffsetY += drained
-                                            remY -= drained
+                            if (!consumedUpstream) {
+                                if (pressed >= 2) {
+                                    pastSinglePanSlop = true
+                                } else if (pressed == 1 && scale > ZOOM_EPSILON && !pastSinglePanSlop) {
+                                    val movedPastSlop =
+                                        event.changes.any { change ->
+                                            change.pressed &&
+                                                (change.id != downId || (change.position - downPos).getDistance() > touchSlop)
                                         }
-                                        if (remY != 0f) {
-                                            val consumedByList = listState.dispatchRawDelta(-remY / newScale)
-                                            val unconsumedScreenY = remY + consumedByList * newScale
-                                            nextOffsetY = (nextOffsetY + unconsumedScreenY).coerceIn(-maxY, maxY)
-                                        }
+                                    if (movedPastSlop) {
+                                        pastSinglePanSlop = true
                                     }
-                                    offsetY = nextOffsetY
                                 }
-                                if (pressed >= 2 || scale > ZOOM_EPSILON) {
-                                    event.changes.forEach { change ->
-                                        if (change.positionChanged()) {
-                                            change.consume()
+                                if (pressed >= 2 || (scale > ZOOM_EPSILON && pastSinglePanSlop)) {
+                                    val zoomChange = event.calculateZoom()
+                                    val panChange = event.calculatePan()
+                                    val newScale = (scale * zoomChange).coerceIn(1f, MAX_READER_ZOOM)
+                                    if (newScale <= ZOOM_EPSILON) {
+                                        scale = 1f
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    } else {
+                                        val maxX = (size.width * (newScale - 1f)) / 2f
+                                        val maxY = (size.height * (newScale - 1f)) / 2f
+                                        scale = newScale
+                                        offsetX = (offsetX + panChange.x).coerceIn(-maxX, maxX)
+                                        var nextOffsetY = offsetY.coerceIn(-maxY, maxY)
+                                        if (panChange.y != 0f) {
+                                            var remY = panChange.y
+                                            if (nextOffsetY != 0f && nextOffsetY * remY < 0f) {
+                                                val drained =
+                                                    if (nextOffsetY > 0f) {
+                                                        maxOf(remY, -nextOffsetY)
+                                                    } else {
+                                                        minOf(remY, -nextOffsetY)
+                                                    }
+                                                nextOffsetY += drained
+                                                remY -= drained
+                                            }
+                                            if (remY != 0f) {
+                                                val consumedByList = listState.dispatchRawDelta(-remY / newScale)
+                                                val unconsumedScreenY = remY + consumedByList * newScale
+                                                nextOffsetY = (nextOffsetY + unconsumedScreenY).coerceIn(-maxY, maxY)
+                                            }
+                                        }
+                                        offsetY = nextOffsetY
+                                    }
+                                    if (pressed >= 2 || scale > ZOOM_EPSILON) {
+                                        event.changes.forEach { change ->
+                                            if (change.positionChanged()) {
+                                                change.consume()
+                                            }
                                         }
                                     }
                                 }

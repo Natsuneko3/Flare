@@ -1870,6 +1870,125 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertEqual(fakeState.currentPageIndex, 1)
     }
 
+    func testMacReaderChapterProgressAndNonPrimaryTranslationErrorResolution() throws {
+        let ch1 = UiMangaChapter(id: "ch-1", title: "Chapter 1: Start", subtitle: "20p", uploadedAt: nil, locked: false, url: nil)
+        let ch2 = UiMangaChapter(id: "ch-2", title: "Chapter 2: Resume", subtitle: "24p", uploadedAt: nil, locked: false, url: nil)
+        let ch3 = UiMangaChapter(id: "ch-3", title: "Chapter 3: Finished", subtitle: "28p", uploadedAt: nil, locked: false, url: nil)
+
+        let pages = makeMacSamplePages(count: 4)
+        let spreadSlots: [any ReaderSlot] = [
+            ReaderSlotDouble(leftPageIndex: 1, rightPageIndex: 0, primaryPageIndex: 0),
+            ReaderSlotDouble(leftPageIndex: 3, rightPageIndex: 2, primaryPageIndex: 2),
+        ]
+        let fakeTranslation = StatefulMacImageTranslationState()
+        let fakeState = FakeMacMangaReaderState(
+            direction: .rtl,
+            pages: pages,
+            slots: spreadSlots,
+            imageTranslation: fakeTranslation
+        )
+        fakeState.chapterItems = [
+            ReaderChapterItem(chapter: ch1, isCurrent: true, isRead: false, lastPageIndex: 0),
+            ReaderChapterItem(chapter: ch2, isCurrent: false, isRead: false, lastPageIndex: 5),
+            ReaderChapterItem(chapter: ch3, isCurrent: false, isRead: true, lastPageIndex: 11),
+        ]
+
+        let chapterListPDF = try renderPDFText(
+            VStack(alignment: .leading, spacing: 4) {
+                MangaReaderChapterListView(state: fakeState).chapterRows
+            },
+            width: 380,
+            height: 460
+        )
+        let expectedResumeLabel = FlareAppleUILocalization.string(
+            "manga_reader_page_number",
+            fallback: "Page %lld",
+            arguments: [Int64(6)]
+        )
+        let unexpectedZeroPageLabel = FlareAppleUILocalization.string(
+            "manga_reader_page_number",
+            fallback: "Page %lld",
+            arguments: [Int64(1)]
+        )
+        let unexpectedReadPageLabel = FlareAppleUILocalization.string(
+            "manga_reader_page_number",
+            fallback: "Page %lld",
+            arguments: [Int64(12)]
+        )
+        let normalizedChapterPDF = chapterListPDF
+            .replacingOccurrences(of: "\u{2EDA}", with: "\u{9875}")
+            .replacingOccurrences(of: "\u{2FB4}", with: "\u{9801}")
+            .precomposedStringWithCompatibilityMapping
+        XCTAssertTrue(
+            normalizedChapterPDF.contains(expectedResumeLabel.precomposedStringWithCompatibilityMapping),
+            chapterListPDF
+        )
+        XCTAssertFalse(
+            normalizedChapterPDF.contains(unexpectedZeroPageLabel.precomposedStringWithCompatibilityMapping),
+            chapterListPDF
+        )
+        XCTAssertFalse(
+            normalizedChapterPDF.contains(unexpectedReadPageLabel.precomposedStringWithCompatibilityMapping),
+            chapterListPDF
+        )
+
+        let page0Original = try XCTUnwrap((pages[0].status as? PageMediaStatusReady)?.original)
+        let page1Original = try XCTUnwrap((pages[1].status as? PageMediaStatusReady)?.original)
+        let page3Original = try XCTUnwrap((pages[3].status as? PageMediaStatusReady)?.original)
+
+        // With no translation error, activeTranslationErrorMedia falls back to currentReadyPage (page 0)
+        XCTAssertEqual(
+            MangaReaderContentView.resolveActiveTranslationErrorMedia(state: fakeState)?.url,
+            page0Original.url
+        )
+
+        // Error on secondary spread page (page 1) surfaces page 1 even while currentPageIndex == 0
+        fakeTranslation.itemsByURL[page1Original.url] = ImageTranslationItem(
+            loading: false,
+            translated: nil,
+            showingTranslated: false,
+            error: .authentication,
+            previous: nil,
+            previousWasShown: false,
+            errorDetails: "spread-secondary-error",
+            errorDetailsVisible: false
+        )
+        XCTAssertEqual(
+            MangaReaderContentView.resolveActiveTranslationErrorMedia(state: fakeState)?.url,
+            page1Original.url
+        )
+
+        // Viewing error details on non-primary page (error == nil, errorDetailsVisible == true) keeps page 1 bound
+        fakeTranslation.setErrorDetailsVisible(media: page1Original, visible: true)
+        XCTAssertEqual(
+            MangaReaderContentView.resolveActiveTranslationErrorMedia(state: fakeState)?.url,
+            page1Original.url
+        )
+        fakeTranslation.setErrorDetailsVisible(media: page1Original, visible: false)
+
+        // Error on off-screen Webtoon page (page 3 while currentPageIndex == 0) also surfaces page 3
+        fakeState.setDirection(direction: .webtoon)
+        fakeTranslation.itemsByURL[page3Original.url] = ImageTranslationItem(
+            loading: false,
+            translated: nil,
+            showingTranslated: false,
+            error: .network,
+            previous: nil,
+            previousWasShown: false,
+            errorDetails: nil,
+            errorDetailsVisible: false
+        )
+        XCTAssertEqual(
+            MangaReaderContentView.resolveActiveTranslationErrorMedia(state: fakeState)?.url,
+            page3Original.url
+        )
+        fakeTranslation.clearError(media: page3Original)
+        XCTAssertEqual(
+            MangaReaderContentView.resolveActiveTranslationErrorMedia(state: fakeState)?.url,
+            page0Original.url
+        )
+    }
+
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -2163,7 +2282,7 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
     var previousBoundary: any ChapterBoundary
     var nextBoundary: any ChapterBoundary
     var prefetchMedia: [UiMediaImage] = []
-    let imageTranslation: any ImageTranslationPresenterState = NoopMacImageTranslationState()
+    let imageTranslation: any ImageTranslationPresenterState
     var chapterGroups: [UiMangaChapterGroup] = []
     var selectedChapterGroupId: String?
     var chapterSortDescending: Bool = true
@@ -2186,7 +2305,8 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
         pages: [ReaderPageState],
         slots: [any ReaderSlot],
         previousBoundary: any ChapterBoundary = ChapterBoundaryNone.shared,
-        nextBoundary: any ChapterBoundary = ChapterBoundaryNone.shared
+        nextBoundary: any ChapterBoundary = ChapterBoundaryNone.shared,
+        imageTranslation: any ImageTranslationPresenterState = NoopMacImageTranslationState()
     ) {
         self.direction = direction
         self.pages = pages
@@ -2194,6 +2314,7 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
         self.doublePageSpread = slots.contains { $0 is ReaderSlotDouble }
         self.previousBoundary = previousBoundary
         self.nextBoundary = nextBoundary
+        self.imageTranslation = imageTranslation
     }
 
     var currentSlotIndex: Int32 {
@@ -2358,6 +2479,57 @@ private final class NoopMacImageTranslationState: NSObject, ImageTranslationPres
     }
     func regenerate(media: any UiMedia) {}
     func setErrorDetailsVisible(media: any UiMedia, visible: Bool) {}
+    func toggle(media: any UiMedia) {}
+}
+
+@MainActor
+private final class StatefulMacImageTranslationState: NSObject, ImageTranslationPresenterState {
+    let configured = true
+    var itemsByURL: [String: ImageTranslationItem] = [:]
+
+    func canRegenerate(media: any UiMedia) -> Bool { itemsByURL[media.url]?.translated != nil }
+    func canToggle(media: any UiMedia) -> Bool { media is UiMediaImage }
+    func clearError(media: any UiMedia) {
+        guard let existing = itemsByURL[media.url] else { return }
+        itemsByURL[media.url] = ImageTranslationItem(
+            loading: existing.loading,
+            translated: existing.translated,
+            showingTranslated: existing.showingTranslated,
+            error: nil,
+            previous: existing.previous,
+            previousWasShown: existing.previousWasShown,
+            errorDetails: existing.errorDetails,
+            errorDetailsVisible: existing.errorDetailsVisible
+        )
+    }
+    func displayed(media: any UiMedia) -> any UiMedia { media }
+    func imageFailed(media: any UiMedia, url: String) {}
+    func item(media: any UiMedia) -> ImageTranslationItem {
+        itemsByURL[media.url] ?? ImageTranslationItem(
+            loading: false,
+            translated: nil,
+            showingTranslated: false,
+            error: nil,
+            previous: nil,
+            previousWasShown: false,
+            errorDetails: nil,
+            errorDetailsVisible: false
+        )
+    }
+    func regenerate(media: any UiMedia) {}
+    func setErrorDetailsVisible(media: any UiMedia, visible: Bool) {
+        let existing = item(media: media)
+        itemsByURL[media.url] = ImageTranslationItem(
+            loading: existing.loading,
+            translated: existing.translated,
+            showingTranslated: existing.showingTranslated,
+            error: nil,
+            previous: existing.previous,
+            previousWasShown: existing.previousWasShown,
+            errorDetails: existing.errorDetails,
+            errorDetailsVisible: visible
+        )
+    }
     func toggle(media: any UiMedia) {}
 }
 

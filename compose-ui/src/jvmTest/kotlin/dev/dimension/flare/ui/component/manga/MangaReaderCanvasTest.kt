@@ -1291,6 +1291,129 @@ class MangaReaderCanvasTest {
         }
         composeRule.onNodeWithTag("manga_reader_page_0").assertExists()
     }
+
+    @Test
+    fun zoomedSubSlopTouchJitterPreservesPageLongPressWhileSuperSlopPanPans() {
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Rtl,
+                initialPages = samplePages(2),
+                initialSlots =
+                    persistentListOf(
+                        ReaderSlot.Double(leftPageIndex = 1, rightPageIndex = 0, primaryPageIndex = 0),
+                    ),
+            )
+        var hudVisible by mutableStateOf(false)
+        val longPressedPages = mutableListOf<Pair<Int, String>>()
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.requiredSize(width = 1000.dp, height = 700.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = hudVisible,
+                        onToggleHud = { hudVisible = !hudVisible },
+                        onPageLongPress = { page, ready ->
+                            longPressedPages += page.index to (ready.displayed as UiMedia.Image).url
+                        },
+                        modifier = Modifier.testTag("reader_canvas"),
+                    )
+                }
+            }
+        }
+
+        val zoomAnchorX = with(composeRule.density) { 100.dp.toPx() }
+        val rightX = with(composeRule.density) { 750.dp.toPx() }
+        val centerY = with(composeRule.density) { 350.dp.toPx() }
+        val tolerancePx = with(composeRule.density) { 2.dp.toPx() }
+
+        // Zoom in 2.5x anchored near the left edge so leftPageIndex (1) spans past rightX
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            doubleClick(Offset(zoomAnchorX, centerY))
+        }
+        composeRule.mainClock.advanceTimeBy(400)
+
+        val zoomedLeftPosBefore =
+            composeRule
+                .onNodeWithTag("manga_reader_page_1")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .x
+
+        // 1. Sub-slop finger micro-jitter during long-press hold while zoomed MUST still fire onPageLongPress without panning
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            down(Offset(rightX, centerY))
+            advanceEventTime(50L)
+            moveBy(Offset(1f, 1f))
+            advanceEventTime(50L)
+            moveBy(Offset(-0.5f, 0.5f))
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100L)
+            up()
+        }
+        composeRule.runOnIdle {
+            assertEquals(listOf(1 to "local-test-page-1"), longPressedPages)
+            assertEquals(0, fakeState.stepForwardCount)
+            assertEquals(0, fakeState.stepBackwardCount)
+            assertEquals(false, hudVisible)
+        }
+        val zoomedLeftPosAfterJitter =
+            composeRule
+                .onNodeWithTag("manga_reader_page_1")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .x
+        assertTrue(
+            abs(zoomedLeftPosAfterJitter - zoomedLeftPosBefore) <= tolerancePx,
+            "Expected sub-slop jitter not to pan zoomed spread, before=$zoomedLeftPosBefore, after=$zoomedLeftPosAfterJitter",
+        )
+
+        // 2. Super-slop drag while zoomed MUST pan the spread and MUST NOT fire onPageLongPress
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            down(Offset(rightX, centerY))
+            advanceEventTime(50L)
+            moveBy(Offset(-140f, 0f))
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100L)
+            up()
+        }
+        composeRule.runOnIdle {
+            assertEquals(listOf(1 to "local-test-page-1"), longPressedPages)
+            assertEquals(0, fakeState.stepForwardCount)
+            assertEquals(0, fakeState.stepBackwardCount)
+            assertEquals(false, hudVisible)
+        }
+        val zoomedLeftPosAfterPan =
+            composeRule
+                .onNodeWithTag("manga_reader_page_1")
+                .fetchSemanticsNode()
+                .positionInRoot
+                .x
+        assertTrue(
+            zoomedLeftPosAfterPan < zoomedLeftPosAfterJitter - 80f,
+            "Expected super-slop drag while zoomed to pan spread left, before=$zoomedLeftPosAfterJitter, after=$zoomedLeftPosAfterPan",
+        )
+
+        // 3. Webtoon zoomed sub-slop jitter during hold also fires onPageLongPress
+        composeRule.runOnIdle {
+            fakeState.setDirection(MangaReadingDirection.Webtoon)
+        }
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            doubleClick(center)
+        }
+        composeRule.mainClock.advanceTimeBy(400)
+        composeRule.onNodeWithTag("reader_canvas").performTouchInput {
+            down(center)
+            advanceEventTime(50L)
+            moveBy(Offset(1f, 1f))
+            advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100L)
+            up()
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(1 to "local-test-page-1", 0 to "local-test-page-0"),
+                longPressedPages,
+            )
+        }
+    }
 }
 
 private fun samplePages(count: Int): ImmutableList<ReaderPageState> =

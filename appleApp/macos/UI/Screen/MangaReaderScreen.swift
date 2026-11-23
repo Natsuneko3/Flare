@@ -300,6 +300,26 @@ struct MangaReaderContentView: View {
         return state.pages[idx].status as? PageMediaStatusReady
     }
 
+    static func resolveActiveTranslationErrorMedia(state: any MangaReaderPresenterState) -> (any UiMedia)? {
+        for page in state.pages {
+            guard let ready = page.status as? PageMediaStatusReady else { continue }
+            let item = state.imageTranslation.item(media: ready.original)
+            if item.error != nil || item.errorDetailsVisible {
+                return ready.original
+            }
+        }
+        let idx = Int(state.currentPageIndex)
+        guard state.pages.indices.contains(idx),
+              let ready = state.pages[idx].status as? PageMediaStatusReady else {
+            return nil
+        }
+        return ready.original
+    }
+
+    private var activeTranslationErrorMedia: (any UiMedia)? {
+        Self.resolveActiveTranslationErrorMedia(state: state)
+    }
+
     private var isBottomScrubberVisible: Bool {
         guard !state.pages.isEmpty else { return false }
         if usesWindowToolbar {
@@ -320,13 +340,23 @@ struct MangaReaderContentView: View {
                     state: state,
                     hudVisible: hudVisible,
                     onToggleHud: {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            if hudVisible && !isScrubberIdleHidden {
+                        let didShowHud: Bool
+                        if hudVisible && !isScrubberIdleHidden {
+                            didShowHud = false
+                            withAnimation(.easeInOut(duration: 0.18)) {
                                 hudVisible = false
-                            } else {
+                            }
+                        } else {
+                            didShowHud = true
+                            withAnimation(.easeInOut(duration: 0.18)) {
                                 isScrubberIdleHidden = false
                                 hudVisible = true
                             }
+                        }
+                        if didShowHud {
+                            scheduleScrubberIdleHideIfNeeded()
+                        } else {
+                            pointerIdleTask?.cancel()
                         }
                     },
                     onBack: goBack,
@@ -433,13 +463,16 @@ struct MangaReaderContentView: View {
                 )
             )
         }
+        .onAppear {
+            scheduleScrubberIdleHideIfNeeded()
+        }
         .onDisappear {
             pointerIdleTask?.cancel()
             pointerIdleTask = nil
         }
         .imageTranslationErrorAlert(
             state: state.imageTranslation,
-            media: currentReadyPage?.original
+            media: activeTranslationErrorMedia
         )
     }
 

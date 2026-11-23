@@ -280,6 +280,26 @@ struct MangaReaderContentView: View {
         return state.pages[idx].status as? PageMediaStatusReady
     }
 
+    static func resolveActiveTranslationErrorMedia(state: any MangaReaderPresenterState) -> (any UiMedia)? {
+        for page in state.pages {
+            guard let ready = page.status as? PageMediaStatusReady else { continue }
+            let item = state.imageTranslation.item(media: ready.original)
+            if item.error != nil || item.errorDetailsVisible {
+                return ready.original
+            }
+        }
+        let idx = Int(state.currentPageIndex)
+        guard state.pages.indices.contains(idx),
+              let ready = state.pages[idx].status as? PageMediaStatusReady else {
+            return nil
+        }
+        return ready.original
+    }
+
+    private var activeTranslationErrorMedia: (any UiMedia)? {
+        Self.resolveActiveTranslationErrorMedia(state: state)
+    }
+
     static func resolveVisibleReadyPageTargets(state: any MangaReaderPresenterState) -> [VisiblePageTarget] {
         if state.direction != .webtoon {
             let slotIdx = Int(state.currentSlotIndex)
@@ -404,7 +424,7 @@ struct MangaReaderContentView: View {
         .persistentSystemOverlays(hudVisible ? .automatic : .hidden)
         .imageTranslationErrorAlert(
             state: state.imageTranslation,
-            media: currentReadyPage?.original
+            media: activeTranslationErrorMedia
         )
     }
 

@@ -106,6 +106,7 @@ import dev.dimension.flare.manga_reader_direction_rtl
 import dev.dimension.flare.manga_reader_direction_webtoon
 import dev.dimension.flare.manga_reader_double_page_spread
 import dev.dimension.flare.manga_reader_next_chapter
+import dev.dimension.flare.manga_reader_page_number
 import dev.dimension.flare.manga_reader_page_of
 import dev.dimension.flare.manga_reader_page_position
 import dev.dimension.flare.manga_reader_previous_chapter
@@ -117,6 +118,7 @@ import dev.dimension.flare.media_save
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.navigate_back
+import dev.dimension.flare.ui.component.DateTimeText
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareScrollBar
 import dev.dimension.flare.ui.component.manga.MangaReaderCanvas
@@ -133,6 +135,7 @@ import dev.dimension.flare.ui.presenter.manga.ReaderSlot
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.screen.media.ImageTranslationActions
+import dev.dimension.flare.ui.screen.media.ImageTranslationErrorDialog
 import dev.dimension.flare.ui.screen.settings.imageTranslationText
 import dev.dimension.flare.ui.theme.LocalComposeWindow
 import io.github.composefluent.FluentTheme
@@ -261,7 +264,17 @@ internal fun MangaReaderContent(
     val bottomHudInteractionSource = remember { MutableInteractionSource() }
     val isBottomHudHovered by bottomHudInteractionSource.collectIsHoveredAsState()
 
-    val anyFlyoutOpen = chaptersFlyoutOpen || settingsFlyoutOpen || lockedPromptChapter != null
+    val activeTranslationErrorMedia =
+        state.pages.firstNotNullOfOrNull { page ->
+            val originalImage = (page.status as? PageMediaStatus.Ready)?.original as? UiMedia.Image ?: return@firstNotNullOfOrNull null
+            val item = state.imageTranslation.item(originalImage)
+            originalImage.takeIf { item.error != null || item.errorDetailsVisible }
+        }
+    val anyFlyoutOpen =
+        chaptersFlyoutOpen ||
+            settingsFlyoutOpen ||
+            lockedPromptChapter != null ||
+            activeTranslationErrorMedia != null
     val isHudHovered = isTopHudHovered || isBottomHudHovered
     val canvasFocusRequester = remember { FocusRequester() }
 
@@ -297,9 +310,23 @@ internal fun MangaReaderContent(
                 .fillMaxSize()
                 .background(Color.Black)
                 .onPreviewKeyEvent { event ->
-                    if (lockedPromptChapter != null && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                        lockedPromptChapter = null
-                        true
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        when {
+                            activeTranslationErrorMedia != null -> {
+                                state.imageTranslation.clearError(activeTranslationErrorMedia)
+                                state.imageTranslation.setErrorDetailsVisible(activeTranslationErrorMedia, false)
+                                true
+                            }
+
+                            lockedPromptChapter != null -> {
+                                lockedPromptChapter = null
+                                true
+                            }
+
+                            else -> {
+                                false
+                            }
+                        }
                     } else {
                         false
                     }
@@ -534,6 +561,7 @@ internal fun MangaReaderContent(
                         ImageTranslationActions(
                             translation = state.imageTranslation,
                             media = ready.original,
+                            showErrorDialog = false,
                         )
                         if (onSavePage != null && ready.original !is UiMedia.Ugoira) {
                             SubtleButton(
@@ -779,6 +807,13 @@ internal fun MangaReaderContent(
                 }
             }
         }
+
+        activeTranslationErrorMedia?.let { errorMedia ->
+            ImageTranslationErrorDialog(
+                translation = state.imageTranslation,
+                media = errorMedia,
+            )
+        }
     }
 }
 
@@ -967,14 +1002,39 @@ private fun DesktopMangaReaderChapterRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                item.chapter.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
-                    Text(
-                        text = subtitle,
-                        style = FluentTheme.typography.caption,
-                        color = FluentTheme.colors.text.text.secondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                val subtitle = item.chapter.subtitle?.takeIf { it.isNotBlank() }
+                val hasResumePage = !item.isRead && item.lastPageIndex > 0
+                val uploadedAt = item.chapter.uploadedAt
+                if (subtitle != null || hasResumePage || uploadedAt != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        subtitle?.let { sub ->
+                            Text(
+                                text = sub,
+                                style = FluentTheme.typography.caption,
+                                color = FluentTheme.colors.text.text.secondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        if (hasResumePage) {
+                            Text(
+                                text = stringResource(Res.string.manga_reader_page_number, item.lastPageIndex + 1),
+                                style = FluentTheme.typography.caption,
+                                color = FluentTheme.colors.text.accent.primary,
+                            )
+                        }
+                        uploadedAt?.let { uploaded ->
+                            DateTimeText(
+                                data = uploaded,
+                                style = FluentTheme.typography.caption,
+                                color = FluentTheme.colors.text.text.secondary,
+                            )
+                        }
+                    }
                 }
             }
         }

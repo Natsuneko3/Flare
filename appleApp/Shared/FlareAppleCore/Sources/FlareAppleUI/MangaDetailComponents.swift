@@ -1574,7 +1574,7 @@ public struct MangaReaderChapterListView: View {
     }
 
     @ViewBuilder
-    private var chapterRows: some View {
+    var chapterRows: some View {
         ForEach(state.chapterItems, id: \.chapter.id) { item in
             let isCurrent = item.isCurrent || item.chapter.id == state.activeChapterId
             let isLocked = item.chapter.locked
@@ -1612,13 +1612,26 @@ public struct MangaReaderChapterListView: View {
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
 
-                        if item.chapter.subtitle?.trimmedNonBlank != nil || item.chapter.uploadedAt != nil {
+                        let subtitle = item.chapter.subtitle?.trimmedNonBlank
+                        let hasResumePage = !item.isRead && item.lastPageIndex > 0
+                        if subtitle != nil || hasResumePage || item.chapter.uploadedAt != nil {
                             HStack(spacing: 8) {
-                                if let subtitle = item.chapter.subtitle?.trimmedNonBlank {
+                                if let subtitle {
                                     Text(verbatim: subtitle)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
+                                }
+                                if hasResumePage {
+                                    Text(
+                                        verbatim: FlareAppleUILocalization.string(
+                                            "manga_reader_page_number",
+                                            fallback: "Page %lld",
+                                            arguments: [Int64(item.lastPageIndex) + 1]
+                                        )
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentColor)
                                 }
                                 if let uploadedAt = item.chapter.uploadedAt {
                                     DateTimeText(data: uploadedAt)

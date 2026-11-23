@@ -43,6 +43,7 @@ import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.PostActionFamily
 import dev.dimension.flare.data.model.appearance.GlobalAppearance
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
+import dev.dimension.flare.data.translation.image.ImageTranslationError
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.LocalGlobalAppearance
@@ -1269,6 +1270,135 @@ class MangaScreenTest {
             assertEquals(1, windowClosedCount)
         }
     }
+
+    @Test(timeout = 30_000)
+    fun desktopReaderShowsPartialChapterPageProgressAndNonPrimaryTranslationErrorDialog() {
+        val chapterGroups =
+            persistentListOf(
+                UiMangaChapterGroup(
+                    id = "main",
+                    title = null,
+                    chapters =
+                        persistentListOf(
+                            UiMangaChapter("ch-1", "Chapter 1: Dawn", "20p", null, locked = false, url = "https://manga.example/ch/1"),
+                            UiMangaChapter("ch-2", "Chapter 2: Midpoint", "24p", null, locked = false, url = "https://manga.example/ch/2"),
+                            UiMangaChapter("ch-3", "Chapter 3: Finale", "28p", null, locked = false, url = "https://manga.example/ch/3"),
+                        ),
+                ),
+            )
+        var translationEntries by mutableStateOf<Map<String, ImageTranslationItem>>(emptyMap())
+        val fakeTranslationState =
+            object : ImageTranslationPresenter.State {
+                override val configured: Boolean = true
+
+                override fun item(media: UiMedia): ImageTranslationItem = translationEntries[media.url] ?: ImageTranslationItem()
+
+                override fun displayed(media: UiMedia): UiMedia = media
+
+                override fun toggle(media: UiMedia) {}
+
+                override fun regenerate(media: UiMedia) {}
+
+                override fun clearError(media: UiMedia) {
+                    val existing = translationEntries[media.url] ?: return
+                    translationEntries = translationEntries + (media.url to existing.copy(error = null))
+                }
+
+                override fun setErrorDetailsVisible(
+                    media: UiMedia,
+                    visible: Boolean,
+                ) {
+                    val existing = translationEntries[media.url] ?: ImageTranslationItem()
+                    translationEntries = translationEntries + (media.url to existing.copy(error = null, errorDetailsVisible = visible))
+                }
+
+                override fun imageFailed(
+                    media: UiMedia,
+                    url: String,
+                ) {}
+            }
+        val fakeReaderState =
+            FakeDesktopReaderState(
+                pageCount = 2,
+                initialDirection = MangaReadingDirection.Rtl,
+                chapterGroups = chapterGroups,
+                chapterProgress =
+                    mapOf(
+                        "ch-1" to (false to 0),
+                        "ch-2" to (false to 4),
+                        "ch-3" to (true to 9),
+                    ),
+                customSlots =
+                    persistentListOf(
+                        ReaderSlot.Double(leftPageIndex = 1, rightPageIndex = 0, primaryPageIndex = 0),
+                    ),
+                customImageTranslation = fakeTranslationState,
+            )
+        var windowClosedCount = 0
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(960.dp, 720.dp)
+                            .onPreviewKeyEvent { false }
+                            .onKeyEvent { event ->
+                                if (shouldCloseDesktopWindowOnEscape(event)) {
+                                    windowClosedCount++
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                ) {
+                    MangaReaderContent(
+                        state = fakeReaderState,
+                        onBack = { windowClosedCount++ },
+                        isStandaloneWindow = true,
+                    )
+                }
+            }
+        }
+
+        // 1. DesktopMangaReaderChaptersFlyout renders "Page 5" (lastPageIndex + 1) only for partially-read chapters (!isRead && lastPageIndex > 0)
+        compose.onNodeWithTag("manga_reader_chapters_button").performClick()
+        compose.onNodeWithText("Page 5").assertIsDisplayed()
+        compose.onNodeWithText("Page 1").assertDoesNotExist()
+        compose.onNodeWithText("Page 10").assertDoesNotExist()
+
+        // 2. Close flyout by clicking canvas outside HUD, let HUD auto-hide after 2.5s, then fail translation on spread's secondary page (local-1 != currentReady local-0)
+        compose.onNodeWithTag("manga_reader_canvas").performMouseInput {
+            click(Offset(50f, 500f))
+        }
+        compose.mainClock.advanceTimeBy(3_000L)
+        compose.onNodeWithTag("manga_reader_collapsed_page_badge").assertIsDisplayed()
+        compose.onNodeWithTag("manga_reader_chapters_button").assertDoesNotExist()
+
+        compose.runOnIdle {
+            translationEntries =
+                mapOf(
+                    "local-1" to
+                        ImageTranslationItem(
+                            error = ImageTranslationError.Authentication,
+                            errorDetails = "secondary-spread-error",
+                        ),
+                )
+        }
+
+        compose.onNodeWithText("Image translation").assertIsDisplayed()
+        compose.onNodeWithText("Check the provider credentials and service access.").assertIsDisplayed()
+
+        // Pressing Escape dismisses the translation error dialog cleanly without closing the standalone window
+        compose.onNodeWithTag("image_translation_error_dialog").assertIsDisplayed().performKeyInput {
+            pressKey(Key.Escape)
+        }
+        compose.onNodeWithText("Check the provider credentials and service access.").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(0, windowClosedCount)
+            assertEquals(null, translationEntries["local-1"]?.error)
+        }
+    }
 }
 
 private class FakeMangaDetailState(
@@ -1336,6 +1466,9 @@ private class FakeDesktopReaderState(
     initialDirection: MangaReadingDirection,
     override val chapterUrl: String? = "https://manga.example/ch/1",
     override val chapterGroups: ImmutableList<UiMangaChapterGroup> = persistentListOf(),
+    private val chapterProgress: Map<String, Pair<Boolean, Int>> = emptyMap(),
+    customSlots: ImmutableList<ReaderSlot>? = null,
+    customImageTranslation: ImageTranslationPresenter.State? = null,
 ) : MangaReaderPresenter.State {
     override val mangaTitle: String = "Starlight Odyssey"
     override val chapterTitle: String = "Chapter 1"
@@ -1352,11 +1485,13 @@ private class FakeDesktopReaderState(
                     aspectRatio = 1000f / 1400f,
                 )
             }.toImmutableList()
-    override val slots: ImmutableList<ReaderSlot> = (0 until pageCount).map(ReaderSlot::Single).toImmutableList()
+    override val slots: ImmutableList<ReaderSlot> =
+        customSlots ?: (0 until pageCount).map(ReaderSlot::Single).toImmutableList()
     override var currentPageIndex: Int by mutableIntStateOf(0)
-    override val currentSlotIndex: Int get() = currentPageIndex
+    override val currentSlotIndex: Int
+        get() = slots.indexOfFirst { it.contains(currentPageIndex) }.coerceAtLeast(0)
     private var _direction by mutableStateOf(initialDirection)
-    private var _doublePageSpread by mutableStateOf(false)
+    private var _doublePageSpread by mutableStateOf(slots.any { it is ReaderSlot.Double })
     private var _spreadCoverSinglePage by mutableStateOf(true)
     private var _webtoonConstrainWidthOnWideScreen by mutableStateOf(true)
     override val direction: MangaReadingDirection get() = _direction
@@ -1371,11 +1506,12 @@ private class FakeDesktopReaderState(
             val ordered = if (chapterSortDescending) group.chapters.asReversed() else group.chapters
             return ordered
                 .map { chapter ->
+                    val progress = chapterProgress[chapter.id]
                     ReaderChapterItem(
                         chapter = chapter,
                         isCurrent = chapter.id == activeChapterId,
-                        isRead = false,
-                        lastPageIndex = 0,
+                        isRead = progress?.first ?: false,
+                        lastPageIndex = progress?.second ?: 0,
                     )
                 }.toImmutableList()
         }
@@ -1384,29 +1520,30 @@ private class FakeDesktopReaderState(
     override val nextBoundary: ChapterBoundary = ChapterBoundary.None
     override val prefetchMedia: ImmutableList<UiMedia.Image> = persistentListOf()
     override val imageTranslation: ImageTranslationPresenter.State =
-        object : ImageTranslationPresenter.State {
-            override val configured: Boolean = false
+        customImageTranslation
+            ?: object : ImageTranslationPresenter.State {
+                override val configured: Boolean = false
 
-            override fun item(media: UiMedia): ImageTranslationItem = ImageTranslationItem()
+                override fun item(media: UiMedia): ImageTranslationItem = ImageTranslationItem()
 
-            override fun displayed(media: UiMedia): UiMedia = media
+                override fun displayed(media: UiMedia): UiMedia = media
 
-            override fun toggle(media: UiMedia) {}
+                override fun toggle(media: UiMedia) {}
 
-            override fun regenerate(media: UiMedia) {}
+                override fun regenerate(media: UiMedia) {}
 
-            override fun clearError(media: UiMedia) {}
+                override fun clearError(media: UiMedia) {}
 
-            override fun setErrorDetailsVisible(
-                media: UiMedia,
-                visible: Boolean,
-            ) {}
+                override fun setErrorDetailsVisible(
+                    media: UiMedia,
+                    visible: Boolean,
+                ) {}
 
-            override fun imageFailed(
-                media: UiMedia,
-                url: String,
-            ) {}
-        }
+                override fun imageFailed(
+                    media: UiMedia,
+                    url: String,
+                ) {}
+            }
 
     override fun setWideViewport(isWide: Boolean) {}
 

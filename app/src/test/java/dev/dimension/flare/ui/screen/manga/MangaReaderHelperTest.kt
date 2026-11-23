@@ -2,6 +2,7 @@ package dev.dimension.flare.ui.screen.manga
 
 import android.view.KeyEvent
 import dev.dimension.flare.data.model.ProxyRef
+import dev.dimension.flare.data.translation.image.ImageTranslationError
 import dev.dimension.flare.ui.model.MangaReadingDirection
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiState
@@ -255,6 +256,61 @@ class MangaReaderHelperTest {
         assertNull(resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = 3))
         assertNull(resolveLongPressedReadyPageTarget(pages = pages, longPressedPageIndex = 99))
     }
+
+    @Test(timeout = 10_000)
+    fun resolveAndroidTranslationErrorMediaSurfacesSpreadAndOffscreenWebtoonErrors() {
+        val pages = (0..3).map(::readyReaderPage).toImmutableList()
+        val entries = mutableMapOf<String, ImageTranslationItem>()
+        val translationState =
+            object : ImageTranslationPresenter.State {
+                override val configured: Boolean = true
+
+                override fun item(media: UiMedia): ImageTranslationItem = entries[media.url] ?: ImageTranslationItem()
+
+                override fun displayed(media: UiMedia): UiMedia = media
+
+                override fun toggle(media: UiMedia) {}
+
+                override fun regenerate(media: UiMedia) {}
+
+                override fun clearError(media: UiMedia) {
+                    entries.remove(media.url)
+                }
+
+                override fun setErrorDetailsVisible(
+                    media: UiMedia,
+                    visible: Boolean,
+                ) {}
+
+                override fun imageFailed(
+                    media: UiMedia,
+                    url: String,
+                ) {}
+            }
+        val webtoonState =
+            FakeHelperReaderState(
+                direction = MangaReadingDirection.Webtoon,
+                pages = pages,
+                slots = (0..3).map(ReaderSlot::Single).toImmutableList(),
+                currentPageIndex = 0,
+                currentSlotIndex = 0,
+                imageTranslation = translationState,
+            )
+
+        assertNull(resolveAndroidTranslationErrorMedia(webtoonState))
+
+        // Off-screen scrolled Webtoon page (page 3 while currentPageIndex == 0) still surfaces its translation error
+        val page3Media = (pages[3].status as PageMediaStatus.Ready).original
+        entries[page3Media.url] = ImageTranslationItem(error = ImageTranslationError.Authentication)
+        assertEquals(page3Media, resolveAndroidTranslationErrorMedia(webtoonState))
+
+        // Visible page error takes priority first, then falls back to off-screen error once cleared
+        val page0Media = (pages[0].status as PageMediaStatus.Ready).original
+        entries[page0Media.url] = ImageTranslationItem(errorDetailsVisible = true)
+        assertEquals(page0Media, resolveAndroidTranslationErrorMedia(webtoonState))
+        entries.remove(page0Media.url)
+        assertEquals(page3Media, resolveAndroidTranslationErrorMedia(webtoonState))
+    }
 }
 
 private fun readyReaderPage(index: Int): ReaderPageState {
@@ -281,6 +337,7 @@ private data class FakeHelperReaderState(
     override val slots: ImmutableList<ReaderSlot>,
     override val currentPageIndex: Int,
     override val currentSlotIndex: Int,
+    override val imageTranslation: ImageTranslationPresenter.State = NoopHelperImageTranslationState,
 ) : MangaReaderPresenter.State {
     override val mangaTitle: String = "Manga"
     override val chapterTitle: String = "Chapter 1"
@@ -292,7 +349,6 @@ private data class FakeHelperReaderState(
     override val previousBoundary: ChapterBoundary = ChapterBoundary.None
     override val nextBoundary: ChapterBoundary = ChapterBoundary.None
     override val prefetchMedia: ImmutableList<UiMedia.Image> = persistentListOf()
-    override val imageTranslation: ImageTranslationPresenter.State = NoopHelperImageTranslationState
 
     override fun setWideViewport(isWide: Boolean) {}
 

@@ -993,4 +993,5 @@
     <string name="manga_reader_constrain_webtoon_width">Constrain webtoon width</string>
     <string name="manga_reader_sort_newest_first">Newest first</string>
     <string name="manga_reader_sort_oldest_first">Oldest first</string>
+    <string name="manga_reader_page_number">Page %1$d</string>
 </resources>

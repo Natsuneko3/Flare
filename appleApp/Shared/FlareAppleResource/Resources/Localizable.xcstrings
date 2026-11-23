@@ -228814,6 +228814,14 @@
       "zh-Hans": { "stringUnit": { "state": "translated", "value": "复制图片" } },
       "zh-Hant": { "stringUnit": { "state": "translated", "value": "複製圖片" } }
     }
+  },
+  "manga_reader_page_number": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Page %lld" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%lld ページ" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "第 %lld 页" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "第 %lld 頁" } }
+    }
   }
 
   },
