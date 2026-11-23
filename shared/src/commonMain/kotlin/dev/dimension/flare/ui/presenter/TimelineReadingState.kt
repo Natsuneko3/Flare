@@ -10,11 +10,13 @@ public interface TimelineReadingState {
     public fun viewportChanged(
         index: Int,
         offset: Double,
+        itemKey: String?,
     )
 
     public fun positionChanged(
         index: Int,
         offset: Double,
+        itemKey: String?,
     )
 
     public fun restorationFinished()

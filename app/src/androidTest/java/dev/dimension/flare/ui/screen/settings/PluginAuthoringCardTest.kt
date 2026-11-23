@@ -23,7 +23,11 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -33,6 +37,7 @@ import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -284,6 +289,61 @@ class PluginAuthoringCardTest {
         compose.runOnIdle { assertTrue(updated) }
         compose.onNodeWithContentDescription(more).assertIsDisplayed().performClick()
         compose.onNodeWithText(context.getString(R.string.plugin_uninstall)).assertIsDisplayed()
+    }
+
+    @Test
+    fun timelinePermissionLabelTogglesOnlyItsOwnSwitch() {
+        val plugin =
+            PluginManagementItemV1(
+                pluginId = "example.plugin",
+                platformId = "example",
+                nameText = UiText.Raw("Example"),
+                version = "1.0",
+                iconPath = "",
+                sourceUrl = "https://github.com/example/plugin",
+                availableUpdate = null,
+                hasTimelineProcessor = true,
+            )
+        val opened = mutableListOf<String>()
+        val uriHandler =
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    opened += uri
+                }
+            }
+        var enabled by mutableStateOf(false)
+        var busy by mutableStateOf(false)
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                    PluginItem(
+                        plugin = plugin.copy(timelineProcessorEnabled = enabled),
+                        busy = busy,
+                        shapesIndex = 0,
+                        shapesCount = 1,
+                        onSettings = {},
+                        onCancelUpdate = {},
+                        onUninstall = {},
+                        onUpdate = {},
+                        onToggleTimelineProcessor = { _, checked -> enabled = checked },
+                    )
+                }
+            }
+        }
+        val label = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.plugin_timeline_processor_toggle)
+        val toggle = compose.onNode(hasText(label) and isToggleable())
+        val labelText = compose.onNodeWithText(label, useUnmergedTree = true)
+        toggle.assertIsOff()
+        labelText.performTouchInput { click() }
+        toggle.assertIsOn().performClick()
+        toggle.assertIsOff()
+        compose.runOnIdle { busy = true }
+        toggle.assertIsNotEnabled()
+        labelText.performTouchInput { click() }
+        compose.runOnIdle {
+            assertTrue(opened.isEmpty())
+            assertEquals(false, enabled)
+        }
     }
 
     @Test

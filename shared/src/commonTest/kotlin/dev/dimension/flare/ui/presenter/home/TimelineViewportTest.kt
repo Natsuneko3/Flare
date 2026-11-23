@@ -1,6 +1,8 @@
 package dev.dimension.flare.ui.presenter.home
 
 import androidx.datastore.core.DataStore
+import dev.dimension.flare.common.decodeProtobuf
+import dev.dimension.flare.common.encodeProtobuf
 import dev.dimension.flare.data.datastore.model.HomeTimelinePosition
 import dev.dimension.flare.data.datastore.model.HomeTimelinePreferences
 import dev.dimension.flare.ui.model.TimelineReadingPosition
@@ -11,7 +13,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -21,10 +22,38 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimelineViewportTest {
     @Test
-    fun bookmarksRoundTripWithoutPostKeys() {
-        val value = HomeTimelinePreferences("tab", mapOf("tab" to HomeTimelinePosition("source", TimelineReadingPosition(54, -17.25), 12)))
-        assertEquals(value, Json.decodeFromString<HomeTimelinePreferences>(Json.encodeToString(value)))
+    fun bookmarksWithoutAKeyRemainReadable() {
+        assertEquals(TimelineReadingPosition(54, -17.25), "08361100000000004031c0".decodeProtobuf<TimelineReadingPosition>())
     }
+
+    @Test
+    fun aKeyedBookmarkCanLoadBeyondItsOldIndex() =
+        runTest {
+            val store = MemoryPreferences()
+            val reader = TimelineViewport(store, "source", "tab", this)
+            reader.positionChanged(18, -17.25, "post-25")
+            reader.savePosition()
+            runCurrent()
+
+            val persisted = store.data.value.encodeProtobuf()
+            val reopened = TimelineViewport(MemoryPreferences(persisted.decodeProtobuf()), "source", "tab", this)
+            reopened.restore()
+            assertEquals(TimelineReadingPosition(18, -17.25, "post-25"), reopened.target.value)
+            assertEquals(19, reopened.cacheChanged(keys(20), false))
+            assertNull(reopened.cacheChanged(keys(40), false))
+        }
+
+    @Test
+    fun aMissingKeyFallsBackToTheSavedIndexAtTheEndOfTheCache() =
+        runTest {
+            val position = TimelineReadingPosition(8, -12.0, "deleted")
+            val store = MemoryPreferences(HomeTimelinePreferences(positions = mapOf("tab" to HomeTimelinePosition("source", position, 1))))
+            val reader = TimelineViewport(store, "source", "tab", this)
+            reader.restore()
+            assertEquals(19, reader.cacheChanged(keys(20), false))
+            assertNull(reader.cacheChanged(keys(30), true))
+            assertEquals(TimelineReadingPosition(8, -12.0), reader.target.value)
+        }
 
     @Test
     fun localPrefixLoadsBeforeRestorationAndRemoteWorkWaitsForTheUI() =
@@ -147,11 +176,11 @@ class TimelineViewportTest {
             val reader = TimelineViewport(store, "source", "tab", this)
             reader.restore()
             val old = reader.target.value
-            reader.positionChanged(3, -17.0)
+            reader.positionChanged(2, -20.0)
             reader.restoreCurrentPosition()
             reader.restorationFinished(old)
             reader.viewportChanged(0, 0.0)
-            assertEquals(TimelineReadingPosition(3, -17.0), reader.target.value)
+            assertEquals(TimelineReadingPosition(2, -20.0), reader.target.value)
             reader.restorationFinished(reader.target.value)
             reader.viewportChanged(4, -9.0)
             reader.savePosition()

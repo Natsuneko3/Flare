@@ -401,18 +401,13 @@ final class StatusShareTests: XCTestCase {
 
     private func pickerReplyIconRegion(state: ReplyPickerState, appearance: TimelineAppearance) async throws -> Data {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let previousWindow = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
         let host = UIHostingController(rootView: StatusShareReplyPicker(state: state)
             .environment(\.timelineAppearance, appearance))
         window.overrideUserInterfaceStyle = .light
         window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer {
-            window.isHidden = true
-            window.rootViewController = nil
-            previousWindow?.makeKey()
-        }
+        window.isHidden = false
+        defer { window.isHidden = true }
 
         func replyList(in view: UIView) -> UICollectionView? {
             (view as? UICollectionView) ?? view.subviews.lazy.compactMap { replyList(in: $0) }.first

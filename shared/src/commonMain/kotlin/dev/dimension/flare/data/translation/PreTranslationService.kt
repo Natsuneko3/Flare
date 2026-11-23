@@ -347,12 +347,8 @@ internal class OnlinePreTranslationService(
 
     private suspend fun cleanupStaleInFlightTranslations() {
         val updatedAt = Clock.System.now().toEpochMilliseconds()
-        val staleBefore = updatedAt - PreTranslationStoreSupport.STALE_TRANSLATION_TIMEOUT.inWholeMilliseconds
-        if (!database.translationDao().hasStaleInFlight(staleBefore = staleBefore)) {
-            return
-        }
         database.translationDao().markStaleInFlightAsFailed(
-            staleBefore = staleBefore,
+            staleBefore = updatedAt - PreTranslationStoreSupport.STALE_TRANSLATION_TIMEOUT.inWholeMilliseconds,
             statusReason = PreTranslationStoreSupport.FAILED_STALE_IN_FLIGHT_REASON,
             updatedAt = updatedAt,
         )

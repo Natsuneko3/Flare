@@ -6,11 +6,13 @@ import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.model.tab.accountLoader
 import dev.dimension.flare.data.network.pixiv.PixivRankingMode
 import dev.dimension.flare.data.network.pixiv.PixivRestrict
+import dev.dimension.flare.data.network.pixiv.pixivShortLink
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformDataSourceContext
 import dev.dimension.flare.model.PlatformDeepLink
 import dev.dimension.flare.model.PlatformMetadata
+import dev.dimension.flare.model.PlatformShortLink
 import dev.dimension.flare.model.PlatformSpec
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiStrings
@@ -38,6 +40,7 @@ public data object PixivPlatformSpec :
             agentAliases = listOf("pxv", "p站"),
         )
     override val order: Int = 50
+    override val shortLink: PlatformShortLink = pixivShortLink
 
     internal val bookmarkTimelineSpec =
         TimelineSpec(

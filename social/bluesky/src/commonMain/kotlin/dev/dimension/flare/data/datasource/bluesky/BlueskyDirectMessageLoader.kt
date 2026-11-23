@@ -1,6 +1,7 @@
 package dev.dimension.flare.data.datasource.bluesky
 
 import chat.bsky.convo.DeleteMessageForSelfRequest
+import chat.bsky.convo.GetConvoAvailabilityQueryParams
 import chat.bsky.convo.GetConvoForMembersQueryParams
 import chat.bsky.convo.GetConvoQueryParams
 import chat.bsky.convo.GetLogQueryParams
@@ -19,7 +20,6 @@ import dev.dimension.flare.data.datasource.microblog.loader.DirectMessageDelta
 import dev.dimension.flare.data.datasource.microblog.loader.DirectMessageLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
-import dev.dimension.flare.data.network.bluesky.BlueskyService
 import dev.dimension.flare.data.platform.BLUESKY_PLATFORM_ID
 import dev.dimension.flare.data.repository.tryRun
 import dev.dimension.flare.model.MicroBlogKey
@@ -29,10 +29,12 @@ import dev.dimension.flare.ui.model.UiState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import sh.christian.ozone.BlueskyApi
 import sh.christian.ozone.api.Did
+import sh.christian.ozone.api.response.AtpResponse
 
 internal class BlueskyDirectMessageLoader(
-    private val getService: suspend () -> BlueskyService,
+    private val getService: suspend () -> BlueskyApi,
     private val accountKey: MicroBlogKey,
 ) : DirectMessageLoader {
     override val platformId: String = BLUESKY_PLATFORM_ID
@@ -244,16 +246,16 @@ internal class BlueskyDirectMessageLoader(
             )
         }
 
-    override suspend fun canSend(userKey: MicroBlogKey): Boolean =
-        tryRun {
-            getService()
-                .getConvoForMembers(
-                    params =
-                        GetConvoForMembersQueryParams(
-                            members = persistentListOf(Did(did = userKey.id)),
-                        ),
-                ).requireResponse()
-        }.isSuccess
+    override suspend fun canSend(userKey: MicroBlogKey): Boolean {
+        val response =
+            getService().getConvoAvailability(
+                GetConvoAvailabilityQueryParams(members = persistentListOf(Did(userKey.id))),
+            )
+        return when (response) {
+            is AtpResponse.Success -> response.response.canChat
+            is AtpResponse.Failure -> throw response.asException()
+        }
+    }
 
     override suspend fun loadBadgeCount(): Int {
         val response =

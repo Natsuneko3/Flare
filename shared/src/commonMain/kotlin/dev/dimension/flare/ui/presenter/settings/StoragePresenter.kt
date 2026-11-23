@@ -6,7 +6,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.room3.RoomDatabase
+import androidx.room3.useWriterConnection
+import androidx.sqlite.async.step
+import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.cache.CacheDatabase
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.data.repository.UgoiraRepository
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.ui.presenter.PresenterBase
@@ -16,6 +21,7 @@ import kotlinx.coroutines.launch
 @WebPresenter("storage")
 public class StoragePresenter : PresenterBase<StorageState>() {
     private val appDataStore by koinInject<dev.dimension.flare.data.datastore.AppDataStore>()
+    private val appDatabase by koinInject<AppDatabase>()
     private val cacheDatabase by koinInject<CacheDatabase>()
     private val ugoiraRepository by koinInject<UgoiraRepository>()
     private val imageTranslationRepository by koinInject<dev.dimension.flare.data.translation.image.ImageTranslationRepository>()
@@ -35,13 +41,19 @@ public class StoragePresenter : PresenterBase<StorageState>() {
     @Throws(Exception::class)
     public suspend fun ugoiraCacheSize(): Long = ugoiraRepository.size()
 
-    public suspend fun clearCacheSuspend() {
+    /** Returns false if a database is still in use and its WAL could not be truncated. */
+    @Throws(Exception::class)
+    public suspend fun clearCacheSuspend(): Boolean {
         cacheDatabase.clearAllTables()
+        timelineProcessorServiceOrNull()?.clearAll()
         cacheDatabase.timelineResets.value += 1
         appDataStore.homeTimelinePreferences.updateData {
             dev.dimension.flare.data.datastore.model
                 .HomeTimelinePreferences()
         }
+        val cacheWalCleared = cacheDatabase.truncateWal()
+        val appWalCleared = appDatabase.truncateWal()
+        return cacheWalCleared && appWalCleared
     }
 
     @Composable
@@ -69,6 +81,13 @@ public class StoragePresenter : PresenterBase<StorageState>() {
         }
     }
 }
+
+private suspend fun RoomDatabase.truncateWal(): Boolean =
+    useWriterConnection { writer ->
+        writer.usePrepared("PRAGMA wal_checkpoint(TRUNCATE)") { result ->
+            result.step() && result.getLong(0) == 0L
+        }
+    }
 
 @Immutable
 public interface StorageState {

@@ -93,12 +93,17 @@ struct StorageScreen: View {
                     Button("Ok", role: .destructive) {
                         guard !isClearingStorage else { return }
                         showDatabaseClearAlert = false
+                        isClearingDatabaseCache = true
                         Task { @MainActor in
-                            isClearingDatabaseCache = true
-                            defer {
-                                isClearingDatabaseCache = false
+                            defer { isClearingDatabaseCache = false }
+                            do {
+                                let reclaimed = try await storagePresenter.clearCacheSuspend()
+                                if !reclaimed.boolValue {
+                                    Drops.show(.init(stringLiteral: .init(localized: "storage_clear_database_cache_busy")))
+                                }
+                            } catch {
+                                Drops.show(.init(stringLiteral: error.localizedDescription))
                             }
-                            try? await storagePresenter.clearCacheSuspend()
                         }
                     }
                 }

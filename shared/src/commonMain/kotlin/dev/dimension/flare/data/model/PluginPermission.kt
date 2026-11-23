@@ -17,4 +17,5 @@ public enum class PluginPermissionType {
     Cookie,
     HttpOrigin,
     AccountHttpOrigin,
+    TimelinePostAccess,
 }

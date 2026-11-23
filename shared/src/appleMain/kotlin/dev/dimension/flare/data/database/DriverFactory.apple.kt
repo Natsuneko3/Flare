@@ -17,9 +17,7 @@ public actual class DriverFactory {
         isCache: Boolean,
     ): RoomDatabase.Builder<T> {
         val dbFilePath = databaseDirPath(isCache) + "/$name"
-        return Room.databaseBuilder<T>(
-            name = dbFilePath,
-        )
+        return Room.databaseBuilder<T>(name = dbFilePath)
     }
 
     @OptIn(ExperimentalForeignApi::class)

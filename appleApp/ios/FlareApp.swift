@@ -31,10 +31,8 @@ struct FlareApp: App {
             }
             .modifier(IOSTimelineListEnvironment())
         .ugoiraExportStatus()
-            .onChange(of: scenePhase, initial: true) { oldPhase, phase in
-                if oldPhase != phase {
-                    MediaCacheMaintenance.handleScenePhase(phase)
-                }
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                MediaCacheMaintenance.handleScenePhase(phase)
                 PluginRuntimeLifecycleFacadeV1().setForeground(active: phase == .active)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in

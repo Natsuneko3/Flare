@@ -117,14 +117,9 @@ struct ProfileScreen: View {
                         .accessibilityLabel(Text("profile_insight_title", bundle: .main))
                         .help(String(localized: "profile_insight_title", defaultValue: "Profile insight", bundle: .main))
                     }
-                    StatusActionsView(
-                        data: presenter.state.actions,
-                        useText: false,
-                        allowSpacer: false,
-                        applyPostActionLayout: false,
-                        isDetail: true
-                    )
-                    .buttonStyle(.plain)
+                    if let group = presenter.state.actions.first as? ActionMenu.Group {
+                        ProfileToolbarMenu(group: group)
+                    }
                 }
             }
         }

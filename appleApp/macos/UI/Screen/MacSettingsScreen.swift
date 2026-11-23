@@ -1061,10 +1061,16 @@ private struct MacStorageSettingsPane: View {
 
     private func clearDatabaseCache() {
         isClearingDatabaseCache = true
-        presenter.state.clearCache()
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            isClearingDatabaseCache = false
+            defer { isClearingDatabaseCache = false }
+            do {
+                let reclaimed = try await storagePresenter.clearCacheSuspend()
+                if !reclaimed.boolValue {
+                    notice = MacStorageNotice(title: "storage_title", message: String(localized: "storage_clear_database_cache_busy"))
+                }
+            } catch {
+                notice = MacStorageNotice(title: "error", message: error.localizedDescription)
+            }
         }
     }
 

@@ -12,7 +12,7 @@ public sealed interface LinkOpenDefaultMethod {
 
 public fun AppSettings.LinkOpenDefaults.methodFor(host: String): LinkOpenDefaultMethod? =
     rules
-        .lastOrNull { it.host == host }
+        .lastOrNull { it.host.lowercase() == host.lowercase() }
         ?.method
         ?.toLinkOpenDefaultMethod()
 
@@ -23,10 +23,10 @@ public fun AppSettings.LinkOpenDefaults.upsert(
     copy(
         rules =
             rules
-                .filterNot { it.host == host }
+                .filterNot { it.host.lowercase() == host.lowercase() }
                 .plus(
                     AppSettings.LinkOpenDefaults.Rule(
-                        host = host,
+                        host = host.lowercase(),
                         method = method.toAppSettingsMethod(),
                     ),
                 ),
@@ -34,7 +34,7 @@ public fun AppSettings.LinkOpenDefaults.upsert(
 
 public fun AppSettings.LinkOpenDefaults.remove(host: String): AppSettings.LinkOpenDefaults =
     copy(
-        rules = rules.filterNot { it.host == host },
+        rules = rules.filterNot { it.host.lowercase() == host.lowercase() },
     )
 
 private fun AppSettings.LinkOpenDefaults.Method.toLinkOpenDefaultMethod(): LinkOpenDefaultMethod =

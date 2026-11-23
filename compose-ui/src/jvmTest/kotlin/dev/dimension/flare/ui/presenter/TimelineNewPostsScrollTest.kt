@@ -166,7 +166,7 @@ class TimelineNewPostsScrollTest {
                     .first()
                     .key,
             )
-            assertEquals(TimelineReadingPosition(8, -25.0), reading.currentPosition)
+            assertEquals(TimelineReadingPosition(8, -25.0, "post-5"), reading.currentPosition)
         }
     }
 
@@ -360,10 +360,10 @@ class TimelineNewPostsScrollTest {
     }
 
     @Test
-    fun restoringARealItemWithAHeaderKeepsItsOffsetAcrossRefresh() {
-        val pages = MutableStateFlow(page(0..19))
+    fun restoringAKeyedItemWithAHeaderKeepsItsOffsetAcrossRefresh() {
+        val pages = MutableStateFlow(page(-2..19))
         val scroll = LazyStaggeredGridState()
-        val reading = Reading(TimelineReadingPosition(5, -25.0))
+        val reading = Reading(TimelineReadingPosition(5, -25.0, "post-5"))
         lateinit var state: TimelineWithLazyListState
         composeRule.setContent {
             val paging = pages.collectAsLazyPagingItems().toPagingState()
@@ -418,7 +418,7 @@ class TimelineNewPostsScrollTest {
                     .offset.y,
             )
             assertEquals(
-                TimelineReadingPosition(8, -25.0),
+                TimelineReadingPosition(8, -25.0, "post-5"),
                 reading.currentPosition,
                 "A prepend must update the persisted index even without another gesture",
             )
@@ -673,16 +673,19 @@ class TimelineNewPostsScrollTest {
         override fun viewportChanged(
             index: Int,
             offset: Double,
+            itemKey: String?,
         ) {
-            if (restorePosition == null) target = TimelineReadingPosition(index, offset)
+            if (restorePosition == null) target = TimelineReadingPosition(index, offset, itemKey)
         }
 
         override fun positionChanged(
             index: Int,
             offset: Double,
+            itemKey: String?,
         ) {
             saved++
-            target = TimelineReadingPosition(index, offset)
+            target = TimelineReadingPosition(index, offset, itemKey)
+            restorePosition = null
         }
 
         override fun restorationFinished() {

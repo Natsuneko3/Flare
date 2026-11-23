@@ -45,7 +45,7 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     description?.let { validateText(it, "description", errors) }
 
     check(
-        platform != null || translation != null || settings != null || platformExtension != null,
+        platform != null || translation != null || settings != null || platformExtension != null || timelineProcessor != null,
         "manifest.empty",
         "manifest",
         "Plugin must provide a capability or settings page",
@@ -60,10 +60,10 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     }
 
     check(
-        (translation == null && settings == null && platformExtension == null) || apiVersion >= 2,
+        (translation == null && settings == null && platformExtension == null && timelineProcessor == null) || apiVersion >= 2,
         "manifest.features",
         "apiVersion",
-        "Translation, settings and platform extensions require Host API v2",
+        "Translation, settings, platform extensions and timeline processors require Host API v2",
     )
     translation?.let {
         check(it.apiVersion == 1, "translation.version", "translation.apiVersion", "Unsupported translation interface")
@@ -72,14 +72,74 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
             namespaces == null ||
                 (
                     namespaces.size <= 64 && namespaces.distinct().size == namespaces.size &&
-                        namespaces.all { name ->
-                            name.isNotEmpty() &&
-                                runCatching { name.encodeToByteArray(throwOnInvalidSequence = true).size <= 256 }.getOrDefault(false) &&
-                                name.none { char -> char.code < 32 }
-                        }
+                        namespaces.all(String::isValidStorageNamespace)
                 ),
             "translation.cache",
             "translation.cache.storageNamespaces",
+            "Invalid storage dependencies",
+        )
+    }
+    timelineProcessor?.let { processor ->
+        check(
+            processor.apiVersion == 1,
+            "timelineProcessor.version",
+            "timelineProcessor.apiVersion",
+            "Unsupported timeline processor interface",
+        )
+        check(
+            processor.maxBatchSize in 1..50,
+            "timelineProcessor.batchSize",
+            "timelineProcessor.maxBatchSize",
+            "Batch size must be between 1 and 50",
+        )
+        processor.filter?.let { filter ->
+            check(
+                filter.containsAny.size <= 32,
+                "timelineProcessor.filter.containsAny",
+                "timelineProcessor.filter.containsAny",
+                "Too many containsAny filters",
+            )
+            filter.containsAny.forEachIndexed { index, needle ->
+                check(
+                    needle.isNotBlank() &&
+                        runCatching { needle.encodeToByteArray(throwOnInvalidSequence = true).size <= 256 }.getOrDefault(false),
+                    "timelineProcessor.filter.containsAny",
+                    "timelineProcessor.filter.containsAny[$index]",
+                    "Filter needle must be non-blank and at most 256 UTF-8 bytes",
+                )
+            }
+            filter.regex?.let { pattern ->
+                check(
+                    pattern.isNotBlank() && pattern.length <= 512 && compileTimelineFilterRegex(pattern) != null,
+                    "timelineProcessor.filter.regex",
+                    "timelineProcessor.filter.regex",
+                    "Filter regex must be a valid pattern of at most 512 characters",
+                )
+            }
+            check(
+                filter.linkHosts.size <= 32,
+                "timelineProcessor.filter.linkHosts",
+                "timelineProcessor.filter.linkHosts",
+                "Too many link host filters",
+            )
+            filter.linkHosts.forEachIndexed { index, host ->
+                check(
+                    host.isCanonicalLowercaseHost(),
+                    "timelineProcessor.filter.linkHost",
+                    "timelineProcessor.filter.linkHosts[$index]",
+                    "Filter link host must be a canonical lowercase hostname",
+                )
+            }
+        }
+        val namespaces = processor.cache.storageNamespaces
+        check(
+            namespaces == null ||
+                (
+                    namespaces.size <= 16 && namespaces.distinct().size == namespaces.size &&
+                        namespaces.all(String::isValidStorageNamespace)
+                ),
+            "timelineProcessor.cache",
+            "timelineProcessor.cache.storageNamespaces",
             "Invalid storage dependencies",
         )
     }
@@ -399,6 +459,8 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     return ManifestValidationV1(errors = errors, warnings = warnings)
 }
 
+internal const val TIMELINE_PROCESS_BATCH_METHOD = "timelineProcessor.processBatch"
+
 public fun PluginManifestV1.requiredMethods(): Set<String> =
     buildSet {
         platform?.let { platform ->
@@ -433,6 +495,9 @@ public fun PluginManifestV1.requiredMethods(): Set<String> =
             add("translation.translateBatchDocumentJson")
         }
         platformExtension?.actions?.forEach { add("platformExtension.actions.${it.id}") }
+        if (timelineProcessor != null) {
+            add(TIMELINE_PROCESS_BATCH_METHOD)
+        }
     }
 
 private fun validateLogin(
@@ -709,6 +774,13 @@ private fun String.httpsOriginOrNull(): String? {
     return origin
 }
 
+private fun String.isValidStorageNamespace(): Boolean =
+    isNotEmpty() &&
+        runCatching { encodeToByteArray(throwOnInvalidSequence = true).size <= 256 }.getOrDefault(false) &&
+        none { char -> char.code < 32 }
+
+private fun String.isCanonicalLowercaseHost(): Boolean = LOWERCASE_ASCII_HOST.matches(this) && isValidDnsHost()
+
 private fun String.isValidDnsHost(): Boolean =
     length <= 253 &&
         split('.').all { label ->
@@ -718,6 +790,7 @@ private fun String.isValidDnsHost(): Boolean =
                 label.all { it.isLetterOrDigit() || it == '-' }
         }
 
+private val LOWERCASE_ASCII_HOST = Regex("[a-z0-9.-]+")
 private val PLUGIN_ID = Regex("[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9-]*)+")
 private val PLATFORM_ID = Regex("[A-Za-z][A-Za-z0-9_.-]{0,63}")
 private val ID = Regex("[A-Za-z][A-Za-z0-9_.-]{0,127}")

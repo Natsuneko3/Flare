@@ -1,5 +1,6 @@
 package dev.dimension.flare.data.datasource.microblog.handler
 
+import androidx.collection.LruCache
 import androidx.paging.ExperimentalPagingApi
 import androidx.paging.Pager
 import androidx.paging.PagingData
@@ -37,6 +38,8 @@ import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.withProxy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -57,6 +60,7 @@ public class DirectMessageHandler(
     private val database: CacheDatabase by koinInject()
     private val accountType = AccountType.Specific(accountKey)
     private val inMemoryBadgeCount = MutableStateFlow<Int?>(null)
+    private val canSendCache = LruCache<MicroBlogKey, Boolean>(maxSize = 128)
 
     public fun list(scope: CoroutineScope): Flow<PagingData<UiDMRoom>> =
         Pager(
@@ -306,7 +310,13 @@ public class DirectMessageHandler(
             }
         }
 
-    public suspend fun canSend(userKey: MicroBlogKey): Boolean = loader.canSend(userKey)
+    public fun cachedCanSend(userKey: MicroBlogKey): Boolean? = canSendCache[userKey]
+
+    public suspend fun canSend(userKey: MicroBlogKey): Boolean =
+        loader.canSend(userKey).also { result ->
+            currentCoroutineContext().ensureActive()
+            canSendCache.put(userKey, result)
+        }
 
     private suspend fun saveDelta(
         roomKey: MicroBlogKey,

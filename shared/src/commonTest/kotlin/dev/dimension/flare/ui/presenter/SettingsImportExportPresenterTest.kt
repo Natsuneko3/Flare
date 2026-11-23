@@ -4,6 +4,7 @@ import androidx.room3.Room
 import dev.dimension.flare.RobolectricTest
 import dev.dimension.flare.createTestFileSystem
 import dev.dimension.flare.createTestRootPath
+import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datastore.AppDataStore
@@ -69,6 +70,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SettingsImportExportPresenterTest : RobolectricTest() {
+    private lateinit var appDatabase: AppDatabase
     private lateinit var cacheDatabase: CacheDatabase
     private val json = Json { ignoreUnknownKeys = true }
     private lateinit var root: Path
@@ -77,6 +79,12 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
 
     @BeforeTest
     fun setup() {
+        appDatabase =
+            Room
+                .memoryDatabaseBuilder<AppDatabase>()
+                .setDriver(createDatabaseDriver())
+                .setQueryCoroutineContext(Dispatchers.Unconfined)
+                .build()
         cacheDatabase =
             Room
                 .memoryDatabaseBuilder<CacheDatabase>()
@@ -99,6 +107,7 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
                 module {
                     testSingle { settingsRepository }
                     testSingle { appDataStore }
+                    testSingle { appDatabase }
                     testSingle { cacheDatabase }
                 },
             )
@@ -107,6 +116,7 @@ class SettingsImportExportPresenterTest : RobolectricTest() {
 
     @AfterTest
     fun tearDown() {
+        appDatabase.close()
         cacheDatabase.close()
         stopKoin()
         deleteTestRootPath(root)
