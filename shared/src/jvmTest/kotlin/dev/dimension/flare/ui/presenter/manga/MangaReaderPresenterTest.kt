@@ -1323,6 +1323,272 @@ class MangaReaderPresenterTest {
             }
         }
 
+    @Test
+    fun inReaderChapterDirectorySupportsGroupSwitchSortToggleAndOpenChapterReuse() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-reader-directory-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val realStorage = OkioFileStorage(FileSystem.SYSTEM, tempDir.toString().toPath(), cacheRoot = tempDir.toString().toPath())
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(dispatcher)
+                    .build()
+            var now = 30_000L
+            val progressRepository = MangaProgressRepository(cacheDatabase) { now++ }
+            val mockClient = HttpClient(MockEngine { respond(ByteArray(0)) })
+            val imageTranslationRepository =
+                ImageTranslationRepository(
+                    storage = realStorage,
+                    client = mockClient,
+                    adapters = emptyList(),
+                    sourceClient = { mockClient },
+                    imageCompressor = JvmImageCompressor(),
+                )
+
+            val ch1 = UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = "https://manga.example/ch-1")
+            val ch2 = UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = "https://manga.example/ch-2")
+            val ch3Locked = UiMangaChapter("ch-3", "Chapter 3", null, null, locked = true, url = "https://manga.example/paywall/ch-3")
+            val ex1 = UiMangaChapter("ex-1", "Extra 1", null, null, locked = false, url = null)
+            val detail =
+                readerDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-main",
+                                title = UiText.Raw("Main"),
+                                chapters = persistentListOf(ch1, ch2, ch3Locked),
+                            ),
+                            UiMangaChapterGroup(
+                                id = "group-extra",
+                                title = UiText.Raw("Extra"),
+                                chapters = persistentListOf(ex1),
+                            ),
+                        ),
+                )
+            val pagesByChapter =
+                mapOf(
+                    "ch-1" to readyPages(count = 4, prefix = "ch1"),
+                    "ch-2" to readyPages(count = 3, prefix = "ch2"),
+                    "ex-1" to readyPages(count = 3, prefix = "ex1"),
+                )
+            val chapterPageLoads = CopyOnWriteArrayList<String>()
+            val detailCache = MutableStateFlow<UiMangaDetail?>(null)
+            val mangaDataSource =
+                object : MangaDataSource {
+                    override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> =
+                        Cacheable(
+                            fetchSource = { detailCache.value = detail },
+                            cacheSource = { detailCache.filterNotNull() },
+                        )
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ): ImmutableList<UiMangaPage> {
+                        chapterPageLoads += chapterId
+                        return pagesByChapter.getValue(chapterId)
+                    }
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ): UiMedia = error("Unused")
+                }
+
+            val accountService = FakeReaderAccountService(accountKey, mangaDataSource)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                        testSingle { imageTranslationRepository }
+                    },
+                )
+            }
+
+            val readerJob = SupervisorJob()
+            val readerScope = CoroutineScope(dispatcher + readerJob)
+            val presenter = MangaReaderPresenter(accountType, mangaKey, initialChapterId = "ch-1", initialPage = 0)
+            try {
+                val states = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                readerScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+
+                // 1. Initial state at ch-1: selectedChapterGroupId == "group-main", descending chapterItems, ascending boundaries.
+                val initial = awaitReaderState(states) { it.loadState is UiState.Success && it.pages.size == 4 }
+                assertEquals(listOf("group-main", "group-extra"), initial.chapterGroups.map { it.id })
+                assertEquals("group-main", initial.selectedChapterGroupId)
+                assertTrue(initial.chapterSortDescending)
+                assertTrue(initial.webtoonConstrainWidthOnWideScreen)
+                assertFalse(initial.volumeKeysNavigation)
+                assertEquals(
+                    listOf(
+                        ReaderChapterItem(chapter = ch3Locked, isCurrent = false, isRead = false, lastPageIndex = 0),
+                        ReaderChapterItem(chapter = ch2, isCurrent = false, isRead = false, lastPageIndex = 0),
+                        ReaderChapterItem(chapter = ch1, isCurrent = true, isRead = false, lastPageIndex = 0),
+                    ),
+                    initial.chapterItems,
+                )
+                assertEquals(ChapterBoundary.None, initial.previousBoundary)
+                val nextUnlocked = assertIs<ChapterBoundary.Unlocked>(initial.nextBoundary)
+                assertEquals("ch-2", nextUnlocked.chapter.id)
+                assertFalse(nextUnlocked.startFromEnd)
+                assertEquals("https://manga.example/paywall/ch-3", initial.resolveChapterOpenUrl(ch3Locked))
+                assertEquals("https://manga.example/series-1", initial.resolveChapterOpenUrl(ex1))
+
+                // Locked or already-active chapters are ignored by selectChapter.
+                initial.selectChapter("ch-3")
+                initial.selectChapter("ch-1")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                assertEquals("ch-1", states.value!!.activeChapterId)
+                assertEquals(listOf("ch-1"), chapterPageLoads.toList())
+
+                // 2. toggleChapterSort() flips to ascending and persists in MangaProgressRepository while keeping boundaries ascending.
+                states.value!!.toggleChapterSort()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val ascendingState = awaitReaderState(states) { !it.chapterSortDescending }
+                assertEquals(listOf("ch-1", "ch-2", "ch-3"), ascendingState.chapterItems.map { it.chapter.id })
+                assertEquals(ChapterBoundary.None, ascendingState.previousBoundary)
+                assertEquals("ch-2", assertIs<ChapterBoundary.Unlocked>(ascendingState.nextBoundary).chapter.id)
+                val sortedProgress =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            progressRepository.observe(accountType, mangaKey).first { !it.chapterSortDescending }
+                        }
+                    }
+                assertFalse(sortedProgress.chapterSortDescending)
+
+                // 3. selectChapterGroup("group-extra") previews ex-1 while activeChapterId remains "ch-1".
+                ascendingState.goToPage(2)
+                ascendingState.selectChapterGroup("group-extra")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val extraGroupState = awaitReaderState(states) { it.selectedChapterGroupId == "group-extra" && it.currentPageIndex == 2 }
+                assertEquals("ch-1", extraGroupState.activeChapterId)
+                assertEquals(
+                    listOf(ReaderChapterItem(chapter = ex1, isCurrent = false, isRead = false, lastPageIndex = 0)),
+                    extraGroupState.chapterItems,
+                )
+
+                // 4. selectChapter("ch-2") flushes ch-1 progress immediately, switches activeChapterId, and syncs group back to "group-main".
+                extraGroupState.selectChapter("ch-2")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val flushedCh1 =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            progressRepository.observe(accountType, mangaKey).first { it.chapters["ch-1"]?.lastPageIndex == 2 }
+                        }
+                    }
+                assertFalse(flushedCh1.chapters.getValue("ch-1").isCompleted)
+                val ch2State =
+                    awaitReaderState(states) {
+                        it.activeChapterId == "ch-2" &&
+                            it.loadState is UiState.Success &&
+                            it.pages.size == 3 &&
+                            it.chapterItems.firstOrNull()?.lastPageIndex == 2
+                    }
+                assertEquals("group-main", ch2State.selectedChapterGroupId)
+                assertEquals(
+                    listOf(
+                        ReaderChapterItem(chapter = ch1, isCurrent = false, isRead = false, lastPageIndex = 2),
+                        ReaderChapterItem(chapter = ch2, isCurrent = true, isRead = false, lastPageIndex = 0),
+                        ReaderChapterItem(chapter = ch3Locked, isCurrent = false, isRead = false, lastPageIndex = 0),
+                    ),
+                    ch2State.chapterItems,
+                )
+
+                // Move to final page of ch-2 so switching via openChapter flushes ch-2 as completed (isRead = true).
+                ch2State.goToPage(2)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+
+                // 5. openChapter("ex-1", initialPage = 1) switches to ex-1 at page 1 and aligns selectedChapterGroupId to "group-extra";
+                //    calling openChapter("ex-1", initialPage = 0) on already-active ex-1 jumps to page 0 without reloading pages.
+                states.value!!.openChapter("ex-1", initialPage = 1)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val ex1AtPage1 =
+                    awaitReaderState(states) {
+                        it.activeChapterId == "ex-1" &&
+                            it.loadState is UiState.Success &&
+                            it.currentPageIndex == 1
+                    }
+                assertEquals("group-extra", ex1AtPage1.selectedChapterGroupId)
+                assertEquals(
+                    listOf(ReaderChapterItem(chapter = ex1, isCurrent = true, isRead = false, lastPageIndex = 0)),
+                    ex1AtPage1.chapterItems,
+                )
+                assertEquals(listOf("ch-1", "ch-2", "ex-1"), chapterPageLoads.toList())
+
+                ex1AtPage1.openChapter("ex-1", initialPage = 0)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val ex1AtPage0 = awaitReaderState(states) { it.activeChapterId == "ex-1" && it.currentPageIndex == 0 }
+                assertEquals(listOf("ch-1", "ch-2", "ex-1"), chapterPageLoads.toList())
+
+                // Switching group preview back to "group-main" reflects ch-2 flushed as read (isRead = true, lastPageIndex = 2).
+                ex1AtPage0.selectChapterGroup("group-main")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val mainGroupPreview =
+                    awaitReaderState(states) {
+                        it.selectedChapterGroupId == "group-main" &&
+                            it.chapterItems.getOrNull(1)?.isRead == true
+                    }
+                assertEquals(
+                    ReaderChapterItem(chapter = ch2, isCurrent = false, isRead = true, lastPageIndex = 2),
+                    mainGroupPreview.chapterItems[1],
+                )
+
+                // 6. setWebtoonConstrainWidthOnWideScreen(false) and setVolumeKeysNavigation(true) update optimistically and persist.
+                mainGroupPreview.setWebtoonConstrainWidthOnWideScreen(false)
+                mainGroupPreview.setVolumeKeysNavigation(true)
+                Snapshot.sendApplyNotifications()
+                val optimisticSettingsState =
+                    awaitReaderState(states) {
+                        !it.webtoonConstrainWidthOnWideScreen && it.volumeKeysNavigation
+                    }
+                assertFalse(optimisticSettingsState.webtoonConstrainWidthOnWideScreen)
+                assertTrue(optimisticSettingsState.volumeKeysNavigation)
+
+                val persistedConfig =
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            appDataStore.appSettingsStore.data
+                                .first {
+                                    !it.mangaReaderConfig.webtoonConstrainWidthOnWideScreen &&
+                                        it.mangaReaderConfig.volumeKeysNavigation
+                                }.mangaReaderConfig
+                        }
+                    }
+                assertFalse(persistedConfig.webtoonConstrainWidthOnWideScreen)
+                assertTrue(persistedConfig.volumeKeysNavigation)
+            } finally {
+                readerJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                mockClient.close()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
     private fun readerDetail(
         readingDirection: MangaReadingDirection? = MangaReadingDirection.Rtl,
         chapterGroups: ImmutableList<UiMangaChapterGroup>,

@@ -79,6 +79,14 @@ public data class ReaderPageState(
 )
 
 @Immutable
+public data class ReaderChapterItem(
+    public val chapter: UiMangaChapter,
+    public val isCurrent: Boolean,
+    public val isRead: Boolean,
+    public val lastPageIndex: Int,
+)
+
+@Immutable
 public sealed interface PageMediaStatus {
     @Immutable
     public data class Loading(
@@ -200,6 +208,12 @@ public class MangaReaderPresenter(
         public val nextBoundary: ChapterBoundary
         public val prefetchMedia: ImmutableList<UiMedia.Image>
         public val imageTranslation: ImageTranslationPresenter.State
+        public val chapterGroups: ImmutableList<UiMangaChapterGroup> get() = persistentListOf()
+        public val selectedChapterGroupId: String? get() = null
+        public val chapterSortDescending: Boolean get() = true
+        public val chapterItems: ImmutableList<ReaderChapterItem> get() = persistentListOf()
+        public val webtoonConstrainWidthOnWideScreen: Boolean get() = true
+        public val volumeKeysNavigation: Boolean get() = false
 
         public val lockedChapter: ChapterBoundary.Locked?
             get() =
@@ -234,6 +248,23 @@ public class MangaReaderPresenter(
         public fun setDoublePageSpread(enabled: Boolean)
 
         public fun setSpreadCoverSinglePage(enabled: Boolean)
+
+        public fun selectChapterGroup(groupId: String) {}
+
+        public fun toggleChapterSort() {}
+
+        public fun selectChapter(chapterId: String) {}
+
+        public fun openChapter(
+            chapterId: String,
+            initialPage: Int?,
+        ) {}
+
+        public fun resolveChapterOpenUrl(chapter: UiMangaChapter): String? = null
+
+        public fun setWebtoonConstrainWidthOnWideScreen(enabled: Boolean) {}
+
+        public fun setVolumeKeysNavigation(enabled: Boolean) {}
     }
 
     @Composable
@@ -256,6 +287,7 @@ public class MangaReaderPresenter(
             }
         val detailState by detailFlow.flattenUiState()
         val rawDetail = detailState.takeSuccess()
+        val latestRawDetail by rememberUpdatedState(rawDetail)
         val currentDataSource by mangaDataSourceFlow.collectAsState(null)
 
         var resolvedMangaKey by remember(accountType, mangaKey) { mutableStateOf(mangaKey) }
@@ -286,13 +318,41 @@ public class MangaReaderPresenter(
             }
         }
 
+        var optimisticChapterSortDescending by remember(accountType, mangaKey) { mutableStateOf<Boolean?>(null) }
+        var pendingSortWrites by remember(accountType, mangaKey) { mutableIntStateOf(0) }
+        LaunchedEffect(loadedProgress) {
+            if (loadedProgress != null && pendingSortWrites == 0) {
+                optimisticChapterSortDescending = null
+            }
+        }
+
         var optimisticDoublePageSpread by remember { mutableStateOf<Boolean?>(null) }
         var optimisticSpreadCoverSinglePage by remember { mutableStateOf<Boolean?>(null) }
+        var optimisticWebtoonConstrainWidthOnWideScreen by remember { mutableStateOf<Boolean?>(null) }
+        var optimisticVolumeKeysNavigation by remember { mutableStateOf<Boolean?>(null) }
         var pendingSettingsWrites by remember { mutableIntStateOf(0) }
         LaunchedEffect(settings.mangaReaderConfig) {
             if (pendingSettingsWrites == 0) {
                 optimisticDoublePageSpread = null
                 optimisticSpreadCoverSinglePage = null
+                optimisticWebtoonConstrainWidthOnWideScreen = null
+                optimisticVolumeKeysNavigation = null
+            }
+        }
+
+        fun clearSyncedOptimisticSettings() {
+            if (pendingSettingsWrites != 0) return
+            if (settings.mangaReaderConfig.doublePageSpreadOnWideScreen == optimisticDoublePageSpread) {
+                optimisticDoublePageSpread = null
+            }
+            if (settings.mangaReaderConfig.spreadCoverSinglePage == optimisticSpreadCoverSinglePage) {
+                optimisticSpreadCoverSinglePage = null
+            }
+            if (settings.mangaReaderConfig.webtoonConstrainWidthOnWideScreen == optimisticWebtoonConstrainWidthOnWideScreen) {
+                optimisticWebtoonConstrainWidthOnWideScreen = null
+            }
+            if (settings.mangaReaderConfig.volumeKeysNavigation == optimisticVolumeKeysNavigation) {
+                optimisticVolumeKeysNavigation = null
             }
         }
 
@@ -314,6 +374,14 @@ public class MangaReaderPresenter(
             }
         val activeChapter = chapterLocation?.chapter
         val isChapterLocked = activeChapter?.locked == true
+
+        var selectedGroupId by remember(accountType, mangaKey) { mutableStateOf<String?>(null) }
+        LaunchedEffect(activeChapterId, chapterLocation?.group?.id) {
+            val activeGroupId = chapterLocation?.group?.id
+            if (activeGroupId != null) {
+                selectedGroupId = activeGroupId
+            }
+        }
 
         val activeSessionHolder = remember { ActiveSessionRef() }
         val session =
@@ -418,6 +486,60 @@ public class MangaReaderPresenter(
                 effectiveDirection != MangaReadingDirection.Webtoon
         val spreadCoverSinglePage =
             optimisticSpreadCoverSinglePage ?: settings.mangaReaderConfig.spreadCoverSinglePage
+        val webtoonConstrainWidthOnWideScreen =
+            optimisticWebtoonConstrainWidthOnWideScreen
+                ?: settings.mangaReaderConfig.webtoonConstrainWidthOnWideScreen
+        val volumeKeysNavigation =
+            optimisticVolumeKeysNavigation
+                ?: settings.mangaReaderConfig.volumeKeysNavigation
+        val effectiveChapterSortDescending =
+            optimisticChapterSortDescending
+                ?: effectiveObservedProgress?.chapterSortDescending
+                ?: true
+        val chapterGroups = rawDetail?.chapterGroups ?: persistentListOf()
+        val effectiveSelectedGroupId =
+            remember(chapterGroups, selectedGroupId, chapterLocation) {
+                if (chapterGroups.isEmpty()) {
+                    null
+                } else {
+                    selectedGroupId?.takeIf { id -> chapterGroups.any { it.id == id } }
+                        ?: chapterLocation?.group?.id
+                        ?: chapterGroups.first().id
+                }
+            }
+        val chapterItems =
+            remember(
+                chapterGroups,
+                effectiveSelectedGroupId,
+                effectiveChapterSortDescending,
+                activeChapterId,
+                effectiveObservedProgress,
+            ) {
+                val selectedGroup =
+                    effectiveSelectedGroupId?.let { id ->
+                        chapterGroups.firstOrNull { it.id == id }
+                    }
+                if (selectedGroup == null) {
+                    persistentListOf()
+                } else {
+                    val orderedChapters =
+                        if (effectiveChapterSortDescending) {
+                            selectedGroup.chapters.asReversed()
+                        } else {
+                            selectedGroup.chapters
+                        }
+                    orderedChapters
+                        .map { chapter ->
+                            val saved = effectiveObservedProgress?.chapters?.get(chapter.id)
+                            ReaderChapterItem(
+                                chapter = chapter,
+                                isCurrent = chapter.id == activeChapterId,
+                                isRead = saved?.isCompleted == true,
+                                lastPageIndex = saved?.lastPageIndex ?: 0,
+                            )
+                        }.toImmutableList()
+                }
+            }
 
         val resolvedMediaMap = session?.resolvedMedia.orEmpty()
         val failedPagesMap = session?.failedPages.orEmpty()
@@ -654,19 +776,32 @@ public class MangaReaderPresenter(
             }
         }
 
-        fun switchToChapter(
+        fun transitionToChapter(
             targetChapterId: String,
-            startFromEnd: Boolean,
+            landing: ChapterLanding,
         ) {
             if (targetChapterId == chapterTarget.chapterId) return
             computeLiveProgressRecord()?.let(::flushRecord)
             activeSessionHolder.session?.cancel()
+            latestRawDetail?.locateChapter(targetChapterId)?.group?.id?.let { groupId ->
+                selectedGroupId = groupId
+            }
             chapterTarget =
                 ChapterTarget(
                     chapterId = targetChapterId,
                     attempt = 0,
-                    landing = ChapterLanding.Boundary(startFromEnd = startFromEnd),
+                    landing = landing,
                 )
+        }
+
+        fun switchToChapter(
+            targetChapterId: String,
+            startFromEnd: Boolean,
+        ) {
+            transitionToChapter(
+                targetChapterId = targetChapterId,
+                landing = ChapterLanding.Boundary(startFromEnd = startFromEnd),
+            )
         }
 
         return object : State {
@@ -687,6 +822,12 @@ public class MangaReaderPresenter(
             override val nextBoundary: ChapterBoundary = nextBoundary
             override val prefetchMedia: ImmutableList<UiMedia.Image> = prefetchMedia
             override val imageTranslation: ImageTranslationPresenter.State = imageTranslation
+            override val chapterGroups: ImmutableList<UiMangaChapterGroup> = chapterGroups
+            override val selectedChapterGroupId: String? = effectiveSelectedGroupId
+            override val chapterSortDescending: Boolean = effectiveChapterSortDescending
+            override val chapterItems: ImmutableList<ReaderChapterItem> = chapterItems
+            override val webtoonConstrainWidthOnWideScreen: Boolean = webtoonConstrainWidthOnWideScreen
+            override val volumeKeysNavigation: Boolean = volumeKeysNavigation
 
             override fun setWideViewport(isWide: Boolean) {
                 wideViewport = isWide
@@ -833,12 +974,7 @@ public class MangaReaderPresenter(
                         optimisticDoublePageSpread = null
                     } finally {
                         pendingSettingsWrites--
-                        if (
-                            pendingSettingsWrites == 0 &&
-                            settings.mangaReaderConfig.doublePageSpreadOnWideScreen == optimisticDoublePageSpread
-                        ) {
-                            optimisticDoublePageSpread = null
-                        }
+                        clearSyncedOptimisticSettings()
                     }
                 }
             }
@@ -864,12 +1000,118 @@ public class MangaReaderPresenter(
                         optimisticSpreadCoverSinglePage = null
                     } finally {
                         pendingSettingsWrites--
-                        if (
-                            pendingSettingsWrites == 0 &&
-                            settings.mangaReaderConfig.spreadCoverSinglePage == optimisticSpreadCoverSinglePage
-                        ) {
-                            optimisticSpreadCoverSinglePage = null
+                        clearSyncedOptimisticSettings()
+                    }
+                }
+            }
+
+            override fun selectChapterGroup(groupId: String) {
+                val detail = latestRawDetail
+                if (detail == null || detail.chapterGroups.any { it.id == groupId }) {
+                    selectedGroupId = groupId
+                }
+            }
+
+            override fun toggleChapterSort() {
+                val targetMangaKey = latestEffectiveMangaKey
+                val nextDescending =
+                    !(optimisticChapterSortDescending ?: latestLoadedProgress?.chapterSortDescending ?: true)
+                optimisticChapterSortDescending = nextDescending
+                pendingSortWrites++
+                writeScope.launch {
+                    try {
+                        writeMutex.withLock {
+                            progressRepository.setChapterSortDescending(accountType, targetMangaKey, nextDescending)
                         }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticChapterSortDescending = null
+                    } finally {
+                        pendingSortWrites--
+                        if (pendingSortWrites == 0 && latestLoadedProgress?.chapterSortDescending == optimisticChapterSortDescending) {
+                            optimisticChapterSortDescending = null
+                        }
+                    }
+                }
+            }
+
+            override fun selectChapter(chapterId: String) {
+                if (chapterId == chapterTarget.chapterId) return
+                val targetChapter = latestRawDetail?.locateChapter(chapterId)?.chapter ?: return
+                if (targetChapter.locked) return
+                transitionToChapter(
+                    targetChapterId = chapterId,
+                    landing = ChapterLanding.Initial(null),
+                )
+            }
+
+            override fun openChapter(
+                chapterId: String,
+                initialPage: Int?,
+            ) {
+                if (chapterId == chapterTarget.chapterId) {
+                    if (initialPage != null) {
+                        goToPage(initialPage)
+                    }
+                    return
+                }
+                transitionToChapter(
+                    targetChapterId = chapterId,
+                    landing = ChapterLanding.Initial(initialPage),
+                )
+            }
+
+            override fun resolveChapterOpenUrl(chapter: UiMangaChapter): String? = chapter.openUrl(latestRawDetail?.url)
+
+            override fun setWebtoonConstrainWidthOnWideScreen(enabled: Boolean) {
+                optimisticWebtoonConstrainWidthOnWideScreen = enabled
+                pendingSettingsWrites++
+                writeScope.launch {
+                    try {
+                        writeMutex.withLock {
+                            appDataStore.appSettingsStore.updateData { current ->
+                                current.copy(
+                                    mangaReaderConfig =
+                                        current.mangaReaderConfig.copy(
+                                            webtoonConstrainWidthOnWideScreen = enabled,
+                                        ),
+                                )
+                            }
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticWebtoonConstrainWidthOnWideScreen = null
+                    } finally {
+                        pendingSettingsWrites--
+                        clearSyncedOptimisticSettings()
+                    }
+                }
+            }
+
+            override fun setVolumeKeysNavigation(enabled: Boolean) {
+                optimisticVolumeKeysNavigation = enabled
+                pendingSettingsWrites++
+                writeScope.launch {
+                    try {
+                        writeMutex.withLock {
+                            appDataStore.appSettingsStore.updateData { current ->
+                                current.copy(
+                                    mangaReaderConfig =
+                                        current.mangaReaderConfig.copy(
+                                            volumeKeysNavigation = enabled,
+                                        ),
+                                )
+                            }
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        optimisticVolumeKeysNavigation = null
+                    } finally {
+                        pendingSettingsWrites--
+                        clearSyncedOptimisticSettings()
                     }
                 }
             }

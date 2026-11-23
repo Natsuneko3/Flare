@@ -32,6 +32,8 @@ public data class AppSettings(
         val defaultDirection: MangaReadingDirection = MangaReadingDirection.Rtl,
         val doublePageSpreadOnWideScreen: Boolean = false,
         val spreadCoverSinglePage: Boolean = true,
+        val webtoonConstrainWidthOnWideScreen: Boolean = true,
+        val volumeKeysNavigation: Boolean = false,
     )
 
     @Serializable

@@ -87,9 +87,17 @@ class MangaProgressRepositoryTest {
                         defaultDirection = MangaReadingDirection.Rtl,
                         doublePageSpreadOnWideScreen = false,
                         spreadCoverSinglePage = true,
+                        webtoonConstrainWidthOnWideScreen = true,
+                        volumeKeysNavigation = false,
                     ),
                     defaultSettings.mangaReaderConfig,
                 )
+                val legacySettings =
+                    Json.decodeFromString<AppSettings>(
+                        """{"version":"1","mangaReaderConfig":{"defaultDirection":"Rtl"}}""",
+                    )
+                assertEquals(true, legacySettings.mangaReaderConfig.webtoonConstrainWidthOnWideScreen)
+                assertEquals(false, legacySettings.mangaReaderConfig.volumeKeysNavigation)
 
                 val mangaKey = MicroBlogKey("manga-42", "api.manga.example")
                 val accountKey = MicroBlogKey("reader", "api.manga.example")
