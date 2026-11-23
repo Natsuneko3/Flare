@@ -7,7 +7,7 @@ import FlareAppleCore
 
 @MainActor
 final class MacStatusActionAnimationTests: XCTestCase {
-    private static let servicesReady: Void = {
+    static let servicesReady: Void = {
         AppleSharedHelper.shared.initialize(inAppNotification: SilentNotification(), swiftFormatter: Formatter.shared,
             swiftPlatformTextRenderer: PlatformTextRenderer.shared, swiftOnDeviceAI: FoundationModelOnDeviceAI.shared)
     }()
@@ -477,7 +477,7 @@ final class MacStatusActionAnimationTests: XCTestCase {
             platformIcon: platformIcon, clickEvent: ClickEventNoop.shared,
             banner: nil, description: nil, sourceLanguages: [], translationDisplayState: .hidden,
             matrices: UiProfile.Matrices(fansCount: 0, followsCount: 0, statusesCount: 0, platformFansCount: nil),
-            mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [])
+            mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [], url: nil)
         let actionCounts: [(UiIcon, Int64?)] = isCalibration
             ? [(.reply, nil), (.retweet, nil), (.like, nil), (.more, nil)]
             : [(.reply, 3), (.retweet, 12), (.like, 128), (.bookmark, 0), (.more, nil)]

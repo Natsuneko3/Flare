@@ -107,7 +107,7 @@ private struct PostAppearanceTimeline: UIViewControllerRepresentable {
             platformIcon: IconType.Material(icon: .x), clickEvent: ClickEventNoop.shared,
             banner: nil, description: nil, sourceLanguages: [], translationDisplayState: .hidden,
             matrices: UiProfile.Matrices(fansCount: 0, followsCount: 0, statusesCount: 0, platformFansCount: nil),
-            mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [])
+            mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [], url: nil)
         let actions: [ActionMenu] = [
             action("reply", icon: .reply, count: counts[0], family: .reply),
             action("retweet", icon: .retweet, count: counts[1], family: .repost),
