@@ -18,6 +18,7 @@ struct ProfileScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShare: (MicroBlogKey) -> Void
     @State private var presenter: KotlinPresenter<ProfileState>
     @State private var tabSelection = ProfileTabSelection()
     @State private var showToolbarTabPicker = false
@@ -93,15 +94,23 @@ struct ProfileScreen: View {
                     }
                 }
             }
-            if agentEnabled || !presenter.state.actions.isEmpty {
+            if loadedProfile != nil || agentEnabled || !presenter.state.actions.isEmpty {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    if agentEnabled, case .success(let userState) = onEnum(of: presenter.state.userState) {
-                        Button {
-                            onProfileInsight(userState.data.key)
-                        } label: {
-                            Image(fontAwesome: .robot)
+                    if let user = loadedProfile {
+                        if agentEnabled {
+                            Button {
+                                onProfileInsight(user.key)
+                            } label: {
+                                Image(fontAwesome: .robot)
+                            }
+                            .accessibilityLabel(Text(String(localized: "profile_insight_title", defaultValue: "Profile insight")))
                         }
-                        .accessibilityLabel(Text(String(localized: "profile_insight_title", defaultValue: "Profile insight")))
+                        Button {
+                            onProfileShare(user.key)
+                        } label: {
+                            Image(fontAwesome: .shareNodes)
+                        }
+                        .accessibilityLabel(Text("fx_share"))
                     }
                     if let group = presenter.state.actions.first as? ActionMenu.Group {
                         ProfileToolbarMenu(group: group)
@@ -332,6 +341,13 @@ struct ProfileScreen: View {
         case .follow, .requestFollow:
             presenter.state.follow(userKey: user.key)
         }
+    }
+
+    private var loadedProfile: UiProfile? {
+        if case .success(let userState) = onEnum(of: presenter.state.userState) {
+            return userState.data
+        }
+        return nil
     }
 
     private var isBlockedProfile: Bool {
@@ -1763,7 +1779,8 @@ extension ProfileScreen {
         userKey: MicroBlogKey?,
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
-        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in }
+        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShare: @escaping (MicroBlogKey) -> Void = { _ in }
     ) {
         self.init(
             accountType: accountType,
@@ -1771,6 +1788,7 @@ extension ProfileScreen {
             onFollowingClick: onFollowingClick,
             onFansClick: onFansClick,
             onProfileInsight: onProfileInsight,
+            onProfileShare: onProfileShare,
             presenter: .init(presenter: ProfilePresenter(accountType: accountType, userKey: userKey))
         )
     }
@@ -1782,6 +1800,7 @@ struct ProfileWithUserNameAndHostScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShare: (MicroBlogKey) -> Void
     
     init(
         userName: String,
@@ -1789,12 +1808,14 @@ struct ProfileWithUserNameAndHostScreen: View {
         accountType: AccountType,
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
-        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in }
+        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShare: @escaping (MicroBlogKey) -> Void = { _ in }
     ) {
         self.accountType = accountType
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
         self.onProfileInsight = onProfileInsight
+        self.onProfileShare = onProfileShare
         self._presenter = .init(wrappedValue: .init(presenter: ProfileWithUserNameAndHostPresenter(userName: userName, host: host, accountType: accountType)))
     }
     var body: some View {
@@ -1804,7 +1825,8 @@ struct ProfileWithUserNameAndHostScreen: View {
                 userKey: user.key,
                 onFollowingClick: onFollowingClick,
                 onFansClick: onFansClick,
-                onProfileInsight: onProfileInsight
+                onProfileInsight: onProfileInsight,
+                onProfileShare: onProfileShare
             )
         } loadingContent: {
             ProgressView()
