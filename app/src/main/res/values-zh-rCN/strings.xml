@@ -1059,4 +1059,8 @@
     <string name="manga_reader_next_chapter">下一话</string>
     <string name="manga_reader_page_position">页面位置</string>
     <string name="manga_reader_page_of">第 %1$d 页，共 %2$d 页</string>
+    <string name="manga_reader_chapters">章节</string>
+    <string name="manga_reader_constrain_webtoon_width">限制条漫宽度</string>
+    <string name="manga_reader_volume_keys">使用音量键翻页</string>
+    <string name="manga_reader_page_number">第 %1$d 页</string>
 </resources>

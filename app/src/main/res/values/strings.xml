@@ -1123,4 +1123,8 @@
     <string name="manga_reader_next_chapter">Next chapter</string>
     <string name="manga_reader_page_position">Page position</string>
     <string name="manga_reader_page_of">%1$d of %2$d</string>
+    <string name="manga_reader_chapters">Chapters</string>
+    <string name="manga_reader_constrain_webtoon_width">Constrain webtoon width</string>
+    <string name="manga_reader_volume_keys">Use volume keys to turn pages</string>
+    <string name="manga_reader_page_number">Page %1$d</string>
 </resources>

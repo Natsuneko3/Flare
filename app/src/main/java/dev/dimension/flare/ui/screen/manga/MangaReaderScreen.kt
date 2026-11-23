@@ -1,8 +1,11 @@
 package dev.dimension.flare.ui.screen.manga
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -10,12 +13,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -23,19 +28,28 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
@@ -43,20 +57,28 @@ import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -66,6 +88,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.annotation.ExperimentalCoilApi
@@ -77,12 +103,18 @@ import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Brands
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.brands.Chrome
+import compose.icons.fontawesomeicons.solid.ArrowDownWideShort
 import compose.icons.fontawesomeicons.solid.ArrowLeft
+import compose.icons.fontawesomeicons.solid.ArrowUpWideShort
 import compose.icons.fontawesomeicons.solid.BackwardStep
+import compose.icons.fontawesomeicons.solid.Check
+import compose.icons.fontawesomeicons.solid.ChevronDown
 import compose.icons.fontawesomeicons.solid.Download
+import compose.icons.fontawesomeicons.solid.EllipsisVertical
 import compose.icons.fontawesomeicons.solid.ForwardStep
 import compose.icons.fontawesomeicons.solid.Gear
 import compose.icons.fontawesomeicons.solid.Language
+import compose.icons.fontawesomeicons.solid.Lock
 import compose.icons.fontawesomeicons.solid.RotateRight
 import compose.icons.fontawesomeicons.solid.ShareNodes
 import dev.dimension.flare.R
@@ -94,14 +126,20 @@ import dev.dimension.flare.common.prepareImageTranslationExport
 import dev.dimension.flare.common.shareImageMedia
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.component.DateTimeText
 import dev.dimension.flare.ui.component.FAIcon
+import dev.dimension.flare.ui.component.FlareDropdownMenu
 import dev.dimension.flare.ui.component.manga.MangaReaderCanvas
+import dev.dimension.flare.ui.component.resolveText
 import dev.dimension.flare.ui.model.MangaReadingDirection
+import dev.dimension.flare.ui.model.UiMangaChapter
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.manga.ChapterBoundary
 import dev.dimension.flare.ui.presenter.manga.MangaReaderPresenter
 import dev.dimension.flare.ui.presenter.manga.PageMediaStatus
+import dev.dimension.flare.ui.presenter.manga.ReaderChapterItem
+import dev.dimension.flare.ui.presenter.manga.ReaderPageState
 import dev.dimension.flare.ui.presenter.manga.ReaderSlot
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
@@ -116,6 +154,63 @@ import kotlinx.coroutines.withContext
 import moe.tlaster.precompose.molecule.producePresenter
 import org.koin.compose.koinInject
 import kotlin.math.roundToInt
+
+internal data class AndroidSpreadPageTarget(
+    val pageIndex: Int,
+    val ready: PageMediaStatus.Ready,
+)
+
+internal fun resolveVisibleReadyPageTargets(state: MangaReaderPresenter.State): List<AndroidSpreadPageTarget> {
+    if (state.pages.isEmpty()) return emptyList()
+    val candidateIndices =
+        if (state.direction != MangaReadingDirection.Webtoon) {
+            when (val slot = state.slots.getOrNull(state.currentSlotIndex)) {
+                is ReaderSlot.Double -> listOf(slot.leftPageIndex, slot.rightPageIndex).distinct().sorted()
+                is ReaderSlot.Single -> listOf(slot.pageIndex)
+                null -> listOf(state.currentPageIndex)
+            }
+        } else {
+            listOf(state.currentPageIndex)
+        }
+    return candidateIndices.mapNotNull { pageIndex ->
+        val page = state.pages.getOrNull(pageIndex) ?: return@mapNotNull null
+        val ready = page.status as? PageMediaStatus.Ready ?: return@mapNotNull null
+        AndroidSpreadPageTarget(pageIndex = page.index, ready = ready)
+    }
+}
+
+internal fun consumeAndroidReaderVolumeKeyEvent(
+    enabled: Boolean,
+    keyCode: Int,
+    action: Int,
+    onStepBackward: () -> Unit,
+    onStepForward: () -> Unit,
+    repeatCount: Int = 0,
+): Boolean {
+    if (!enabled) return false
+    val stepCallback =
+        when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> onStepBackward
+            KeyEvent.KEYCODE_VOLUME_DOWN -> onStepForward
+            else -> return false
+        }
+    return when (action) {
+        KeyEvent.ACTION_DOWN -> {
+            if (repeatCount == 0) {
+                stepCallback()
+            }
+            true
+        }
+
+        KeyEvent.ACTION_UP -> {
+            true
+        }
+
+        else -> {
+            false
+        }
+    }
+}
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -231,16 +326,76 @@ internal fun MangaReaderContent(
 ) {
     var hudVisible by remember { mutableStateOf(true) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showChapterSheet by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var lockedPromptChapter by remember { mutableStateOf<UiMangaChapter?>(null) }
+    var longPressedPageIndex by remember { mutableStateOf<Int?>(null) }
+    var scrubPreviewPage by remember { mutableStateOf<Int?>(null) }
     var isWideViewport by remember { mutableStateOf(false) }
+
     val uriHandler = LocalUriHandler.current
+    val hapticFeedback = LocalHapticFeedback.current
+    val view = LocalView.current
+    val latestState by rememberUpdatedState(state)
+
+    LaunchedEffect(state.activeChapterId) {
+        lockedPromptChapter = null
+        longPressedPageIndex = null
+    }
+
+    ImmersiveSystemBarsEffect(hudVisible = hudVisible)
+
+    val anyOverlayOpen =
+        showSettingsSheet ||
+            showChapterSheet ||
+            showMoreMenu ||
+            lockedPromptChapter != null ||
+            longPressedPageIndex != null
+    val volumeKeysEnabled = state.volumeKeysNavigation && !anyOverlayOpen
+
+    DisposableEffect(view, volumeKeysEnabled) {
+        if (volumeKeysEnabled) {
+            val listener =
+                ViewCompat.OnUnhandledKeyEventListenerCompat { _, event ->
+                    consumeAndroidReaderVolumeKeyEvent(
+                        enabled = true,
+                        keyCode = event.keyCode,
+                        action = event.action,
+                        onStepBackward = { latestState.stepBackward() },
+                        onStepForward = { latestState.stepForward() },
+                        repeatCount = event.repeatCount,
+                    )
+                }
+            ViewCompat.addOnUnhandledKeyEventListener(view, listener)
+            onDispose {
+                ViewCompat.removeOnUnhandledKeyEventListener(view, listener)
+            }
+        } else {
+            onDispose {}
+        }
+    }
+
     val currentPage = state.pages.getOrNull(state.currentPageIndex)
     val currentReady = currentPage?.status as? PageMediaStatus.Ready
+    val visibleTargets = resolveVisibleReadyPageTargets(state)
+    val chapterUrl = state.chapterUrl?.takeIf { it.isNotBlank() }
 
     BoxWithConstraints(
         modifier =
             Modifier
                 .fillMaxSize()
-                .background(Color.Black),
+                .background(Color.Black)
+                .onPreviewKeyEvent { keyEvent ->
+                    val nativeEvent = keyEvent.nativeKeyEvent
+                    consumeAndroidReaderVolumeKeyEvent(
+                        enabled = volumeKeysEnabled,
+                        keyCode = nativeEvent.keyCode,
+                        action = nativeEvent.action,
+                        onStepBackward = { latestState.stepBackward() },
+                        onStepForward = { latestState.stepForward() },
+                        repeatCount = nativeEvent.repeatCount,
+                    )
+                },
     ) {
         isWideViewport = maxWidth >= 720.dp
         MangaReaderCanvas(
@@ -248,6 +403,10 @@ internal fun MangaReaderContent(
             hudVisible = hudVisible,
             onToggleHud = { hudVisible = !hudVisible },
             onBack = onBack,
+            onPageLongPress = { page, _ ->
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                longPressedPageIndex = page.index
+            },
             modifier =
                 Modifier
                     .fillMaxSize()
@@ -268,12 +427,39 @@ internal fun MangaReaderContent(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                 contentColor = MaterialTheme.colorScheme.onSurface,
             ) {
+                val canOpenChapters = state.chapterItems.isNotEmpty()
+                val saveTargets =
+                    if (onSavePage != null) {
+                        visibleTargets.filter { it.ready.original !is UiMedia.Ugoira }
+                    } else {
+                        emptyList()
+                    }
+                val shareTargets =
+                    if (onSharePage != null) {
+                        visibleTargets.filter {
+                            it.ready.displayed is UiMedia.Image || it.ready.displayed is UiMedia.Gif
+                        }
+                    } else {
+                        emptyList()
+                    }
+                val primarySharePageIndex =
+                    shareTargets.firstOrNull { it.pageIndex == state.currentPageIndex }?.pageIndex
+                        ?: shareTargets.firstOrNull()?.pageIndex
+                val regenerateTargets =
+                    visibleTargets.filter { state.imageTranslation.canRegenerate(it.ready.original) }
+                val hasOverflowActions =
+                    saveTargets.isNotEmpty() ||
+                        shareTargets.isNotEmpty() ||
+                        regenerateTargets.isNotEmpty() ||
+                        chapterUrl != null
+
                 Row(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .systemBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .windowInsetsPadding(
+                                WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                            ).padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -287,24 +473,54 @@ internal fun MangaReaderContent(
                         )
                     }
 
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    Row(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .then(
+                                    if (canOpenChapters) {
+                                        Modifier.clickable { showChapterSheet = true }
+                                    } else {
+                                        Modifier
+                                    },
+                                ).padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("manga_reader_chapters_button"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            text = state.chapterTitle,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (state.mangaTitle.isNotBlank()) {
+                        Column(
+                            modifier = Modifier.weight(1f, fill = false),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
                             Text(
-                                text = state.mangaTitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text =
+                                    if (canOpenChapters) {
+                                        state.chapterTitle.ifBlank { stringResource(R.string.manga_reader_chapters) }
+                                    } else {
+                                        state.chapterTitle
+                                    },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                            )
+                            if (state.mangaTitle.isNotBlank()) {
+                                Text(
+                                    text = state.mangaTitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        if (canOpenChapters) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Solid.ChevronDown,
+                                contentDescription = stringResource(R.string.manga_reader_chapters),
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -329,51 +545,6 @@ internal fun MangaReaderContent(
                                 )
                             }
                         }
-                        if (state.imageTranslation.canRegenerate(ready.original)) {
-                            FilledTonalIconButton(
-                                onClick = { state.imageTranslation.regenerate(ready.original) },
-                                enabled = !item.loading,
-                            ) {
-                                FAIcon(
-                                    imageVector = FontAwesomeIcons.Solid.RotateRight,
-                                    contentDescription = imageTranslationText("Translate again"),
-                                )
-                            }
-                        }
-                        if (onSavePage != null && ready.original !is UiMedia.Ugoira) {
-                            FilledTonalIconButton(
-                                onClick = { onSavePage(ready.original, ready.displayed, state.currentPageIndex) },
-                            ) {
-                                FAIcon(
-                                    imageVector = FontAwesomeIcons.Solid.Download,
-                                    contentDescription = stringResource(R.string.media_menu_save),
-                                )
-                            }
-                        }
-                        if (onSharePage != null && (ready.displayed is UiMedia.Image || ready.displayed is UiMedia.Gif)) {
-                            FilledTonalIconButton(
-                                onClick = { onSharePage(ready.original, ready.displayed, state.currentPageIndex) },
-                                modifier = Modifier.testTag("manga_reader_share_page"),
-                            ) {
-                                FAIcon(
-                                    imageVector = FontAwesomeIcons.Solid.ShareNodes,
-                                    contentDescription = stringResource(R.string.media_menu_share_image),
-                                )
-                            }
-                        }
-                    }
-
-                    state.chapterUrl?.takeIf { it.isNotBlank() }?.let { url ->
-                        FilledTonalIconButton(
-                            onClick = {
-                                uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(url).toUri())
-                            },
-                        ) {
-                            FAIcon(
-                                imageVector = FontAwesomeIcons.Brands.Chrome,
-                                contentDescription = stringResource(R.string.manga_open_in_browser),
-                            )
-                        }
                     }
 
                     FilledTonalIconButton(
@@ -384,6 +555,126 @@ internal fun MangaReaderContent(
                             imageVector = FontAwesomeIcons.Solid.Gear,
                             contentDescription = stringResource(R.string.manga_reader_settings),
                         )
+                    }
+
+                    Box {
+                        FilledTonalIconButton(
+                            onClick = { showMoreMenu = true },
+                            enabled = hasOverflowActions,
+                            modifier = Modifier.testTag("manga_reader_more_button"),
+                        ) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Solid.EllipsisVertical,
+                                contentDescription = stringResource(R.string.more),
+                            )
+                        }
+
+                        FlareDropdownMenu(
+                            expanded = showMoreMenu && hasOverflowActions,
+                            onDismissRequest = { showMoreMenu = false },
+                        ) {
+                            val isMultiPageSpread = visibleTargets.size > 1
+                            saveTargets.forEach { target ->
+                                val label =
+                                    if (isMultiPageSpread) {
+                                        "${stringResource(R.string.media_menu_save)} (${
+                                            stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
+                                        })"
+                                    } else {
+                                        stringResource(R.string.media_menu_save)
+                                    }
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    leadingIcon = {
+                                        FAIcon(
+                                            imageVector = FontAwesomeIcons.Solid.Download,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onSavePage?.invoke(target.ready.original, target.ready.displayed, target.pageIndex)
+                                    },
+                                )
+                            }
+
+                            shareTargets.forEach { target ->
+                                val label =
+                                    if (isMultiPageSpread) {
+                                        "${stringResource(R.string.media_menu_share_image)} (${
+                                            stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
+                                        })"
+                                    } else {
+                                        stringResource(R.string.media_menu_share_image)
+                                    }
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    leadingIcon = {
+                                        FAIcon(
+                                            imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onSharePage?.invoke(target.ready.original, target.ready.displayed, target.pageIndex)
+                                    },
+                                    modifier =
+                                        if (target.pageIndex == primarySharePageIndex) {
+                                            Modifier.testTag("manga_reader_share_page")
+                                        } else {
+                                            Modifier
+                                        },
+                                )
+                            }
+
+                            regenerateTargets.forEach { target ->
+                                val item = state.imageTranslation.item(target.ready.original)
+                                val baseLabel = imageTranslationText("Translate again")
+                                val label =
+                                    if (isMultiPageSpread) {
+                                        "$baseLabel (${
+                                            stringResource(R.string.manga_reader_page_number, target.pageIndex + 1)
+                                        })"
+                                    } else {
+                                        baseLabel
+                                    }
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    enabled = !item.loading,
+                                    leadingIcon = {
+                                        FAIcon(
+                                            imageVector = FontAwesomeIcons.Solid.RotateRight,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        state.imageTranslation.regenerate(target.ready.original)
+                                    },
+                                )
+                            }
+
+                            chapterUrl?.let { url ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.manga_open_in_browser)) },
+                                    leadingIcon = {
+                                        FAIcon(
+                                            imageVector = FontAwesomeIcons.Brands.Chrome,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(url).toUri())
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -404,56 +695,86 @@ internal fun MangaReaderContent(
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
-            Surface(
-                shape = MaterialTheme.shapes.extraLarge,
-                color = BottomSheetDefaults.ContainerColor.copy(alpha = 0.94f),
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val isRtl = state.direction == MangaReadingDirection.Rtl
-                val prevUnlocked = state.previousBoundary as? ChapterBoundary.Unlocked
-                val nextUnlocked = state.nextBoundary as? ChapterBoundary.Unlocked
-                val leftChapterTarget = if (isRtl) nextUnlocked else prevUnlocked
-                val rightChapterTarget = if (isRtl) prevUnlocked else nextUnlocked
-                val leftChapterLabel =
-                    stringResource(if (isRtl) R.string.manga_reader_next_chapter else R.string.manga_reader_previous_chapter)
-                val rightChapterLabel =
-                    stringResource(if (isRtl) R.string.manga_reader_previous_chapter else R.string.manga_reader_next_chapter)
-
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                AnimatedVisibility(
+                    visible = scrubPreviewPage != null,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
                 ) {
-                    IconButton(
-                        onClick = { leftChapterTarget?.let(state::openAdjacentChapter) },
-                        enabled = leftChapterTarget != null,
+                    val bubblePage = (scrubPreviewPage ?: state.currentPageIndex).coerceIn(0, (state.pages.size - 1).coerceAtLeast(0))
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tonalElevation = 6.dp,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.testTag("manga_reader_page_slider_bubble"),
                     ) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.BackwardStep,
-                            contentDescription = leftChapterLabel,
-                            modifier = Modifier.size(16.dp),
+                        Text(
+                            text = "${bubblePage + 1} / ${state.pages.size}",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         )
                     }
+                }
 
-                    AndroidMangaPageSlider(
-                        pageCount = state.pages.size,
-                        currentPageIndex = state.currentPageIndex,
-                        isRtl = isRtl,
-                        onPageSelected = state::goToPage,
-                        modifier = Modifier.weight(1f),
-                    )
+                Surface(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = BottomSheetDefaults.ContainerColor.copy(alpha = 0.94f),
+                ) {
+                    val isRtl = state.direction == MangaReadingDirection.Rtl
+                    val prevUnlocked = state.previousBoundary as? ChapterBoundary.Unlocked
+                    val nextUnlocked = state.nextBoundary as? ChapterBoundary.Unlocked
+                    val leftChapterTarget = if (isRtl) nextUnlocked else prevUnlocked
+                    val rightChapterTarget = if (isRtl) prevUnlocked else nextUnlocked
+                    val leftChapterLabel =
+                        stringResource(if (isRtl) R.string.manga_reader_next_chapter else R.string.manga_reader_previous_chapter)
+                    val rightChapterLabel =
+                        stringResource(if (isRtl) R.string.manga_reader_previous_chapter else R.string.manga_reader_next_chapter)
 
-                    IconButton(
-                        onClick = { rightChapterTarget?.let(state::openAdjacentChapter) },
-                        enabled = rightChapterTarget != null,
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.ForwardStep,
-                            contentDescription = rightChapterLabel,
-                            modifier = Modifier.size(16.dp),
+                        IconButton(
+                            onClick = { leftChapterTarget?.let(state::openAdjacentChapter) },
+                            enabled = leftChapterTarget != null,
+                        ) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Solid.BackwardStep,
+                                contentDescription = leftChapterLabel,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+
+                        AndroidMangaPageSlider(
+                            pageCount = state.pages.size,
+                            currentPageIndex = state.currentPageIndex,
+                            isRtl = isRtl,
+                            onPageSelected = state::goToPage,
+                            modifier = Modifier.weight(1f),
+                            onScrubPageChanged = { scrubPreviewPage = it },
                         )
+
+                        IconButton(
+                            onClick = { rightChapterTarget?.let(state::openAdjacentChapter) },
+                            enabled = rightChapterTarget != null,
+                        ) {
+                            FAIcon(
+                                imageVector = FontAwesomeIcons.Solid.ForwardStep,
+                                contentDescription = rightChapterLabel,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -489,11 +810,79 @@ internal fun MangaReaderContent(
         }
     }
 
-    currentReady?.let { ready ->
-        ImageTranslationErrorDialog(
-            translation = state.imageTranslation,
-            media = ready.original,
+    visibleTargets
+        .distinctBy { it.ready.original.cacheKey }
+        .forEach { target ->
+            ImageTranslationErrorDialog(
+                translation = state.imageTranslation,
+                media = target.ready.original,
+            )
+        }
+
+    if (showChapterSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showChapterSheet = false },
+        ) {
+            AndroidMangaChapterDirectorySheet(
+                state = state,
+                onSelectUnlockedChapter = { chapterId ->
+                    showChapterSheet = false
+                    state.selectChapter(chapterId)
+                },
+                onSelectLockedChapter = { chapter ->
+                    showChapterSheet = false
+                    lockedPromptChapter = chapter
+                },
+            )
+        }
+    }
+
+    lockedPromptChapter?.let { lockedChapter ->
+        val openUrl = state.resolveChapterOpenUrl(lockedChapter)?.takeIf { it.isNotBlank() }
+        AlertDialog(
+            onDismissRequest = { lockedPromptChapter = null },
+            title = { Text(stringResource(R.string.manga_locked_chapter_title)) },
+            text = { Text(stringResource(R.string.manga_locked_chapter_message, lockedChapter.title)) },
+            confirmButton = {
+                if (openUrl != null) {
+                    TextButton(
+                        onClick = {
+                            lockedPromptChapter = null
+                            uriHandler.openUri(DeeplinkRoute.OpenLinkDirectly(openUrl).toUri())
+                        },
+                        modifier = Modifier.testTag("manga_reader_locked_chapter_confirm"),
+                    ) {
+                        Text(stringResource(R.string.manga_open_in_browser))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { lockedPromptChapter = null }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
         )
+    }
+
+    longPressedPageIndex?.let { pageIndex ->
+        val targetPage = state.pages.firstOrNull { it.index == pageIndex } ?: state.pages.getOrNull(pageIndex)
+        val targetReady = targetPage?.status as? PageMediaStatus.Ready
+        if (targetPage != null && targetReady != null) {
+            ModalBottomSheet(
+                onDismissRequest = { longPressedPageIndex = null },
+            ) {
+                AndroidMangaPageActionSheet(
+                    page = targetPage,
+                    ready = targetReady,
+                    state = state,
+                    onSavePage = onSavePage,
+                    onSharePage = onSharePage,
+                    onDismiss = { longPressedPageIndex = null },
+                )
+            }
+        } else {
+            longPressedPageIndex = null
+        }
     }
 
     if (showSettingsSheet) {
@@ -508,6 +897,40 @@ internal fun MangaReaderContent(
     }
 }
 
+@Composable
+private fun ImmersiveSystemBarsEffect(hudVisible: Boolean) {
+    val view = LocalView.current
+    if (view.isInEditMode) return
+    val window = remember(view) { view.context.findActivity()?.window } ?: return
+
+    DisposableEffect(window, view, hudVisible) {
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (hudVisible) {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {}
+    }
+
+    DisposableEffect(window, view) {
+        onDispose {
+            WindowCompat
+                .getInsetsController(window, view)
+                .show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AndroidMangaPageSlider(
@@ -516,9 +939,13 @@ private fun AndroidMangaPageSlider(
     isRtl: Boolean,
     onPageSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onScrubPageChanged: (Int?) -> Unit = {},
 ) {
     val maxPage = (pageCount - 1).coerceAtLeast(0)
+    val hapticFeedback = LocalHapticFeedback.current
+    val latestOnScrubPageChanged by rememberUpdatedState(onScrubPageChanged)
     var isDragging by remember { mutableStateOf(false) }
+    var lastDragHapticPage by remember { mutableIntStateOf(-1) }
     val sliderState =
         remember(pageCount) {
             SliderState(
@@ -533,6 +960,14 @@ private fun AndroidMangaPageSlider(
         }
     }
     val displayedPage = sliderState.value.roundToInt().coerceIn(0, maxPage)
+    LaunchedEffect(isDragging, displayedPage) {
+        latestOnScrubPageChanged(if (isDragging) displayedPage else null)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            latestOnScrubPageChanged(null)
+        }
+    }
     val positionLabel = stringResource(R.string.manga_reader_page_position)
     val pageDescription = stringResource(R.string.manga_reader_page_of, displayedPage + 1, pageCount)
 
@@ -553,8 +988,18 @@ private fun AndroidMangaPageSlider(
                     state = sliderState,
                     onValueChange = { rawValue ->
                         val page = rawValue.roundToInt().coerceIn(0, maxPage)
+                        val previousDisplayedPage =
+                            if (isDragging && lastDragHapticPage >= 0) {
+                                lastDragHapticPage
+                            } else {
+                                displayedPage
+                            }
                         isDragging = true
                         sliderState.value = page.toFloat()
+                        lastDragHapticPage = page
+                        if (page != previousDisplayedPage) {
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                         if (page != currentPageIndex) {
                             onPageSelected(page)
                         }
@@ -562,6 +1007,7 @@ private fun AndroidMangaPageSlider(
                     onValueChangeFinished = {
                         val page = sliderState.value.roundToInt().coerceIn(0, maxPage)
                         isDragging = false
+                        lastDragHapticPage = -1
                         if (page != currentPageIndex) {
                             onPageSelected(page)
                         }
@@ -585,6 +1031,355 @@ private fun AndroidMangaPageSlider(
                 text = pageCount.toString(),
                 style = MaterialTheme.typography.labelMedium,
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AndroidMangaChapterDirectorySheet(
+    state: MangaReaderPresenter.State,
+    onSelectUnlockedChapter: (String) -> Unit,
+    onSelectLockedChapter: (UiMangaChapter) -> Unit,
+) {
+    val initialIndex =
+        remember {
+            state.chapterItems
+                .indexOfFirst { it.chapter.id == state.activeChapterId || it.isCurrent }
+                .coerceAtLeast(0)
+        }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+
+    LaunchedEffect(state.activeChapterId, state.selectedChapterGroupId, state.chapterSortDescending) {
+        if (state.chapterItems.isNotEmpty()) {
+            val targetIndex =
+                state.chapterItems
+                    .indexOfFirst { it.chapter.id == state.activeChapterId || it.isCurrent }
+                    .coerceAtLeast(0)
+            listState.scrollToItem(targetIndex)
+        }
+    }
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "${stringResource(R.string.manga_reader_chapters)} (${state.chapterItems.size})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            TextButton(
+                onClick = state::toggleChapterSort,
+                modifier = Modifier.testTag("manga_reader_chapter_sort_toggle"),
+            ) {
+                FAIcon(
+                    imageVector =
+                        if (state.chapterSortDescending) {
+                            FontAwesomeIcons.Solid.ArrowDownWideShort
+                        } else {
+                            FontAwesomeIcons.Solid.ArrowUpWideShort
+                        },
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text =
+                        stringResource(
+                            if (state.chapterSortDescending) {
+                                R.string.manga_detail_sort_descending
+                            } else {
+                                R.string.manga_detail_sort_ascending
+                            },
+                        ),
+                )
+            }
+        }
+
+        if (state.chapterGroups.size > 1 || state.chapterGroups.any { it.title != null }) {
+            FlowRow(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                state.chapterGroups.forEach { group ->
+                    val label = group.title?.resolveText()?.takeIf { it.isNotBlank() } ?: group.id
+                    FilterChip(
+                        selected = group.id == state.selectedChapterGroupId,
+                        onClick = { state.selectChapterGroup(group.id) },
+                        label = { Text(label) },
+                        modifier = Modifier.testTag("manga_reader_chapter_group_${group.id}"),
+                    )
+                }
+            }
+        }
+
+        if (state.chapterItems.isEmpty()) {
+            Text(
+                text = stringResource(R.string.manga_detail_empty_chapters),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+            )
+        } else {
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 440.dp),
+            ) {
+                items(
+                    items = state.chapterItems,
+                    key = { it.chapter.id },
+                ) { item ->
+                    AndroidMangaReaderChapterRow(
+                        item = item,
+                        onClick = {
+                            if (item.chapter.locked) {
+                                onSelectLockedChapter(item.chapter)
+                            } else {
+                                onSelectUnlockedChapter(item.chapter.id)
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AndroidMangaReaderChapterRow(
+    item: ReaderChapterItem,
+    onClick: () -> Unit,
+) {
+    val chapter = item.chapter
+    val backgroundColor =
+        if (item.isCurrent) {
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+        } else {
+            Color.Transparent
+        }
+    val titleColor =
+        when {
+            item.isCurrent -> MaterialTheme.colorScheme.primary
+            item.isRead || chapter.locked -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> MaterialTheme.colorScheme.onSurface
+        }
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(backgroundColor)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .testTag("manga_reader_chapter_item_${chapter.id}"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (chapter.locked) {
+            FAIcon(
+                imageVector = FontAwesomeIcons.Solid.Lock,
+                contentDescription = stringResource(R.string.manga_locked_chapter_title),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (item.isRead && !item.isCurrent) {
+            FAIcon(
+                imageVector = FontAwesomeIcons.Solid.Check,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = chapter.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (item.isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                color = titleColor,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val subtitle = chapter.subtitle?.takeIf { it.isNotBlank() }
+            val hasResumePage = !item.isRead && item.lastPageIndex > 0
+            if (subtitle != null || hasResumePage || chapter.uploadedAt != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    subtitle?.let { sub ->
+                        Text(
+                            text = sub,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (hasResumePage) {
+                        Text(
+                            text = stringResource(R.string.manga_reader_page_number, item.lastPageIndex + 1),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    chapter.uploadedAt?.let { uploaded ->
+                        DateTimeText(
+                            data = uploaded,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AndroidMangaPageActionSheet(
+    page: ReaderPageState,
+    ready: PageMediaStatus.Ready,
+    state: MangaReaderPresenter.State,
+    onSavePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)?,
+    onSharePage: ((original: UiMedia, displayed: UiMedia, pageIndex: Int) -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val translationItem = state.imageTranslation.item(ready.original)
+    val listItemColors = ListItemDefaults.colors(containerColor = Color.Transparent)
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.manga_reader_page_number, page.index + 1),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        )
+
+        if (onSavePage != null && ready.original !is UiMedia.Ugoira) {
+            ListItem(
+                leadingContent = {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                colors = listItemColors,
+                elevation = ListItemDefaults.elevation(),
+                modifier =
+                    Modifier
+                        .clickable {
+                            onDismiss()
+                            onSavePage(ready.original, ready.displayed, page.index)
+                        }.testTag("manga_reader_page_sheet_save"),
+            ) {
+                Text(stringResource(R.string.media_menu_save))
+            }
+        }
+
+        if (onSharePage != null && (ready.displayed is UiMedia.Image || ready.displayed is UiMedia.Gif)) {
+            ListItem(
+                leadingContent = {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                colors = listItemColors,
+                elevation = ListItemDefaults.elevation(),
+                modifier =
+                    Modifier
+                        .clickable {
+                            onDismiss()
+                            onSharePage(ready.original, ready.displayed, page.index)
+                        }.testTag("manga_reader_page_sheet_share"),
+            ) {
+                Text(stringResource(R.string.media_menu_share_image))
+            }
+        }
+
+        if (state.imageTranslation.canToggle(ready.original)) {
+            ListItem(
+                leadingContent = {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.Language,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                colors = listItemColors,
+                elevation = ListItemDefaults.elevation(),
+                modifier =
+                    Modifier
+                        .clickable(enabled = !translationItem.loading) {
+                            onDismiss()
+                            state.imageTranslation.toggle(ready.original)
+                        }.testTag("manga_reader_page_sheet_translate"),
+            ) {
+                Text(
+                    imageTranslationText(
+                        when {
+                            translationItem.showingTranslated -> "Show original"
+                            translationItem.translated != null -> "Show translation"
+                            else -> "Translate image"
+                        },
+                    ),
+                )
+            }
+        }
+
+        if (state.imageTranslation.canRegenerate(ready.original)) {
+            ListItem(
+                leadingContent = {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.RotateRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                colors = listItemColors,
+                elevation = ListItemDefaults.elevation(),
+                modifier =
+                    Modifier
+                        .clickable(enabled = !translationItem.loading) {
+                            onDismiss()
+                            state.imageTranslation.regenerate(ready.original)
+                        }.testTag("manga_reader_page_sheet_regenerate"),
+            ) {
+                Text(imageTranslationText("Translate again"))
+            }
         }
     }
 }
@@ -639,6 +1434,25 @@ private fun AndroidMangaReaderSettingsSheet(
             }
         }
 
+        if (isWideViewport && state.direction == MangaReadingDirection.Webtoon) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.manga_reader_constrain_webtoon_width),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = state.webtoonConstrainWidthOnWideScreen,
+                    onCheckedChange = state::setWebtoonConstrainWidthOnWideScreen,
+                    modifier = Modifier.testTag("manga_reader_constrain_webtoon_switch"),
+                )
+            }
+        }
+
         if (isWideViewport && state.direction != MangaReadingDirection.Webtoon) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -673,6 +1487,23 @@ private fun AndroidMangaReaderSettingsSheet(
                     )
                 }
             }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.manga_reader_volume_keys),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = state.volumeKeysNavigation,
+                onCheckedChange = state::setVolumeKeysNavigation,
+                modifier = Modifier.testTag("manga_reader_volume_keys_switch"),
+            )
         }
     }
 }
