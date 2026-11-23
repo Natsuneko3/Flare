@@ -16,15 +16,25 @@ public struct TranslateStatusComponent: View {
             icon(.language)
             switch data {
             case .failed: icon(.circleExclamation)
-            case .translating: ProgressView()
-                    .progressViewStyle(.circular)
-                #if os(macOS)
-                    .controlSize(.small)
-                    .scaleEffect((iconSize ?? 12) / 16)
-                #else
-                    .scaleEffect((iconSize ?? 12) / 20)
-                #endif
-                    .frame(width: iconSize ?? 12, height: iconSize ?? 12)
+            case .translating:
+                let progress = ProgressView().progressViewStyle(.circular)
+                if let iconSize {
+                    progress
+                    #if os(macOS)
+                        .controlSize(.small)
+                        .scaleEffect(iconSize / 16)
+                    #else
+                        .scaleEffect(iconSize / 20)
+                    #endif
+                        .frame(width: iconSize, height: iconSize)
+                } else {
+                    progress
+                    #if os(macOS)
+                        .scaleEffect(0.5)
+                    #endif
+                        .scaledToFit()
+                        .frame(width: 12, height: 12)
+                }
             default: EmptyView()
             }
         }

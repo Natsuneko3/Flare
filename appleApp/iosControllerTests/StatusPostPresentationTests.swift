@@ -444,6 +444,8 @@ final class StatusPostPresentationTests: XCTestCase {
                 XCTAssertEqual(try XCTUnwrap(insight.imageView).frame.height, font.pointSize, accuracy: 0.5)
                 let expandedHitPoint = CGPoint(x: insight.frame.maxX + 1.5, y: insight.frame.maxY + 1.5)
                 XCTAssertTrue(view.hitTest(expandedHitPoint, with: nil) === insight)
+                let hitSize = max(24, font.pointSize + 4)
+                XCTAssertEqual(insight.accessibilityFrame.size, CGSize(width: hitSize, height: hitSize))
                 let timestamp = try XCTUnwrap(view.subviews.compactMap { $0 as? DateTimeUILabel }.first)
                 XCTAssertEqual(timestamp.font.pointSize, font.pointSize)
                 let textHeight = timestamp.sizeThatFits(CGSize(width: 1_000, height: 1_000)).height

@@ -37,6 +37,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
@@ -794,11 +795,13 @@ class StatusHeaderSpacingTest {
 
     @Test
     fun topRightIconsAndInsightButtonFitHeaderTextWithoutInflatingRow() {
+        val postUri = "https://example.invalid/status/header-alignment"
         val basePost =
             samplePost().copy(
                 platformId = "X",
                 platformIcon = IconType.Material(UiIcon.X),
                 visibility = UiTimelineV2.Post.Visibility.Public,
+                clickEvent = ClickEvent.Deeplink(postUri),
             )
         val baseFeed =
             UiTimelineV2.Feed(
@@ -907,16 +910,19 @@ class StatusHeaderSpacingTest {
                     statusKey = basePost.statusKey,
                 ).toUri()
         for (point in outsetPoints) {
-            openedUris.clear()
+            compose.runOnIdle { openedUris.clear() }
             compose.onNodeWithTag("header-alignment-root").performTouchInput {
                 click(Offset(point.x - rootBounds.left, point.y - rootBounds.top))
             }
-            compose.waitForIdle()
-            assertEquals(
-                listOf(expectedInsightUri),
-                openedUris,
-                "Outset tap at $point should invoke AI insight instead of post click",
-            )
+            compose.runOnIdle {
+                assertEquals(listOf(expectedInsightUri), openedUris, "Outset tap at $point must open only Insight")
+            }
+        }
+
+        compose.runOnIdle { openedUris.clear() }
+        compose.onNodeWithText("Body", useUnmergedTree = true).performMouseInput { click() }
+        compose.runOnIdle {
+            assertEquals(listOf(postUri), openedUris, "Body tap must open only the post")
         }
     }
 

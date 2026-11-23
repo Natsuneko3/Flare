@@ -610,10 +610,19 @@ final class UserCompatUIView: UIStackView {
 private final class StatusTopEndIconButton: UIButton {
     var minimumHitSize: CGFloat = 24
 
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    private var hitBounds: CGRect {
         let dx = max(0, (minimumHitSize - bounds.width) / 2)
         let dy = max(0, (minimumHitSize - bounds.height) / 2)
-        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+        return bounds.insetBy(dx: -dx, dy: -dy)
+    }
+
+    override var accessibilityFrame: CGRect {
+        get { UIAccessibility.convertToScreenCoordinates(hitBounds, in: self) }
+        set { super.accessibilityFrame = newValue }
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        hitBounds.contains(point)
     }
 }
 

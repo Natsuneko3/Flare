@@ -81,12 +81,18 @@ final class MacStatusActionAnimationTests: XCTestCase {
         let feedInk = try renderedInkSize(feedTranslating)
         XCTAssertGreaterThan(feedInk.width, footnoteSize + 2)
         XCTAssertLessThanOrEqual(feedInk.height, footnoteSize + 0.5)
+
+        let profileTranslating = TranslateStatusComponent(data: .translating).font(.caption)
+        let profileInk = try renderedInkSize(profileTranslating)
+        XCTAssertEqual(profileInk.height, 16, accuracy: 1)
     }
 
     func testMacOSStatusViewInsightButtonExpandsHitTargetWithoutInflatingHeight() async throws {
         Self.servicesReady
         _ = NSApplication.shared
-        let post = previewPost("insight-hit", name: "Alex Rivera", text: "Post body text", isCalibration: true)
+        let postURL = try XCTUnwrap(URL(string: "https://example.invalid/status/insight-hit"))
+        let post = previewPost("insight-hit", name: "Alex Rivera", text: "Post body text", isCalibration: true,
+                               clickEvent: ClickEventDeeplink(url: postURL.absoluteString))
         let base = TimelineAppearance.companion.Default
         func makeAppearance(agent: Bool) -> TimelineAppearance {
             base.doCopy(
@@ -164,7 +170,8 @@ final class MacStatusActionAnimationTests: XCTestCase {
             accountType: post.accountType,
             statusKey: post.statusKey
         ).toUri()))
-        for pt in outsetPoints {
+        let postBodyPoint = CGPoint(x: padding + 80, y: buttonCenterY - iconSize - 4)
+        for (pt, expectedURL) in outsetPoints.map({ ($0, expectedInsightURL) }) + [(postBodyPoint, postURL)] {
             openedURLs.removeAll()
             let down = try XCTUnwrap(NSEvent.mouseEvent(
                 with: .leftMouseDown, location: pt, modifierFlags: [], timestamp: 0,
@@ -177,10 +184,7 @@ final class MacStatusActionAnimationTests: XCTestCase {
             window.sendEvent(down)
             window.sendEvent(up)
             try await Task.sleep(for: .milliseconds(50))
-            XCTAssertEqual(
-                openedURLs, [expectedInsightURL],
-                "Click at \(pt) should trigger AI insight button, opened: \(openedURLs)"
-            )
+            XCTAssertEqual(openedURLs, [expectedURL], "Click at \(pt) must open exactly one URL")
         }
     }
 
@@ -505,7 +509,8 @@ final class MacStatusActionAnimationTests: XCTestCase {
     }
 
     private func previewPost(_ id: String, name: String, text: String, isCalibration: Bool = false, images: [UiMedia] = [],
-                             translationDisplayState: TranslationDisplayState = .hidden) -> UiTimelineV2.Post {
+                             translationDisplayState: TranslationDisplayState = .hidden,
+                             clickEvent: ClickEvent = ClickEventNoop.shared) -> UiTimelineV2.Post {
         func rich(_ value: String) -> UiRichText {
             let style = RenderTextStyle(link: nil, bold: false, italic: false, strikethrough: false,
                                         monospace: false, code: false, underline: false, small: false, time: false, imageLink: nil)
@@ -537,7 +542,7 @@ final class MacStatusActionAnimationTests: XCTestCase {
             statusKey: MicroBlogKey(id: id, host: host), card: nil,
             createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000) - (isCalibration ? 39_000 : 600_000)).toUi(),
             emojiReactions: [], sourceChannel: nil, visibility: isCalibration ? nil : .public, replyToHandle: nil,
-            references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
+            references: [], clickEvent: clickEvent, mediaClickPolicy: .openStatusMedia,
             accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil)
     }
 
