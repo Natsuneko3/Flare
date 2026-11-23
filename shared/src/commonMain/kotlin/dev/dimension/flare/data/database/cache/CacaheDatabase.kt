@@ -10,8 +10,8 @@ import androidx.room3.withWriteTransaction
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.async.executeSQL
 
-// Added DbProfileTabs cache table for profile tabs persistence.
-internal const val CACHE_DATABASE_VERSION = 54
+// Removed legacy VVOStatus and VVOComment DeeplinkRoute variants from cached status payloads.
+internal const val CACHE_DATABASE_VERSION = 55
 
 @Database(
     entities = [

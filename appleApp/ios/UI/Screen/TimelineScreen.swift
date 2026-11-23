@@ -124,7 +124,7 @@ struct TimelinePageScreen: View {
     var body: some View {
         UITimelinePagingView(
             data: presenter.state.listState,
-            detailStatusKey: nil,
+            detailStatusKey: page.detailStatusKey,
             key: presenter.key,
             columnPolicy: .single
         )

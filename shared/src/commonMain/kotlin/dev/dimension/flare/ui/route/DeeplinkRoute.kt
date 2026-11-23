@@ -63,18 +63,6 @@ public sealed class DeeplinkRoute {
         ) : Status()
 
         @Serializable
-        public data class VVOComment(
-            val commentKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status()
-
-        @Serializable
-        public data class VVOStatus(
-            val statusKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status()
-
-        @Serializable
         public data class AddReaction(
             val statusKey: MicroBlogKey,
             val accountType: AccountType,

@@ -2,7 +2,6 @@ package dev.dimension.flare.data.datasource.vvo
 
 import androidx.paging.ExperimentalPagingApi
 import androidx.paging.Pager
-import dev.dimension.flare.common.CacheData
 import dev.dimension.flare.common.FileItem
 import dev.dimension.flare.common.MemCacheable
 import dev.dimension.flare.common.decodeJson
@@ -729,16 +728,6 @@ internal class VVODataSource(
             accountKey = accountKey,
             commentKey = commentKey,
         )
-
-    fun comment(statusKey: MicroBlogKey): CacheData<UiTimelineV2> =
-        MemCacheable("vvo_comment_${accountKey}_$statusKey") {
-            service
-                .getHotFlowChild(statusKey.id)
-                .rootComment
-                ?.firstOrNull()
-                ?.render(accountKey)
-                ?: throw Exception("status not found")
-        }
 
     private fun statusExtendedText(statusKey: MicroBlogKey): Flow<UiState<String>> =
         MemCacheable(

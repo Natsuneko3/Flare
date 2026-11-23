@@ -28,22 +28,6 @@ internal fun EntryProviderScope<NavKey>.statusEntryBuilder(
         )
     }
 
-    entry<Route.Status.VVOComment> { args ->
-        VVOCommentScreen(
-            commentKey = args.commentKey,
-            accountType = args.accountType,
-            onBack = onBack
-        )
-    }
-
-    entry<Route.Status.VVOStatus> { args ->
-        StatusScreen(
-            statusKey = args.statusKey,
-            accountType = args.accountType,
-            onBack = onBack
-        )
-    }
-
     entry<Route.Status.AddReaction>(
         metadata = BottomSheetSceneStrategy.bottomSheet()
     ) { args ->

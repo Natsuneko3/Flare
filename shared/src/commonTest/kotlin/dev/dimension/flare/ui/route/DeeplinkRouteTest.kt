@@ -115,34 +115,21 @@ class DeeplinkRouteTest {
     }
 
     @Test
+    fun weiboStatusUsesGenericDetailWebPathAndBumpsCacheVersionAfterLegacyRouteRemoval() {
+        val route =
+            DeeplinkRoute.Status.Detail(
+                statusKey = MicroBlogKey("5357831171867297", "m.weibo.cn"),
+                accountType = AccountType.Specific(MicroBlogKey("23", "m.weibo.cn")),
+            )
+        assertEquals("/23@m.weibo.cn/status/5357831171867297@m.weibo.cn", route.toWebPath())
+        assertEquals(55, dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION)
+    }
+
+    @Test
     fun testGalleryDetail() {
         val route =
             DeeplinkRoute.Gallery.Detail(
                 statusKey = MicroBlogKey("status123", "example.com"),
-                accountType = activeAccountType,
-            )
-        val uri = route.toUri()
-        val parsed = DeeplinkRoute.parse(uri)
-        assertEquals(route, parsed)
-    }
-
-    @Test
-    fun testStatusVVOComment() {
-        val route =
-            DeeplinkRoute.Status.VVOComment(
-                commentKey = MicroBlogKey("comment123", "example.com"),
-                accountType = AccountType.Guest,
-            )
-        val uri = route.toUri()
-        val parsed = DeeplinkRoute.parse(uri)
-        assertEquals(route, parsed)
-    }
-
-    @Test
-    fun testStatusVVOStatus() {
-        val route =
-            DeeplinkRoute.Status.VVOStatus(
-                statusKey = MicroBlogKey("status456", "example.com"),
                 accountType = activeAccountType,
             )
         val uri = route.toUri()
