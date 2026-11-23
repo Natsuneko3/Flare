@@ -19,6 +19,7 @@ import dev.dimension.flare.data.database.cache.model.TranslationEntityType
 import dev.dimension.flare.data.database.cache.model.TranslationPayload
 import dev.dimension.flare.data.database.cache.model.TranslationStatus
 import dev.dimension.flare.data.database.cache.model.sourceHash
+import dev.dimension.flare.data.database.cache.model.statusTranslationEntityKey
 import dev.dimension.flare.data.database.cache.model.translationEntityKey
 import dev.dimension.flare.data.database.cache.model.translationPayload
 import dev.dimension.flare.data.database.createDatabaseDriver
@@ -31,6 +32,7 @@ import dev.dimension.flare.data.datasource.microblog.loader.PostLoader
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
+import dev.dimension.flare.data.datasource.microblog.paging.TimelinePagingMapper
 import dev.dimension.flare.data.datasource.microblog.paging.notSupported
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
@@ -49,6 +51,7 @@ import dev.dimension.flare.data.translation.PreTranslationBatchDocument
 import dev.dimension.flare.data.translation.PreTranslationBatchItemStatus
 import dev.dimension.flare.data.translation.PreTranslationBatchPayload
 import dev.dimension.flare.data.translation.PreTranslationService
+import dev.dimension.flare.data.translation.TranslationSettingsSupport
 import dev.dimension.flare.data.translation.aiPreTranslateConfig
 import dev.dimension.flare.data.translation.translationProviderCacheKey
 import dev.dimension.flare.deleteTestRootPath
@@ -126,7 +129,7 @@ class StatusShareTranslationTest {
             val child = post("child-1", "Nested child reply", sourceLanguage = foreignLanguage)
             val gate = CompletableDeferred<Unit>()
             translationGate = gate
-            configureTranslateSettings(preTranslate = true)
+            val settings = configureTranslateSettings(preTranslate = true)
             insertAccount()
             rootStatus = rootPost
             replies = listOf(reply)
@@ -172,6 +175,9 @@ class StatusShareTranslationTest {
                         .content.translation
                         ?.raw,
                 )
+                val cached = cache.pagingTimelineDao().searchCachedStatuses("%First reply text%", 10).single()
+                val searchResult = TimelinePagingMapper.toUi(cached, "cache_search", TranslationSettingsSupport.displayOptions(settings))
+                assertEquals(quoted.statusKey, searchResult.asTimelinePostItem()?.presentation?.quotes?.single()?.statusKey)
 
                 translatedState.selectReplies()
                 states.filterNotNull().first { it.selecting }.loadReplyChildren(reply.statusKey)
@@ -368,6 +374,72 @@ class StatusShareTranslationTest {
                         ?.translation
                         ?.raw,
                 )
+            } finally {
+                job.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun openingPickerKeepsManualTranslationForAnExcludedLanguage() =
+        withFixture {
+            val manual = post("manual", "Manually translated reply", sourceLanguage = foreignLanguage)
+            val otherLanguage = if (Locale.language.startsWith("fr", ignoreCase = true)) "de" else "fr"
+            val automatic = post("automatic", "Another reply", sourceLanguage = otherLanguage)
+            val settings = configureTranslateSettings(preTranslate = true, excludedLanguages = listOf(foreignLanguage))
+            insertAccount()
+            seedCachedTranslation(manual, "Saved translation", TranslationDisplayMode.Translated, settings)
+            val saved = cachedTranslation(manual)
+            replies = listOf(manual, automatic)
+
+            val states = MutableStateFlow<StatusSharePresenter.State?>(null)
+            val job = launchPresenter(states)
+            try {
+                states.filterNotNull().first().selectReplies()
+                val loaded =
+                    states.filterNotNull().first {
+                        it.replies.lastOrNull()?.contentPostOrNull()?.translationDisplayState == TranslationDisplayState.Translated
+                    }
+                assertEquals(saved, cachedTranslation(manual))
+                assertEquals("Saved translation", loaded.replies.first().contentPostOrNull()?.content?.translation?.raw)
+            } finally {
+                job.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun reopeningPickerKeepsTheTranslationOfAnEditedReply() =
+        withFixture {
+            val old = post("edited", "Old reply", sourceLanguage = foreignLanguage)
+            val edited = post("edited", "Edited reply", sourceLanguage = foreignLanguage)
+            val retry = post("retry", "Reply to retry", sourceLanguage = foreignLanguage)
+            val settings = configureTranslateSettings(preTranslate = true)
+            insertAccount()
+            replies = listOf(old, retry)
+
+            val states = MutableStateFlow<StatusSharePresenter.State?>(null)
+            val job = launchPresenter(states)
+            try {
+                states.filterNotNull().first().selectReplies()
+                states
+                    .filterNotNull()
+                    .first { state ->
+                        state.replies.size == 2 &&
+                            state.replies.all { it.contentPostOrNull()?.translationDisplayState == TranslationDisplayState.Translated }
+                    }.cancelSelection()
+                seedCachedTranslation(edited, "Translation of the edit", TranslationDisplayMode.Translated, settings)
+                val saved = cachedTranslation(edited)
+                cache.translationDao().insert(cachedTranslation(retry).copy(status = TranslationStatus.Failed, payload = null))
+
+                states
+                    .filterNotNull()
+                    .first { !it.selecting && it.replies.last().contentPostOrNull()?.translationDisplayState == TranslationDisplayState.Failed }
+                    .selectReplies()
+                val reopened =
+                    states.filterNotNull().first {
+                        it.selecting && it.replies.last().contentPostOrNull()?.translationDisplayState == TranslationDisplayState.Translated
+                    }
+                assertEquals(saved, cachedTranslation(edited))
+                assertEquals(TranslationDisplayState.Hidden, reopened.replies.first().contentPostOrNull()?.translationDisplayState)
             } finally {
                 job.cancelAndJoin()
             }
@@ -641,6 +713,15 @@ class StatusShareTranslationTest {
                     aiConfig = AppSettings.AiConfig(type = AppSettings.AiConfig.Type.OnDevice),
                 )
             }
+
+        suspend fun cachedTranslation(post: UiTimelineV2.Post): DbTranslation =
+            requireNotNull(
+                cache.translationDao().get(
+                    TranslationEntityType.Status,
+                    statusTranslationEntityKey(post.accountType, post.statusKey),
+                    Locale.language,
+                ),
+            )
 
         suspend fun seedCachedTranslation(
             post: UiTimelineV2.Post,

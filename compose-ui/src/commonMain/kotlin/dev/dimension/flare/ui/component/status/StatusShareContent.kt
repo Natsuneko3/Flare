@@ -37,6 +37,7 @@ import dev.dimension.flare.ui.component.platform.PlatformTextButton
 import dev.dimension.flare.ui.component.platform.PlatformTextStyle
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.presenter.status.StatusSharePresenter
+import dev.dimension.flare.ui.presenter.status.shareReplyAccessibilityLabel
 import dev.dimension.flare.ui.theme.PlatformTheme
 import org.jetbrains.compose.resources.stringResource
 
@@ -107,7 +108,14 @@ public fun StatusShareReplyList(
                                 value = state.isSelected(reply.statusKey),
                                 role = Role.Checkbox,
                             ) { state.toggleReply(reply.statusKey) }
-                            .semantics { contentDescription = reply.searchText.orEmpty() },
+                            .semantics {
+                                contentDescription =
+                                    shareReplyAccessibilityLabel(
+                                        reply = reply,
+                                        showOriginalWithTranslation = appearance.aiConfig.showOriginalWithTranslation,
+                                        expandContentWarning = appearance.expandContentWarning,
+                                    )
+                            },
                     )
                 }
                 if (reply.statusKey in state.expandableReplies) {

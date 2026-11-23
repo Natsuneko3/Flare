@@ -168,7 +168,6 @@ import dev.dimension.flare.ui.model.UiCard
 import dev.dimension.flare.ui.model.UiCommunityNote
 import dev.dimension.flare.ui.model.UiPoll
 import dev.dimension.flare.ui.model.UiTimelineV2
-import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
@@ -1515,18 +1514,6 @@ private fun StatusReplyComponent(
             color = StatusComponentDefaults.secondaryColor,
             maxLines = 1,
         )
-    }
-}
-
-private fun UiTranslatableText.visiblePostText(
-    translated: Boolean,
-    showOriginal: Boolean,
-): List<UiRichText> {
-    val translatedText = translation
-    return when {
-        !translated || translatedText == null -> listOf(original)
-        showOriginal -> listOf(original, translatedText)
-        else -> listOf(translatedText)
     }
 }
 

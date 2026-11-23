@@ -109,21 +109,10 @@ public struct StatusView: View {
         let carouselLeadingPadding = carouselEdgePadding + (usesSideAvatar && user != nil ? 56 : 0)
         let replyToHandle = withLeadingPadding || (showParents && !parents.isEmpty) ? nil : data.replyToHandle
         let translationDisplayed = data.translationDisplayState == .translated
-        let contentWarnings: [UiRichText] = if let warning = data.contentWarning {
-            if translationDisplayed, let translation = warning.translation {
-                translateConfig.showOriginalWithTranslation ? [warning.original, translation] : [translation]
-            } else {
-                [warning.original]
-            }
-        } else {
-            []
-        }
+        let showOriginal = translateConfig.showOriginalWithTranslation
+        let contentWarnings = data.contentWarning?.visiblePostText(translated: translationDisplayed, showOriginal: showOriginal) ?? []
         let contentWarningIsEmpty = contentWarnings.allSatisfy(\.isEmpty)
-        let contents: [UiRichText] = if translationDisplayed, let translation = data.content.translation {
-            translateConfig.showOriginalWithTranslation ? [data.content.original, translation] : [translation]
-        } else {
-            [data.content.original]
-        }
+        let contents = data.content.visiblePostText(translated: translationDisplayed, showOriginal: showOriginal)
         let poll = data.poll
         let images = Array(data.images)
         let hasImages = !images.isEmpty

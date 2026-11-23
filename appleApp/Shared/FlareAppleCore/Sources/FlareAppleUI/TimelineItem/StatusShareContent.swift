@@ -32,6 +32,7 @@ public struct StatusShareContent: View {
 public struct StatusShareReplyPicker: View {
     let state: StatusSharePresenterState
     @Environment(\.timelineAppearance) private var timelineAppearance
+    @Environment(\.translateConfig) private var translateConfig
 
     public init(state: StatusSharePresenterState) { self.state = state }
 
@@ -91,7 +92,11 @@ public struct StatusShareReplyPicker: View {
                     .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(reply.searchText ?? "")
+                .accessibilityLabel(Text(verbatim: StatusSharePresenterKt.shareReplyAccessibilityLabel(
+                    reply: reply,
+                    showOriginalWithTranslation: translateConfig.showOriginalWithTranslation,
+                    expandContentWarning: timelineAppearance.expandContentWarning
+                )))
                 .accessibilityAddTraits(state.isSelected(key: reply.statusKey) ? .isSelected : [])
                 if state.expandableReplies.contains(reply.statusKey) {
                     Button { state.loadReplyChildren(key: reply.statusKey) } label: {

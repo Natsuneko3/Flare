@@ -45,6 +45,7 @@ import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.humanizer.PlatformFormatter
 import dev.dimension.flare.ui.model.ClickEvent
+import dev.dimension.flare.ui.model.TranslationDisplayState
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
@@ -108,7 +109,14 @@ class StatusShareContentTest {
 
     @Test
     fun replyRowExposesOneToggleAndNeverNavigatesThePost() {
-        val reply = post("reply", "Selectable reply").copy(user = createSampleUser().copy(avatar = null, banner = null))
+        val reply =
+            post("reply", "Original body").copy(
+                user = createSampleUser().copy(avatar = null, banner = null),
+                content = UiTranslatableText("Original body".toUiPlainText(), "Selectable reply".toUiPlainText()),
+                contentWarning = UiTranslatableText("Original warning".toUiPlainText(), "Translated warning".toUiPlainText()),
+                translationDisplayState = TranslationDisplayState.Translated,
+            )
+        var appearance by mutableStateOf(TimelineAppearance(showTranslateButton = false, expandContentWarning = true))
         var selected by mutableStateOf(false)
         var confirmed = false
         var cancelled = false
@@ -152,12 +160,15 @@ class StatusShareContentTest {
             FlareTheme(isDarkTheme = false) {
                 CompositionLocalProvider(
                     LocalGlobalAppearance provides GlobalAppearance(),
-                    LocalTimelineAppearance provides TimelineAppearance(showTranslateButton = false),
+                    LocalTimelineAppearance provides appearance,
                 ) {
                     StatusShareReplyDialog(state)
                 }
             }
         }
+        composeRule.onNodeWithContentDescription("Translated warning", substring = true).assertIsOff()
+        composeRule.onAllNodesWithContentDescription("Original body", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Original warning", substring = true).assertCountEquals(0)
         composeRule
             .onNodeWithContentDescription("Selectable reply", substring = true)
             .assertIsOff()
@@ -190,6 +201,16 @@ class StatusShareContentTest {
         composeRule.runOnIdle { assertTrue(confirmed) }
         composeRule.onNodeWithText("Cancel").performClick()
         composeRule.runOnIdle { assertTrue(cancelled) }
+        composeRule.runOnIdle {
+            appearance = appearance.copy(aiConfig = appearance.aiConfig.copy(showOriginalWithTranslation = true))
+        }
+        composeRule.onNodeWithContentDescription("Original body", substring = true).assertIsOff()
+        composeRule.onNodeWithContentDescription("Original warning", substring = true).assertIsOff()
+        composeRule.onNodeWithContentDescription("Selectable reply", substring = true).assertIsOff()
+        composeRule.runOnIdle { appearance = appearance.copy(expandContentWarning = false) }
+        composeRule.onNodeWithContentDescription("Translated warning", substring = true).assertIsOff()
+        composeRule.onAllNodesWithContentDescription("Original body", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Selectable reply", substring = true).assertCountEquals(0)
     }
 
     @Test

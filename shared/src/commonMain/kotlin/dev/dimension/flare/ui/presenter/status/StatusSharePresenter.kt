@@ -13,8 +13,7 @@ import androidx.compose.runtime.setValue
 import dev.dimension.flare.common.Locale
 import dev.dimension.flare.common.PlatformDispatchers
 import dev.dimension.flare.data.database.cache.CacheDatabase
-import dev.dimension.flare.data.database.cache.connect
-import dev.dimension.flare.data.database.cache.model.DbStatus
+import dev.dimension.flare.data.database.cache.mapper.saveMissingStatuses
 import dev.dimension.flare.data.database.cache.model.DbTranslation
 import dev.dimension.flare.data.database.cache.model.TranslationDisplayOptions
 import dev.dimension.flare.data.database.cache.model.TranslationEntityType
@@ -22,6 +21,7 @@ import dev.dimension.flare.data.database.cache.model.applyTranslation
 import dev.dimension.flare.data.database.cache.model.statusTranslationEntityKey
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
+import dev.dimension.flare.data.datasource.microblog.paging.TimelinePagingMapper
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.accountServiceFlow
@@ -30,14 +30,15 @@ import dev.dimension.flare.data.translation.TranslationSettingsSupport
 import dev.dimension.flare.data.translation.pluginTranslationServiceOrNull
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
-import dev.dimension.flare.model.DbAccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.ReferenceType
+import dev.dimension.flare.ui.model.TranslationDisplayState
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asTimelinePostItem
 import dev.dimension.flare.ui.model.bindMediaProxy
 import dev.dimension.flare.ui.model.contentPostOrNull
 import dev.dimension.flare.ui.presenter.PresenterBase
+import dev.dimension.flare.ui.render.UiRichText
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
@@ -312,6 +313,37 @@ internal class StatusShareSession(
     }
 }
 
+public fun shareReplyAccessibilityLabel(
+    reply: UiTimelineV2,
+    showOriginalWithTranslation: Boolean,
+    expandContentWarning: Boolean,
+): String {
+    val item = reply.asTimelinePostItem() ?: return reply.searchText.orEmpty()
+    return buildList {
+        fun addText(text: UiRichText?) {
+            val plainText = text?.innerText.orEmpty().trim()
+            if (plainText.isNotEmpty()) add(plainText)
+        }
+
+        fun addPost(post: UiTimelineV2.Post) {
+            addText(post.user?.name)
+            val translated = post.translationDisplayState == TranslationDisplayState.Translated
+            val warnings = post.contentWarning?.visiblePostText(translated, showOriginalWithTranslation).orEmpty()
+            warnings.forEach(::addText)
+            if (expandContentWarning || warnings.all { it.isEmpty }) {
+                post.content.visiblePostText(translated, showOriginalWithTranslation).forEach(::addText)
+            }
+        }
+
+        item.presentation.inlineParents.forEach { parent ->
+            addPost(parent.displayPost)
+            parent.presentation.quotes.forEach(::addPost)
+        }
+        addPost(item.displayPost)
+        item.presentation.quotes.forEach(::addPost)
+    }.joinToString("\n")
+}
+
 private const val SHARE_TRANSLATION_SQL_BATCH_SIZE = 500
 
 private data class ShareReplyTranslationConfig(
@@ -348,7 +380,8 @@ private fun rememberShareReplyTranslations(
     }.collectAsState(null)
 
     val targetLanguage = Locale.language
-    val entityKeys = remember(replies) { replies.collectTranslationEntityKeys() }
+    val itemsByEntityKey = remember(replies) { replies.indexShareStatusItems() }
+    val entityKeys = remember(itemsByEntityKey) { itemsByEntityKey.keys.toList() }
     val enqueuedIds = remember(config, targetLanguage, retryGeneration) { mutableSetOf<String>() }
 
     LaunchedEffect(replies, config, targetLanguage, retryGeneration) {
@@ -358,11 +391,15 @@ private fun rememberShareReplyTranslations(
         try {
             val statuses =
                 withContext(PlatformDispatchers.IO) {
-                    val pending = replies.collectDbStatuses(excludedIds = alreadyEnqueued)
+                    val pending =
+                        itemsByEntityKey
+                            .filterKeys { it !in alreadyEnqueued }
+                            .values
+                            .map(TimelinePagingMapper::toDbStatus)
                     if (pending.isNotEmpty()) {
-                        persistMissingStatuses(database, pending)
+                        saveMissingStatuses(database, pending)
                     }
-                    pending
+                    pending.map { it.status.data }
                 }
             if (statuses.isEmpty()) return@LaunchedEffect
             statuses.chunked(SHARE_TRANSLATION_SQL_BATCH_SIZE).forEach { batch ->
@@ -423,72 +460,16 @@ private fun ImmutableList<UiTimelineV2>.applyShareTranslations(state: ShareReply
     return if (changed) mapped.toImmutableList() else this
 }
 
-private fun List<UiTimelineV2>.collectDbStatuses(excludedIds: Set<String> = emptySet()): List<DbStatus> =
-    buildList {
-        val seenIds = HashSet<String>()
-
-        fun collect(item: UiTimelineV2) {
-            when (item) {
-                is UiTimelineV2.TimelinePostItem -> {
-                    collect(item.post)
-                    item.presentation.inlineParents.forEach(::collect)
-                    item.presentation.quotes.forEach(::collect)
-                    item.presentation.repost?.let(::collect)
-                }
-
-                is UiTimelineV2.Post -> {
-                    val account = item.accountType as? DbAccountType ?: return
-                    val id = DbStatus.createId(accountType = account, statusKey = item.statusKey)
-                    if (id in excludedIds || !seenIds.add(id)) return
-                    val normalized =
-                        item.copy(
-                            references = item.references.distinctBy { it.type to it.statusKey }.toImmutableList(),
-                        )
-                    add(
-                        DbStatus(
-                            statusKey = normalized.statusKey,
-                            accountType = account,
-                            content = normalized,
-                            renderHash = normalized.renderHash,
-                            text = normalized.searchText,
-                        ),
-                    )
-                }
-
-                is UiTimelineV2.Feed -> {
-                    val account = item.accountType as? DbAccountType ?: return
-                    val id = DbStatus.createId(accountType = account, statusKey = item.statusKey)
-                    if (id in excludedIds || !seenIds.add(id)) return
-                    add(
-                        DbStatus(
-                            statusKey = item.statusKey,
-                            accountType = account,
-                            content = item,
-                            renderHash = item.renderHash,
-                            text = item.searchText,
-                        ),
-                    )
-                }
-
-                is UiTimelineV2.UserList -> {
-                    item.post?.let(::collect)
-                }
-
-                is UiTimelineV2.Gap,
-                is UiTimelineV2.Message,
-                is UiTimelineV2.User,
-                -> {}
-            }
+private fun List<UiTimelineV2>.indexShareStatusItems(): Map<String, UiTimelineV2> =
+    buildMap {
+        fun index(item: UiTimelineV2) {
+            getOrPut(statusTranslationEntityKey(item.accountType, item.statusKey)) { item }
         }
-        forEach(::collect)
-    }
 
-private fun List<UiTimelineV2>.collectTranslationEntityKeys(): List<String> =
-    buildList {
         fun collect(item: UiTimelineV2) {
             when (item) {
                 is UiTimelineV2.TimelinePostItem -> {
-                    collect(item.post)
+                    index(item)
                     item.presentation.inlineParents.forEach(::collect)
                     item.presentation.quotes.forEach(::collect)
                     item.presentation.repost?.let(::collect)
@@ -497,7 +478,7 @@ private fun List<UiTimelineV2>.collectTranslationEntityKeys(): List<String> =
                 is UiTimelineV2.Post,
                 is UiTimelineV2.Feed,
                 -> {
-                    add(statusTranslationEntityKey(item.accountType, item.statusKey))
+                    index(item)
                 }
 
                 is UiTimelineV2.UserList -> {
@@ -511,26 +492,7 @@ private fun List<UiTimelineV2>.collectTranslationEntityKeys(): List<String> =
             }
         }
         forEach(::collect)
-    }.distinct()
-
-private suspend fun persistMissingStatuses(
-    database: CacheDatabase,
-    statuses: List<DbStatus>,
-) {
-    if (statuses.isEmpty()) return
-    database.connect {
-        val existingIds =
-            statuses
-                .map { it.id }
-                .chunked(SHARE_TRANSLATION_SQL_BATCH_SIZE)
-                .flatMap { database.statusDao().getVersions(it) }
-                .mapTo(mutableSetOf()) { it.id }
-        val missing = statuses.filter { it.id !in existingIds }
-        if (missing.isNotEmpty()) {
-            database.statusDao().insertNew(missing)
-        }
     }
-}
 
 private suspend fun loadTranslationsByEntityKey(
     database: CacheDatabase,

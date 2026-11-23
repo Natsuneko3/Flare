@@ -365,7 +365,7 @@ final class StatusShareTests: XCTestCase {
             .environment(\.colorScheme, .light)
             .environment(\.timelineAppearance, enabled)
             .snapshot(colorScheme: .light)
-        XCTAssertNotEqual(baselineEnabled.pngData(), baselineDisabled.pngData(),
+        XCTAssertNotEqual(try agentIconRegion(in: baselineEnabled).pngData(), try agentIconRegion(in: baselineDisabled).pngData(),
                           "Baseline TimelineView fixture must render the AI agent icon when agent is enabled")
 
         let expectedContent = try await StatusShareContent(data: root, statusKey: root.statusKey, replies: [reply])
@@ -380,24 +380,58 @@ final class StatusShareTests: XCTestCase {
             .environment(\.colorScheme, .light)
             .environment(\.timelineAppearance, enabled)
             .snapshot(colorScheme: .light)
-        XCTAssertEqual(actualContent.pngData(), expectedContent.pngData(),
+        XCTAssertEqual(try agentIconRegion(in: actualContent, height: actualContent.size.height).pngData(),
+                       try agentIconRegion(in: expectedContent, height: expectedContent.size.height).pngData(),
                        "StatusShareContent must not display the AI agent icon when agent is enabled")
 
         let pickerState = ReplyPickerState(replies: [reply])
-        let expectedPicker = try await StatusShareReplyPicker(state: pickerState)
-            .frame(width: 360, height: 320)
-            .environment(\.colorScheme, .light)
-            .environment(\.timelineAppearance, disabled)
-            .snapshot(colorScheme: .light)
-        let actualPicker = try await StatusShareReplyPicker(state: pickerState)
-            .frame(width: 360, height: 320)
-            .environment(\.colorScheme, .light)
-            .environment(\.timelineAppearance, enabled)
-            .snapshot(colorScheme: .light)
-        XCTAssertTrue(hasNonUniformPixels(in: expectedPicker),
-                      "StatusShareReplyPicker snapshot must materialize reply content")
-        XCTAssertEqual(actualPicker.pngData(), expectedPicker.pngData(),
+        let expectedPickerIcon = try await pickerReplyIconRegion(state: pickerState, appearance: disabled)
+        let actualPickerIcon = try await pickerReplyIconRegion(state: pickerState, appearance: enabled)
+        XCTAssertEqual(actualPickerIcon, expectedPickerIcon,
                        "StatusShareReplyPicker must not display the AI agent icon when agent is enabled")
+    }
+
+    private func agentIconRegion(in image: UIImage, height: CGFloat = 48) throws -> UIImage {
+        let raster = try XCTUnwrap(image.cgImage)
+        // The trailing header area contains the robot and its neighboring timestamp or platform icon.
+        let width = 64 * image.scale
+        let region = CGRect(x: CGFloat(raster.width) - width, y: 0, width: width, height: height * image.scale)
+        return UIImage(cgImage: try XCTUnwrap(raster.cropping(to: region)))
+    }
+
+    private func pickerReplyIconRegion(state: ReplyPickerState, appearance: TimelineAppearance) async throws -> Data {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: StatusShareReplyPicker(state: state)
+            .environment(\.timelineAppearance, appearance))
+        window.overrideUserInterfaceStyle = .light
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+        }
+
+        func replyList(in view: UIView) -> UICollectionView? {
+            (view as? UICollectionView) ?? view.subviews.lazy.compactMap { replyList(in: $0) }.first
+        }
+        for _ in 0..<60 {
+            try await Task.sleep(for: .milliseconds(25))
+            window.layoutIfNeeded()
+            guard let cell = replyList(in: host.view)?.cellForItem(at: IndexPath(item: 0, section: 0)),
+                  cell.bounds.width >= 64, cell.bounds.height >= 48 else { continue }
+            cell.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: cell.bounds).image { _ in
+                cell.drawHierarchy(in: cell.bounds, afterScreenUpdates: true)
+            }
+            let region = try agentIconRegion(in: image)
+            if hasNonUniformPixels(in: region) {
+                return try XCTUnwrap(region.pngData())
+            }
+        }
+        return try XCTUnwrap(nil, "The first reply's header must render before comparing the icon region")
     }
 
     private func hasNonUniformPixels(in image: UIImage) -> Bool {
@@ -464,8 +498,8 @@ final class StatusShareTests: XCTestCase {
             postActionLayout: base.postActionLayout,
             postActionFixedWidth: base.postActionFixedWidth,
             fullWidthPost: base.fullWidthPost,
-            absoluteTimestamp: base.absoluteTimestamp,
-            showPlatformLogo: base.showPlatformLogo,
+            absoluteTimestamp: true,
+            showPlatformLogo: true,
             timelineDisplayMode: base.timelineDisplayMode,
             aiConfig: TimelineAppearance.AiConfig(
                 translation: base.aiConfig.translation,
