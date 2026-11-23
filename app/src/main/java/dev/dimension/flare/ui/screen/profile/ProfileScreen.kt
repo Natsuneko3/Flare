@@ -70,6 +70,7 @@ import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.Images
 import compose.icons.fontawesomeicons.solid.Robot
+import compose.icons.fontawesomeicons.solid.ShareNodes
 import dev.dimension.flare.R
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.refreshSuspend
@@ -141,6 +142,7 @@ internal fun ProfileWithUserNameAndHostDeeplinkRoute(
     onFollowListClick: (userKey: MicroBlogKey) -> Unit,
     onFansListClick: (userKey: MicroBlogKey) -> Unit,
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit,
+    onProfileShareClick: (userKey: MicroBlogKey) -> Unit,
     onBack: () -> Unit = {},
     showBackButton: Boolean = true,
     onMediaClick: (statusKey: MicroBlogKey, index: Int, preview: String?) -> Unit,
@@ -164,6 +166,7 @@ internal fun ProfileWithUserNameAndHostDeeplinkRoute(
                 onFollowListClick = onFollowListClick,
                 onFansListClick = onFansListClick,
                 onProfileInsightClick = onProfileInsightClick,
+                onProfileShareClick = onProfileShareClick,
                 userKey = it.key,
                 onBack = onBack,
                 showBackButton = showBackButton,
@@ -268,6 +271,7 @@ internal fun ProfileScreen(
     onFollowListClick: (userKey: MicroBlogKey) -> Unit,
     onFansListClick: (userKey: MicroBlogKey) -> Unit,
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit,
+    onProfileShareClick: (userKey: MicroBlogKey) -> Unit,
     userKey: MicroBlogKey? = null,
     onBack: () -> Unit = {},
     showBackButton: Boolean = true,
@@ -405,6 +409,10 @@ internal fun ProfileScreen(
                                     profileState = state.state,
                                     onClick = onProfileInsightClick,
                                 )
+                                ProfileShareAction(
+                                    profileState = state.state,
+                                    onClick = onProfileShareClick,
+                                )
                                 ProfileMenu(
                                     profileState = state.state,
                                     modifier = Modifier.padding(8.dp),
@@ -435,6 +443,10 @@ internal fun ProfileScreen(
                                 ProfileInsightAction(
                                     profileState = state.state,
                                     onClick = onProfileInsightClick,
+                                )
+                                ProfileShareAction(
+                                    profileState = state.state,
+                                    onClick = onProfileShareClick,
                                 )
                                 ProfileMenu(
                                     profileState = state.state,
@@ -744,6 +756,27 @@ private fun ProfileInsightAction(
             FAIcon(
                 imageVector = FontAwesomeIcons.Solid.Robot,
                 contentDescription = stringResource(id = R.string.profile_insight_title),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileShareAction(
+    profileState: ProfileState,
+    onClick: (MicroBlogKey) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    profileState.userState.onSuccess { profile ->
+        IconButton(
+            onClick = {
+                onClick(profile.key)
+            },
+            modifier = modifier,
+        ) {
+            FAIcon(
+                imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                contentDescription = stringResource(id = R.string.settings_post_action_family_share),
             )
         }
     }
