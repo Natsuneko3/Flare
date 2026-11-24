@@ -2559,6 +2559,96 @@ final class MangaReaderAndDetailTests: XCTestCase {
         )
     }
 
+    func testIOSReaderBottomScrubberCapsuleAndWideViewportBounds() async throws {
+        let pages = makeSamplePages(count: 20)
+        let slots: [any ReaderSlot] = pages.indices.map { ReaderSlotSingle(pageIndex: Int32($0)) }
+        let fakeState = FakeMangaReaderState(
+            direction: .rtl,
+            pages: pages,
+            slots: slots,
+            previousBoundary: ChapterBoundaryUnlocked(
+                chapter: UiMangaChapter(id: "ch-prev", title: "Prev", subtitle: nil, uploadedAt: nil, locked: false, url: nil),
+                startFromEnd: true
+            ),
+            nextBoundary: ChapterBoundaryUnlocked(
+                chapter: UiMangaChapter(id: "ch-next", title: "Next", subtitle: nil, uploadedAt: nil, locked: false, url: nil),
+                startFromEnd: false
+            )
+        )
+        fakeState.mangaTitle = "Wide Viewport Manga Title"
+        fakeState.chapterTitle = "Chapter 12"
+        fakeState.goToPage(pageIndex: 5)
+        let controller = MangaReaderInteractionController()
+        let hostModel = ReaderTestHostModel(state: fakeState, controller: controller)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: ReaderTestHostView(model: hostModel))
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        func assertScrubberLayout(size: CGSize) async throws {
+            hostModel.scrubberLeadingLabelFrame = nil
+            hostModel.scrubberTrailingLabelFrame = nil
+            window.frame = CGRect(origin: .zero, size: size)
+            window.layoutIfNeeded()
+
+            try await eventually(window: window) {
+                hostModel.scrubberLeadingLabelFrame != nil &&
+                    hostModel.scrubberTrailingLabelFrame != nil &&
+                    !self.visibleSubviews(ofType: UISlider.self, in: window).isEmpty
+            }
+            window.layoutIfNeeded()
+
+            let slider: UISlider = try XCTUnwrap(visibleSubviews(ofType: UISlider.self, in: window).first)
+            let sliderFrame = slider.convert(slider.bounds, to: window)
+            let leadingFrame: CGRect = try XCTUnwrap(hostModel.scrubberLeadingLabelFrame)
+            let trailingFrame: CGRect = try XCTUnwrap(hostModel.scrubberTrailingLabelFrame)
+
+            let safeRect = window.bounds.inset(by: window.safeAreaInsets)
+            let expectedCapsuleWidth = min(safeRect.width - 32, 640)
+            let expectedCapsuleMinX = safeRect.minX + (safeRect.width - expectedCapsuleWidth) / 2
+            let expectedCapsuleMaxX = expectedCapsuleMinX + expectedCapsuleWidth
+
+            XCTAssertGreaterThan(sliderFrame.width, 100)
+            XCTAssertLessThan(abs(leadingFrame.midY - sliderFrame.midY), 10)
+            XCTAssertLessThan(abs(trailingFrame.midY - sliderFrame.midY), 10)
+
+            // All scrubber subviews must remain strictly inside the 16pt-inset safe area and <=640pt centered capsule.
+            XCTAssertGreaterThanOrEqual(sliderFrame.minX, expectedCapsuleMinX + 44)
+            XCTAssertLessThanOrEqual(sliderFrame.maxX, expectedCapsuleMaxX - 44)
+            XCTAssertGreaterThanOrEqual(trailingFrame.minX, expectedCapsuleMinX + 44)
+            XCTAssertLessThanOrEqual(leadingFrame.maxX, expectedCapsuleMaxX - 44)
+            XCTAssertGreaterThanOrEqual(min(trailingFrame.minX, leadingFrame.minX), safeRect.minX + 16)
+            XCTAssertLessThanOrEqual(max(trailingFrame.maxX, leadingFrame.maxX), safeRect.maxX - 16)
+
+            // Any enclosing glass/HUD bar container wrapping the slider must have exact clamped width and centered X.
+            let enclosingBarFrames = descendants(window).compactMap { view -> CGRect? in
+                let frame = view.convert(view.bounds, to: window)
+                guard frame.height >= 44, frame.height <= 76, frame.contains(sliderFrame) else {
+                    return nil
+                }
+                return frame
+            }
+            XCTAssertFalse(enclosingBarFrames.isEmpty, "Expected an enclosing bottom HUD capsule around UISlider")
+            for barFrame in enclosingBarFrames {
+                XCTAssertEqual(barFrame.width, expectedCapsuleWidth, accuracy: 2.0)
+                XCTAssertEqual(barFrame.midX, safeRect.midX, accuracy: 2.0)
+                XCTAssertGreaterThanOrEqual(barFrame.minX, safeRect.minX + 16 - 1.0)
+                XCTAssertLessThanOrEqual(barFrame.maxX, safeRect.maxX - 16 + 1.0)
+            }
+        }
+
+        try await assertScrubberLayout(size: CGSize(width: 393, height: 852))
+        try await assertScrubberLayout(size: CGSize(width: 1024, height: 1366))
+        try await assertScrubberLayout(size: CGSize(width: 1366, height: 1024))
+    }
+
     private func makeRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,

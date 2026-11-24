@@ -684,34 +684,19 @@ struct MangaReaderContentView: View {
         }
     }
 
-    @ViewBuilder
     private var bottomHudBar: some View {
-        if #available(iOS 26.0, *) {
-            bottomHudBarContent
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .frame(maxWidth: 640)
-                .backport
-                .glassEffect(
-                    .tinted(.init(.systemGroupedBackground).opacity(0.5)),
-                    in: .rect(corners: .concentric, isUniform: true),
-                    fallbackBackground: .regularMaterial
-                )
-                .padding()
-        } else {
-            bottomHudBarContent
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .frame(maxWidth: 640)
-                .backport
-                .glassEffect(
-                    .regular,
-                    in: .rect(cornerRadius: 24, style: .continuous),
-                    fallbackBackground: .regularMaterial
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-        }
+        bottomHudBarContent
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .backport
+            .glassEffect(
+                .tinted(.init(.systemGroupedBackground).opacity(0.5)),
+                in: .capsule,
+                fallbackBackground: .regularMaterial
+            )
+            .frame(maxWidth: 640)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
     }
 
     private var bottomHudBarContent: some View {
