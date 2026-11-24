@@ -7,6 +7,7 @@ import dev.dimension.flare.common.Locale
 import dev.dimension.flare.di.koinGet
 import dev.dimension.flare.feature.plugin.PluginSubsystemV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.ui.presenter.PresenterBase
 import kotlinx.coroutines.CoroutineScope
 
@@ -158,7 +159,7 @@ public class PluginOAuthCallbackFacadeV1 {
 
     @Throws(Exception::class)
     public suspend fun handle(url: String) {
-        check(coordinator.handle(url, Locale.language)) { "Unsupported plugin OAuth callback" }
+        check(coordinator.handle(url, normalizePluginInvocationLocale(Locale.language))) { "Unsupported plugin OAuth callback" }
     }
 }
 

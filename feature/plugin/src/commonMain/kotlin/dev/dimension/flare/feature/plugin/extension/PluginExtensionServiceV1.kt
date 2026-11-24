@@ -16,6 +16,7 @@ import dev.dimension.flare.feature.plugin.host.platformUuid
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.manifest.PluginExtensionActionV1
 import dev.dimension.flare.feature.plugin.manifest.PluginManifestV1
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimePool
@@ -426,7 +427,7 @@ internal class PluginExtensionServiceV1(
                                 accountId,
                                 execution.account.accountKey,
                                 execution.plugin.installed.manifest.permissions.httpOrigins,
-                                Locale.language,
+                                normalizePluginInvocationLocale(Locale.language),
                                 access,
                                 accountOrigin = adapter.accountOrigin,
                             ),
