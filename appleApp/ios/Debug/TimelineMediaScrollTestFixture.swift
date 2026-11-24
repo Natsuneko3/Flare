@@ -103,7 +103,7 @@ private final class TimelineScrollMeasurements: NSObject {
             .post(makeTimelineTestRow(
                 $0,
                 imageHeight: usesCarousel ? 600 : 1_600,
-                mediaCount: usesCarousel ? 16 : 1,
+                mediaCount: usesCarousel ? 40 : 1,
                 textRepeatCount: $0 % 4
             ))
         }

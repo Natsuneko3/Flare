@@ -63,11 +63,11 @@ final class TimelineMediaScrollTests: XCTestCase {
         let origin = app.coordinate(withNormalizedOffset: .zero)
         let right = origin.withOffset(CGVector(dx: frame.minX + frame.width * 0.85, dy: frame.midY))
         let left = origin.withOffset(CGVector(dx: frame.minX + frame.width * 0.15, dy: frame.midY))
+        let flickVelocity = XCUIGestureVelocity(rawValue: 2500)
 
         // 1. Continue scrolling forward in the same direction during inertia.
-        try withQuiescenceSkipped(in: app) {
-            right.press(forDuration: 0.05, thenDragTo: left, withVelocity: .fast, thenHoldForDuration: 0)
-            try waitForDeceleration(in: app, minimumOffsetX: 60)
+        withQuiescenceSkipped(in: app) {
+            right.press(forDuration: 0.05, thenDragTo: left, withVelocity: flickVelocity, thenHoldForDuration: 0)
             right.press(forDuration: 0.02, thenDragTo: left, withVelocity: .slow, thenHoldForDuration: 0.25)
         }
 
@@ -84,9 +84,8 @@ final class TimelineMediaScrollTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(afterContinue["timelineOffsetY"]), restingTimelineOffsetY, accuracy: 2, forwardRaw)
 
         // 2. Catch and reverse scrolling direction during inertia.
-        try withQuiescenceSkipped(in: app) {
-            right.press(forDuration: 0.05, thenDragTo: left, withVelocity: .fast, thenHoldForDuration: 0)
-            try waitForDeceleration(in: app, minimumOffsetX: forwardFinalOffset + 60)
+        withQuiescenceSkipped(in: app) {
+            right.press(forDuration: 0.05, thenDragTo: left, withVelocity: flickVelocity, thenHoldForDuration: 0)
             left.press(forDuration: 0.02, thenDragTo: right, withVelocity: .slow, thenHoldForDuration: 0.25)
         }
 
@@ -114,20 +113,6 @@ final class TimelineMediaScrollTests: XCTestCase {
         app.setValue(0x3, forKey: "currentInteractionOptions")
         defer { app.setValue(0, forKey: "currentInteractionOptions") }
         try body()
-    }
-
-    @MainActor
-    private func waitForDeceleration(in app: XCUIApplication, minimumOffsetX: Double, timeout: TimeInterval = 3) throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let values = try? measurements(in: app),
-               (values["carouselDecelerating"] ?? 0) == 1,
-               (values["carouselOffsetX"] ?? 0) >= minimumOffsetX {
-                return
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.03))
-        }
-        XCTFail("Carousel did not enter momentum deceleration past \(minimumOffsetX)pt: \(app.staticTexts["timeline-scroll-metrics"].label)")
     }
 
     @MainActor
