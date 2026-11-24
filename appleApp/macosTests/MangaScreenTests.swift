@@ -2263,7 +2263,7 @@ final class MangaScreenTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         try await eventually(window: window) {
             self.findMacAccessibilityButton(identifier: "list_error_challenge_verify", in: listErrorHost) != nil ||
-                !self.findMacKeyViewProxies(in: listErrorHost).isEmpty
+                self.findMacKeyViewProxies(in: listErrorHost).count >= 2
         }
         if let listButton = findMacAccessibilityButton(identifier: "list_error_challenge_verify", in: listErrorHost) {
             XCTAssertTrue(pressMacAccessibilityButton(listButton))
@@ -2276,6 +2276,16 @@ final class MangaScreenTests: XCTestCase {
         XCTAssertEqual(standaloneRetryCount, 0)
         launched[0].1()
         XCTAssertEqual(standaloneRetryCount, 1)
+        if let retryButton = findMacAccessibilityButton(identifier: "list_error_challenge_retry", in: listErrorHost) {
+            XCTAssertTrue(pressMacAccessibilityButton(retryButton))
+            XCTAssertEqual(standaloneRetryCount, 2)
+        } else {
+            let proxies = findMacKeyViewProxies(in: listErrorHost)
+            XCTAssertGreaterThanOrEqual(proxies.count, 2)
+            let lastProxy = try XCTUnwrap(proxies.last)
+            try clickMacViewCenter(lastProxy, in: window)
+            XCTAssertEqual(standaloneRetryCount, 2)
+        }
 
         // 2. MangaReaderCanvas chapter-level SessionChallengeException triggers state.retryChallengeFailures() (not retryChapter())
         launched.removeAll()
@@ -2869,7 +2879,14 @@ final class MangaScreenTests: XCTestCase {
             }
             stack.append(contentsOf: view.subviews)
         }
-        return result
+        return result.sorted { lhs, rhs in
+            let lhsPoint = lhs.convert(CGPoint(x: lhs.bounds.midX, y: lhs.bounds.midY), to: nil)
+            let rhsPoint = rhs.convert(CGPoint(x: rhs.bounds.midX, y: rhs.bounds.midY), to: nil)
+            if lhsPoint.y != rhsPoint.y {
+                return lhsPoint.y > rhsPoint.y
+            }
+            return lhsPoint.x < rhsPoint.x
+        }
     }
 
     private func clickMacViewCenter(_ view: NSView, in window: NSWindow) throws {

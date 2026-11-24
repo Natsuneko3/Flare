@@ -103,6 +103,7 @@ import dev.dimension.flare.compose.ui.manga_locked_chapter_title
 import dev.dimension.flare.compose.ui.manga_open_in_browser
 import dev.dimension.flare.compose.ui.manga_page_retry
 import dev.dimension.flare.compose.ui.session_challenge_complete_verification
+import dev.dimension.flare.compose.ui.status_loadmore_error_retry
 import dev.dimension.flare.data.network.ProxyNetwork
 import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.ui.component.ErrorContent
@@ -118,6 +119,7 @@ import dev.dimension.flare.ui.component.platform.PlatformCard
 import dev.dimension.flare.ui.component.platform.PlatformCircularProgressIndicator
 import dev.dimension.flare.ui.component.platform.PlatformFilledTonalButton
 import dev.dimension.flare.ui.component.platform.PlatformText
+import dev.dimension.flare.ui.component.platform.PlatformTextButton
 import dev.dimension.flare.ui.component.rememberMediaImageRequest
 import dev.dimension.flare.ui.model.MangaReadingDirection
 import dev.dimension.flare.ui.model.UiMedia
@@ -1631,6 +1633,15 @@ private fun ReaderPageErrorContent(
                     modifier = Modifier.testTag("manga_page_verify_$pageId"),
                 ) {
                     PlatformText(text = stringResource(Res.string.session_challenge_complete_verification))
+                }
+                PlatformTextButton(
+                    onClick = onChallengeCompleted,
+                    modifier = Modifier.testTag("manga_page_retry_$pageId"),
+                ) {
+                    PlatformText(
+                        text = stringResource(Res.string.status_loadmore_error_retry),
+                        color = Color.White.copy(alpha = 0.85f),
+                    )
                 }
             } else {
                 PlatformFilledTonalButton(

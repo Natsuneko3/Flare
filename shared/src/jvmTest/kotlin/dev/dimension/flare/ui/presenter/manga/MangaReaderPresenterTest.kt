@@ -3122,6 +3122,18 @@ class MangaReaderPresenterTest {
                 }
                 val seqInitial = awaitReaderState(seqStates) { it.loadState is UiState.Success && it.pages.size == 15 }
                 assertEquals(listOf(CursorCall("ch-seq", 0, null)), calls.toList())
+                assertEquals(
+                    ChapterBoundary.None,
+                    seqInitial.nextBoundary,
+                    "nextBoundary must stay None while cursor chapter still has unloaded pages",
+                )
+                seqInitial.stepForward()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                assertEquals("ch-seq", seqStates.value!!.activeChapterId)
+                seqInitial.goToPage(0)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
 
                 // Scrolling to index 4 (= 14 - 10) triggers single-flight cur-1; scrolling further (5, 6) while cur-1 is in flight must NOT duplicate cur-1!
                 seqInitial.goToPage(4)
@@ -3188,11 +3200,12 @@ class MangaReaderPresenterTest {
                 assertEquals(1, calls.count { it.chapterId == "ch-seq" && it.cursor == "cur-2" })
                 assertIs<PageMediaStatus.Failed>(seqStates.value!!.pages[30].status)
 
-                // Retry cur-2 -> succeeds with explicit offset = 30 and endReached = true -> reaching page 34 marks isCompleted = true!
+                // Retry cur-2 -> succeeds with explicit offset = 30 and endReached = true -> nextBoundary unlocks and reaching page 34 marks isCompleted = true!
                 cur2Failed.retryPage("__chunk_placeholder_30")
                 Snapshot.sendApplyNotifications()
                 runCurrent()
                 val afterCur2 = awaitReaderState(seqStates) { it.pages.size == 35 && it.pages[34].id == "seq-34" }
+                assertEquals("ch-chase-ok", assertIs<ChapterBoundary.Unlocked>(afterCur2.nextBoundary).chapter.id)
                 afterCur2.goToPage(34)
                 Snapshot.sendApplyNotifications()
                 advanceTimeBy(350)
@@ -3248,6 +3261,60 @@ class MangaReaderPresenterTest {
                 assertTrue(resumedLazy.pages.size >= 104)
                 job2.cancelAndJoin()
                 presenterCap.awaitPendingWrites()
+
+                // 2b. Opening and closing a 120-page cursor chapter when resume caps at 50 chunks (102 pages)
+                //     must preserve the prior 116/120 progress until the user explicitly navigates.
+                progressRepository.recordPage(
+                    accountType = accountType,
+                    mangaKey = mangaKey,
+                    chapterId = "ch-chase-cap",
+                    pageIndex = 115,
+                    pageCount = 120,
+                    isCompleted = false,
+                )
+                val preserveScopeJob = SupervisorJob()
+                val preserveScope = CoroutineScope(dispatcher + preserveScopeJob)
+                val preservePresenter = MangaReaderPresenter(accountType, mangaKey, initialChapterId = "ch-chase-cap")
+                val preserveStates = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                preserveScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { preservePresenter.body() }.collect { preserveStates.value = it }
+                }
+                val cappedResume =
+                    awaitReaderState(preserveStates) { state ->
+                        state.activeChapterId == "ch-chase-cap" && state.loadState is UiState.Success
+                    }
+                assertEquals(102, cappedResume.pages.size)
+                assertEquals(101, cappedResume.currentPageIndex)
+                assertEquals(ChapterBoundary.None, cappedResume.nextBoundary)
+                advanceTimeBy(400)
+                runCurrent()
+                preserveScopeJob.cancelAndJoin()
+                preservePresenter.awaitPendingWrites()
+                val preservedAfterClose = progressRepository.observe(accountType, mangaKey).first().chapters.getValue("ch-chase-cap")
+                assertEquals(115, preservedAfterClose.lastPageIndex)
+                assertEquals(120, preservedAfterClose.pageCount)
+
+                // Now user explicitly navigates after capped resume -> progress updates to the user's chosen page.
+                val navJob = SupervisorJob()
+                val navScope = CoroutineScope(dispatcher + navJob)
+                val navPresenter = MangaReaderPresenter(accountType, mangaKey, initialChapterId = "ch-chase-cap")
+                val navStates = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                navScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { navPresenter.body() }.collect { navStates.value = it }
+                }
+                val navCapped =
+                    awaitReaderState(navStates) { state ->
+                        state.activeChapterId == "ch-chase-cap" && state.loadState is UiState.Success
+                    }
+                navCapped.goToPage(80)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                advanceTimeBy(350)
+                runCurrent()
+                navJob.cancelAndJoin()
+                navPresenter.awaitPendingWrites()
+                val updatedAfterNav = progressRepository.observe(accountType, mangaKey).first().chapters.getValue("ch-chase-cap")
+                assertEquals(80, updatedAfterNav.lastPageIndex)
 
                 // 3. Switching chapter mid-chase cancels the active chase coroutine cleanly.
                 val cancelStates = MutableStateFlow<MangaReaderPresenter.State?>(null)

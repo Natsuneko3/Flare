@@ -764,6 +764,28 @@ class AccountRepositoryTest : RobolectricTest() {
                 val afterUpdate = settings.tabSettingsV2.first { tabSettings -> tabSettings.homeSlots.none { it.id == currentDefault.id } }
                 assertEquals(savedTabs(updated), afterUpdate.homeSlots)
                 assertEquals("chapter", progress.observe(owner, manga).first().lastChapterId)
+
+                // Plugin update removes one guest timeline specId while keeping standaloneGuestHost -> stale tab is pruned.
+                val withoutPopular = registry.mangaGuestPlatform("new.manga.example:8443", timelineIds = listOf("latest"))
+                registry.replaceExternal(withoutPopular.platformId, withoutPopular)
+                val afterRemoval =
+                    settings.tabSettingsV2.first { tabSettings ->
+                        tabSettings.homeSlots.none { it.id == savedTabs(updated)[1].id }
+                    }
+                val expectedLatestGroup =
+                    TimelineSlot(
+                        id = "reading-group",
+                        content =
+                            TimelineSlotContent.Group(
+                                children =
+                                    listOf(
+                                        resolver.toSlot(withoutPopular.guestTimelineTabs.single()).copy(id = "custom-latest"),
+                                        unrelated,
+                                    ),
+                            ),
+                        presentation = presentation,
+                    )
+                assertEquals(listOf(unrelated, expectedLatestGroup), afterRemoval.homeSlots)
             } finally {
                 job.cancelAndJoin()
             }
@@ -1960,9 +1982,12 @@ class AccountRepositoryTest : RobolectricTest() {
         }
     }
 
-    private fun PlatformRegistry.mangaGuestPlatform(host: String?): PlatformSpec {
+    private fun PlatformRegistry.mangaGuestPlatform(
+        host: String?,
+        timelineIds: List<String> = listOf("popular", "latest"),
+    ): PlatformSpec {
         val timelines =
-            listOf("popular", "latest").associateWith { id ->
+            timelineIds.associateWith { id ->
                 TimelineSpec(
                     id = "plugin:manga:MangaGuest:schema1:guest-timeline:$id",
                     title = UiText.Raw(id),

@@ -512,6 +512,22 @@ class WireMangaV1Test {
             assertFalse(withDirections.validate().isValid, nonPagingOp)
         }
 
+        // Missing permissions.mediaNetwork fails manga capability validation
+        val missingMediaNetwork =
+            manifestWithCapabilities(
+                apiVersion = 2,
+                capabilitiesJson =
+                    """
+                    "${PluginAbiV1.Capabilities.MANGA}": {
+                      "operations": { "detail": {}, "pages": {} }
+                    }
+                    """.trimIndent(),
+                mediaNetwork = false,
+            )
+        val missingMediaResult = missingMediaNetwork.validate()
+        assertFalse(missingMediaResult.isValid)
+        assertTrue(missingMediaResult.errors.any { it.code == "capability.permission" }, missingMediaResult.errors.toString())
+
         // Session exposure invariants: post.mutate alone does not expose POST detail or count as displayable
         assertFalse(PluginAbiV1.isDisplayableCapability(PluginAbiV1.Capabilities.POST, setOf("mutate")))
         assertTrue(PluginAbiV1.isDisplayableCapability(PluginAbiV1.Capabilities.MANGA, setOf("detail", "pages")))
@@ -568,6 +584,7 @@ class WireMangaV1Test {
         apiVersion: Int,
         capabilitiesJson: String,
         timelinesJson: String = "[]",
+        mediaNetwork: Boolean = true,
     ): PluginManifestV1 =
         PluginJsonV1.decodeFromString(
             """
@@ -577,7 +594,7 @@ class WireMangaV1Test {
               "id": "dev.example.manga",
               "version": "0.1.0",
               "name": "Manga sample",
-              "permissions": { "mediaNetwork": true },
+              "permissions": { "mediaNetwork": $mediaNetwork },
               "platform": {
                 "id": "MangaSample",
                 "name": "Manga sample",

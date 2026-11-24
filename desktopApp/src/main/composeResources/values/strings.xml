@@ -997,6 +997,8 @@
     <string name="session_challenge_title">Verification</string>
     <string name="session_challenge_close">Close</string>
     <string name="session_challenge_desktop_proxy_warning">Flare\'s custom proxy settings cannot be applied to the desktop verification WebView. This page is using your system proxy.</string>
+    <string name="session_challenge_proxy_consent_message">Flare\'s custom proxy settings cannot be applied to this verification WebView. Continuing will send requests directly through your system network instead of this account\'s proxy.</string>
+    <string name="session_challenge_continue_system_network">Continue using system network</string>
     <string name="session_challenge_desktop_seed_cookies_unsupported">Desktop WebView does not support host-only cookie isolation required for this seeded verification session. Please complete verification on iOS, macOS, or Android, or sign in again.</string>
     <string name="session_challenge_expired">This verification session has expired or is no longer valid. Close this window and retry.</string>
     <string name="session_challenge_relogin_title">Login required</string>

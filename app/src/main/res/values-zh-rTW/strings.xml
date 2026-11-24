@@ -1060,7 +1060,10 @@
     <string name="manga_reader_page_number">第 %1$d 頁</string>
     <string name="session_challenge_title">安全驗證</string>
     <string name="session_challenge_close">關閉</string>
-    <string name="session_challenge_account_proxy_mismatch">目前帳號的代理設定與全域代理不一致。由於 Android WebView 僅支援程序級全域代理，為確保網路邊界安全，無法在此開啟驗證頁面。請將全域代理調整為與該帳號一致後重試。</string>
+    <string name="session_challenge_account_proxy_mismatch">目前帳號的代理設定與全域代理不一致。由於 Android WebView 僅支援程序級全域代理，繼續操作將繞過該帳號的代理設定，改用系統網路發起驗證請求。</string>
+    <string name="session_challenge_unsupported_proxy_consent">目前 WebView 不支援自訂代理覆寫。繼續操作將繞過該帳號的代理設定，改用系統網路發起驗證請求。</string>
+    <string name="session_challenge_continue_system_network">使用系統網路繼續</string>
+    <string name="session_challenge_system_network_active_warning">目前驗證頁面正使用系統網路載入，未使用該帳號設定的代理。</string>
     <string name="session_challenge_expired">目前驗證工作階段已過期或失效，請關閉後重試。</string>
     <string name="session_challenge_relogin_title">需要重新登入</string>
     <string name="session_challenge_relogin_message">目前登入狀態已失效，請重新登入以繼續使用。</string>

@@ -52,6 +52,7 @@ import dev.dimension.flare.data.repository.SessionChallengeCookieRequirement
 import dev.dimension.flare.data.repository.SessionChallengeCookieSnapshot
 import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.data.repository.SessionChallengeHandle
+import dev.dimension.flare.data.repository.SessionChallengePromptBus
 import dev.dimension.flare.data.repository.SessionChallengeSeedCookie
 import dev.dimension.flare.data.translation.image.ImageTranslationError
 import dev.dimension.flare.model.AccountType
@@ -91,6 +92,7 @@ import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.TopLevelBackStack
 import dev.dimension.flare.ui.route.dispatchDesktopRouterNavigation
 import dev.dimension.flare.ui.screen.serviceselect.DesktopChallengePolicyDecision
+import dev.dimension.flare.ui.screen.serviceselect.ProvideDesktopSessionChallengeHost
 import dev.dimension.flare.ui.screen.serviceselect.SessionChallengeWebViewDialog
 import dev.dimension.flare.ui.screen.serviceselect.collectDesktopProbeCookies
 import dev.dimension.flare.ui.screen.serviceselect.evaluateDesktopChallengePolicy
@@ -1602,7 +1604,8 @@ class MangaScreenTest {
             assertEquals(0, webViewMountedCount)
         }
 
-        // 5. Empty seedCookies + ProxyMode.PROXY mounts WebView, shows top proxy warning banner, highlights deviated origin, and completes.
+        // 5. Empty seedCookies + ProxyMode.PROXY gates WebView mount behind system-network consent,
+        //    only mounts WebView & shows top proxy warning banner after confirmation, highlights deviated origin, and completes.
         val emptySeedHandle =
             FakeDesktopChallengeHandle(
                 challengeId = "cf-1",
@@ -1644,6 +1647,16 @@ class MangaScreenTest {
                 )
             }
         }
+        compose.onNodeWithTag("session_challenge_proxy_consent").assertIsDisplayed()
+        compose.onNodeWithTag("session_challenge_continue_system_network").assertIsDisplayed()
+        compose.onNodeWithTag("session_challenge_proxy_warning").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(0, webViewMountedCount)
+            assertEquals(0, emptySeedHandle.cancelCount)
+        }
+
+        compose.onNodeWithTag("session_challenge_continue_system_network").performClick()
+        compose.onNodeWithTag("session_challenge_proxy_consent").assertDoesNotExist()
         compose.onNodeWithTag("session_challenge_proxy_warning").assertIsDisplayed()
         compose.onNodeWithTag("session_challenge_origin").assertIsDisplayed()
         compose.onNodeWithText("https://manga.example").assertIsDisplayed()
@@ -1673,6 +1686,45 @@ class MangaScreenTest {
         compose.runOnIdle {
             assertEquals(1, completedCount)
             assertEquals(1, emptySeedHandle.closedCount)
+        }
+
+        // 5b. Closing on consent screen cancels handle without ever mounting WebView.
+        val declHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "cf-decline",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+            )
+        var declinedDismissed = 0
+        var declinedMounts = 0
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                SessionChallengeWebViewDialog(
+                    exception =
+                        SessionChallengeException(
+                            challengeId = "cf-decline",
+                            accountKey = accountKey,
+                            platformId = "MangaPlat",
+                            challengeUrl = "https://manga.example/challenge",
+                            displayMessage = "Verify",
+                        ),
+                    accountProxyMode = ProxyMode.DIRECT,
+                    beginSession = { declHandle },
+                    onCompleted = {},
+                    onRequireRelogin = {},
+                    onDismiss = { declinedDismissed++ },
+                    webViewContent = { _, _, _, _, _ -> declinedMounts++ },
+                )
+            }
+        }
+        compose.onNodeWithTag("session_challenge_proxy_consent").assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.runOnIdle {
+            assertEquals(0, declinedMounts)
+            assertEquals(1, declinedDismissed)
+            assertEquals(1, declHandle.cancelCount)
         }
 
         // 6. RequireReLoginException closes handle & WebView and notifies onRequireRelogin
@@ -1983,6 +2035,77 @@ class MangaScreenTest {
             listOf("clear", "registerSnapshotProvider", "loadUrl", "readUserAgent", "ua:FlareDesktopTestUA/1.0"),
             events,
         )
+    }
+
+    @Test
+    fun desktopSessionChallengeHostCollectsGlobalPromptBusAndRunsCompletionCallback() {
+        val accountKey = MicroBlogKey("me", "manga.example")
+        val probe =
+            SessionChallengeCookieProbe(
+                url = "https://manga.example/gallery",
+                cookies = listOf(SessionChallengeCookieRequirement("cf_clearance", required = true)),
+            )
+        val busHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "bus-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+            ).apply {
+                nextResults.add(SessionChallengeCheckResult.Completed)
+            }
+        var navCallback: (() -> Unit)? = null
+        var snapshotCallback: ((() -> SessionChallengeCookieSnapshot?) -> Unit)? = null
+        var completedCount = 0
+
+        try {
+            compose.setContent {
+                FlareTheme(isDarkTheme = false) {
+                    ProvideDesktopSessionChallengeHost(
+                        collectGlobalPrompts = true,
+                        beginSession = { busHandle },
+                        webViewContent = { _, _, onNavigationFinished, _, onSnapshotProvider ->
+                            navCallback = onNavigationFinished
+                            snapshotCallback = onSnapshotProvider
+                        },
+                    ) {
+                        Box(Modifier.size(100.dp))
+                    }
+                }
+            }
+
+            SessionChallengePromptBus.emit(
+                exception =
+                    SessionChallengeException(
+                        challengeId = "bus-1",
+                        accountKey = accountKey,
+                        platformId = "MangaPlat",
+                        challengeUrl = "https://manga.example/challenge",
+                        displayMessage = "Verify to bookmark",
+                    ),
+                onCompleted = { completedCount++ },
+            )
+
+            compose.onNodeWithTag("session_challenge_proxy_consent").assertIsDisplayed()
+            compose.onNodeWithTag("session_challenge_continue_system_network").performClick()
+            compose.onNodeWithTag("session_challenge_origin").assertIsDisplayed()
+
+            compose.runOnIdle {
+                snapshotCallback?.invoke {
+                    SessionChallengeCookieSnapshot(cookies = emptyList(), userAgent = "FlareDesktopTestUA/1.0")
+                }
+                navCallback?.invoke()
+            }
+            compose.runOnIdle {
+                assertEquals(1, completedCount)
+                assertEquals(1, busHandle.closeCount)
+            }
+        } finally {
+            while (SessionChallengePromptBus.tryReceive() != null) {
+                // Drain buffered prompts between tests.
+            }
+        }
     }
 }
 

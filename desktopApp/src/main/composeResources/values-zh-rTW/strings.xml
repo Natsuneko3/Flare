@@ -941,6 +941,8 @@
     <string name="session_challenge_title">安全驗證</string>
     <string name="session_challenge_close">關閉</string>
     <string name="session_challenge_desktop_proxy_warning">Flare 的自訂代理設定無法套用至桌面端驗證 WebView，目前頁面將透過系統代理載入。</string>
+    <string name="session_challenge_proxy_consent_message">Flare 的自訂代理設定無法套用至此驗證 WebView。繼續操作將繞過該帳號的代理設定，改用系統網路發起驗證請求。</string>
+    <string name="session_challenge_continue_system_network">使用系統網路繼續</string>
     <string name="session_challenge_desktop_seed_cookies_unsupported">桌面端 WebView 不支援此驗證所需的僅限來源主機 Cookie 隔離機制。請在 iOS、macOS 或 Android 端完成驗證，或重新登入帳號。</string>
     <string name="session_challenge_expired">目前驗證工作階段已過期或失效，請關閉後重試。</string>
     <string name="session_challenge_relogin_title">需要重新登入</string>

@@ -948,6 +948,8 @@
     <string name="session_challenge_title">安全验证</string>
     <string name="session_challenge_close">关闭</string>
     <string name="session_challenge_desktop_proxy_warning">Flare 的自定义代理设置无法应用于桌面端验证 WebView，当前页面将通过系统代理加载。</string>
+    <string name="session_challenge_proxy_consent_message">Flare 的自定义代理设置无法应用于此验证 WebView。继续操作将绕过该账号的代理设置，改用系统网络发起验证请求。</string>
+    <string name="session_challenge_continue_system_network">使用系统网络继续</string>
     <string name="session_challenge_desktop_seed_cookies_unsupported">桌面端 WebView 不支持该验证所需的仅限源主机 Cookie 隔离机制。请在 iOS、macOS 或 Android 端完成验证，或重新登录账号。</string>
     <string name="session_challenge_expired">当前验证会话已过期或失效，请关闭后重试。</string>
     <string name="session_challenge_relogin_title">需要重新登录</string>

@@ -12,6 +12,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
@@ -32,6 +33,7 @@ import dev.dimension.flare.data.repository.RequireReLoginException
 import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.ui.component.platform.PlatformFilledTonalButton
 import dev.dimension.flare.ui.component.platform.PlatformText
+import dev.dimension.flare.ui.component.platform.PlatformTextButton
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
 import org.jetbrains.compose.resources.stringResource
@@ -101,8 +103,15 @@ private fun SessionChallengeError(
         if (challengeLauncher != null) {
             PlatformFilledTonalButton(
                 onClick = { challengeLauncher(error, onRetry) },
+                modifier = Modifier.testTag("session_challenge_verify"),
             ) {
                 PlatformText(text = stringResource(resource = Res.string.session_challenge_complete_verification))
+            }
+            PlatformTextButton(
+                onClick = onRetry,
+                modifier = Modifier.testTag("session_challenge_retry"),
+            ) {
+                PlatformText(text = stringResource(resource = Res.string.status_loadmore_error_retry))
             }
         } else {
             PlatformFilledTonalButton(onClick = onRetry) {

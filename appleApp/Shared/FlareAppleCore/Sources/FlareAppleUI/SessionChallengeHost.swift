@@ -82,9 +82,16 @@ public struct SessionChallengeService {
 public extension View {
     func flareSessionChallengeHost(
         service: SessionChallengeService? = nil,
+        collectGlobalPrompts: Bool = false,
         onRelogin: ((RequireReLoginException) -> Void)? = nil
     ) -> some View {
-        modifier(SessionChallengeHostModifier(service: service, onRelogin: onRelogin))
+        modifier(
+            SessionChallengeHostModifier(
+                service: service,
+                collectGlobalPrompts: collectGlobalPrompts,
+                onRelogin: onRelogin
+            )
+        )
     }
 }
 
@@ -96,6 +103,7 @@ private struct PendingSessionChallenge: Identifiable {
 
 private struct SessionChallengeHostModifier: ViewModifier {
     let service: SessionChallengeService?
+    let collectGlobalPrompts: Bool
     let onRelogin: ((RequireReLoginException) -> Void)?
 
     @Environment(\.openURL) private var openURL
@@ -113,6 +121,23 @@ private struct SessionChallengeHostModifier: ViewModifier {
                     onCompleted: onCompleted
                 )
             })
+            .task(id: collectGlobalPrompts) {
+                guard collectGlobalPrompts else { return }
+                while !Task.isCancelled {
+                    do {
+                        let prompt = try await SessionChallengePromptBus.shared.awaitPrompt()
+                        guard !Task.isCancelled else { break }
+                        alertRelogin = nil
+                        pendingReloginAfterDismiss = nil
+                        activeChallenge = PendingSessionChallenge(
+                            exception: prompt.exception,
+                            onCompleted: { prompt.complete() }
+                        )
+                    } catch {
+                        break
+                    }
+                }
+            }
             .sheet(
                 item: $activeChallenge,
                 onDismiss: {

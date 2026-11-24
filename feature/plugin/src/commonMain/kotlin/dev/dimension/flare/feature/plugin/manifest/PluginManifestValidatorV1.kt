@@ -374,6 +374,12 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 )
             }
             if (capabilityId == PluginAbiV1.Capabilities.MANGA) {
+                check(
+                    permissions.mediaNetwork,
+                    "capability.permission",
+                    path,
+                    "Manga capability requires permissions.mediaNetwork",
+                )
                 listOf("detail", "pages", "pageImage").forEach { operation ->
                     check(
                         declaration.operations[operation]?.directions.isNullOrEmpty(),

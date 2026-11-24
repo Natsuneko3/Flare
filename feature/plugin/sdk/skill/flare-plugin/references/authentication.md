@@ -368,18 +368,24 @@ satisfied headlessly by `flare.http.request`.
      message: { value: "Complete verification to continue" },
      challenge: {
        url: context.origin + "/challenge",
-       seedCookies: [{ name: "session_hint", value: "abc" }],
+       // Optional on iOS, macOS, and Android; Desktop fails closed when seedCookies is non-empty:
+       // seedCookies: [{ name: "session_hint", value: "abc" }],
      },
    });
    ```
    `challenge.url` must be an approved HTTPS URL on `$accountOrigin` or
    `permissions.authOrigins` (no whitespace, control characters, or `#` fragment).
    Optional `seedCookies` supports up to `32` entries (`64 KiB` aggregate UTF-8
-   name+value bytes).
-4. **Completing the challenge**: The Host opens an interactive WebView routed through
-   the account's proxy, seeds `seedCookies`, monitors `challengeProbes`, and calls
+   name+value bytes) on iOS, macOS, and Android, and is rejected on Desktop before
+   opening the WebView.
+4. **Completing the challenge**: The Host opens an interactive WebView to
+   `challenge.url`, monitors `challengeProbes`, and calls
    `capabilities.sessionChallenge.complete(request, context)` with
    `{ challengeUrl, cookies, userAgent?, pendingPayload? }`.
+   - **Proxy & `seedCookies` platform boundaries**:
+     - **iOS / macOS**: Routes the challenge WebView through the account's proxy and supports host-only `seedCookies`.
+     - **Android**: Uses the account's proxy when it matches the global proxy and `PROXY_OVERRIDE` is supported, and seeds host-only `seedCookies`. Otherwise, it blocks initial navigation without loading until the user explicitly confirms continuing over the system network.
+     - **Desktop**: Cannot apply per-WebView custom proxies; when the account is not using the system proxy, it blocks initial navigation without loading until the user explicitly confirms continuing over the system network. Any non-empty `seedCookies` fails closed before mounting the WebView.
    - `cookies.cookies` contains only Cookies matching the declared `challengeProbes`.
    - `userAgent` carries the normalized WebView User-Agent (`1..1024` non-control chars) when available.
    - Return `{ type: "pending", pendingPayload? }` (up to `64 KiB` JSON; whole replacement,

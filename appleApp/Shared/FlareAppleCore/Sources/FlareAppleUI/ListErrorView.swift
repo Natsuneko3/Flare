@@ -138,6 +138,13 @@ public struct ListErrorView: View {
                     challengeActionBox?.register(nil)
                 }
                 .accessibilityIdentifier("list_error_challenge_verify")
+                if launchSessionChallenge != nil {
+                    Button(action: onRetry) {
+                        Text("action_retry", bundle: FlareAppleUILocalization.bundle)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("list_error_challenge_retry")
+                }
             } else {
                 Image(systemName: "exclamationmark.triangle.text.page")
                     .resizable()

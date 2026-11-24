@@ -90,10 +90,46 @@ final class IOSMangaReaderShareCoordinator {
     }
 }
 
+@MainActor
+private final class WindowAnchorBox {
+    weak var window: UIWindow?
+}
+
+private struct WindowReaderView: UIViewRepresentable {
+    let anchor: WindowAnchorBox
+
+    final class TrackingView: UIView {
+        var onWindowChange: ((UIWindow?) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onWindowChange?(window)
+        }
+    }
+
+    func makeUIView(context: Context) -> TrackingView {
+        let view = TrackingView(frame: .zero)
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        view.onWindowChange = { window in
+            anchor.window = window
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: TrackingView, context: Context) {
+        uiView.onWindowChange = { window in
+            anchor.window = window
+        }
+        anchor.window = uiView.window
+    }
+}
+
 struct MangaReaderScreen: View {
     @State private var presenter: KotlinPresenter<MangaReaderPresenterState>
     @State private var hudVisible = true
     @State private var shareCoordinator = IOSMangaReaderShareCoordinator()
+    @State private var windowAnchor = WindowAnchorBox()
 
     private let accountType: AccountType
     private let mangaKey: MicroBlogKey
@@ -136,6 +172,7 @@ struct MangaReaderScreen: View {
                 sharePage(displayed: displayed, pageIndex: pageIndex)
             }
         )
+        .background(WindowReaderView(anchor: windowAnchor))
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(!hudVisible)
@@ -182,7 +219,7 @@ struct MangaReaderScreen: View {
                     onNavigate(.statusShareSheet(accountType, mangaKey, shareUrl, nil, nil))
                 },
                 presentFile: { fileURL in
-                    guard let host = Self.topViewController() else {
+                    guard let host = Self.presenterViewController(in: windowAnchor.window) else {
                         throw IOSMangaShareError.missingPresenter
                     }
                     presentActivitySheet(items: [fileURL], from: host)
@@ -211,6 +248,13 @@ struct MangaReaderScreen: View {
             height: 1
         )
         presenter.present(controller, animated: true)
+    }
+
+    static func presenterViewController(in preferredWindow: UIWindow?) -> UIViewController? {
+        if let preferredWindow {
+            return topViewController(from: preferredWindow.rootViewController)
+        }
+        return topViewController()
     }
 
     private static func topViewController() -> UIViewController? {

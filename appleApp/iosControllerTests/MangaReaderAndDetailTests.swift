@@ -2864,13 +2864,18 @@ final class MangaReaderAndDetailTests: XCTestCase {
             uiKitRetryCount += 1
         }
         XCTAssertEqual(errorUIView.currentModeForTesting, .sessionChallenge)
-        let uiKitButton = try XCTUnwrap(descendants(errorUIView).compactMap { $0 as? UIButton }.first)
+        let uiKitButtons = descendants(errorUIView).compactMap { $0 as? UIButton }
+        let uiKitButton = try XCTUnwrap(uiKitButtons.first)
+        let uiKitRetryButton = try XCTUnwrap(uiKitButtons.first { $0.accessibilityIdentifier == "list_error_challenge_retry" })
+        XCTAssertFalse(uiKitRetryButton.isHidden)
         uiKitButton.sendActions(for: .touchUpInside)
         XCTAssertEqual(uiKitLaunched.count, 1)
         XCTAssertEqual(uiKitLaunched[0].0.challengeId, "ios-ui-ticket-1")
         XCTAssertEqual(uiKitRetryCount, 0)
         uiKitLaunched[0].1()
         XCTAssertEqual(uiKitRetryCount, 1)
+        uiKitRetryButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(uiKitRetryCount, 2)
 
         // 2. SwiftUI ListErrorView
         var swiftUILaunched: [(SessionChallengeException, () -> Void)] = []
@@ -2980,6 +2985,40 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertEqual(galleryLaunched.count, 1)
         galleryLaunched[0].1()
         XCTAssertEqual(galleryRetryCount, 1)
+    }
+
+    func testMangaReaderPresenterViewControllerTargetsPreferredWindowAcrossTwoWindows() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+
+        let rootA = UIViewController()
+        let navA = UINavigationController(rootViewController: rootA)
+        let windowA = UIWindow(windowScene: scene)
+        windowA.frame = CGRect(x: 0, y: 0, width: 400, height: 600)
+        windowA.rootViewController = navA
+        windowA.makeKeyAndVisible()
+
+        let rootB = UIViewController()
+        let leafB = UIViewController()
+        let navB = UINavigationController(rootViewController: rootB)
+        let windowB = UIWindow(windowScene: scene)
+        windowB.frame = CGRect(x: 420, y: 0, width: 400, height: 600)
+        windowB.rootViewController = navB
+        windowB.isHidden = false
+        rootB.present(leafB, animated: false)
+
+        defer {
+            windowA.isHidden = true
+            windowA.rootViewController = nil
+            windowB.isHidden = true
+            windowB.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+
+        let resolvedB = MangaReaderScreen.presenterViewController(in: windowB)
+        XCTAssertTrue(resolvedB === leafB, "Expected presenterViewController(in: windowB) to resolve window B's top VC")
+        let resolvedA = MangaReaderScreen.presenterViewController(in: windowA)
+        XCTAssertTrue(resolvedA === rootA, "Expected presenterViewController(in: windowA) to resolve window A's top VC")
     }
 
     private func findViewController<T: UIViewController>(ofType type: T.Type, in root: UIViewController) -> T? {

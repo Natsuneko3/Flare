@@ -239,7 +239,7 @@ struct RootView: View {
         .onChange(of: mainWindowCoordinator.navigationRequest?.id) { _, _ in
             handleMainWindowNavigationRequest(mainWindowCoordinator.navigationRequest)
         }
-        .flareSessionChallengeHost { relogin in
+        .flareSessionChallengeHost(collectGlobalPrompts: true) { relogin in
             reloginRoute = .relogin(relogin.accountKey, relogin.platformId)
         }
     }

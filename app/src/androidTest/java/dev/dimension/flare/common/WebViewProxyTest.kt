@@ -14,6 +14,8 @@ import androidx.compose.ui.ComposeUiFlags
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewFeature
@@ -226,9 +228,9 @@ class WebViewProxyTest {
             compose.waitUntil(20_000) { CookieManager.getInstance().getCookie(loginUrl).isNullOrEmpty() }
         }
 
-    @Test fun sessionChallengeFailsClosedWhenAccountProxyDiffersFromGlobal() =
+    @Test fun sessionChallengeBlocksInitialLoadUntilConsentWhenAccountProxyDiffersFromGlobal() =
         runBlocking {
-            val target = tlsServer { socket -> respond(socket, "should-not-connect") }
+            val target = tlsServer { socket -> respond(socket, "<html>verified</html>") }
             val accountKey = MicroBlogKey("me", "localhost")
             val challengeUrl = "https://localhost:${target.port}/challenge"
             val mismatchMessage =
@@ -236,7 +238,13 @@ class WebViewProxyTest {
                     .getInstrumentation()
                     .targetContext
                     .getString(R.string.session_challenge_account_proxy_mismatch)
+            val continueLabel =
+                InstrumentationRegistry
+                    .getInstrumentation()
+                    .targetContext
+                    .getString(R.string.session_challenge_continue_system_network)
             repository.selectGlobal(ProxyPolicy(ProxyMode.SYSTEM))
+            val cancelCount = AtomicInteger(0)
             val handle =
                 object : SessionChallengeHandle {
                     override val challengeId: String = "mismatch-1"
@@ -250,44 +258,68 @@ class WebViewProxyTest {
                     override suspend fun check(snapshot: SessionChallengeCookieSnapshot): SessionChallengeCheckResult =
                         SessionChallengeCheckResult.Pending
 
-                    override fun cancel() = Unit
+                    override fun cancel() {
+                        cancelCount.incrementAndGet()
+                    }
 
                     override fun close() = Unit
                 }
+            val prepareSystemCalls = AtomicInteger(0)
+            val restoreGlobalCalls = AtomicInteger(0)
+            var showsChallenge by mutableStateOf(true)
             compose.setContent {
                 CompositionLocalProvider(
                     LocalGlobalAppearance provides GlobalAppearance(),
                     LocalTimelineAppearance provides TimelineAppearance(),
                 ) {
                     FlareTheme(darkTheme = false, dynamicColor = false) {
-                        SessionChallengeWebViewDialog(
-                            exception =
-                                SessionChallengeException(
-                                    challengeId = "mismatch-1",
-                                    accountKey = accountKey,
-                                    platformId = "Test",
-                                    challengeUrl = challengeUrl,
-                                    displayMessage = "Verify",
-                                ),
-                            onCompleted = {},
-                            onRequireRelogin = {},
-                            onDismiss = {},
-                            beginSession = { handle },
-                            snapshotProxy = { ref ->
-                                if (ref is ProxyRef.Account) {
-                                    ChallengeProxyEndpoint(ProxyMode.DIRECT)
-                                } else {
-                                    ChallengeProxyEndpoint(ProxyMode.SYSTEM)
-                                }
-                            },
-                        )
+                        if (showsChallenge) {
+                            SessionChallengeWebViewDialog(
+                                exception =
+                                    SessionChallengeException(
+                                        challengeId = "mismatch-1",
+                                        accountKey = accountKey,
+                                        platformId = "Test",
+                                        challengeUrl = challengeUrl,
+                                        displayMessage = "Verify",
+                                    ),
+                                onCompleted = {},
+                                onRequireRelogin = {},
+                                onDismiss = { showsChallenge = false },
+                                beginSession = { handle },
+                                prepareSystemNetwork = {
+                                    prepareSystemCalls.incrementAndGet()
+                                    WebViewProxy.prepareSystemNetwork()
+                                },
+                                restoreGlobalProxy = {
+                                    restoreGlobalCalls.incrementAndGet()
+                                    WebViewProxy.prepare()
+                                },
+                                snapshotProxy = { ref ->
+                                    if (ref is ProxyRef.Account) {
+                                        ChallengeProxyEndpoint(ProxyMode.DIRECT)
+                                    } else {
+                                        ChallengeProxyEndpoint(ProxyMode.SYSTEM)
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }
             compose.waitUntil(20_000) {
-                compose.onAllNodesWithText(mismatchMessage).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithText(mismatchMessage).fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodesWithText(continueLabel).fetchSemanticsNodes().isNotEmpty()
             }
             assertEquals(0, target.accepted.get())
+            assertEquals(0, cancelCount.get())
+            assertEquals(0, prepareSystemCalls.get())
+
+            // Explicit confirmation mounts WebView via system network and restores global proxy on disposal.
+            compose.onNodeWithTag("session_challenge_continue_system_network").performClick()
+            compose.waitUntil(20_000) { prepareSystemCalls.get() == 1 && target.accepted.get() > 0 }
+            compose.runOnIdle { showsChallenge = false }
+            compose.waitUntil(20_000) { restoreGlobalCalls.get() == 1 }
         }
 
     @Test fun sessionChallengeInjectsHostOnlySeedCookiesAndCollectsProbeCookies() =

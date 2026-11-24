@@ -177,7 +177,7 @@ internal fun DesktopMangaReaderWindowBody(
             }
         }
     CompositionLocalProvider(LocalUriHandler provides readerUriHandler) {
-        ProvideDesktopSessionChallengeHost {
+        ProvideDesktopSessionChallengeHost(collectGlobalPrompts = false) {
             content()
         }
     }

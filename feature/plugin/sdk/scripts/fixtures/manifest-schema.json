@@ -2552,6 +2552,7 @@
       "name": "API v2 manga capability with optional operations",
       "patch": {
         "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
         "platform": {
           "capabilities": {
             "flare.datasource.manga/v1": {
@@ -2570,8 +2571,27 @@
       "hostValid": true
     },
     {
+      "name": "API v2 manga capability requires permissions.mediaNetwork",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
       "name": "API v1 rejects manga capability",
       "patch": {
+        "permissions": { "mediaNetwork": true },
         "platform": {
           "capabilities": {
             "flare.datasource.manga/v1": {
@@ -2590,6 +2610,7 @@
       "name": "manga capability requires detail and pages",
       "patch": {
         "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
         "platform": {
           "capabilities": {
             "flare.datasource.manga/v1": {
@@ -2607,6 +2628,7 @@
       "name": "manga non-paging operations reject directions",
       "patch": {
         "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
         "platform": {
           "capabilities": {
             "flare.datasource.manga/v1": {
@@ -2625,6 +2647,7 @@
       "name": "API v2 allows post.mutate without post.detail",
       "patch": {
         "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
         "platform": {
           "capabilities": {
             "flare.datasource.manga/v1": {

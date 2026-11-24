@@ -1532,7 +1532,7 @@ class MangaReaderCanvasTest {
             }
         }
 
-        // 1. General ErrorContent displays Complete Verification and runs onRetry on completion.
+        // 1. General ErrorContent displays Complete Verification + secondary Retry (for post-cancel re-request).
         composeRule.onNodeWithText("Verify to load list").assertExists()
         composeRule.onNodeWithText("Complete Verification").performClick()
         composeRule.runOnIdle {
@@ -1541,8 +1541,12 @@ class MangaReaderCanvasTest {
             launchedChallenges.last().second.invoke()
             assertEquals(1, generalRetryCount)
         }
+        composeRule.onNodeWithTag("session_challenge_retry").performClick()
+        composeRule.runOnIdle {
+            assertEquals(2, generalRetryCount)
+        }
 
-        // 2. Reader chapter-level SessionChallengeException triggers state.retryChallengeFailures() on completion.
+        // 2. Reader chapter-level SessionChallengeException triggers state.retryChallengeFailures() on completion or retry.
         composeRule.runOnIdle {
             fakeState.loadState = UiState.Error(chapterChallenge)
             mode = "reader"
@@ -1556,8 +1560,13 @@ class MangaReaderCanvasTest {
             assertEquals(1, fakeState.retryChallengeFailuresCount)
             assertEquals(0, fakeState.retryChapterCount)
         }
+        composeRule.onNodeWithTag("session_challenge_retry").performClick()
+        composeRule.runOnIdle {
+            assertEquals(2, fakeState.retryChallengeFailuresCount)
+            assertEquals(0, fakeState.retryChapterCount)
+        }
 
-        // 3. Reader page-level SessionChallengeException triggers state.retryChallengeFailures() on completion.
+        // 3. Reader page-level SessionChallengeException triggers state.retryChallengeFailures() on completion or secondary retry.
         composeRule.runOnIdle {
             fakeState.loadState = UiState.Success(Unit)
         }
@@ -1567,7 +1576,12 @@ class MangaReaderCanvasTest {
             assertEquals(3, launchedChallenges.size)
             assertEquals("ch-page", launchedChallenges.last().first.challengeId)
             launchedChallenges.last().second.invoke()
-            assertEquals(2, fakeState.retryChallengeFailuresCount)
+            assertEquals(3, fakeState.retryChallengeFailuresCount)
+            assertTrue(fakeState.retriedPageIds.isEmpty())
+        }
+        composeRule.onNodeWithTag("manga_page_retry_p-0").performClick()
+        composeRule.runOnIdle {
+            assertEquals(4, fakeState.retryChallengeFailuresCount)
             assertTrue(fakeState.retriedPageIds.isEmpty())
         }
     }

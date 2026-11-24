@@ -732,12 +732,22 @@ internal class TimelineResolver(
         val platformId = source.ownerPlatformId ?: guest?.platformId ?: return source
         val platform = platforms[platformId] ?: return null
         val host = platform.standaloneGuestHost ?: return null
-        if (guest is TimelineSpec.GuestPluginResourceData && guest.platformId == platformId && guest.host != host) {
-            val updated = guest.copy(host = host)
-            val candidate = platform.guestTimelineTabs.firstOrNull { it.target.spec.id == source.specId && it.target.data == updated }
-            if (candidate != null) return candidate.target.toSource(source.title, source.icon)
+        if (guest == null || guest.platformId != platformId) return null
+        val targetData =
+            if (guest is TimelineSpec.GuestPluginResourceData && guest.host != host) {
+                guest.copy(host = host)
+            } else {
+                guest
+            }
+        val candidate =
+            platform.guestTimelineTabs.firstOrNull {
+                it.target.spec.id == source.specId && it.target.data == targetData
+            } ?: return null
+        return if (targetData != guest) {
+            candidate.target.toSource(source.title, source.icon)
+        } else {
+            source.copy(ownerPlatformId = platformId)
         }
-        return source.copy(ownerPlatformId = platformId)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

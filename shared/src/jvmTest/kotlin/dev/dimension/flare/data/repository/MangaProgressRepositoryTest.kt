@@ -11,7 +11,6 @@ import dev.dimension.flare.data.database.buildCacheDatabase
 import dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.model.DbPluginPostWidget
-import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
@@ -285,100 +284,49 @@ class MangaProgressRepositoryTest {
         }
 
     @Test
-    fun migrationFromManga55KeepsReadingProgressAndAddsWidgetStorage() =
+    fun cacheRebuildFromV56CreatesMangaProgressTablesAndDecodesUnknownDirectionDefensively() =
         runTest {
-            val directory = Files.createTempDirectory("flare-cache-manga-v55")
-            val path = directory.resolve("cache.db").toString()
-            val owner = AccountType.GuestPlugin("MangaPlugin", "api.manga.example")
-            val book = MicroBlogKey("series-1", "api.manga.example")
-            try {
-                val original = buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path))
-                try {
-                    MangaProgressRepository(original) { 42L }.recordPage(owner, book, "ch-1", 4, 10, false)
-                } finally {
-                    original.close()
-                }
-                BundledSQLiteDriver().open(path).use { connection ->
-                    connection.execSQL("DROP TABLE DbPluginPostWidget")
-                    connection.execSQL("UPDATE room_master_table SET identity_hash = 'ce76106ed6f3e4b79442097c8152a804' WHERE id = 42")
-                    connection.execSQL("PRAGMA user_version = 55")
-                }
-                val migrated = buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path))
-                try {
-                    val progress = MangaProgressRepository(migrated).observe(owner, book).first()
-                    assertEquals(4, progress.lastPageIndex)
-                    assertEquals(42L, progress.lastReadAt)
-                    assertEquals(emptyList(), migrated.pluginPostWidgetDao().getByPostKeys(listOf("post")))
-                } finally {
-                    migrated.close()
-                }
-            } finally {
-                directory.toFile().deleteRecursively()
-            }
-        }
-
-    @Test
-    fun migrationFromWidget55CreatesMangaProgressTablesWithoutDroppingExistingCache() =
-        runTest {
-            assertEquals(56, CACHE_DATABASE_VERSION)
-            val dbPath = Files.createTempFile("flare-cache-widget-v55", ".db")
+            assertEquals(57, CACHE_DATABASE_VERSION)
+            val dbPath = Files.createTempFile("flare-cache-v56-rebuild", ".db")
             val path = dbPath.toAbsolutePath().toString()
             val owner = AccountType.GuestPlugin("MangaPlugin", "api.manga.example")
-            val userKey = MicroBlogKey("author", "api.manga.example")
             val mangaKey = MicroBlogKey("series-1", "api.manga.example")
-            val widget = DbPluginPostWidget("post", "plugin", "v1", "hash", "[]", 42L, null)
             try {
                 val seedDb = buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path))
                 try {
-                    seedDb.pluginPostWidgetDao().upsertAll(listOf(widget))
-                    seedDb.userDao().insertProfileTabs(DbProfileTabs(owner, userKey, "[\"works\"]"))
+                    seedDb.pluginPostWidgetDao().upsertAll(
+                        listOf(DbPluginPostWidget("post", "plugin", "v1", "hash", "[]", 42L, null)),
+                    )
                 } finally {
                     seedDb.close()
                 }
 
-                // Recreate the v55 schema shipped with plugin widgets.
+                // Recreate a prior v56 schema without manga tables or matching identity hash.
                 BundledSQLiteDriver().open(path).use { connection ->
                     connection.execSQL("DROP TABLE DbMangaChapterProgress")
                     connection.execSQL("DROP TABLE DbMangaState")
                     connection.execSQL("UPDATE room_master_table SET identity_hash = '301b52290882c35fd112a882504b2475' WHERE id = 42")
-                    connection.execSQL("PRAGMA user_version = 55")
+                    connection.execSQL("PRAGMA user_version = 56")
                 }
 
-                // Open strictly with MIGRATION_55_56 (no fallbackToDestructiveMigration) so Room validates exact schema + indices.
-                val migratedDb =
-                    Room
-                        .databaseBuilder<CacheDatabase>(name = path)
-                        .addMigrations(CacheDatabase.MIGRATION_55_56)
-                        .setDriver(createDatabaseDriver())
-                        .setQueryCoroutineContext(PlatformDispatchers.IO)
-                        .build()
+                val rebuiltDb = buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path))
                 try {
-                    assertEquals(
-                        DbProfileTabs(owner, userKey, "[\"works\"]"),
-                        migratedDb.userDao().getProfileTabsSync(owner, userKey),
-                    )
-                    assertEquals(listOf(widget), migratedDb.pluginPostWidgetDao().getByPostKeys(listOf("post")))
-                    val repo = MangaProgressRepository(migratedDb) { 9_000L }
+                    assertEquals(emptyList(), rebuiltDb.pluginPostWidgetDao().getByPostKeys(listOf("post")))
+                    val repo = MangaProgressRepository(rebuiltDb) { 9_000L }
                     repo.recordPage(owner, mangaKey, "ch-1", pageIndex = 2, pageCount = 10, isCompleted = false)
                     val snapshot = repo.observe(owner, mangaKey).first()
                     assertEquals("ch-1", snapshot.lastChapterId)
                     assertEquals(2, snapshot.lastPageIndex)
                     assertEquals(9_000L, snapshot.lastReadAt)
                 } finally {
-                    migratedDb.close()
+                    rebuiltDb.close()
                 }
 
                 // Unknown persisted reading direction string decodes defensively to null without crashing Room queries.
                 BundledSQLiteDriver().open(path).use { connection ->
                     connection.execSQL("UPDATE DbMangaState SET readerModeOverride = 'FutureScrollMode'")
                 }
-                val reopenedDb =
-                    Room
-                        .databaseBuilder<CacheDatabase>(name = path)
-                        .addMigrations(CacheDatabase.MIGRATION_55_56)
-                        .setDriver(createDatabaseDriver())
-                        .setQueryCoroutineContext(PlatformDispatchers.IO)
-                        .build()
+                val reopenedDb = buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path))
                 try {
                     val reopenedSnapshot = MangaProgressRepository(reopenedDb).observe(owner, mangaKey).first()
                     assertEquals("ch-1", reopenedSnapshot.lastChapterId)
@@ -390,6 +338,89 @@ class MangaProgressRepositoryTest {
                 Files.deleteIfExists(dbPath)
                 Files.deleteIfExists(dbPath.resolveSibling("${dbPath.fileName}-wal"))
                 Files.deleteIfExists(dbPath.resolveSibling("${dbPath.fileName}-shm"))
+            }
+        }
+
+    @Test
+    fun uninstallingGuestPluginDeletesProcessorWidgetsWhileKeepingOtherAccounts() =
+        runTest {
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val appDataStore = AppDataStore(fileStorage)
+            val appDatabase =
+                Room
+                    .memoryDatabaseBuilder<AppDatabase>()
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            val cacheDatabase =
+                Room
+                    .memoryDatabaseBuilder<CacheDatabase>()
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+            val proxyRepository = ProxyRepository(fileStorage)
+            val draftRepository = DraftRepository(appDatabase, DraftMediaStore(fileStorage))
+            val accountRepository =
+                AccountRepository(
+                    appDatabase = appDatabase,
+                    coroutineScope = backgroundScope,
+                    appDataStore = appDataStore,
+                    cacheDatabase = cacheDatabase,
+                    proxyRepository = proxyRepository,
+                    platformRegistry = registry,
+                    draftRepository = draftRepository,
+                )
+            try {
+                val guestAccount = AccountType.GuestPlugin(platformId = "MangaPlugin", host = "api.manga.example")
+                val otherGuestAccount = AccountType.GuestPlugin(platformId = "OtherMangaPlugin", host = "other.manga.example")
+                registry.replaceExternal(
+                    "MangaPlugin",
+                    object : PlatformSpec by registry.defaultGuest {
+                        override val platformId = "MangaPlugin"
+                        override val isDefaultGuest = false
+                        override val standaloneGuestHost = "api.manga.example"
+                    },
+                )
+                registry.replaceExternal(
+                    "OtherMangaPlugin",
+                    object : PlatformSpec by registry.defaultGuest {
+                        override val platformId = "OtherMangaPlugin"
+                        override val isDefaultGuest = false
+                        override val standaloneGuestHost = "other.manga.example"
+                    },
+                )
+                val targetPostEntityKey = "${guestAccount}_${MicroBlogKey("post-1", "api.manga.example")}"
+                val orphanPostEntityKey = "${guestAccount}_${MicroBlogKey("post-orphan", "api.manga.example")}"
+                val preservedPostEntityKey = "${otherGuestAccount}_${MicroBlogKey("post-2", "other.manga.example")}"
+                cacheDatabase.pluginPostWidgetDao().upsertAll(
+                    listOf(
+                        DbPluginPostWidget(targetPostEntityKey, "other.processor.plugin", "k1", "h1", "[]", 10L, null),
+                        DbPluginPostWidget(orphanPostEntityKey, "another.processor.plugin", "k2", "h2", "[]", 20L, null),
+                        DbPluginPostWidget(preservedPostEntityKey, "other.processor.plugin", "k3", "h3", "[]", 30L, null),
+                    ),
+                )
+
+                accountRepository.deleteAccounts(
+                    platformId = "MangaPlugin",
+                    ownsCredential = { true },
+                    beforeDelete = { registry.replaceExternal("MangaPlugin", null) },
+                )
+
+                assertEquals(
+                    emptyList(),
+                    cacheDatabase.pluginPostWidgetDao().getByPostKeys(listOf(targetPostEntityKey, orphanPostEntityKey)),
+                )
+                assertEquals(
+                    listOf(preservedPostEntityKey),
+                    cacheDatabase.pluginPostWidgetDao().getByPostKeys(listOf(preservedPostEntityKey)).map { it.postEntityKey },
+                )
+            } finally {
+                cacheDatabase.close()
+                appDatabase.close()
+                deleteTestRootPath(root)
             }
         }
 }

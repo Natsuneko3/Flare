@@ -7,6 +7,8 @@ import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.DatabaseUpdater
 import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.UpdatePostActionMenuEvent
+import dev.dimension.flare.data.repository.SessionChallengeException
+import dev.dimension.flare.data.repository.SessionChallengePromptBus
 import dev.dimension.flare.data.repository.tryRun
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
@@ -98,7 +100,7 @@ public class PostEventHandler(
                     event = event,
                     updater = this@PostEventHandler,
                 )
-            }.onFailure {
+            }.onFailure { error ->
                 // revert cache to original data if handling fails
                 if (originalData != null) {
                     database.statusDao().update(
@@ -107,6 +109,12 @@ public class PostEventHandler(
                         content = originalData,
                         renderHash = originalData.renderHash,
                         text = originalData.searchText,
+                    )
+                }
+                if (error is SessionChallengeException) {
+                    SessionChallengePromptBus.emit(
+                        exception = error,
+                        onCompleted = { handleEvent(event) },
                     )
                 }
             }

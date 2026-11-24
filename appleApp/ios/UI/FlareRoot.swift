@@ -114,7 +114,7 @@ struct FlareRoot: View {
                 .tabBarMinimizeBehavior(.onScrollDown)
                 .background(Color(.systemGroupedBackground))
             }
-            .flareSessionChallengeHost { relogin in
+            .flareSessionChallengeHost(collectGlobalPrompts: true) { relogin in
                 reloginRoute = .relogin(relogin.accountKey, relogin.platformId)
             }
             .sheet(item: $reloginRoute) { route in
@@ -248,7 +248,7 @@ struct BackportFlareRoot: View {
                 onDoubleTap: { tabBarNotifications.post(name: .tabDoubleTapped, object: activeTab) }
             ))
             .background(Color(.systemGroupedBackground))
-            .flareSessionChallengeHost { relogin in
+            .flareSessionChallengeHost(collectGlobalPrompts: true) { relogin in
                 reloginRoute = .relogin(relogin.accountKey, relogin.platformId)
             }
             .sheet(item: $reloginRoute) { route in

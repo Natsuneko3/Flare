@@ -3165,6 +3165,52 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "platform": {
+            "type": "object",
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "type": "object",
+                "required": [
+                  "flare.datasource.manga/v1"
+                ],
+                "properties": {
+                  "flare.datasource.manga/v1": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "platform"
+        ]
+      },
+      "then": {
+        "required": [
+          "permissions"
+        ],
+        "properties": {
+          "permissions": {
+            "type": "object",
+            "required": [
+              "mediaNetwork"
+            ],
+            "properties": {
+              "mediaNetwork": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -12,7 +12,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
@@ -20,6 +22,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,6 +40,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -66,6 +70,7 @@ import dev.dimension.flare.data.repository.SessionChallengeCookieValue
 import dev.dimension.flare.data.repository.SessionChallengeCoordinator
 import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.data.repository.SessionChallengeHandle
+import dev.dimension.flare.data.repository.SessionChallengePromptBus
 import dev.dimension.flare.ui.component.BackButton
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareScaffold
@@ -74,7 +79,10 @@ import dev.dimension.flare.ui.component.LocalSessionChallengeLauncher
 import dev.dimension.flare.ui.presenter.login.ReloginTarget
 import dev.dimension.flare.ui.theme.FlareTheme
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -199,6 +207,14 @@ internal fun ProvideAndroidSessionChallengeHost(content: @Composable () -> Unit)
             }
         }
 
+    LaunchedEffect(Unit) {
+        SessionChallengePromptBus.prompts.collect { prompt ->
+            launcher(prompt.exception) {
+                prompt.complete()
+            }
+        }
+    }
+
     CompositionLocalProvider(
         LocalSessionChallengeLauncher provides launcher,
         LocalAndroidChallengeReloginHandler provides reloginHandler,
@@ -260,6 +276,26 @@ internal fun ProvideAndroidSessionChallengeHost(content: @Composable () -> Unit)
     }
 }
 
+internal data class AndroidChallengeRoute(
+    val key: String,
+    val isValid: () -> Boolean,
+    val onInvalidated: (() -> Unit) -> () -> Unit,
+)
+
+private fun ProxySnapshot.toAndroidChallengeRoute(): AndroidChallengeRoute =
+    AndroidChallengeRoute(
+        key = key,
+        isValid = { isValid },
+        onInvalidated = { callback -> onInvalidated(callback) },
+    )
+
+private fun systemFallbackRoute(key: String): AndroidChallengeRoute =
+    AndroidChallengeRoute(
+        key = key,
+        isValid = { true },
+        onInvalidated = { { } },
+    )
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SessionChallengeWebViewDialog(
@@ -275,6 +311,8 @@ internal fun SessionChallengeWebViewDialog(
             ?.beginSession(challengeId)
     },
     prepareProxy: suspend () -> ProxySnapshot = { WebViewProxy.prepare() },
+    prepareSystemNetwork: suspend () -> Unit = { WebViewProxy.prepareSystemNetwork() },
+    restoreGlobalProxy: suspend () -> Unit = { WebViewProxy.prepare() },
     snapshotProxy: suspend (ProxyRef) -> ChallengeProxyEndpoint = { ref ->
         ProxyNetwork.snapshot(ref).connection.toChallengeProxyEndpoint()
     },
@@ -282,18 +320,22 @@ internal fun SessionChallengeWebViewDialog(
     val latestOnCompleted by rememberUpdatedState(onCompleted)
     val latestOnRequireRelogin by rememberUpdatedState(onRequireRelogin)
     val latestOnDismiss by rememberUpdatedState(onDismiss)
+    val latestRestoreGlobalProxy by rememberUpdatedState(restoreGlobalProxy)
 
     val initialOrigin = remember(exception.challengeUrl) { exception.challengeUrl.challengeHttpsOriginOrNull() }
     var currentOrigin by remember(exception.challengeId) { mutableStateOf(initialOrigin.orEmpty()) }
     var sessionHandle by remember(exception.challengeId) { mutableStateOf<SessionChallengeHandle?>(null) }
     var sessionCompleted by remember(exception.challengeId) { mutableStateOf(false) }
-    var route by remember(exception.challengeId) { mutableStateOf<ProxySnapshot?>(null) }
+    var route by remember(exception.challengeId) { mutableStateOf<AndroidChallengeRoute?>(null) }
     var cookiesSeeded by remember(exception.challengeId) { mutableStateOf(false) }
+    var systemNetworkConfirmed by remember(exception.challengeId) { mutableStateOf(false) }
+    var consentMessage by remember(exception.challengeId) { mutableStateOf<String?>(null) }
+    var usedSystemNetworkFallback by remember(exception.challengeId) { mutableStateOf(false) }
     var errorText by remember(exception.challengeId) { mutableStateOf<String?>(null) }
 
     val expiredErrorText = stringResource(R.string.session_challenge_expired)
-    val mismatchErrorText = stringResource(R.string.session_challenge_account_proxy_mismatch)
-    val unsupportedProxyText = stringResource(R.string.proxy_webview_unsupported)
+    val mismatchConsentText = stringResource(R.string.session_challenge_account_proxy_mismatch)
+    val unsupportedProxyConsentText = stringResource(R.string.session_challenge_unsupported_proxy_consent)
     val proxyErrorText = stringResource(R.string.proxy_webview_error)
 
     val cancelAndDismiss = {
@@ -309,6 +351,11 @@ internal fun SessionChallengeWebViewDialog(
                 sessionHandle?.close()
             }
             clearAndroidChallengeStorageAndCookies()
+            if (usedSystemNetworkFallback) {
+                CoroutineScope(Dispatchers.Main.immediate + SupervisorJob()).launch {
+                    runCatching { latestRestoreGlobalProxy() }
+                }
+            }
         }
     }
 
@@ -316,6 +363,9 @@ internal fun SessionChallengeWebViewDialog(
         sessionHandle = null
         route = null
         cookiesSeeded = false
+        systemNetworkConfirmed = false
+        consentMessage = null
+        usedSystemNetworkFallback = false
         errorText = null
 
         val handle =
@@ -334,10 +384,34 @@ internal fun SessionChallengeWebViewDialog(
             errorText = expiredErrorText
             return@LaunchedEffect
         }
+        val challengeOrigin = handle.challengeUrl.challengeHttpsOriginOrNull()
+        if (challengeOrigin == null) {
+            errorText = expiredErrorText
+            handle.cancel()
+            handle.close()
+            sessionCompleted = true
+            return@LaunchedEffect
+        }
+        if (currentOrigin.isEmpty()) {
+            currentOrigin = challengeOrigin
+        }
         sessionHandle = handle
+    }
 
+    val activeHandle = sessionHandle
+    LaunchedEffect(activeHandle, systemNetworkConfirmed) {
+        val handle = activeHandle ?: return@LaunchedEffect
+        val confirmed = systemNetworkConfirmed
         ProxyNetwork.changes.collectLatest {
             if (sessionCompleted) return@collectLatest
+            val challengeOrigin = handle.challengeUrl.challengeHttpsOriginOrNull()
+            if (challengeOrigin == null) {
+                route = null
+                consentMessage = null
+                errorText = expiredErrorText
+                handle.cancel()
+                return@collectLatest
+            }
             val decision =
                 try {
                     val accountConn = snapshotProxy(handle.proxyRef)
@@ -349,39 +423,84 @@ internal fun SessionChallengeWebViewDialog(
                     AndroidChallengeProxyDecision.AccountProxyMismatch
                 }
             if (decision != AndroidChallengeProxyDecision.Allowed) {
+                if (!confirmed) {
+                    route = null
+                    usedSystemNetworkFallback = false
+                    consentMessage = mismatchConsentText
+                    errorText = null
+                    return@collectLatest
+                }
+                val fallbackKey = "system-${handle.challengeId}"
+                if (usedSystemNetworkFallback && route?.key == fallbackKey && route?.isValid?.invoke() == true && cookiesSeeded) {
+                    return@collectLatest
+                }
                 route = null
-                errorText = mismatchErrorText
-                handle.cancel()
+                consentMessage = null
+                errorText = null
+                try {
+                    if (!cookiesSeeded) {
+                        seedAndroidChallengeCookies(
+                            challengeOrigin = challengeOrigin,
+                            seedCookies = handle.seedCookies,
+                        )
+                        cookiesSeeded = true
+                    }
+                    prepareSystemNetwork()
+                    usedSystemNetworkFallback = true
+                    route = systemFallbackRoute(fallbackKey)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    errorText = proxyErrorText
+                }
                 return@collectLatest
             }
 
-            if (route?.isValid == true && cookiesSeeded) return@collectLatest
+            if (!usedSystemNetworkFallback && route?.isValid?.invoke() == true && cookiesSeeded) return@collectLatest
             route = null
+            consentMessage = null
             errorText = null
             try {
-                if (!cookiesSeeded) {
-                    val challengeOrigin = handle.challengeUrl.challengeHttpsOriginOrNull()
-                    if (challengeOrigin == null) {
-                        errorText = expiredErrorText
-                        handle.cancel()
-                        return@collectLatest
-                    }
-                    seedAndroidChallengeCookies(
-                        challengeOrigin = challengeOrigin,
-                        seedCookies = handle.seedCookies,
-                    )
-                    cookiesSeeded = true
-                }
                 val prepared = prepareProxy()
                 if (prepared.isValid) {
-                    route = prepared
+                    if (!cookiesSeeded) {
+                        seedAndroidChallengeCookies(
+                            challengeOrigin = challengeOrigin,
+                            seedCookies = handle.seedCookies,
+                        )
+                        cookiesSeeded = true
+                    }
+                    usedSystemNetworkFallback = false
+                    route = prepared.toAndroidChallengeRoute()
                 } else {
                     errorText = proxyErrorText
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: UnsupportedOperationException) {
-                errorText = unsupportedProxyText
+                if (!confirmed) {
+                    route = null
+                    usedSystemNetworkFallback = false
+                    consentMessage = unsupportedProxyConsentText
+                    errorText = null
+                } else {
+                    try {
+                        if (!cookiesSeeded) {
+                            seedAndroidChallengeCookies(
+                                challengeOrigin = challengeOrigin,
+                                seedCookies = handle.seedCookies,
+                            )
+                            cookiesSeeded = true
+                        }
+                        prepareSystemNetwork()
+                        usedSystemNetworkFallback = true
+                        route = systemFallbackRoute("system-unsupported-${handle.challengeId}")
+                    } catch (innerError: CancellationException) {
+                        throw innerError
+                    } catch (_: Exception) {
+                        errorText = proxyErrorText
+                    }
+                }
             } catch (_: Exception) {
                 errorText = proxyErrorText
             }
@@ -417,67 +536,135 @@ internal fun SessionChallengeWebViewDialog(
                     )
                 },
             ) { padding ->
-                Box(
+                Column(
                     modifier =
                         Modifier
                             .padding(padding)
                             .fillMaxSize(),
-                    contentAlignment = Alignment.Center,
                 ) {
                     val currentError = errorText
+                    val pendingConsent = consentMessage
                     val prepared = route
                     val handle = sessionHandle
-                    when {
-                        currentError != null -> {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                FAIcon(
-                                    imageVector = FontAwesomeIcons.Solid.CircleExclamation,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(48.dp),
-                                )
-                                Text(
-                                    text = currentError,
-                                    textAlign = TextAlign.Center,
-                                )
-                                Button(onClick = cancelAndDismiss) {
-                                    Text(text = stringResource(R.string.session_challenge_close))
+                    if (
+                        usedSystemNetworkFallback &&
+                        currentError == null &&
+                        pendingConsent == null &&
+                        handle != null &&
+                        prepared != null &&
+                        prepared.isValid() &&
+                        cookiesSeeded
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .testTag("session_challenge_proxy_warning"),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.session_challenge_system_network_active_warning),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        when {
+                            currentError != null -> {
+                                Column(
+                                    modifier = Modifier.padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    FAIcon(
+                                        imageVector = FontAwesomeIcons.Solid.CircleExclamation,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(48.dp),
+                                    )
+                                    Text(
+                                        text = currentError,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                    Button(onClick = cancelAndDismiss) {
+                                        Text(text = stringResource(R.string.session_challenge_close))
+                                    }
                                 }
                             }
-                        }
 
-                        handle != null && prepared != null && prepared.isValid && cookiesSeeded -> {
-                            key(handle.challengeId, prepared.key) {
-                                AndroidChallengeWebView(
-                                    handle = handle,
-                                    route = prepared,
-                                    expiredErrorText = expiredErrorText,
-                                    onOriginChange = { currentOrigin = it },
-                                    onCompletedSuccess = {
-                                        sessionCompleted = true
-                                        handle.close()
-                                        latestOnCompleted()
-                                    },
-                                    onRequireRelogin = { relogin ->
-                                        sessionCompleted = true
-                                        handle.close()
-                                        latestOnRequireRelogin(relogin)
-                                    },
-                                    onError = { message ->
-                                        errorText = message
-                                    },
-                                    onWebError = {
-                                        errorText = proxyErrorText
-                                    },
-                                )
+                            pendingConsent != null && !systemNetworkConfirmed -> {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .padding(24.dp)
+                                            .testTag("session_challenge_proxy_consent"),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    FAIcon(
+                                        imageVector = FontAwesomeIcons.Solid.CircleExclamation,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(48.dp),
+                                    )
+                                    Text(
+                                        text = pendingConsent,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        TextButton(onClick = cancelAndDismiss) {
+                                            Text(text = stringResource(R.string.session_challenge_close))
+                                        }
+                                        Button(
+                                            onClick = { systemNetworkConfirmed = true },
+                                            modifier = Modifier.testTag("session_challenge_continue_system_network"),
+                                        ) {
+                                            Text(text = stringResource(R.string.session_challenge_continue_system_network))
+                                        }
+                                    }
+                                }
                             }
-                        }
 
-                        else -> {
-                            CircularProgressIndicator()
+                            handle != null && prepared != null && prepared.isValid() && cookiesSeeded -> {
+                                key(handle.challengeId, prepared.key) {
+                                    AndroidChallengeWebView(
+                                        handle = handle,
+                                        route = prepared,
+                                        expiredErrorText = expiredErrorText,
+                                        onOriginChange = { currentOrigin = it },
+                                        onCompletedSuccess = {
+                                            sessionCompleted = true
+                                            handle.close()
+                                            latestOnCompleted()
+                                        },
+                                        onRequireRelogin = { relogin ->
+                                            sessionCompleted = true
+                                            handle.close()
+                                            latestOnRequireRelogin(relogin)
+                                        },
+                                        onError = { message ->
+                                            errorText = message
+                                        },
+                                        onWebError = {
+                                            errorText = proxyErrorText
+                                        },
+                                    )
+                                }
+                            }
+
+                            else -> {
+                                CircularProgressIndicator()
+                            }
                         }
                     }
                 }
@@ -489,7 +676,7 @@ internal fun SessionChallengeWebViewDialog(
 @Composable
 private fun AndroidChallengeWebView(
     handle: SessionChallengeHandle,
-    route: ProxySnapshot,
+    route: AndroidChallengeRoute,
     expiredErrorText: String,
     onOriginChange: (String) -> Unit,
     onCompletedSuccess: () -> Unit,
@@ -529,7 +716,7 @@ private fun AndroidChallengeWebView(
         coroutineScope {
             val ticker =
                 launch {
-                    while (isActive && route.isValid && !finished) {
+                    while (isActive && route.isValid() && !finished) {
                         delay(2.seconds)
                         if (webViewState.lastLoadedUrl?.challengeHttpsOriginOrNull() != null) {
                             checkTriggers.trySend(Unit)
@@ -538,7 +725,7 @@ private fun AndroidChallengeWebView(
                 }
             try {
                 for (trigger in checkTriggers) {
-                    if (!route.isValid || finished) break
+                    if (!route.isValid() || finished) break
                     val loadedOrigin = webViewState.lastLoadedUrl?.challengeHttpsOriginOrNull() ?: continue
                     loadedOrigin.let(latestOnOriginChange)
                     val manager = CookieManager.getInstance()
@@ -607,20 +794,20 @@ private fun AndroidChallengeWebView(
                     override fun shouldOverrideUrlLoading(
                         view: AndroidWebView?,
                         request: WebResourceRequest?,
-                    ): Boolean = !route.isValid || finished || (request?.isForMainFrame == true && !request.url.isChallengeHttps())
+                    ): Boolean = !route.isValid() || finished || (request?.isForMainFrame == true && !request.url.isChallengeHttps())
 
                     @Deprecated("Deprecated in Android")
                     override fun shouldOverrideUrlLoading(
                         view: AndroidWebView?,
                         url: String?,
-                    ): Boolean = !route.isValid || finished || url?.challengeHttpsOriginOrNull() == null
+                    ): Boolean = !route.isValid() || finished || url?.challengeHttpsOriginOrNull() == null
 
                     override fun onPageFinished(
                         view: AndroidWebView,
                         url: String?,
                     ) {
                         super.onPageFinished(view, url)
-                        if (!route.isValid || finished) return
+                        if (!route.isValid() || finished) return
                         url?.challengeHttpsOriginOrNull()?.let { origin ->
                             latestOnOriginChange(origin)
                             checkTriggers.trySend(Unit)
@@ -633,7 +820,7 @@ private fun AndroidChallengeWebView(
                         error: WebResourceError?,
                     ) {
                         super.onReceivedError(view, request, error)
-                        if (request?.isForMainFrame == true && route.isValid && !finished) {
+                        if (request?.isForMainFrame == true && route.isValid() && !finished) {
                             latestOnWebError()
                         }
                     }
@@ -650,7 +837,7 @@ private fun AndroidChallengeWebView(
                 allowFileAccess = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 cacheMode = WebSettings.LOAD_NO_CACHE
-                blockNetworkLoads = !route.isValid
+                blockNetworkLoads = !route.isValid()
             }
             unsubscribe =
                 route.onInvalidated {

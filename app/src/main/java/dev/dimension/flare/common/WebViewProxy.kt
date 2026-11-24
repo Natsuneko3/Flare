@@ -85,4 +85,22 @@ internal object WebViewProxy {
                 snapshot
             }
         }
+
+    /** Clears any process-wide WebView proxy override so subsequent requests use the OS system network. */
+    suspend fun prepareSystemNetwork() {
+        mutex.withLock {
+            withContext(Dispatchers.Main.immediate) {
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+                    withContext(NonCancellable) {
+                        suspendCancellableCoroutine { continuation ->
+                            val done = Runnable { continuation.resume(Unit) }
+                            val executor = java.util.concurrent.Executor { it.run() }
+                            ProxyController.getInstance().clearProxyOverride(executor, done)
+                        }
+                    }
+                }
+                appliedKey = null
+            }
+        }
+    }
 }

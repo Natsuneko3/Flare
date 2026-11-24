@@ -3194,6 +3194,15 @@ private struct ReaderPageErrorView: View {
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier(isChallengeActionActive ? "manga_page_verify_\(pageId)" : "manga_page_retry_\(pageId)")
+
+            if isChallengeActionActive {
+                Button(action: onChallengeCompleted ?? onRetry) {
+                    Text("action_retry", bundle: FlareAppleUILocalization.bundle)
+                }
+                .buttonStyle(.bordered)
+                .tint(.white.opacity(0.85))
+                .accessibilityIdentifier("manga_page_retry_\(pageId)")
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

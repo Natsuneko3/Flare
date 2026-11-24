@@ -747,6 +747,7 @@ public class MangaReaderPresenter(
             val currentSession = targetSession ?: return null
             if (currentSession.attempt != chapterTarget.attempt) return null
             if (currentSession.pagesLoadState !is UiState.Success) return null
+            if (currentSession.unresolvedResumeGoal != null) return null
             val totalCountForProgress = currentSession.effectiveTotalPageCount
             if (totalCountForProgress <= 0) return null
             val lastRealIndex = totalCountForProgress - 1
@@ -880,7 +881,12 @@ public class MangaReaderPresenter(
             override val doublePageSpread: Boolean = doublePageSpread
             override val spreadCoverSinglePage: Boolean = spreadCoverSinglePage
             override val previousBoundary: ChapterBoundary = previousBoundary
-            override val nextBoundary: ChapterBoundary = nextBoundary
+            override val nextBoundary: ChapterBoundary =
+                if (session?.canCompleteChapter == true) {
+                    nextBoundary
+                } else {
+                    ChapterBoundary.None
+                }
             override val prefetchMedia: ImmutableList<UiMedia.Image> = prefetchMedia
             override val imageTranslation: ImageTranslationPresenter.State = imageTranslation
             override val chapterGroups: ImmutableList<UiMangaChapterGroup> = chapterGroups
@@ -1387,6 +1393,7 @@ private class ChapterPagesSession(
     var failedChunkRegions by mutableStateOf<List<FailedChunkRegion>>(emptyList())
     var cursorAppendError by mutableStateOf<Throwable?>(null)
     var suppressCursorAppendUntilNavigation by mutableStateOf(false)
+    var unresolvedResumeGoal by mutableStateOf<CursorChaseGoal?>(null)
     var userNavTick by mutableIntStateOf(0)
     var resolvedMedia by mutableStateOf<Map<String, UiMedia>>(emptyMap())
     var failedPages by mutableStateOf<Map<String, Throwable>>(emptyMap())
@@ -1402,10 +1409,11 @@ private class ChapterPagesSession(
         get() = displayPageCount - 1
 
     val canCompleteChapter: Boolean
-        get() = totalCount != null || endReached
+        get() = pagesLoadState is UiState.Success && (totalCount != null || endReached)
 
     fun onUserNavigation() {
         suppressCursorAppendUntilNavigation = false
+        unresolvedResumeGoal = null
         userNavTick++
     }
 
@@ -1485,6 +1493,7 @@ private class ChapterPagesSession(
                             Snapshot.withMutableSnapshot {
                                 onSeedProgress(resolvedProgress)
                                 suppressCursorAppendUntilNavigation = hitCap
+                                unresolvedResumeGoal = if (hitCap) finalGoal else null
                                 currentPageIndex = landingIndex
                                 pagesLoadState = UiState.Success(Unit)
                             }
@@ -1960,12 +1969,23 @@ private class ChapterPagesSession(
             pageIndexById[page.id] = globalIdx
         }
         val updatedLoaded = builder.build()
+        val nextLoadedCount = currentLoaded + chunk.pages.size
+        val nextEndReached = chunk.endReached
         Snapshot.withMutableSnapshot {
             loadedPagesByIndex = updatedLoaded
-            loadedCount = currentLoaded + chunk.pages.size
+            loadedCount = nextLoadedCount
             nextCursor = chunk.nextCursor
-            endReached = chunk.endReached
+            endReached = nextEndReached
             cursorAppendError = null
+            val reachedResumeGoal =
+                when (val goal = unresolvedResumeGoal) {
+                    null -> false
+                    CursorChaseGoal.End -> nextEndReached && currentPageIndex >= nextLoadedCount - 1
+                    is CursorChaseGoal.TargetIndex -> nextLoadedCount > goal.target && currentPageIndex >= goal.target
+                }
+            if (reachedResumeGoal) {
+                unresolvedResumeGoal = null
+            }
             loadedPagesVersion++
         }
     }

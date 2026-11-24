@@ -54,12 +54,15 @@ import dev.dimension.flare.data.repository.SessionChallengeCookieValue
 import dev.dimension.flare.data.repository.SessionChallengeCoordinator
 import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.data.repository.SessionChallengeHandle
+import dev.dimension.flare.data.repository.SessionChallengePromptBus
 import dev.dimension.flare.data.repository.SessionChallengeSeedCookie
 import dev.dimension.flare.login_expired_relogin
 import dev.dimension.flare.session_challenge_close
+import dev.dimension.flare.session_challenge_continue_system_network
 import dev.dimension.flare.session_challenge_desktop_proxy_warning
 import dev.dimension.flare.session_challenge_desktop_seed_cookies_unsupported
 import dev.dimension.flare.session_challenge_expired
+import dev.dimension.flare.session_challenge_proxy_consent_message
 import dev.dimension.flare.session_challenge_relogin_message
 import dev.dimension.flare.session_challenge_relogin_title
 import dev.dimension.flare.session_challenge_title
@@ -69,6 +72,7 @@ import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import io.github.composefluent.FluentTheme
+import io.github.composefluent.component.AccentButton
 import io.github.composefluent.component.Button
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
@@ -173,6 +177,7 @@ private data class PendingDesktopChallenge(
 
 @Composable
 internal fun ProvideDesktopSessionChallengeHost(
+    collectGlobalPrompts: Boolean = true,
     onRelogin: (RequireReLoginException) -> Unit = { relogin ->
         val handled = DeeplinkHandler.handleDeeplink(DeeplinkRoute.Relogin(relogin.accountKey, relogin.platformId).toUri())
         if (!handled) {
@@ -183,6 +188,22 @@ internal fun ProvideDesktopSessionChallengeHost(
                 ?.onError(Message.LoginExpired, relogin)
         }
     },
+    beginSession: suspend (String) -> SessionChallengeHandle? = { challengeId ->
+        KoinPlatformTools
+            .defaultContext()
+            .getOrNull()
+            ?.getOrNull<SessionChallengeCoordinator>()
+            ?.beginSession(challengeId)
+    },
+    webViewContent: (
+        @Composable (
+            challengeUrl: String,
+            onOriginChanged: (String) -> Unit,
+            onNavigationFinished: () -> Unit,
+            onUserAgentAvailable: (String) -> Unit,
+            onCookieSnapshotProviderReady: (() -> SessionChallengeCookieSnapshot?) -> Unit,
+        ) -> Unit
+    )? = null,
     content: @Composable () -> Unit,
 ) {
     var activeChallenge by remember { mutableStateOf<PendingDesktopChallenge?>(null) }
@@ -194,6 +215,15 @@ internal fun ProvideDesktopSessionChallengeHost(
                 activeChallenge = PendingDesktopChallenge(exception = exception, onCompleted = onCompleted)
             }
         }
+
+    LaunchedEffect(collectGlobalPrompts) {
+        if (!collectGlobalPrompts) return@LaunchedEffect
+        SessionChallengePromptBus.prompts.collect { prompt ->
+            launcher(prompt.exception) {
+                prompt.complete()
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         CompositionLocalProvider(LocalSessionChallengeLauncher provides launcher) {
@@ -212,13 +242,16 @@ internal fun ProvideDesktopSessionChallengeHost(
                             runCatching {
                                 ProxyNetwork.snapshot(ProxyRef.forAccount(current.exception.accountKey)).connection.mode
                             }.getOrElse {
-                                ProxyMode.SYSTEM
+                                // Fail closed into consent prompt if proxy snapshot lookup fails.
+                                ProxyMode.PROXY
                             }
                     }
                 }
             SessionChallengeWebViewDialog(
                 exception = current.exception,
                 accountProxyMode = accountProxyMode,
+                beginSession = beginSession,
+                webViewContent = webViewContent,
                 onCompleted = {
                     activeChallenge = null
                     current.onCompleted()
@@ -288,6 +321,7 @@ internal fun SessionChallengeWebViewDialog(
     var sessionHandle by remember(exception.challengeId) { mutableStateOf<SessionChallengeHandle?>(null) }
     var pollingFinished by remember(exception.challengeId) { mutableStateOf(false) }
     var sessionCompleted by remember(exception.challengeId) { mutableStateOf(false) }
+    var systemNetworkConfirmed by remember(exception.challengeId) { mutableStateOf(false) }
     var errorText by remember(exception.challengeId) { mutableStateOf<String?>(null) }
     var cachedUserAgent by remember(exception.challengeId) { mutableStateOf<String?>(null) }
     var snapshotProvider by remember(exception.challengeId) { mutableStateOf<(() -> SessionChallengeCookieSnapshot?)?>(null) }
@@ -353,10 +387,11 @@ internal fun SessionChallengeWebViewDialog(
                 null
             }
         }
+    val needsSystemNetworkConsent = policy?.usesSystemProxyFallback == true && !systemNetworkConfirmed
 
-    LaunchedEffect(handle, policy?.blockedBySeedCookies) {
+    LaunchedEffect(handle, policy?.blockedBySeedCookies, needsSystemNetworkConsent) {
         val activeHandle = handle ?: return@LaunchedEffect
-        if (policy?.blockedBySeedCookies != false) return@LaunchedEffect
+        if (policy?.blockedBySeedCookies != false || needsSystemNetworkConsent) return@LaunchedEffect
         snapshotFlow { snapshotProvider }.filterNotNull().first()
         coroutineScope {
             val ticker =
@@ -481,7 +516,13 @@ internal fun SessionChallengeWebViewDialog(
                 )
             }
 
-            if (policy?.usesSystemProxyFallback == true) {
+            if (
+                policy?.usesSystemProxyFallback == true &&
+                systemNetworkConfirmed &&
+                errorText == null &&
+                !policy.blockedBySeedCookies &&
+                handle?.challengeUrl?.challengeHttpsOriginOrNull() != null
+            ) {
                 InfoBar(
                     title = {},
                     message = {
@@ -529,6 +570,15 @@ internal fun SessionChallengeWebViewDialog(
                         )
                     }
 
+                    needsSystemNetworkConsent -> {
+                        ChallengeProxyConsentView(
+                            message = stringResource(Res.string.session_challenge_proxy_consent_message),
+                            onContinue = { systemNetworkConfirmed = true },
+                            onClose = cancelAndDismiss,
+                            modifier = Modifier.testTag("session_challenge_proxy_consent"),
+                        )
+                    }
+
                     else -> {
                         if (webViewContent == null) {
                             DesktopChallengeWryWebView(
@@ -550,6 +600,44 @@ internal fun SessionChallengeWebViewDialog(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChallengeProxyConsentView(
+    message: String,
+    onContinue: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        FAIcon(
+            imageVector = FontAwesomeIcons.Solid.CircleExclamation,
+            contentDescription = null,
+            modifier = Modifier.size(40.dp),
+        )
+        Text(
+            text = message,
+            textAlign = TextAlign.Center,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(onClick = onClose) {
+                Text(text = stringResource(Res.string.session_challenge_close))
+            }
+            AccentButton(
+                onClick = onContinue,
+                modifier = Modifier.testTag("session_challenge_continue_system_network"),
+            ) {
+                Text(text = stringResource(Res.string.session_challenge_continue_system_network))
             }
         }
     }

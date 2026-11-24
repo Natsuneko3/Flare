@@ -6,8 +6,9 @@ import androidx.room3.Database
 import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
 import androidx.room3.withWriteTransaction
+import dev.dimension.flare.model.AccountType
 
-// Added DbMangaState and DbMangaChapterProgress tables for manga reading progress.
+// Bumped past PR #2907 so prior master/experimental v56 caches silently rebuild with manga tables.
 internal const val CACHE_DATABASE_VERSION = 57
 
 @Database(
@@ -94,7 +95,7 @@ internal suspend fun CacheDatabase.invalidateGuestPluginCachedContent(
         val guestTypes =
             statusDao()
                 .getDistinctAccountTypesAcrossCache()
-                .filterIsInstance<dev.dimension.flare.model.AccountType.GuestPlugin>()
+                .filterIsInstance<AccountType.GuestPlugin>()
                 .filter { it.platformId == platformId }
         guestTypes.forEach { guestType ->
             purgeGuestPluginTimelineAndStatusesInTx(guestType, nonCursorPagingKeys)
@@ -110,10 +111,15 @@ internal suspend fun CacheDatabase.clearGuestPluginData(
 ) {
     connect {
         val guestTypes =
-            statusDao()
-                .getDistinctAccountTypesAcrossCache()
-                .filterIsInstance<dev.dimension.flare.model.AccountType.GuestPlugin>()
-                .filter { it.platformId == platformId }
+            buildSet {
+                statusDao()
+                    .getDistinctAccountTypesAcrossCache()
+                    .filterIsInstance<AccountType.GuestPlugin>()
+                    .filterTo(this) { it.platformId == platformId }
+                additionalHosts.forEach { host ->
+                    add(AccountType.GuestPlugin(platformId = platformId, host = host))
+                }
+            }
         guestTypes.forEach { guestType ->
             messageDao().exclusiveRoomKeys(guestType).forEach { roomKey ->
                 messageDao().deleteRoomMessages(roomKey)
@@ -135,7 +141,7 @@ internal suspend fun CacheDatabase.clearGuestPluginData(
 }
 
 private suspend fun CacheDatabase.purgeGuestPluginTimelineAndStatusesInTx(
-    guestType: dev.dimension.flare.model.AccountType.GuestPlugin,
+    guestType: AccountType.GuestPlugin,
     nonCursorPagingKeys: Set<String>,
 ) {
     val pagingDao = pagingTimelineDao()
@@ -153,6 +159,7 @@ private suspend fun CacheDatabase.purgeGuestPluginTimelineAndStatusesInTx(
                 pagingDao.deletePagingKey(pagingKey)
             }
         }
+    pluginPostWidgetDao().deleteByAccountType(guestType)
     statusDao().deleteByAccountType(guestType)
     userDao().deleteProfileTabsByAccountType(guestType)
     userDao().deleteHistoryByAccountType(guestType)
