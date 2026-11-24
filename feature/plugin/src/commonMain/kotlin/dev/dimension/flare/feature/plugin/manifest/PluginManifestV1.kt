@@ -57,6 +57,15 @@ public data class PluginPlatformManifestV1(
     val credentialSchemaVersion: Int = 1,
     val timelineSchemaVersion: Int = 1,
     val composeDefaultsV3: ComposeConfigV2? = null,
+    val recommendedOrigins: List<RecommendedOriginManifestV1> = emptyList(),
+    val allowCustomOrigin: Boolean = true,
+)
+
+@Serializable
+public data class RecommendedOriginManifestV1(
+    val origin: String,
+    val name: PluginTextV1? = null,
+    val description: PluginTextV1? = null,
 )
 
 @Serializable

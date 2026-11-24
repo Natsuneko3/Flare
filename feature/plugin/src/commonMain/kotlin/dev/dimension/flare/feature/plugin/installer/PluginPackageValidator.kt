@@ -177,6 +177,10 @@ private fun PluginManifestV1.localizedKeys(): Set<String> =
         platform?.let { platform ->
             addText(platform.name)
             addText(platform.description)
+            platform.recommendedOrigins.forEach { origin ->
+                addText(origin.name)
+                addText(origin.description)
+            }
             platform.timelines.forEach { addText(it.title) }
             platform.profileTabs.forEach { addText(it.title) }
             platform.loginMethods.forEach { method ->

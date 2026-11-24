@@ -19,13 +19,18 @@ import dev.dimension.flare.feature.plugin.installer.TestFppFactory
 import dev.dimension.flare.feature.plugin.lifecycle.PluginRunningSnapshotV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginStateStore
 import dev.dimension.flare.feature.plugin.login.PluginFormLoginCoordinatorV1
+import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingStoreV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
+import dev.dimension.flare.feature.plugin.login.requireLoginSuccess
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimePool
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeUnavailableException
+import dev.dimension.flare.feature.plugin.wire.EntityKeyV1
+import dev.dimension.flare.feature.plugin.wire.LoginSuccessV1
 import dev.dimension.flare.feature.plugin.wire.PluginAccountCredentialV1
+import dev.dimension.flare.feature.plugin.wire.ProfileV1
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformSpec
@@ -34,6 +39,8 @@ import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asType
+import dev.dimension.flare.ui.presenter.login.LoginContext
+import dev.dimension.flare.ui.presenter.login.LoginMethodType
 import dev.dimension.flare.ui.presenter.login.LoginPlatformProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,9 +52,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonPrimitive
 import okio.FileSystem
 import okio.Path.Companion.toOkioPath
 import okio.SYSTEM
+import org.koin.core.context.GlobalContext
+import org.koin.core.context.stopKoin
+import org.koin.dsl.koinApplication
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -270,6 +281,331 @@ class PluginPlatformSpecSourceV1Test {
                     assertEquals(emptyList(), invalidLoader.load(20, PagingRequest.Refresh).data)
                 }
                 assertTrue(requestedAccounts.isEmpty())
+            }
+        }
+
+    @Test
+    fun singleSiteRecommendedOriginsRunZeroJsWithPriorityZeroAndEnforceEntryGuardrails() =
+        runBlocking {
+            val singleSiteManifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.dimension.flare.test.singlesite",
+                  "version": "1.0.0",
+                  "defaultLocale": "en",
+                  "name": "Single Site",
+                  "platform": {
+                    "id": "SingleSite",
+                    "name": { "key": "platform.name", "fallback": "Single Site" },
+                    "description": { "key": "platform.desc", "fallback": "Default description" },
+                    "allowCustomOrigin": false,
+                    "recommendedOrigins": [
+                      {
+                        "origin": "https://exhentai.org",
+                        "name": { "key": "origin.ex.name", "fallback": "ExHentai" },
+                        "description": { "key": "origin.ex.desc", "fallback": "Members gallery" }
+                      },
+                      {
+                        "origin": "https://e-hentai.org:8443"
+                      }
+                    ],
+                    "loginMethods": [
+                      { "id": "oauth", "interaction": "OAuth", "title": "OAuth" }
+                    ],
+                    "capabilities": {
+                      "flare.datasource.timeline/v1": {
+                        "operations": { "page": { "directions": ["refresh"] } }
+                      }
+                    },
+                    "timelines": [
+                      { "id": "home", "title": "Home", "defaultForNewAccount": true }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            val emptyDetectorScript =
+                """
+                defineFlareSocialPlugin({
+                  login: {
+                    oauth: {
+                      async begin() { return { type: "Pending" }; },
+                      async resume() { return { type: "Pending" }; }
+                    }
+                  },
+                  capabilities: {
+                    timeline: { async page() { return { items: [] }; } }
+                  }
+                });
+                """.trimIndent()
+            val enCatalog =
+                """
+                {
+                  "platform.name": "Single Site EN",
+                  "platform.desc": "Default EN desc",
+                  "origin.ex.name": "ExHentai EN",
+                  "origin.ex.desc": "Members EN desc"
+                }
+                """.trimIndent()
+
+            val root = Files.createTempDirectory("plugin-single-site").toOkioPath()
+            val files = FileSystem.SYSTEM
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val pool =
+                PluginRuntimePool(
+                    files,
+                    object : PluginHttpTransport {
+                        override suspend fun execute(request: PluginTransportRequestV1): PluginTransportResponseV1 =
+                            error("Single-site static test does not use HTTP")
+                    },
+                )
+            val originalLocale = java.util.Locale.getDefault()
+            val unusedAccountService =
+                object : AccountService {
+                    override suspend fun deleteAccounts(
+                        platformId: String,
+                        ownsCredential: (String) -> Boolean,
+                        beforeDelete: suspend () -> Unit,
+                    ) = error("Unused")
+
+                    override fun accountServiceFlow(accountType: AccountType): Flow<MicroblogDataSource> = error("Unused")
+
+                    override fun allAccountServicesFlow(): Flow<List<AccountMicroblogDataSource>> = error("Unused")
+
+                    override suspend fun <T : Any> addAccount(
+                        account: UiAccount,
+                        credential: T,
+                        serializer: KSerializer<T>,
+                        beforeCommit: () -> Unit,
+                    ) = error("Unused")
+
+                    override fun <T : Any> credentialFlow(
+                        accountKey: MicroBlogKey,
+                        serializer: KSerializer<T>,
+                    ): Flow<T> = error("Unused")
+
+                    override fun <T : Any> updateCredential(
+                        accountKey: MicroBlogKey,
+                        credential: T,
+                        serializer: KSerializer<T>,
+                    ): Job = error("Unused")
+                }
+            val oauthCoordinator =
+                PluginOAuthLoginCoordinatorV1(
+                    runtimePool = pool,
+                    pendingStore =
+                        object : PluginOAuthPendingStoreV1 {
+                            override suspend fun save(pending: PluginOAuthPendingV1) = error("Unused")
+
+                            override suspend fun load(flowId: String): PluginOAuthPendingV1? = null
+
+                            override suspend fun consume(pending: PluginOAuthPendingV1): Boolean = false
+                        },
+                    runningPlugin = { null },
+                )
+            stopKoin()
+            GlobalContext.startKoin(
+                koinApplication {
+                    koin.declare<AccountService>(unusedAccountService)
+                    koin.declare(PluginOAuthCallbackCoordinatorV1(oauthCoordinator, unusedAccountService))
+                },
+            )
+            try {
+                java.util.Locale.setDefault(java.util.Locale.ENGLISH)
+                val archive = root / "plugin.fpp"
+                TestFppFactory.write(
+                    archive,
+                    TestFppFactory.validEntries(manifest = singleSiteManifest, script = emptyDetectorScript) +
+                        ("locales/en.json" to enCatalog.encodeToByteArray()),
+                )
+                val store = PluginStateStore.open(files, root / "state")
+                val installer = PluginInstaller(files, store)
+                installer.commit(installer.inspect(archive), confirmed = true, activate = store::install)
+                val snapshot = PluginStateStore.open(files, root / "state").running
+                val runningPlugin = snapshot.plugins.values.single()
+                val runtimeCalls = mutableListOf<String>()
+                runningPlugin.diagnostic = { _, event -> runtimeCalls += event }
+                // Close pool upfront so any accidental JS runtime invocation fails immediately.
+                pool.close()
+
+                val provider = snapshot.platformSpecForTest(pool, scope) as LoginPlatformProvider
+                assertEquals(0, provider.detector.priority)
+
+                val recommended = provider.recommendInstances()
+                assertEquals(2, recommended.size)
+                assertEquals(0, recommended[0].priority)
+                assertEquals("exhentai.org", recommended[0].instance.domain)
+                assertEquals("ExHentai EN", recommended[0].instance.name)
+                assertEquals("Members EN desc", recommended[0].instance.description)
+                assertEquals("Single Site", recommended[0].instance.platformDisplayName)
+
+                assertEquals(0, recommended[1].priority)
+                assertEquals("e-hentai.org:8443", recommended[1].instance.domain)
+                assertEquals("Single Site EN", recommended[1].instance.name)
+                assertEquals("Default EN desc", recommended[1].instance.description)
+
+                val detected = provider.detector.detect("EXHENTAI.ORG")
+                assertNotNull(detected)
+                assertEquals("exhentai.org", detected.host)
+                assertEquals("Single Site", detected.software)
+                assertEquals(false, detected.compatibleMode)
+
+                val detectedPort = provider.detector.detect("https://e-hentai.org:8443")
+                assertNotNull(detectedPort)
+                assertEquals("e-hentai.org:8443", detectedPort.host)
+
+                assertNull(provider.detector.detect("evil.example"))
+
+                val allowedMeta = provider.instanceMetadata("exhentai.org")
+                assertEquals("exhentai.org", allowedMeta.instance.domain)
+                assertEquals("ExHentai EN", allowedMeta.instance.name)
+                assertEquals("Members EN desc", allowedMeta.instance.description)
+
+                assertFailsWith<IllegalArgumentException> {
+                    provider.instanceMetadata("evil.example")
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    provider.createHandler(
+                        LoginContext(
+                            host = "evil.example",
+                            methodType = LoginMethodType.OAuth,
+                            onSuccess = {},
+                        ),
+                    )
+                }
+                assertNotNull(
+                    provider.createHandler(
+                        LoginContext(
+                            host = "exhentai.org",
+                            methodType = LoginMethodType.OAuth,
+                            onSuccess = {},
+                        ),
+                    ),
+                )
+
+                val unapprovedSuccess =
+                    LoginSuccessV1(
+                        accountId = "u1",
+                        origin = "https://evil.example",
+                        credential = JsonPrimitive("secret"),
+                        profile =
+                            ProfileV1(
+                                key = EntityKeyV1("u1", "evil.example"),
+                                handle = "u1",
+                                displayName = "User 1",
+                            ),
+                        capabilities = mapOf("flare.datasource.timeline/v1" to setOf("page")),
+                    )
+                assertFailsWith<IllegalArgumentException> {
+                    runningPlugin.requireLoginSuccess(
+                        value = unapprovedSuccess,
+                        expectedOrigin = "https://evil.example",
+                        expectedAccountId = null,
+                    )
+                }
+
+                val approvedSuccess =
+                    unapprovedSuccess.copy(
+                        origin = "https://exhentai.org",
+                        profile = unapprovedSuccess.profile.copy(key = EntityKeyV1("u1", "exhentai.org")),
+                    )
+                val approvedResult =
+                    runningPlugin.requireLoginSuccess(
+                        value = approvedSuccess,
+                        expectedOrigin = "https://exhentai.org",
+                        expectedAccountId = null,
+                    )
+                assertEquals("https://exhentai.org", approvedResult.origin)
+
+                assertTrue(runtimeCalls.isEmpty(), "Expected zero JS invocations, got: $runtimeCalls")
+            } finally {
+                stopKoin()
+                java.util.Locale.setDefault(originalLocale)
+                scope.cancel()
+                pool.close()
+                files.deleteRecursively(root, mustExist = false)
+            }
+        }
+
+    @Test
+    fun detectorWithExplicitPriorityMatchesRecommendedOriginsFirstAndRespectsAllowCustomOrigin() =
+        runBlocking {
+            val baseManifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.dimension.flare.test.hybrid",
+                  "version": "1.0.0",
+                  "defaultLocale": "en",
+                  "name": "Hybrid",
+                  "platform": {
+                    "id": "Hybrid",
+                    "name": "Hybrid",
+                    "detector": { "priority": 42 },
+                    "allowCustomOrigin": ALLOW_CUSTOM,
+                    "recommendedOrigins": [
+                      { "origin": "https://primary.example" }
+                    ],
+                    "loginMethods": [
+                      { "id": "oauth", "interaction": "OAuth", "title": "OAuth" }
+                    ],
+                    "capabilities": {
+                      "flare.datasource.timeline/v1": {
+                        "operations": { "page": { "directions": ["refresh"] } }
+                      }
+                    },
+                    "timelines": [
+                      { "id": "home", "title": "Home", "defaultForNewAccount": true }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            val script =
+                """
+                defineFlareSocialPlugin({
+                  detector: {
+                    async detect(request) {
+                      if (request.origin === "https://primary.example") {
+                        throw new Error("Should not invoke JS for recommended origin");
+                      }
+                      return { match: "compatible", canonicalOrigin: request.origin, software: "HybridJS" };
+                    }
+                  },
+                  login: {
+                    oauth: {
+                      async begin() { return { type: "Pending" }; },
+                      async resume() { return { type: "Pending" }; }
+                    }
+                  },
+                  capabilities: {
+                    timeline: { async page() { return { items: [] }; } }
+                  }
+                });
+                """.trimIndent()
+
+            withCustomPlatform(baseManifest.replace("ALLOW_CUSTOM", "false"), script) { spec ->
+                val provider = spec as LoginPlatformProvider
+                assertEquals(42, provider.detector.priority)
+                val primary = provider.detector.detect("primary.example")
+                assertNotNull(primary)
+                assertEquals("primary.example", primary.host)
+                assertEquals(false, primary.compatibleMode)
+                assertNull(provider.detector.detect("custom.example"))
+            }
+
+            withCustomPlatform(baseManifest.replace("ALLOW_CUSTOM", "true"), script) { spec ->
+                val provider = spec as LoginPlatformProvider
+                assertEquals(42, provider.detector.priority)
+                val primary = provider.detector.detect("primary.example")
+                assertNotNull(primary)
+                assertEquals(false, primary.compatibleMode)
+                val custom = provider.detector.detect("custom.example")
+                assertNotNull(custom)
+                assertEquals("custom.example", custom.host)
+                assertEquals("HybridJS", custom.software)
+                assertEquals(true, custom.compatibleMode)
             }
         }
 

@@ -34,6 +34,9 @@ import dev.dimension.flare.feature.plugin.manifest.DeepLinkTargetTypeV1
 import dev.dimension.flare.feature.plugin.manifest.LoginFieldTypeV1
 import dev.dimension.flare.feature.plugin.manifest.LoginInteractionV1
 import dev.dimension.flare.feature.plugin.manifest.LoginMethodManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
+import dev.dimension.flare.feature.plugin.manifest.PluginTextV1
+import dev.dimension.flare.feature.plugin.manifest.RecommendedOriginManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
 import dev.dimension.flare.feature.plugin.manifest.fallbackText
 import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
@@ -184,6 +187,8 @@ private class PluginPlatformSpecV1(
     private val platform = manifest.socialPlatform
     private val accountCapabilities = PluginAccountCapabilitiesV1(plugin, runtimePool, coroutineScope)
     private val standaloneGuestSources = MutableStateFlow<Map<Pair<String, String>, PluginDataSourceV1>>(emptyMap())
+    private val recommendedOriginsByOrigin: Map<String, RecommendedOriginManifestV1> =
+        platform.recommendedOrigins.associateBy { PluginUrlPolicy.requireOrigin(it.origin).lowercase() }
 
     val pluginId: String = plugin.installed.pluginId
     override val platformId: String = platform.id
@@ -301,6 +306,7 @@ private class PluginPlatformSpecV1(
             } catch (error: IllegalStateException) {
                 throw IllegalArgumentException(error.message ?: "Invalid HTTPS origin", error)
             }
+        requireAllowedOrigin(origin)
         val normalizedLocale = normalizePluginInvocationLocale(locale)
 
         fun create() =
@@ -321,11 +327,22 @@ private class PluginPlatformSpecV1(
 
     override val detector: PlatformDetector =
         object : PlatformDetector {
-            override val priority: Int = platform.detector?.priority ?: Int.MIN_VALUE
+            override val priority: Int =
+                platform.detector?.priority ?: if (platform.recommendedOrigins.isNotEmpty()) 0 else Int.MIN_VALUE
 
             override suspend fun detect(host: String): NodeDetection? {
-                if (platform.detector == null) return null
+                if (platform.detector == null && platform.recommendedOrigins.isEmpty()) return null
                 val origin = host.toHttpsOrigin()
+                val recommended = recommendedOriginsByOrigin[origin.lowercase()]
+                if (recommended != null) {
+                    val canonicalOrigin = PluginUrlPolicy.requireOrigin(recommended.origin).lowercase()
+                    return NodeDetection(
+                        host = Url(canonicalOrigin).accountHost(),
+                        software = platform.name.fallbackText,
+                        compatibleMode = false,
+                    )
+                }
+                if (!platform.allowCustomOrigin || platform.detector == null) return null
                 val result = invokeDetector(origin, PluginCallTimeoutV1.Detector)
                 if (result.match == DetectorMatchV1.None) return null
                 val canonicalOrigin = PluginUrlPolicy.requireOrigin(result.canonicalOrigin)
@@ -371,10 +388,30 @@ private class PluginPlatformSpecV1(
 
     override fun agreementUrl(host: String): String? = null
 
-    override suspend fun recommendInstances(): List<RecommendedInstance> = emptyList()
+    override suspend fun recommendInstances(): List<RecommendedInstance> =
+        platform.recommendedOrigins.map { item ->
+            val canonicalOrigin = PluginUrlPolicy.requireOrigin(item.origin).lowercase()
+            RecommendedInstance(
+                instance =
+                    UiInstance(
+                        name = resolveText(item.name ?: platform.name),
+                        description = (item.description ?: platform.description)?.let(::resolveText),
+                        iconUrl = null,
+                        domain = Url(canonicalOrigin).accountHost(),
+                        platformId = platformId,
+                        bannerUrl = null,
+                        usersCount = 0,
+                        platformDisplayName = metadata.displayName,
+                        platformIcon = metadata.icon,
+                    ),
+                priority = 0,
+            )
+        }
 
     override suspend fun instanceMetadata(host: String): UiInstanceMetadata {
         val origin = host.toHttpsOrigin()
+        requireAllowedOrigin(origin)
+        val recommended = recommendedOriginsByOrigin[origin.lowercase()]
         val detected =
             if (platform.detector == null) {
                 null
@@ -390,8 +427,9 @@ private class PluginPlatformSpecV1(
         return UiInstanceMetadata(
             instance =
                 UiInstance(
-                    name = detected?.title ?: domain,
-                    description = detected?.description,
+                    name = detected?.title ?: recommended?.let { resolveText(it.name ?: platform.name) } ?: domain,
+                    description =
+                        detected?.description ?: recommended?.let { (it.description ?: platform.description)?.let(::resolveText) },
                     iconUrl = detected?.iconUrl,
                     domain = domain,
                     platformId = platformId,
@@ -432,6 +470,9 @@ private class PluginPlatformSpecV1(
     }
 
     override fun createHandler(context: LoginContext): LoginMethodHandler {
+        if (!platform.allowCustomOrigin) {
+            requireAllowedOrigin(context.host.toHttpsOrigin())
+        }
         val candidates = platform.loginMethods.filter { it.interaction.toLoginMethodType() == context.methodType }
         val method = candidates.singleOrNull() ?: error("Plugin login method is ambiguous or unavailable: ${context.methodType}")
         return PluginLoginMethodHandlerV1(
@@ -446,6 +487,35 @@ private class PluginPlatformSpecV1(
             coroutineScope = coroutineScope,
             runtimePool = runtimePool,
         )
+    }
+
+    private fun requireAllowedOrigin(origin: String) {
+        require(platform.allowCustomOrigin || origin.lowercase() in recommendedOriginsByOrigin) {
+            "Origin is not allowed for single-site platform: $platformId"
+        }
+    }
+
+    private fun resolveText(text: PluginTextV1): String {
+        val installed = plugin.installed
+        return when (val uiText = text.toUiText(installed.pluginId)) {
+            is UiText.Raw -> {
+                uiText.string
+            }
+
+            is UiText.ExternalRef -> {
+                runCatching {
+                    PluginCatalogBundleV1(
+                        pluginId = installed.pluginId,
+                        defaultLocale = manifest.defaultLocale,
+                        catalogs = installed.catalogs,
+                    ).resolve(uiText, Locale.language)
+                }.getOrElse { text.fallbackText }
+            }
+
+            else -> {
+                text.fallbackText
+            }
+        }
     }
 
     private fun TimelineManifestV1.toTimelineSpec(): TimelineSpec<TimelineSpec.AccountResourceData> =

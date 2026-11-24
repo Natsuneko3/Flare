@@ -225,6 +225,46 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
         platform.detector?.let {
             check(it.priority in -10_000..10_000, "detector.priority", "platform.detector.priority", "Invalid detector priority")
         }
+        if (platform.recommendedOrigins.isNotEmpty() || !platform.allowCustomOrigin) {
+            check(
+                apiVersion >= 2,
+                "recommendedOrigins.version",
+                if (platform.recommendedOrigins.isNotEmpty()) "platform.recommendedOrigins" else "platform.allowCustomOrigin",
+                "Recommended origins and single-site origin restrictions require Host API v2",
+            )
+        }
+        check(
+            platform.recommendedOrigins.size <= 8,
+            "recommendedOrigins.count",
+            "platform.recommendedOrigins",
+            "Too many recommended origins",
+        )
+        if (!platform.allowCustomOrigin) {
+            check(
+                platform.recommendedOrigins.isNotEmpty(),
+                "recommendedOrigins.required",
+                "platform.recommendedOrigins",
+                "Single-site platforms must declare at least one recommended origin",
+            )
+        }
+        val seenRecommendedOrigins = mutableSetOf<String>()
+        platform.recommendedOrigins.forEachIndexed { index, item ->
+            val path = "platform.recommendedOrigins[$index]"
+            check(
+                item.origin.isExactHttpsOrigin(),
+                "recommendedOrigins.origin",
+                "$path.origin",
+                "Recommended origin must be exact HTTPS origin",
+            )
+            check(
+                seenRecommendedOrigins.add(item.origin.lowercase()),
+                "recommendedOrigins.duplicate",
+                "$path.origin",
+                "Duplicate recommended origin",
+            )
+            item.name?.let { validateText(it, "$path.name", errors) }
+            item.description?.let { validateText(it, "$path.description", errors) }
+        }
         platform.guest?.let { guest ->
             if (!guest.enabled) {
                 check(
@@ -237,6 +277,14 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
             guest.origin?.let { origin ->
                 check(apiVersion >= 2, "guest.origin.version", "platform.guest.origin", "Standalone guest origin requires Host API v2")
                 check(origin.isExactHttpsOrigin(), "guest.origin", "platform.guest.origin", "Guest origin must be exact HTTPS origin")
+                if (!platform.allowCustomOrigin && guest.enabled) {
+                    check(
+                        platform.recommendedOrigins.any { it.origin.equals(origin, ignoreCase = true) },
+                        "guest.origin.unrecommended",
+                        "platform.guest.origin",
+                        "Standalone guest origin must be listed in recommendedOrigins when custom origins are disallowed",
+                    )
+                }
             }
         }
 

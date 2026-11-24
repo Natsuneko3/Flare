@@ -2,6 +2,7 @@ package dev.dimension.flare.feature.plugin.manifest
 
 import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
+import dev.dimension.flare.feature.plugin.installer.validatePluginCatalogs
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTextArgument
@@ -507,10 +508,126 @@ class PluginManifestV1Test {
         assertTrue(v2MutatePlusKnownContextWithoutDetail.validate().errors.any { it.code == "capability.incomplete" })
     }
 
+    @Test
+    fun recommendedOriginsAndAllowCustomOriginRequireApiV2AndStrictOriginRules() {
+        assertFalse(
+            validateManifest(
+                apiVersion = 1,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"}]""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 1,
+                allowCustomOrigin = false,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"}]""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                allowCustomOrigin = false,
+                recommendedOrigins = "[]",
+            ).isValid,
+        )
+        val tooMany = (1..9).joinToString(",") { """{"origin":"https://site$it.example"}""" }
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = "[$tooMany]",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"},{"origin":"https://exhentai.org"}]""",
+            ).isValid,
+        )
+        listOf(
+            "http://exhentai.org",
+            "https://exhentai.org/",
+            "https://exhentai.org/gallery",
+            "https://EXHENTAI.ORG",
+            "https://exhentai.org:443",
+            "https://bad..host",
+        ).forEach { invalidOrigin ->
+            assertFalse(
+                validateManifest(
+                    apiVersion = 2,
+                    recommendedOrigins = """[{"origin":"$invalidOrigin"}]""",
+                ).isValid,
+                "Expected invalid origin to fail: $invalidOrigin",
+            )
+        }
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                allowCustomOrigin = false,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"}]""",
+                guest = """{"enabled":true,"origin":"https://e-hentai.org"}""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = """[{"origin":"https://exhentai.org","name":"   "}]""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = """[{"origin":"https://exhentai.org","description":{"key":"1bad","fallback":"Desc"}}]""",
+            ).isValid,
+        )
+        assertTrue(
+            validateManifest(
+                apiVersion = 2,
+                allowCustomOrigin = false,
+                recommendedOrigins =
+                    """[
+                      {"origin":"https://exhentai.org","name":{"key":"origin.eh.name","fallback":"ExHentai"},"description":{"key":"origin.eh.desc","fallback":"Gallery"}},
+                      {"origin":"https://e-hentai.org:8443"}
+                    ]""",
+                guest = """{"enabled":true,"origin":"https://exhentai.org"}""",
+            ).isValid,
+        )
+
+        val base = PluginJsonV1.decodeFromString<PluginManifestV1>(VALID_MANIFEST)
+        val localizedManifest =
+            base.copy(
+                apiVersion = 2,
+                platform =
+                    base.socialPlatform.copy(
+                        name = PluginTextV1.Literal("Single Site"),
+                        recommendedOrigins =
+                            listOf(
+                                RecommendedOriginManifestV1(
+                                    origin = "https://exhentai.org",
+                                    name = PluginTextV1.Localized("origin.eh.name", "ExHentai"),
+                                    description = PluginTextV1.Localized("origin.eh.desc", "Gallery"),
+                                ),
+                            ),
+                        allowCustomOrigin = false,
+                    ),
+            )
+        assertFailsWith<IllegalArgumentException> {
+            validatePluginCatalogs(
+                localizedManifest,
+                mapOf("en" to mapOf("origin.eh.name" to "ExHentai")),
+            )
+        }
+        validatePluginCatalogs(
+            localizedManifest,
+            mapOf("en" to mapOf("origin.eh.name" to "ExHentai", "origin.eh.desc" to "Gallery")),
+        )
+    }
+
     private fun validateManifest(
         apiVersion: Int,
         loginMethods: String = """[{"id":"oauth","interaction":"OAuth","title":"OAuth"}]""",
         guest: String? = null,
+        recommendedOrigins: String? = null,
+        allowCustomOrigin: Boolean? = null,
     ): ManifestValidationV1 {
         val root = PluginJsonV1.parseToJsonElement(VALID_MANIFEST).jsonObject
         val platform = root.getValue("platform").jsonObject
@@ -520,6 +637,12 @@ class PluginManifestV1Test {
                 put("loginMethods", PluginJsonV1.parseToJsonElement(loginMethods))
                 if (guest != null) {
                     put("guest", PluginJsonV1.parseToJsonElement(guest))
+                }
+                if (recommendedOrigins != null) {
+                    put("recommendedOrigins", PluginJsonV1.parseToJsonElement(recommendedOrigins))
+                }
+                if (allowCustomOrigin != null) {
+                    put("allowCustomOrigin", JsonPrimitive(allowCustomOrigin))
                 }
             }
         val updatedManifest =
