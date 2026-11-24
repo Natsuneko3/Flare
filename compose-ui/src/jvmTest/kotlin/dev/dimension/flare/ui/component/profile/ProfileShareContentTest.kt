@@ -22,6 +22,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import coil3.ColorImage
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.annotation.DelicateCoilApi
+import coil3.decode.DataSource
+import coil3.intercept.Interceptor
+import coil3.request.SuccessResult
 import com.fleeksoft.ksoup.Ksoup
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
@@ -45,9 +53,6 @@ import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
-import java.awt.image.BufferedImage
-import java.nio.file.Files
-import javax.imageio.ImageIO
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -91,95 +96,115 @@ class ProfileShareContentTest {
         }
     }
 
+    @OptIn(DelicateCoilApi::class)
     @Test
     fun profileShareContentShowsProfileDetailsWithoutFollowControlsOrClicks() {
-        val bannerFile = Files.createTempFile("share-banner", ".png").toFile().apply { deleteOnExit() }
-        ImageIO.write(BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB), "png", bannerFile)
-        val avatarFile = Files.createTempFile("share-avatar", ".png").toFile().apply { deleteOnExit() }
-        ImageIO.write(BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB), "png", avatarFile)
-        val openedUris = mutableListOf<String>()
-        val uriHandler =
-            object : UriHandler {
-                override fun openUri(uri: String) {
-                    openedUris += uri
-                }
-            }
-        val profile =
-            createSampleUser().copy(
-                nameInternal = "Alice Rivera".toUiPlainText(),
-                handle = UiHandle("alice", "example.org", displayOverride = "@alice@example.org"),
-                banner = bannerFile.toURI().toString().toUiImage(),
-                avatar = avatarFile.toURI().toString().toUiImage(),
-                clickEvent = ClickEvent.Deeplink("flare://profile/alice"),
-                mark = persistentListOf(UiProfile.Mark.Verified, UiProfile.Mark.Bot),
-                description =
-                    Ksoup
-                        .parse("<p>Building federated apps on <a href=\"https://example.org/flare\">Flare</a>.</p>")
-                        .body()
-                        .toUi(),
-                bottomContent =
-                    UiProfile.BottomContent.Fields(
-                        fields =
-                            persistentMapOf(
-                                "Pronouns" to "she/her".toUiPlainText(),
-                                "Website" to Ksoup.parse("<a href=\"https://example.org\">example.org</a>").body().toUi(),
-                            ),
-                    ),
-                matrices =
-                    UiProfile.Matrices(
-                        fansCount = 1000,
-                        followsCount = 500,
-                        statusesCount = 300,
-                    ),
-            )
+        val bannerUrl = "memory://share-banner.png"
+        val avatarUrl = "memory://share-avatar.png"
+        val previousLoader = SingletonImageLoader.get(PlatformContext.INSTANCE)
+        SingletonImageLoader.setUnsafe(
+            ImageLoader
+                .Builder(PlatformContext.INSTANCE)
+                .components {
+                    add(
+                        Interceptor { chain ->
+                            when (chain.request.data.toString()) {
+                                bannerUrl, avatarUrl ->
+                                    SuccessResult(ColorImage(0xFF336699.toInt(), 20, 20), chain.request, DataSource.MEMORY)
 
-        compose.setContent {
-            FluentTheme {
-                CompositionLocalProvider(
-                    LocalTimelineAppearance provides TimelineAppearance(),
-                    LocalDensity provides Density(1f),
-                    LocalUriHandler provides uriHandler,
-                ) {
-                    Box(Modifier.width(360.dp)) {
-                        ProfileShareContent(profile = profile)
+                                else -> chain.proceed()
+                            }
+                        },
+                    )
+                }.build(),
+        )
+        try {
+            val openedUris = mutableListOf<String>()
+            val uriHandler =
+                object : UriHandler {
+                    override fun openUri(uri: String) {
+                        openedUris += uri
+                    }
+                }
+            val profile =
+                createSampleUser().copy(
+                    nameInternal = "Alice Rivera".toUiPlainText(),
+                    handle = UiHandle("alice", "example.org", displayOverride = "@alice@example.org"),
+                    banner = bannerUrl.toUiImage(),
+                    avatar = avatarUrl.toUiImage(),
+                    clickEvent = ClickEvent.Deeplink("flare://profile/alice"),
+                    mark = persistentListOf(UiProfile.Mark.Verified, UiProfile.Mark.Bot),
+                    description =
+                        Ksoup
+                            .parse("<p>Building federated apps on <a href=\"https://example.org/flare\">Flare</a>.</p>")
+                            .body()
+                            .toUi(),
+                    bottomContent =
+                        UiProfile.BottomContent.Fields(
+                            fields =
+                                persistentMapOf(
+                                    "Pronouns" to "she/her".toUiPlainText(),
+                                    "Website" to Ksoup.parse("<a href=\"https://example.org\">example.org</a>").body().toUi(),
+                                ),
+                        ),
+                    matrices =
+                        UiProfile.Matrices(
+                            fansCount = 1000,
+                            followsCount = 500,
+                            statusesCount = 300,
+                        ),
+                )
+
+            compose.setContent {
+                FluentTheme {
+                    CompositionLocalProvider(
+                        LocalTimelineAppearance provides TimelineAppearance(),
+                        LocalDensity provides Density(1f),
+                        LocalUriHandler provides uriHandler,
+                    ) {
+                        Box(Modifier.width(360.dp)) {
+                            ProfileShareContent(profile = profile)
+                        }
                     }
                 }
             }
-        }
 
-        compose.onNodeWithText("Alice Rivera", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("@alice@example.org", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("@alice@example.org", useUnmergedTree = true).assertLeftPositionInRootIsEqualTo(16.dp)
-        compose.onNodeWithContentDescription("Profile banner for Alice Rivera").assertTopPositionInRootIsEqualTo(0.dp)
-        compose.onNodeWithContentDescription("Profile banner for Alice Rivera").assertHeightIsEqualTo(150.dp)
-        compose.onNodeWithContentDescription("Verified profile").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Bot account").assertIsDisplayed()
-        compose.onNodeWithText("Building federated apps on Flare.", substring = true, useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Pronouns", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("she/her", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Website", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("example.org", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("300 Posts", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("500 Following", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("1000 Followers", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("Alice Rivera", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("@alice@example.org", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("@alice@example.org", useUnmergedTree = true).assertLeftPositionInRootIsEqualTo(16.dp)
+            compose.onNodeWithContentDescription("Profile banner for Alice Rivera").assertTopPositionInRootIsEqualTo(0.dp)
+            compose.onNodeWithContentDescription("Profile banner for Alice Rivera").assertHeightIsEqualTo(150.dp)
+            compose.onNodeWithContentDescription("Verified profile").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Bot account").assertIsDisplayed()
+            compose.onNodeWithText("Building federated apps on Flare.", substring = true, useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("Pronouns", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("she/her", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("Website", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("example.org", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("300 Posts", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("500 Following", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("1000 Followers", useUnmergedTree = true).assertIsDisplayed()
 
-        listOf("Follow", "Following", "Requested", "Request follow", "Blocked", "Follows you").forEach { label ->
-            compose.onNodeWithText(label).assertDoesNotExist()
-        }
-        compose.onNodeWithContentDescription("Profile banner for Alice Rivera").assertHasNoClickAction()
-        compose.onNodeWithContentDescription("Profile picture for Alice Rivera").assertHasNoClickAction()
+            listOf("Follow", "Following", "Requested", "Request follow", "Blocked", "Follows you").forEach { label ->
+                compose.onNodeWithText(label).assertDoesNotExist()
+            }
+            compose.onNodeWithContentDescription("Profile banner for Alice Rivera").assertHasNoClickAction()
+            compose.onNodeWithContentDescription("Profile picture for Alice Rivera").assertHasNoClickAction()
 
-        val clickableNodes = compose.onAllNodes(hasClickAction(), useUnmergedTree = true).fetchSemanticsNodes()
-        clickableNodes.forEachIndexed { index, _ ->
-            compose.onAllNodes(hasClickAction(), useUnmergedTree = true)[index].performClick()
-        }
-        compose.onNodeWithText("300 Posts", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("500 Following", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("1000 Followers", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("example.org", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("Building federated apps on Flare.", substring = true, useUnmergedTree = true).performClick()
-        compose.runOnIdle {
-            assertTrue(openedUris.isEmpty())
+            val clickableNodes = compose.onAllNodes(hasClickAction(), useUnmergedTree = true).fetchSemanticsNodes()
+            clickableNodes.forEachIndexed { index, _ ->
+                compose.onAllNodes(hasClickAction(), useUnmergedTree = true)[index].performClick()
+            }
+            compose.onNodeWithText("300 Posts", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("500 Following", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("1000 Followers", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("example.org", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("Building federated apps on Flare.", substring = true, useUnmergedTree = true).performClick()
+            compose.runOnIdle {
+                assertTrue(openedUris.isEmpty())
+            }
+        } finally {
+            SingletonImageLoader.setUnsafe(previousLoader)
         }
     }
 

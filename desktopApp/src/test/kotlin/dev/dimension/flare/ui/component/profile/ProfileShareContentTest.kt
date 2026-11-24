@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -24,10 +26,21 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import coil3.ColorImage
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.annotation.DelicateCoilApi
+import coil3.decode.DataSource
+import coil3.intercept.Interceptor
+import coil3.request.SuccessResult
+import dev.dimension.flare.Res
 import dev.dimension.flare.data.model.appearance.GlobalAppearance
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.share_image_render_failed
+import dev.dimension.flare.share_image_too_large
 import dev.dimension.flare.ui.component.ComposeInAppNotification
 import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalShareImageLoading
@@ -64,9 +77,6 @@ import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
 import java.awt.Color
-import java.awt.image.BufferedImage
-import java.nio.file.Files
-import javax.imageio.ImageIO
 import kotlin.time.Instant
 
 class ProfileShareContentTest {
@@ -218,90 +228,184 @@ class ProfileShareContentTest {
     }
 
     @Test
-    fun crossPostInitialTextFormatsNonBlankUrlAndStaysEmptyWhenNullOrBlank() {
+    fun crossPostInitialTextFormatsValidUrlAndStaysEmptyWhenNullBlankOrInvalid() {
         assertEquals("", crossPostInitialText(null))
         assertEquals("", crossPostInitialText(""))
         assertEquals("", crossPostInitialText("   "))
+        assertEquals("", crossPostInitialText("/users/alice"))
+        assertEquals("", crossPostInitialText("//example.org/@alice"))
+        assertEquals("", crossPostInitialText("example.org/@alice"))
+        assertEquals("", crossPostInitialText("javascript:alert(1)"))
         assertEquals("\n\nhttps://example.org/@alice", crossPostInitialText("https://example.org/@alice"))
         assertEquals("\n\nhttps://example.org/@alice", crossPostInitialText("  https://example.org/@alice  "))
     }
 
     @Test
-    fun profileShareScreenshotKeepsEqualCardPaddingOnEveryEdge() {
-        val bannerFile = Files.createTempFile("desktop-profile-banner", ".png").toFile().apply { deleteOnExit() }
-        val bannerImage = BufferedImage(200, 100, BufferedImage.TYPE_INT_RGB)
-        val graphics = bannerImage.createGraphics()
-        graphics.color = Color.RED
-        graphics.fillRect(0, 0, bannerImage.width, bannerImage.height)
-        graphics.dispose()
-        ImageIO.write(bannerImage, "png", bannerFile)
-
-        val profile = sampleProfile().copy(banner = bannerFile.toURI().toString().toUiImage())
-        val imageLoading = ShareImageLoading()
-        var imageReady by mutableStateOf(false)
-
+    fun shareCardDialogPreservesThemeAndStyleAcrossVisibilityToggle() {
+        val profile = sampleProfile(url = "https://example.org/@alice")
+        var dialogVisible by mutableStateOf(true)
         compose.setContent {
-            LaunchedEffect(imageLoading) {
-                imageLoading.awaitReady()
-                imageReady = true
-            }
             FlareTheme(isDarkTheme = false) {
                 CompositionLocalProvider(
+                    LocalComposeWindow provides null,
                     LocalGlobalAppearance provides GlobalAppearance(),
                     LocalTimelineAppearance provides TimelineAppearance(),
-                    LocalShareImageLoading provides imageLoading,
-                    LocalDensity provides Density(1f),
                 ) {
-                    ShareCardPreviewFrame(
-                        previewStyle = SharePreviewStyle.Card,
-                        modifier = Modifier.testTag("screenshot"),
+                    ShareCardDialog(
+                        isReady = true,
+                        shareUrl = profile.url,
+                        fileName = "profile_alice.png",
+                        imageLoadingKey = profile,
+                        onBack = {},
+                        onCrossPost = {},
+                        visible = dialogVisible,
                     ) {
-                        Box(modifier = Modifier.testTag("card-content")) {
-                            ProfileShareContent(profile = profile)
-                        }
+                        ProfileShareContent(profile = profile)
                     }
                 }
             }
         }
 
-        compose.waitUntil(timeoutMillis = 10_000) { imageReady }
-        compose.waitForIdle()
+        compose.onNodeWithText("Dark").performClick().assertIsSelected()
+        compose.onNodeWithText("Content").performClick().assertIsSelected()
+        compose.runOnIdle { dialogVisible = false }
+        compose.onNodeWithText("Dark").assertDoesNotExist()
+        compose.runOnIdle { dialogVisible = true }
+        compose.onNodeWithText("Dark").assertIsSelected()
+        compose.onNodeWithText("Content").assertIsSelected()
+    }
 
-        val padding = 64f
-        val frameBounds = compose.onNodeWithTag("screenshot").fetchSemanticsNode().boundsInRoot
-        val cardBounds = compose.onNodeWithTag("card-content").fetchSemanticsNode().boundsInRoot
-        assertEquals(padding, cardBounds.left - frameBounds.left, 0.5f)
-        assertEquals(padding, frameBounds.right - cardBounds.right, 0.5f)
-        assertEquals(padding, cardBounds.top - frameBounds.top, 0.5f)
-        assertEquals(padding, frameBounds.bottom - cardBounds.bottom, 0.5f)
-
-        val bitmap = compose.onNodeWithTag("screenshot").captureToImage().toAwtImage()
-        val paddingPx = 64
-
-        fun isRedPixel(
-            x: Int,
-            y: Int,
-        ): Boolean {
-            val c = Color(bitmap.getRGB(x, y))
-            return c.red > 200 && c.green < 50 && c.blue < 50
-        }
-
-        assertTrue(isRedPixel(bitmap.width / 2, paddingPx + 20))
-        assertFalse(isRedPixel(paddingPx + 1, paddingPx + 1))
-        assertFalse(isRedPixel(bitmap.width - paddingPx - 2, paddingPx + 1))
-
-        for (y in 0 until paddingPx) {
-            for (x in 0 until bitmap.width) {
-                assertFalse("Banner bled into top padding at ($x, $y)", isRedPixel(x, y))
+    @Test
+    fun shareCardDialogShowsLoadErrorInsteadOfLoadingAndDisablesActions() {
+        var loadError by mutableStateOf<Throwable>(IllegalStateException("Profile unavailable"))
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                CompositionLocalProvider(
+                    LocalComposeWindow provides null,
+                    LocalGlobalAppearance provides GlobalAppearance(),
+                    LocalTimelineAppearance provides TimelineAppearance(),
+                ) {
+                    ShareCardDialog(
+                        isReady = false,
+                        shareUrl = null,
+                        fileName = "profile_alice.png",
+                        imageLoadingKey = null,
+                        onBack = {},
+                        onCrossPost = {},
+                        loadError = loadError,
+                        tooLargeError = Res.string.share_image_too_large,
+                        renderFailedError = Res.string.share_image_render_failed,
+                    ) {
+                        ProfileShareContent(profile = null)
+                    }
+                }
             }
         }
-        for (y in 0 until bitmap.height) {
-            for (x in 0 until paddingPx) {
-                assertFalse("Banner bled into left padding at ($x, $y)", isRedPixel(x, y))
+
+        compose.onNodeWithText("Profile unavailable").assertIsDisplayed()
+        compose.onNodeWithText("Loading user").assertDoesNotExist()
+        compose.onNodeWithText("Cross-post").assertIsNotEnabled()
+        compose.onNodeWithText("Share screenshot").assertIsNotEnabled()
+        compose.onNodeWithText("Save screenshot").assertIsNotEnabled()
+        compose.onNodeWithText("Dark").performClick().assertIsNotSelected()
+        compose.onNodeWithText("Light").assertIsSelected()
+        compose.onNodeWithText("Cancel").assertIsEnabled()
+
+        compose.runOnIdle { loadError = IllegalStateException("") }
+        compose.onNodeWithText("Unable to prepare the image. Please try again.").assertIsDisplayed()
+    }
+
+    @OptIn(DelicateCoilApi::class)
+    @Test
+    fun profileShareScreenshotKeepsEqualCardPaddingOnEveryEdge() {
+        val bannerUrl = "memory://desktop-profile-banner.png"
+        val previousLoader = SingletonImageLoader.get(PlatformContext.INSTANCE)
+        val loader =
+            ImageLoader
+                .Builder(PlatformContext.INSTANCE)
+                .components {
+                    add(
+                        Interceptor { chain ->
+                            if (chain.request.data.toString() == bannerUrl) {
+                                SuccessResult(ColorImage(Color.RED.rgb, 200, 100), chain.request, DataSource.MEMORY)
+                            } else {
+                                chain.proceed()
+                            }
+                        },
+                    )
+                }.build()
+        SingletonImageLoader.setUnsafe(loader)
+
+        try {
+            val profile = sampleProfile().copy(banner = bannerUrl.toUiImage())
+            val imageLoading = ShareImageLoading()
+            var imageReady by mutableStateOf(false)
+
+            compose.setContent {
+                LaunchedEffect(imageLoading) {
+                    imageLoading.awaitReady()
+                    imageReady = true
+                }
+                FlareTheme(isDarkTheme = false) {
+                    CompositionLocalProvider(
+                        LocalGlobalAppearance provides GlobalAppearance(),
+                        LocalTimelineAppearance provides TimelineAppearance(),
+                        LocalShareImageLoading provides imageLoading,
+                        LocalDensity provides Density(1f),
+                    ) {
+                        ShareCardPreviewFrame(
+                            previewStyle = SharePreviewStyle.Card,
+                            modifier = Modifier.testTag("screenshot"),
+                        ) {
+                            Box(modifier = Modifier.testTag("card-content")) {
+                                ProfileShareContent(profile = profile)
+                            }
+                        }
+                    }
+                }
             }
-            for (x in (bitmap.width - paddingPx) until bitmap.width) {
-                assertFalse("Banner bled into right padding at ($x, $y)", isRedPixel(x, y))
+
+            compose.waitUntil(timeoutMillis = 10_000) { imageReady }
+            compose.waitForIdle()
+
+            val padding = 64f
+            val frameBounds = compose.onNodeWithTag("screenshot").fetchSemanticsNode().boundsInRoot
+            val cardBounds = compose.onNodeWithTag("card-content").fetchSemanticsNode().boundsInRoot
+            assertEquals(padding, cardBounds.left - frameBounds.left, 0.5f)
+            assertEquals(padding, frameBounds.right - cardBounds.right, 0.5f)
+            assertEquals(padding, cardBounds.top - frameBounds.top, 0.5f)
+            assertEquals(padding, frameBounds.bottom - cardBounds.bottom, 0.5f)
+
+            val bitmap = compose.onNodeWithTag("screenshot").captureToImage().toAwtImage()
+            val paddingPx = 64
+
+            fun isRedPixel(
+                x: Int,
+                y: Int,
+            ): Boolean {
+                val c = Color(bitmap.getRGB(x, y))
+                return c.red > 200 && c.green < 50 && c.blue < 50
             }
+
+            assertTrue(isRedPixel(bitmap.width / 2, paddingPx + 20))
+            assertFalse(isRedPixel(paddingPx + 1, paddingPx + 1))
+            assertFalse(isRedPixel(bitmap.width - paddingPx - 2, paddingPx + 1))
+
+            for (y in 0 until paddingPx) {
+                for (x in 0 until bitmap.width) {
+                    assertFalse("Banner bled into top padding at ($x, $y)", isRedPixel(x, y))
+                }
+            }
+            for (y in 0 until bitmap.height) {
+                for (x in 0 until paddingPx) {
+                    assertFalse("Banner bled into left padding at ($x, $y)", isRedPixel(x, y))
+                }
+                for (x in (bitmap.width - paddingPx) until bitmap.width) {
+                    assertFalse("Banner bled into right padding at ($x, $y)", isRedPixel(x, y))
+                }
+            }
+        } finally {
+            SingletonImageLoader.setUnsafe(previousLoader)
         }
     }
 

@@ -15,16 +15,40 @@ final class ProfileShareViewTests: XCTestCase {
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "example.org/@alice"))
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "  example.org/@alice  "))
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "/@alice"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "/users/alice"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "//example.org/@alice"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "javascript:alert(1)"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "mailto:a@b.com"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "https://"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "https:///path"))
+        XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "https://example.org/with space"))
         XCTAssertNil(MacProfileShareMenu<Text>.resolveShareURL(from: "://example.org/@alice"))
         XCTAssertNil(ProfileShareURLResolver.resolve("example.org/@alice"))
+        XCTAssertNil(ProfileShareURLResolver.resolve("/users/alice"))
 
         let clean = MacProfileShareMenu<Text>.resolveShareURL(from: "https://example.org/@alice")
         XCTAssertEqual(clean?.raw, "https://example.org/@alice")
         XCTAssertEqual(clean?.url, URL(string: "https://example.org/@alice"))
 
+        let httpUrl = MacProfileShareMenu<Text>.resolveShareURL(from: "http://example.org/@alice")
+        XCTAssertEqual(httpUrl?.raw, "http://example.org/@alice")
+        XCTAssertEqual(httpUrl?.url, URL(string: "http://example.org/@alice"))
+
         let trimmed = MacProfileShareMenu<Text>.resolveShareURL(from: "  https://example.org/@alice  ")
         XCTAssertEqual(trimmed?.raw, "https://example.org/@alice")
         XCTAssertEqual(trimmed?.url, URL(string: "https://example.org/@alice"))
+    }
+
+    func testProfileRenderErrorUsesNonReplyCopy() {
+        let tooLargeReply = StatusShareRenderError.tooLarge.localizedMessage(includesReplies: true)
+        let tooLargeImage = StatusShareRenderError.tooLarge.localizedMessage(includesReplies: false)
+        let mediaReply = StatusShareRenderError.mediaUnavailable.localizedMessage(includesReplies: true)
+        let mediaImage = StatusShareRenderError.mediaUnavailable.localizedMessage(includesReplies: false)
+
+        XCTAssertNotEqual(tooLargeImage, tooLargeReply)
+        XCTAssertNotEqual(mediaImage, mediaReply)
+        XCTAssertFalse(tooLargeImage.localizedCaseInsensitiveContains("replies"))
+        XCTAssertFalse(mediaImage.localizedCaseInsensitiveContains("replies"))
     }
 
     func testProfileShareTypesAndPurposeCompatibility() {

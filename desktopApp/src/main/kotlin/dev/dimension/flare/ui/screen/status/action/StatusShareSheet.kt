@@ -19,6 +19,7 @@ import dev.dimension.flare.status_share_via_fixvx
 import dev.dimension.flare.status_share_via_fxembed
 import dev.dimension.flare.ui.component.ComposeInAppNotification
 import dev.dimension.flare.ui.component.status.StatusShareContent
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.status.StatusSharePresenter
@@ -50,9 +51,9 @@ internal fun StatusShareSheet(
     }
     if (state.selecting) {
         StatusShareReplyDialog(state)
-        return
     }
     val status = state.status.takeSuccess()
+    val loadError = (state.status as? UiState.Error)?.throwable
     ShareCardDialog(
         isReady = status != null,
         shareUrl = shareUrl,
@@ -60,6 +61,9 @@ internal fun StatusShareSheet(
         imageLoadingKey = status to state.selectedReplies,
         onBack = onBack,
         onCrossPost = onCrossPost,
+        modifier = modifier,
+        visible = !state.selecting,
+        loadError = loadError,
         extraOptions = { enabled ->
             Button(
                 onClick = state::selectReplies,
@@ -91,7 +95,6 @@ internal fun StatusShareSheet(
                 }
             }
         },
-        modifier = modifier,
     ) {
         StatusShareContent(
             status = status,

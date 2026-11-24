@@ -4,10 +4,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import dev.dimension.flare.Res
 import dev.dimension.flare.common.MediaFileNamePolicy
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.share_image_render_failed
+import dev.dimension.flare.share_image_too_large
 import dev.dimension.flare.ui.component.profile.ProfileShareContent
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.profile.ProfileSharePresenter
@@ -29,6 +33,7 @@ internal fun ProfileShareSheet(
         }.invoke()
     }
     val profile = state.profile.takeSuccess()
+    val loadError = (state.profile as? UiState.Error)?.throwable
     ShareCardDialog(
         isReady = profile != null,
         shareUrl = state.shareUrl,
@@ -39,6 +44,9 @@ internal fun ProfileShareSheet(
             onCrossPost(imageFile, state.shareUrl)
         },
         modifier = modifier,
+        loadError = loadError,
+        tooLargeError = Res.string.share_image_too_large,
+        renderFailedError = Res.string.share_image_render_failed,
     ) {
         ProfileShareContent(profile = profile)
     }

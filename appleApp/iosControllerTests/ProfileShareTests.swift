@@ -277,6 +277,29 @@ final class ProfileShareTests: XCTestCase {
         }
     }
 
+    func testProfileRenderErrorMessagesOmitReplyCopy() {
+        let tooLargeMessage = StatusShareRenderError.tooLarge.localizedMessage(includesReplies: false)
+        let renderFailedMessage = StatusShareRenderError.mediaUnavailable.localizedMessage(includesReplies: false)
+
+        XCTAssertFalse(tooLargeMessage.isEmpty)
+        XCTAssertNotEqual(tooLargeMessage, "share_image_too_large")
+        XCTAssertNotEqual(tooLargeMessage, StatusShareRenderError.tooLarge.localizedMessage(includesReplies: true))
+        XCTAssertFalse(renderFailedMessage.isEmpty)
+        XCTAssertNotEqual(renderFailedMessage, "share_image_render_failed")
+        XCTAssertNotEqual(renderFailedMessage, StatusShareRenderError.mediaUnavailable.localizedMessage(includesReplies: true))
+        XCTAssertFalse(tooLargeMessage.localizedCaseInsensitiveContains("replies"))
+        XCTAssertFalse(tooLargeMessage.contains("回复"))
+        XCTAssertFalse(tooLargeMessage.contains("回覆"))
+        XCTAssertFalse(renderFailedMessage.localizedCaseInsensitiveContains("replies"))
+        XCTAssertFalse(renderFailedMessage.contains("回复"))
+        XCTAssertFalse(renderFailedMessage.contains("回覆"))
+        XCTAssertNil(ProfileShareURLResolver.resolve("/users/alice"))
+        XCTAssertNil(ProfileShareURLResolver.resolve("//example.org/@alice"))
+        XCTAssertNil(ProfileShareURLResolver.resolve("javascript:alert(1)"))
+        XCTAssertNil(ProfileShareURLResolver.resolve("https://"))
+        XCTAssertEqual(ProfileShareURLResolver.resolve("https://example.org/@alice")?.raw, "https://example.org/@alice")
+    }
+
     // MARK: - Helpers
 
     private final class StubProfileShareState: NSObject, ProfileSharePresenterState {

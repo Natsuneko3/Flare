@@ -194,7 +194,8 @@ struct ProfileShareSheetContent: View {
             } catch is CancellationError {
             } catch {
                 guard revision == previewRevision else { return }
-                renderError = error.localizedDescription
+                renderError = (error as? StatusShareRenderError)?.localizedMessage(includesReplies: false)
+                    ?? error.localizedDescription
             }
         }
     }

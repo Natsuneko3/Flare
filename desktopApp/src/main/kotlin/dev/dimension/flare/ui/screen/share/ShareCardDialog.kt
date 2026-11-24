@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
+import compose.icons.fontawesomeicons.solid.CircleExclamation
 import compose.icons.fontawesomeicons.solid.Download
 import compose.icons.fontawesomeicons.solid.Image
 import compose.icons.fontawesomeicons.solid.Link
@@ -44,6 +46,7 @@ import compose.icons.fontawesomeicons.solid.Retweet
 import dev.dimension.flare.Res
 import dev.dimension.flare.cancel
 import dev.dimension.flare.common.DesktopSaveDialog
+import dev.dimension.flare.common.ShareUrlPolicy
 import dev.dimension.flare.copied_to_clipboard
 import dev.dimension.flare.settings_appearance_layout_group_title
 import dev.dimension.flare.settings_appearance_theme
@@ -104,7 +107,7 @@ internal enum class SharePreviewStyle {
     Content,
 }
 
-internal fun normalizeShareUrl(shareUrl: String?): String? = shareUrl?.trim()?.takeIf { it.isNotEmpty() }
+internal fun normalizeShareUrl(shareUrl: String?): String? = ShareUrlPolicy.normalize(shareUrl)
 
 internal fun crossPostInitialText(shareUrl: String?): String = normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
 
@@ -158,9 +161,13 @@ internal fun ShareCardDialog(
     imageLoadingKey: Any?,
     onBack: () -> Unit,
     onCrossPost: (File) -> Unit,
+    modifier: Modifier = Modifier,
+    visible: Boolean = true,
+    loadError: Throwable? = null,
+    tooLargeError: StringResource = Res.string.share_replies_too_large,
+    renderFailedError: StringResource = Res.string.share_replies_render_failed,
     extraOptions: @Composable ColumnScope.(enabled: Boolean) -> Unit = {},
     extraActionButtons: @Composable () -> Unit = {},
-    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val inAppNotification: ComposeInAppNotification = koinInject()
@@ -175,7 +182,8 @@ internal fun ShareCardDialog(
     var imageAttempt by remember { mutableStateOf(0) }
     val normalizedShareUrl = normalizeShareUrl(shareUrl)
     val imageLoading = remember(imageLoadingKey, previewTheme, previewStyle, imageAttempt) { ShareImageLoading() }
-    val controlsEnabled = !isPreparingImage && !isPreparingCrossPost
+    val controlsEnabled = !isPreparingImage && !isPreparingCrossPost && loadError == null
+    val actionsDisabled = !isReady || loadError != null || isPreparingImage || isPreparingCrossPost
 
     suspend fun captureImage(): ImageBitmap? {
         if (isPreparingImage) return null
@@ -186,16 +194,16 @@ internal fun ShareCardDialog(
             imageLoading.awaitReady()
             repeat(2) { withFrameNanos { } }
             if (!StatusShareImageLimits.canRender(previewGraphicsLayer.size.width, previewGraphicsLayer.size.height)) {
-                imageError = Res.string.share_replies_too_large
+                imageError = tooLargeError
                 return null
             }
             return capturePreviewImage(previewGraphicsLayer).also {
-                if (it == null) imageError = Res.string.share_replies_render_failed
+                if (it == null) imageError = renderFailedError
             }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            imageError = Res.string.share_replies_render_failed
+            imageError = renderFailedError
             imageAttempt++
             return null
         } finally {
@@ -204,7 +212,7 @@ internal fun ShareCardDialog(
     }
 
     FluentDialog(
-        visible = true,
+        visible = visible,
     ) {
         Column(
             modifier =
@@ -215,43 +223,66 @@ internal fun ShareCardDialog(
         ) {
             Box(
                 modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center,
             ) {
-                FlareTheme(
-                    isDarkTheme = previewTheme == SharePreviewTheme.Dark,
-                ) {
-                    ViewBox(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        Box {
-                            Box(
-                                modifier =
-                                    Modifier.drawWithContent {
-                                        previewGraphicsLayer.record {
-                                            this@drawWithContent.drawContent()
-                                        }
-                                        drawContent()
-                                    },
-                            ) {
-                                ShareCardPreviewFrame(previewStyle = previewStyle) {
-                                    CompositionLocalProvider(
-                                        LocalShareImageLoading provides imageLoading,
-                                        LocalContentColor provides FluentTheme.colors.text.text.primary,
-                                        LocalTextStyle provides LocalTextStyle.current.copy(Color.Unspecified),
-                                    ) {
-                                        key(imageLoading) {
-                                            content()
+                if (loadError != null) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FAIcon(
+                            imageVector = FontAwesomeIcons.Solid.CircleExclamation,
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp),
+                            tint = FluentTheme.colors.system.critical,
+                        )
+                        Text(
+                            text = loadError.message?.takeIf { it.isNotBlank() } ?: stringResource(renderFailedError),
+                            color = FluentTheme.colors.system.critical,
+                        )
+                    }
+                } else {
+                    FlareTheme(
+                        isDarkTheme = previewTheme == SharePreviewTheme.Dark,
+                    ) {
+                        ViewBox(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            Box {
+                                Box(
+                                    modifier =
+                                        Modifier.drawWithContent {
+                                            previewGraphicsLayer.record {
+                                                this@drawWithContent.drawContent()
+                                            }
+                                            drawContent()
+                                        },
+                                ) {
+                                    ShareCardPreviewFrame(previewStyle = previewStyle) {
+                                        CompositionLocalProvider(
+                                            LocalShareImageLoading provides imageLoading,
+                                            LocalContentColor provides FluentTheme.colors.text.text.primary,
+                                            LocalTextStyle provides LocalTextStyle.current.copy(Color.Unspecified),
+                                        ) {
+                                            key(imageLoading) {
+                                                content()
+                                            }
                                         }
                                     }
                                 }
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .matchParentSize()
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                onClick = {},
+                                            ),
+                                )
                             }
-                            Box(
-                                modifier =
-                                    Modifier
-                                        .matchParentSize()
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = {},
-                                        ),
-                            )
                         }
                     }
                 }
@@ -297,8 +328,10 @@ internal fun ShareCardDialog(
                     extraOptions(controlsEnabled)
                 }
             }
-            if (isPreparingImage) Text(stringResource(Res.string.share_replies_preparing))
-            imageError?.let { Text(stringResource(it)) }
+            if (loadError == null) {
+                if (isPreparingImage) Text(stringResource(Res.string.share_replies_preparing))
+                imageError?.let { Text(stringResource(it)) }
+            }
             FlowRow(
                 modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -324,7 +357,7 @@ internal fun ShareCardDialog(
                             }
                         }
                     },
-                    disabled = isPreparingCrossPost || isPreparingImage || !isReady,
+                    disabled = actionsDisabled,
                 ) {
                     FAIcon(
                         FontAwesomeIcons.Solid.Retweet,
@@ -345,7 +378,7 @@ internal fun ShareCardDialog(
                     }
                 }
                 Button(
-                    disabled = isPreparingImage || isPreparingCrossPost || !isReady,
+                    disabled = actionsDisabled,
                     onClick = {
                         scope.launch {
                             val image = captureImage() ?: return@launch
@@ -361,7 +394,7 @@ internal fun ShareCardDialog(
                     Text(stringResource(Res.string.status_share_image))
                 }
                 Button(
-                    disabled = isPreparingImage || isPreparingCrossPost || !isReady,
+                    disabled = actionsDisabled,
                     onClick = {
                         scope.launch {
                             val image = captureImage() ?: return@launch

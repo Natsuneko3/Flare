@@ -18,12 +18,16 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], manifest = Config.NONE)
 class ShareCardSheetHelperTest {
     @Test
-    fun `crossPostInitialText formats non-blank url and stays empty for null or blank`() {
+    fun `crossPostInitialText formats valid url and stays empty for null blank or invalid urls`() {
         assertEquals("\n\nhttps://example.org/@alice", crossPostInitialText("https://example.org/@alice"))
         assertEquals("\n\nhttps://example.org/@alice", crossPostInitialText("  https://example.org/@alice  "))
         assertEquals("", crossPostInitialText(null))
         assertEquals("", crossPostInitialText(""))
         assertEquals("", crossPostInitialText("   "))
+        assertEquals("", crossPostInitialText("/users/alice"))
+        assertEquals("", crossPostInitialText("//example.org/@alice"))
+        assertEquals("", crossPostInitialText("example.org/@alice"))
+        assertEquals("", crossPostInitialText("javascript:alert(1)"))
     }
 
     @Test
@@ -54,11 +58,16 @@ class ShareCardSheetHelperTest {
     }
 
     @Test
-    fun `normalizeShareUrl trims non-blank urls and returns null for null or blank`() {
+    fun `normalizeShareUrl accepts http or https with host and rejects blank or relative urls`() {
         assertEquals("https://example.org/@alice", normalizeShareUrl("  https://example.org/@alice  "))
+        assertEquals("http://example.org/@alice", normalizeShareUrl("http://example.org/@alice"))
         assertNull(normalizeShareUrl(null))
         assertNull(normalizeShareUrl(""))
         assertNull(normalizeShareUrl("   "))
+        assertNull(normalizeShareUrl("/users/alice"))
+        assertNull(normalizeShareUrl("//example.org/@alice"))
+        assertNull(normalizeShareUrl("example.org/@alice"))
+        assertNull(normalizeShareUrl("javascript:alert(1)"))
     }
 
     @Test

@@ -4,9 +4,12 @@ public enum ProfileShareURLResolver {
     public static func resolve(_ shareUrl: String?) -> (raw: String, url: URL)? {
         guard let trimmed = shareUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty,
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
               let url = URL(string: trimmed),
-              let scheme = url.scheme,
-              !scheme.isEmpty
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host,
+              !host.isEmpty
         else {
             return nil
         }
@@ -157,6 +160,7 @@ public struct MacProfileShareSheet: View {
             directoryPrefix: "flare-profile-share",
             fallbackFileName: "flare-profile.png",
             appliesContentPadding: false,
+            includesReplies: false,
             onCrossPost: { data, fileName in
                 onCrossPost?(
                     data,

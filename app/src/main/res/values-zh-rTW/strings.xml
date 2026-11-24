@@ -1007,6 +1007,8 @@
     <string name="settings_remember_home_timeline_position_description">刷新時保持位置，並在開啟應用程式時恢復最後一個分頁和位置。</string>
     <string name="share_replies_too_large">圖片太長。請選擇較少的回覆。</string>
     <string name="share_replies_render_failed">無法準備圖片。請重試或移除媒體不可用的回覆。</string>
+    <string name="share_image_too_large">圖片過長，無法分享。</string>
+    <string name="share_image_render_failed">無法準備圖片，請重試。</string>
     <string name="share_replies_preparing">準備圖片…</string>
     <string name="share_replies_title">選擇回覆</string>
     <string name="share_replies_cancel">取消</string>

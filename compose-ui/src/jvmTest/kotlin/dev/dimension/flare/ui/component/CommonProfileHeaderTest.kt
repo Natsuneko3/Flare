@@ -18,6 +18,14 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import coil3.ColorImage
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.annotation.DelicateCoilApi
+import coil3.decode.DataSource
+import coil3.intercept.Interceptor
+import coil3.request.SuccessResult
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
 import dev.dimension.flare.ui.model.UiHandle
 import dev.dimension.flare.ui.model.createSampleUser
@@ -27,9 +35,6 @@ import dev.dimension.flare.ui.theme.PlatformTheme
 import io.github.composefluent.FluentTheme
 import org.junit.Rule
 import org.junit.Test
-import java.awt.image.BufferedImage
-import java.nio.file.Files
-import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 
 class CommonProfileHeaderTest {
@@ -95,36 +100,56 @@ class CommonProfileHeaderTest {
         compose.onNodeWithText("@reader").assertLeftPositionInRootIsEqualTo(16.dp)
     }
 
+    @OptIn(DelicateCoilApi::class)
     @Test
     fun profileHeaderOmitsStatusBarInsetWhenDisabled() {
-        val bannerFile = Files.createTempFile("profile-banner", ".png").toFile().apply { deleteOnExit() }
-        ImageIO.write(BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB), "png", bannerFile)
-        val user = createSampleUser()
-        var includeStatusBarInset by mutableStateOf(true)
-
-        compose.setContent {
-            FluentTheme {
-                CompositionLocalProvider(
-                    LocalTimelineAppearance provides TimelineAppearance(),
-                    LocalDensity provides Density(1f),
-                ) {
-                    CommonProfileHeader(
-                        banner = bannerFile.toURI().toString().toUiImage(),
-                        avatar = null,
-                        displayName = "Alex Rivera".toUiPlainText(),
-                        userKey = user.key,
-                        handle = UiHandle("alex", "example.org", displayOverride = "@alex"),
-                        includeStatusBarInset = includeStatusBarInset,
-                        statusBarTopInset = 48.dp,
+        val bannerUrl = "memory://profile-banner.png"
+        val previousLoader = SingletonImageLoader.get(PlatformContext.INSTANCE)
+        SingletonImageLoader.setUnsafe(
+            ImageLoader
+                .Builder(PlatformContext.INSTANCE)
+                .components {
+                    add(
+                        Interceptor { chain ->
+                            if (chain.request.data.toString() == bannerUrl) {
+                                SuccessResult(ColorImage(0xFF336699.toInt(), 20, 20), chain.request, DataSource.MEMORY)
+                            } else {
+                                chain.proceed()
+                            }
+                        },
                     )
+                }.build(),
+        )
+        try {
+            val user = createSampleUser()
+            var includeStatusBarInset by mutableStateOf(true)
+
+            compose.setContent {
+                FluentTheme {
+                    CompositionLocalProvider(
+                        LocalTimelineAppearance provides TimelineAppearance(),
+                        LocalDensity provides Density(1f),
+                    ) {
+                        CommonProfileHeader(
+                            banner = bannerUrl.toUiImage(),
+                            avatar = null,
+                            displayName = "Alex Rivera".toUiPlainText(),
+                            userKey = user.key,
+                            handle = UiHandle("alex", "example.org", displayOverride = "@alex"),
+                            includeStatusBarInset = includeStatusBarInset,
+                            statusBarTopInset = 48.dp,
+                        )
+                    }
                 }
             }
-        }
 
-        compose.onNodeWithContentDescription("Profile banner for Alex Rivera").assertHeightIsEqualTo(198.dp)
-        compose.onNodeWithContentDescription("Profile picture for Alex Rivera").assertTopPositionInRootIsEqualTo(150.dp)
-        compose.runOnIdle { includeStatusBarInset = false }
-        compose.onNodeWithContentDescription("Profile banner for Alex Rivera").assertHeightIsEqualTo(150.dp)
-        compose.onNodeWithContentDescription("Profile picture for Alex Rivera").assertTopPositionInRootIsEqualTo(102.dp)
+            compose.onNodeWithContentDescription("Profile banner for Alex Rivera").assertHeightIsEqualTo(198.dp)
+            compose.onNodeWithContentDescription("Profile picture for Alex Rivera").assertTopPositionInRootIsEqualTo(150.dp)
+            compose.runOnIdle { includeStatusBarInset = false }
+            compose.onNodeWithContentDescription("Profile banner for Alex Rivera").assertHeightIsEqualTo(150.dp)
+            compose.onNodeWithContentDescription("Profile picture for Alex Rivera").assertTopPositionInRootIsEqualTo(102.dp)
+        } finally {
+            SingletonImageLoader.setUnsafe(previousLoader)
+        }
     }
 }

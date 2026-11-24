@@ -3,6 +3,7 @@ package dev.dimension.flare.ui.presenter.profile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import dev.dimension.flare.common.ShareUrlPolicy
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.accountKeyOrNull
 import dev.dimension.flare.data.datasource.microblog.accountProfileFlow
@@ -20,7 +21,10 @@ import dev.dimension.flare.ui.model.flattenUiState
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.model.toUi
 import dev.dimension.flare.ui.presenter.PresenterBase
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 
 public class ProfileSharePresenter(
@@ -29,9 +33,37 @@ public class ProfileSharePresenter(
 ) : PresenterBase<ProfileSharePresenter.State>() {
     private val accountRepository: AccountRepository by koinInject()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val profileFlow by lazy {
-        accountServiceFlow(accountType, accountRepository).flatMapLatestUiState { service ->
-            resolveProfileShareFlow(service = service, userKey = userKey)
+        when (accountType) {
+            is AccountType.Specific -> {
+                accountRepository
+                    .getFlow(accountType.accountKey)
+                    .distinctUntilChangedBy { state ->
+                        when (state) {
+                            is UiState.Success -> state.data.accountKey
+                            is UiState.Error -> state.throwable
+                            is UiState.Loading -> Unit
+                        }
+                    }.flatMapLatest { accountState ->
+                        when (accountState) {
+                            is UiState.Loading -> flowOf(UiState.Loading())
+                            is UiState.Error -> flowOf(UiState.Error(accountState.throwable))
+                            is UiState.Success ->
+                                accountServiceFlow(accountType, accountRepository).flatMapLatestUiState { service ->
+                                    resolveProfileShareFlow(service = service, userKey = userKey)
+                                }
+                        }
+                    }
+            }
+
+            AccountType.Guest,
+            is AccountType.GuestHost,
+            -> {
+                accountServiceFlow(accountType, accountRepository).flatMapLatestUiState { service ->
+                    resolveProfileShareFlow(service = service, userKey = userKey)
+                }
+            }
         }
     }
 
@@ -73,8 +105,4 @@ internal fun resolveProfileShareFlow(
     }
 
 internal fun normalizeProfileShareUrl(profile: UiState<UiProfile>): String? =
-    profile
-        .takeSuccess()
-        ?.url
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
+    ShareUrlPolicy.normalize(profile.takeSuccess()?.url)

@@ -4,9 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import dev.dimension.flare.R
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.profile.ProfileShareContent
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.profile.ProfileSharePresenter
@@ -26,6 +28,7 @@ internal fun ProfileShareSheet(
         }.invoke()
     }
     val profile = state.profile.takeSuccess()
+    val loadError = (state.profile as? UiState.Error)?.throwable
 
     ShareCardSheet(
         isReady = profile != null,
@@ -35,6 +38,9 @@ internal fun ProfileShareSheet(
         imageLoadingKey = profile,
         onBack = onBack,
         modifier = modifier,
+        loadError = loadError,
+        tooLargeErrorRes = R.string.share_image_too_large,
+        renderFailedErrorRes = R.string.share_image_render_failed,
     ) {
         ProfileShareContent(profile = profile)
     }

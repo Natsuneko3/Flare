@@ -31,6 +31,7 @@ import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.status.StatusShareContent
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.status.StatusSharePresenter
@@ -57,6 +58,7 @@ internal fun StatusShareSheet(
         }.invoke()
     }
     val status = state.status.takeSuccess()
+    val loadError = (state.status as? UiState.Error)?.throwable
 
     if (state.selecting) {
         StatusShareReplySheet(state)
@@ -69,6 +71,8 @@ internal fun StatusShareSheet(
         fileKey = statusKey.toString(),
         imageLoadingKey = status to state.selectedReplies,
         onBack = onBack,
+        modifier = modifier,
+        loadError = loadError,
         extraActionButtons = {
             if (fxShareUrl != null) {
                 FilledTonalButton(
@@ -113,7 +117,6 @@ internal fun StatusShareSheet(
                 },
             )
         },
-        modifier = modifier,
     ) {
         StatusShareContent(status = status, statusKey = statusKey, replies = state.selectedReplies)
     }

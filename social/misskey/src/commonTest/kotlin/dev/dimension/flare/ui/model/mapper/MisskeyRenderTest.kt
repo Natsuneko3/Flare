@@ -355,14 +355,20 @@ class MisskeyRenderTest {
             )
         val userWithExplicitUrl = baseUser.render(accountKey)
         val userWithNullUrl = baseUser.copy(id = "2", username = "bob", host = "misskey.io", url = null).render(accountKey)
+        val remoteUserWithoutUrl = baseUser.copy(id = "2b", username = "bob", host = "fed.example", url = null).render(accountKey)
         val userWithBlankUrlAndUsername = baseUser.copy(id = "3", username = "  ", host = null, url = "  ").render(accountKey)
         val userLiteLocal = UserLite(id = "4", username = "carol", host = null).render(accountKey)
+        val userLiteSameHost = UserLite(id = "4b", username = "dave", host = "misskey.io").render(accountKey)
+        val userLiteRemote = UserLite(id = "1", username = "alice", host = "fed.example").render(accountKey)
         val userLiteBlank = UserLite(id = "5", username = "  ", host = null).render(accountKey)
 
         assertEquals("https://fed.example/users/alice", userWithExplicitUrl.url)
         assertEquals("https://misskey.io/@bob", userWithNullUrl.url)
+        assertNull(remoteUserWithoutUrl.url)
         assertNull(userWithBlankUrlAndUsername.url)
         assertEquals("https://${accountKey.host}/@carol", userLiteLocal.url)
+        assertEquals("https://${accountKey.host}/@dave", userLiteSameHost.url)
+        assertNull(userLiteRemote.url)
         assertNull(userLiteBlank.url)
     }
 

@@ -845,6 +845,8 @@ internal fun UserLite.render(accountKey: MicroBlogKey): UiProfile {
             id = id,
             host = accountKey.host,
         )
+    val trimmedUsername = username.trim()
+    val isLocalUser = host.isNullOrBlank() || host.equals(accountKey.host, ignoreCase = true)
     return UiProfile(
         avatar = avatarUrl.toUiImage(),
         nameInternal = parseName(name.orEmpty(), accountKey, emojis),
@@ -866,7 +868,7 @@ internal fun UserLite.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
         platformId = MISSKEY_PLATFORM_ID,
         platformIcon = UiIcon.Misskey.asType(),
-        url = username.takeIf { it.isNotBlank() }?.let { "https://$remoteHost/@$it" },
+        url = if (isLocalUser && trimmedUsername.isNotEmpty()) "https://${accountKey.host}/@$trimmedUsername" else null,
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -891,6 +893,8 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
             host = accountKey.host,
         )
     val sourceLanguages = listOfNotNull(lang).toPersistentList()
+    val trimmedUsername = username.trim()
+    val isLocalUser = host.isNullOrBlank() || host.equals(accountKey.host, ignoreCase = true)
     return UiProfile(
         avatar = avatarUrl.toUiImage(),
         nameInternal = parseName(name.orEmpty(), accountKey, emojis, sourceLanguages),
@@ -941,7 +945,13 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
                 },
         platformId = MISSKEY_PLATFORM_ID,
         platformIcon = UiIcon.Misskey.asType(),
-        url = url?.trim()?.takeIf { it.isNotEmpty() } ?: username.takeIf { it.isNotBlank() }?.let { "https://$remoteHost/@$it" },
+        url =
+            url?.trim()?.takeIf { it.isNotEmpty() }
+                ?: if (isLocalUser && trimmedUsername.isNotEmpty()) {
+                    "https://${accountKey.host}/@$trimmedUsername"
+                } else {
+                    null
+                },
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile

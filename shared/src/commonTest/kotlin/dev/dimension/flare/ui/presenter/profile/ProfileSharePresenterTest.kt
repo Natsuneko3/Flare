@@ -6,6 +6,7 @@ import app.cash.molecule.RecompositionMode
 import app.cash.molecule.moleculeFlow
 import dev.dimension.flare.RobolectricTest
 import dev.dimension.flare.common.OnDeviceAI
+import dev.dimension.flare.common.ShareUrlPolicy
 import dev.dimension.flare.common.TestFormatter
 import dev.dimension.flare.createTestFileSystem
 import dev.dimension.flare.createTestRootPath
@@ -310,16 +311,103 @@ class ProfileSharePresenterTest : RobolectricTest() {
         }
 
     @Test
-    fun `shareUrl trims non-blank url and returns null for blank or non-success states`() {
+    fun `shareUrl requires http or https url with host and returns null for relative or invalid urls`() {
         assertNull(normalizeProfileShareUrl(UiState.Loading()))
         assertNull(normalizeProfileShareUrl(UiState.Error(IllegalStateException("boom"))))
         assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = null))))
         assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "   "))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "/users/alice"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "//example.org/@alice"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "example.org/@alice"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "javascript:alert(1)"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "mailto:a@b.com"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "https://"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "https:///path"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "https://?foo=bar"))))
+        assertNull(normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = "https://example.org/with space"))))
         assertEquals(
             "https://example.org/@a",
             normalizeProfileShareUrl(UiState.Success(createSampleUser().copy(url = " https://example.org/@a "))),
         )
+        assertEquals(
+            "http://example.org/@a",
+            ShareUrlPolicy.normalize("  http://example.org/@a  "),
+        )
     }
+
+    @Test
+    fun `presenter emits NoActiveAccountException when specific account is missing or deleted`() =
+        runTest {
+            Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+            val ownProfile =
+                createSampleUser().copy(
+                    key = accountKey,
+                    nameInternal = "Self Profile".toUiPlainText(),
+                    url = "https://example.org/@me",
+                )
+            platformServiceFactory = {
+                FakeProfileService(
+                    accountKey = accountKey,
+                    authenticatedProfile = ownProfile,
+                    userHandler = null,
+                )
+            }
+
+            val clock = BroadcastFrameClock()
+            val states = MutableStateFlow<ProfileSharePresenter.State?>(null)
+            var collection: Job? = null
+            try {
+                val missingPresenter = ProfileSharePresenter(AccountType.Specific(accountKey), null)
+                val missingFlow =
+                    moleculeFlow(RecompositionMode.ContextClock) {
+                        missingPresenter.body()
+                    }
+                val missingJob =
+                    launch(clock) {
+                        missingFlow.collect { states.value = it }
+                    }
+                var frame = 1L
+                while (states.value?.profile !is UiState.Error && frame <= 10L) {
+                    runCurrent()
+                    clock.sendFrame(frame++)
+                    runCurrent()
+                }
+                val missingError = assertIs<UiState.Error<UiProfile>>(states.value?.profile)
+                assertSame(NoActiveAccountException, missingError.throwable)
+                assertNull(states.value?.shareUrl)
+                missingJob.cancelAndJoin()
+
+                states.value = null
+                accounts.addAccount(UiAccount(accountKey, "Mastodon"), "{}")
+                val presenter = ProfileSharePresenter(AccountType.Specific(accountKey), null)
+                collection =
+                    launch(clock) {
+                        moleculeFlow(RecompositionMode.ContextClock) {
+                            presenter.body()
+                        }.collect { states.value = it }
+                    }
+                while (states.value?.profile !is UiState.Success && frame <= 20L) {
+                    runCurrent()
+                    clock.sendFrame(frame++)
+                    runCurrent()
+                }
+                assertIs<UiState.Success<UiProfile>>(states.value?.profile)
+                assertEquals("https://example.org/@me", states.value?.shareUrl)
+
+                appDb.accountDao().delete(accountKey)
+                while (states.value?.profile !is UiState.Error && frame <= 30L) {
+                    runCurrent()
+                    clock.sendFrame(frame++)
+                    runCurrent()
+                }
+                val deletedError = assertIs<UiState.Error<UiProfile>>(states.value?.profile)
+                assertSame(NoActiveAccountException, deletedError.throwable)
+                assertNull(states.value?.shareUrl)
+            } finally {
+                collection?.cancelAndJoin()
+                Dispatchers.resetMain()
+            }
+        }
 
     @Test
     fun `presenter emits profile and trimmed shareUrl for specific account`() =

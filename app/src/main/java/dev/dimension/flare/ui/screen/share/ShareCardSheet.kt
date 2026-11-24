@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -88,6 +89,7 @@ import androidx.savedstate.compose.LocalSavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
+import compose.icons.fontawesomeicons.solid.CircleExclamation
 import compose.icons.fontawesomeicons.solid.Download
 import compose.icons.fontawesomeicons.solid.Image
 import compose.icons.fontawesomeicons.solid.Link
@@ -95,6 +97,7 @@ import compose.icons.fontawesomeicons.solid.Retweet
 import dev.dimension.flare.R
 import dev.dimension.flare.common.AndroidDownloadManager
 import dev.dimension.flare.common.MediaFileNamePolicy
+import dev.dimension.flare.common.ShareUrlPolicy
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.LocalNetworkImageAllowHardware
 import dev.dimension.flare.ui.component.LocalShareImageLoading
@@ -132,7 +135,7 @@ private val ShareCardShadowRadius = 16.dp
 private val ShareCaptureWidth = ShareCardWidth + ShareCardPadding * 2
 private const val SHARE_LONG_CAPTURE_HEIGHT_THRESHOLD_PX = 4096
 
-internal fun normalizeShareUrl(shareUrl: String?): String? = shareUrl?.trim()?.takeIf { it.isNotEmpty() }
+internal fun normalizeShareUrl(shareUrl: String?): String? = ShareUrlPolicy.normalize(shareUrl)
 
 internal fun crossPostInitialText(shareUrl: String?): String = normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
 
@@ -165,9 +168,12 @@ internal fun ShareCardSheet(
     fileKey: String,
     imageLoadingKey: Any?,
     onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    loadError: Throwable? = null,
+    @StringRes tooLargeErrorRes: Int = R.string.share_replies_too_large,
+    @StringRes renderFailedErrorRes: Int = R.string.share_replies_render_failed,
     extraActionButtons: @Composable RowScope.() -> Unit = {},
     extraOptionItem: (@Composable (enabled: Boolean) -> Unit)? = null,
-    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -199,6 +205,8 @@ internal fun ShareCardSheet(
         }
 
     val captureFits = StatusShareImageLimits.canRender(shareCaptureWidthPx, previewContentHeightPx)
+    val actionsEnabled = isReady && loadError == null && !isCapturing && !isCrossPosting && captureFits
+    val controlsEnabled = !isCapturing && !isCrossPosting && loadError == null
 
     suspend fun captureBitmap(): Bitmap? {
         if (isCapturing || !captureFits) return null
@@ -258,23 +266,47 @@ internal fun ShareCardSheet(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        key(imageLoading) {
-            ShareCardPreview(
-                imageLoading = imageLoading,
-                previewTheme = previewTheme,
-                previewStyle = previewStyle,
-                captureRequested = captureRequested,
-                previewGraphicsLayer = previewGraphicsLayer,
-                onContentHeightChanged = {
-                    previewContentHeightPx = it
-                },
-                content = content,
-            )
+        if (loadError != null) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.CircleExclamation,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    text = loadError.message?.takeIf { it.isNotBlank() } ?: stringResource(renderFailedErrorRes),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        } else {
+            key(imageLoading) {
+                ShareCardPreview(
+                    imageLoading = imageLoading,
+                    previewTheme = previewTheme,
+                    previewStyle = previewStyle,
+                    captureRequested = captureRequested,
+                    previewGraphicsLayer = previewGraphicsLayer,
+                    onContentHeightChanged = {
+                        previewContentHeightPx = it
+                    },
+                    content = content,
+                )
+            }
         }
 
-        if (isCapturing) Text(stringResource(R.string.share_replies_preparing))
-        if (previewContentHeightPx > 0 && !captureFits) Text(stringResource(R.string.share_replies_too_large))
-        if (captureFailed) Text(stringResource(R.string.share_replies_render_failed))
+        if (loadError == null) {
+            if (isCapturing) Text(stringResource(R.string.share_replies_preparing))
+            if (previewContentHeightPx > 0 && !captureFits) Text(stringResource(tooLargeErrorRes))
+            if (captureFailed) Text(stringResource(renderFailedErrorRes))
+        }
         Row(
             modifier =
                 Modifier
@@ -283,7 +315,7 @@ internal fun ShareCardSheet(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(
-                enabled = isReady && !isCrossPosting && !isCapturing && captureFits,
+                enabled = actionsEnabled,
                 onClick = {
                     scope.launch {
                         isCrossPosting = true
@@ -361,7 +393,7 @@ internal fun ShareCardSheet(
                 }
             }
             FilledTonalButton(
-                enabled = isReady && !isCapturing && !isCrossPosting && captureFits,
+                enabled = actionsEnabled,
                 onClick = {
                     scope.launch {
                         val bitmap = captureBitmap()
@@ -417,7 +449,7 @@ internal fun ShareCardSheet(
             }
 
             FilledTonalButton(
-                enabled = isReady && !isCapturing && !isCrossPosting && captureFits,
+                enabled = actionsEnabled,
                 onClick = {
                     scope.launch {
                         val bitmap = captureBitmap()
@@ -447,7 +479,6 @@ internal fun ShareCardSheet(
 
             extraActionButtons()
         }
-        val controlsEnabled = !isCapturing && !isCrossPosting
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),

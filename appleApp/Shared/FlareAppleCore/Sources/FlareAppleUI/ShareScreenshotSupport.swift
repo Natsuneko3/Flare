@@ -186,6 +186,7 @@ struct MacShareSheetScaffold<
     let directoryPrefix: String
     let fallbackFileName: String
     let appliesContentPadding: Bool
+    var includesReplies: Bool = true
     let onCrossPost: ((Data, String) -> Void)?
     @ViewBuilder let previewContent: (Model) -> PreviewContent
     @ViewBuilder let extraOptions: () -> ExtraOptions
@@ -359,7 +360,9 @@ struct MacShareSheetScaffold<
         } catch is CancellationError {
         } catch {
             guard renderRequestID == requestID else { return }
-            alert = MacShareAlert(message: error.localizedDescription)
+            let message = (error as? StatusShareRenderError)?.localizedMessage(includesReplies: includesReplies)
+                ?? error.localizedDescription
+            alert = MacShareAlert(message: message)
         }
         guard renderRequestID == requestID else { return }
         isRenderingScreenshot = false
