@@ -346,6 +346,20 @@
           "maximum": 1000000,
           "default": 1,
           "description": "Bump for incompatible timeline identity/parameter changes."
+        },
+        "recommendedOrigins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/recommendedOrigin"
+          },
+          "default": [],
+          "maxItems": 8,
+          "description": "Optional static recommended HTTPS origins (API v2 only) shown in the service selector and matched without starting JS."
+        },
+        "allowCustomOrigin": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether users may connect custom origins beyond recommendedOrigins (API v2 only when false)."
         }
       },
       "required": [
@@ -679,7 +693,67 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "allowCustomOrigin"
+            ],
+            "properties": {
+              "allowCustomOrigin": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "recommendedOrigins"
+            ],
+            "properties": {
+              "recommendedOrigins": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
         }
+      ]
+    },
+    "recommendedOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string",
+          "description": "Exact canonical HTTPS origin; no path, credentials, wildcard, or trailing slash. Flare checks DNS/port normalization.",
+          "pattern": "^(?:https://[a-z0-9.-]+(?::[0-9]{1,5})?)(?![\\s\\S])"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "origin"
       ]
     },
     "detector": {
@@ -2915,6 +2989,13 @@
                     }
                   }
                 }
+              },
+              "recommendedOrigins": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "allowCustomOrigin": {
+                "const": true
               },
               "loginMethods": {
                 "type": "array",

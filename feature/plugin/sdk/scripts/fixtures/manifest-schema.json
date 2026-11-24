@@ -2714,6 +2714,85 @@
       },
       "schemaValid": false,
       "hostValid": false
+    },
+    {
+      "name": "API v2 single-site recommendedOrigins with allowCustomOrigin false",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org",
+              "name": "ExHentai",
+              "description": {
+                "key": "origin.eh.desc",
+                "fallback": "Members gallery"
+              }
+            }
+          ]
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects recommendedOrigins",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org"
+            }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v1 rejects allowCustomOrigin false",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org"
+            }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 allowCustomOrigin false requires non-empty recommendedOrigins",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": []
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 recommendedOrigins rejects non-canonical HTTPS origin",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org/"
+            }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
     }
   ]
 }

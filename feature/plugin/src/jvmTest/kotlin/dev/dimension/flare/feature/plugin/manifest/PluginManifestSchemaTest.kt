@@ -64,6 +64,7 @@ class PluginManifestSchemaTest {
             "localizedText" to PluginTextV1.Localized.serializer().descriptor,
             "detector" to DetectorManifestV1.serializer().descriptor,
             "guest" to GuestManifestV1.serializer().descriptor,
+            "recommendedOrigin" to RecommendedOriginManifestV1.serializer().descriptor,
             "capability" to CapabilityManifestV1.serializer().descriptor,
             "platformExtension" to PluginPlatformExtensionManifestV1.serializer().descriptor,
             "operation" to CapabilityOperationManifestV1.serializer().descriptor,
