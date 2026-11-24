@@ -59,6 +59,7 @@ public class ProfileSharePresenter(
 
             AccountType.Guest,
             is AccountType.GuestHost,
+            is AccountType.GuestPlugin,
             -> {
                 accountServiceFlow(accountType, accountRepository).flatMapLatestUiState { service ->
                     resolveProfileShareFlow(service = service, userKey = userKey)
