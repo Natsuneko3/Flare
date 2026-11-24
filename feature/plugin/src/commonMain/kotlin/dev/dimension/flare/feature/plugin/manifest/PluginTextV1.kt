@@ -150,6 +150,31 @@ internal fun PluginTextV1.requireValid(path: String) {
 
 internal fun isValidLocaleTag(value: String): Boolean = LOCALE_TAG.matches(value)
 
+internal fun normalizePluginInvocationLocale(locale: String): String {
+    val base =
+        locale
+            .trim()
+            .substringBefore('@')
+            .substringBefore('.')
+    if (base.isBlank() || base.equals("C", ignoreCase = true) || base.equals("POSIX", ignoreCase = true)) {
+        return DEFAULT_INVOCATION_LOCALE
+    }
+    val rawParts = base.replace('_', '-').split('-')
+    if (rawParts.any(String::isEmpty) || rawParts.first().equals("POSIX", ignoreCase = true)) {
+        return DEFAULT_INVOCATION_LOCALE
+    }
+    val parts =
+        if (rawParts.size > 1 && rawParts.last().equals("POSIX", ignoreCase = true)) {
+            rawParts.dropLast(1)
+        } else {
+            rawParts
+        }
+    val candidate = parts.joinToString("-")
+    return candidate.takeIf(::isValidLocaleTag) ?: DEFAULT_INVOCATION_LOCALE
+}
+
+private const val DEFAULT_INVOCATION_LOCALE = "en"
+
 private fun localeCandidates(locale: String): List<String> {
     val parts = normalizeLocale(locale).split('-').filter(String::isNotBlank)
     if (parts.isEmpty()) return emptyList()

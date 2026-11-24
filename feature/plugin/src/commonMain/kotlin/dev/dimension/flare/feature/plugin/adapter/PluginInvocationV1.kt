@@ -11,6 +11,7 @@ import dev.dimension.flare.feature.plugin.host.PluginAsset
 import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
 import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.runtime.PluginCallException
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
@@ -36,7 +37,7 @@ internal class PluginAccountInvokerV1(
 ) {
     suspend fun ensureActive() {
         plugin.session.ensureActive()
-        context(Locale.language, emptyMap()).credential?.ensureActive()
+        context(normalizePluginInvocationLocale(Locale.language), emptyMap()).credential?.ensureActive()
     }
 
     suspend fun <T> withAuthorization(block: suspend () -> T): T =
@@ -94,7 +95,7 @@ internal class PluginAccountInvokerV1(
         validate: (Response) -> Unit = {},
     ): Response =
         plugin.session.invoke(requireNotNull(PluginAbiV1.capabilityMethod(capabilityId, operation))) {
-            val invocationContext = context(Locale.language, assets)
+            val invocationContext = context(normalizePluginInvocationLocale(Locale.language), assets)
             try {
                 runtimePool
                     .invoke(

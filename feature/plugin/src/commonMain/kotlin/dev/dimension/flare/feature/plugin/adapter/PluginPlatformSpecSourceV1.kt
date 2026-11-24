@@ -35,6 +35,7 @@ import dev.dimension.flare.feature.plugin.manifest.LoginInteractionV1
 import dev.dimension.flare.feature.plugin.manifest.LoginMethodManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
 import dev.dimension.flare.feature.plugin.manifest.fallbackText
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
@@ -256,7 +257,7 @@ private class PluginPlatformSpecV1(
             plugin = plugin,
             runtimePool = runtimePool,
             origin = host.toHttpsOrigin(),
-            locale = locale,
+            locale = normalizePluginInvocationLocale(locale),
             timelineSpecs = specs,
             dynamicTimelineSpec = dynamicTimelineSpec,
         )
@@ -293,7 +294,7 @@ private class PluginPlatformSpecV1(
                     platformId = platformId,
                     packageHash = plugin.installed.packageHash,
                     candidateOrigin = origin,
-                    locale = Locale.language,
+                    locale = normalizePluginInvocationLocale(Locale.language),
                 ),
             method = "detector.detect",
             request = DetectorRequestV1(origin),
@@ -541,7 +542,7 @@ internal class PluginLoginMethodHandlerV1(
                                 plugin = plugin,
                                 methodId = method.id,
                                 origin = context.host.toHttpsOrigin(),
-                                locale = Locale.language,
+                                locale = normalizePluginInvocationLocale(Locale.language),
                                 expectedAccountId = context.reloginTarget?.accountKey?.id,
                             )
                     ) {
@@ -572,7 +573,7 @@ internal class PluginLoginMethodHandlerV1(
                             plugin = plugin,
                             methodId = method.id,
                             origin = context.host.toHttpsOrigin(),
-                            locale = Locale.language,
+                            locale = normalizePluginInvocationLocale(Locale.language),
                             values = values,
                             expectedAccountId = context.reloginTarget?.accountKey?.id,
                         ),
@@ -586,7 +587,7 @@ internal class PluginLoginMethodHandlerV1(
                             plugin = plugin,
                             methodId = method.id,
                             origin = context.host.toHttpsOrigin(),
-                            locale = Locale.language,
+                            locale = normalizePluginInvocationLocale(Locale.language),
                             expectedAccountId = context.reloginTarget?.accountKey?.id,
                         )
                     cookieSession = session
@@ -628,7 +629,7 @@ internal class PluginLoginMethodHandlerV1(
                         plugin = plugin,
                         methodId = method.id,
                         origin = context.host.toHttpsOrigin(),
-                        locale = Locale.language,
+                        locale = normalizePluginInvocationLocale(Locale.language),
                         expectedAccountId = context.reloginTarget?.accountKey?.id,
                     ).login { content, scanned ->
                         if (attempt.isActive) {
@@ -677,7 +678,7 @@ internal class PluginLoginMethodHandlerV1(
             require(parsePluginOAuthCallback(value).flowId == expectedFlowId) {
                 "OAuth callback belongs to another login flow"
             }
-            if (!oauthCallbacks.handle(value, Locale.language)) {
+            if (!oauthCallbacks.handle(value, normalizePluginInvocationLocale(Locale.language))) {
                 throw IllegalArgumentException("Unsupported OAuth callback")
             }
             if (oauthFlowId != null) mutableState.value = state()
