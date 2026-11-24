@@ -38,6 +38,7 @@ public struct CommonProfileHeader: View {
     private let followButtonState: UiState<FollowButtonState>
     private let isMe: UiState<KotlinBoolean>
     private let bannerTopInset: CGFloat
+    private let showsFollowButton: Bool
     private let onFollowClick: (FollowButtonState) -> Void
     private let onFollowingClick: () -> Void
     private let onFansClick: () -> Void
@@ -48,6 +49,7 @@ public struct CommonProfileHeader: View {
         followButtonState: UiState<FollowButtonState>,
         isMe: UiState<KotlinBoolean>,
         bannerTopInset: CGFloat = 0,
+        showsFollowButton: Bool = true,
         onFollowClick: @escaping (FollowButtonState) -> Void,
         onFollowingClick: @escaping () -> Void,
         onFansClick: @escaping () -> Void
@@ -57,6 +59,7 @@ public struct CommonProfileHeader: View {
         self.followButtonState = followButtonState
         self.isMe = isMe
         self.bannerTopInset = bannerTopInset
+        self.showsFollowButton = showsFollowButton
         self.onFollowClick = onFollowClick
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
@@ -143,7 +146,7 @@ public struct CommonProfileHeader: View {
                     VStack {
                         Spacer()
                             .frame(height: headerHeight)
-                        if case .success(let data) = onEnum(of: isMe), !data.data.boolValue {
+                        if showsFollowButton, case .success(let data) = onEnum(of: isMe), !data.data.boolValue {
                             switch onEnum(of: followButtonState) {
                             case .success(let buttonState):
                                 VStack(spacing: 4) {

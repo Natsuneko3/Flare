@@ -846,6 +846,8 @@
     <string name="home_timeline_view_latest">View latest posts</string>
     <string name="share_replies_too_large">The image is too long. Select fewer replies.</string>
     <string name="share_replies_render_failed">Unable to prepare the image. Retry or remove replies with unavailable media.</string>
+    <string name="share_image_too_large">The image is too long to share.</string>
+    <string name="share_image_render_failed">Unable to prepare the image. Please try again.</string>
     <string name="share_replies_preparing">Preparing image…</string>
     <string name="share_replies_title">Select replies</string>
     <string name="share_replies_count">%1$d selected</string>

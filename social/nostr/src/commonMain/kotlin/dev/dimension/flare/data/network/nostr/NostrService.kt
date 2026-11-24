@@ -2292,6 +2292,7 @@ internal class NostrService(
             nameInternal = name.toUiPlainText(),
             platformId = NOSTR_PLATFORM_ID,
             platformIcon = UiIcon.Nostr.asType(),
+            url = "https://nostter.app/$npub",
             clickEvent =
                 ClickEvent.Deeplink(
                     DeeplinkRoute.Profile.User(

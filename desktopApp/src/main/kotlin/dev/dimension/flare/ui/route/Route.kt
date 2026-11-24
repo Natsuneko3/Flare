@@ -147,6 +147,11 @@ internal sealed interface Route : NavKey {
         val userKey: MicroBlogKey,
     ) : FloatingRoute
 
+    data class ProfileShareSheet(
+        val accountType: AccountType,
+        val userKey: MicroBlogKey,
+    ) : FloatingRoute
+
     data class Search(
         val accountType: AccountType,
         val keyword: String,
@@ -198,7 +203,7 @@ internal sealed interface Route : NavKey {
 
     data object Compose {
         data class CrossPost(
-            val shareUrl: String,
+            val shareUrl: String? = null,
             val imagePath: String,
         ) : FloatingRoute
 

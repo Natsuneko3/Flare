@@ -15,6 +15,7 @@ import dev.dimension.flare.data.network.vvo.model.Status
 import dev.dimension.flare.data.network.vvo.model.StatusPic
 import dev.dimension.flare.data.network.vvo.model.User
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.model.vvoHostLong
 import dev.dimension.flare.model.vvoHostShort
 import dev.dimension.flare.ui.humanizer.PlatformFormatter
 import dev.dimension.flare.ui.model.UiMedia
@@ -344,6 +345,15 @@ class VVORenderTest {
             actions.filterNot { it == quote },
             post.actions.applyPostActionLayout(hiddenConfig),
         )
+    }
+
+    @Test
+    fun userRenderPopulatesCanonicalProfileUrl() {
+        val withId = createUser(123456L, "vvo_user").render(accountKey)
+        val withoutId = User(id = null, screenName = "anonymous").render(accountKey)
+
+        assertEquals("https://$vvoHostLong/u/123456", withId.url)
+        assertNull(withoutId.url)
     }
 
     @Test

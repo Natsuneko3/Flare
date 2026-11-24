@@ -998,6 +998,7 @@ internal fun Account.render(
                 },
         platformId = MASTODON_PLATFORM_ID,
         platformIcon = UiIcon.Mastodon.asType(),
+        url = url?.trim()?.takeIf { it.isNotEmpty() } ?: username?.takeIf { it.isNotBlank() }?.let { "https://$remoteHost/@$it" },
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile

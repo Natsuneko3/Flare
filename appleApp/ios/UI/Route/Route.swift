@@ -128,7 +128,8 @@ enum Route: Hashable, Identifiable {
                 userKey: userKey,
                 onFollowingClick: { key in onNavigate(.userFollowing(accountType, key)) },
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
-                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) }
+                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
+                onProfileShare: { key in onNavigate(.profileShareSheet(accountType, key)) }
             )
         case .settings:
             SettingsScreen()
@@ -168,7 +169,8 @@ enum Route: Hashable, Identifiable {
                 accountType: accountType,
                 onFollowingClick: { key in onNavigate(.userFollowing(accountType, key)) },
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
-                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) }
+                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
+                onProfileShare: { key in onNavigate(.profileShareSheet(accountType, key)) }
             )
         case .appearanceTheme:
             AppearanceThemeScreen()
@@ -255,6 +257,14 @@ enum Route: Hashable, Identifiable {
             StatusInsightSheet(accountType: accountType, statusKey: statusKey, onNavigate: onNavigate)
         case .profileInsight(let accountType, let userKey):
             ProfileInsightSheet(accountType: accountType, userKey: userKey, onNavigate: onNavigate)
+        case .profileShareSheet(let accountType, let userKey):
+            ProfileShareSheet(
+                userKey: userKey,
+                accountType: accountType,
+                onCrossPost: { prefill in
+                    onNavigate(.composeCrossPost(prefill))
+                }
+            )
         case .userFans(let account, let userKey):
             UserListScreen(accountType: account, userKey: userKey, isFollowing: false)
         case .userFollowing(let account, let userKey):
@@ -347,6 +357,7 @@ enum Route: Hashable, Identifiable {
     case profileUser(AccountType, MicroBlogKey)
     case profileUserNameWithHost(AccountType, String, String)
     case profileInsight(AccountType, MicroBlogKey)
+    case profileShareSheet(AccountType, MicroBlogKey)
     case rssDetail(String, String?, String?, String?)
     case article(AccountType, MicroBlogKey)
     case search(AccountType, String)

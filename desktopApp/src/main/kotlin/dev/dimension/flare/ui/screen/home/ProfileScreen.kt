@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.Robot
+import compose.icons.fontawesomeicons.solid.ShareNodes
 import dev.dimension.flare.LocalWindowPadding
 import dev.dimension.flare.RegisterTabCallback
 import dev.dimension.flare.Res
@@ -57,6 +58,7 @@ import dev.dimension.flare.profile_blocked_gate_description
 import dev.dimension.flare.profile_blocked_gate_show
 import dev.dimension.flare.profile_blocked_gate_title
 import dev.dimension.flare.profile_insight_title
+import dev.dimension.flare.settings_post_action_family_share
 import dev.dimension.flare.ui.common.items
 import dev.dimension.flare.ui.common.plus
 import dev.dimension.flare.ui.component.ErrorContent
@@ -117,6 +119,7 @@ internal fun ProfileWithUserNameAndHostDeeplinkRoute(
     onMediaClick: (statusKey: MicroBlogKey, index: Int, preview: String?) -> Unit,
     onRawMediaClick: (media: UiMedia.Image) -> Unit,
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit,
+    onProfileShareClick: (userKey: MicroBlogKey) -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val state by producePresenter(key = "acct_${accountType}_$userName@$host") {
@@ -135,6 +138,7 @@ internal fun ProfileWithUserNameAndHostDeeplinkRoute(
                 onMediaClick = onMediaClick,
                 onRawMediaClick = onRawMediaClick,
                 onProfileInsightClick = onProfileInsightClick,
+                onProfileShareClick = onProfileShareClick,
                 userKey = it.key,
             )
         }.onLoading {
@@ -216,6 +220,7 @@ internal fun ProfileScreen(
     onMediaClick: (statusKey: MicroBlogKey, index: Int, preview: String?) -> Unit = { _, _, _ -> },
     onRawMediaClick: (media: UiMedia.Image) -> Unit = {},
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit = {},
+    onProfileShareClick: (userKey: MicroBlogKey) -> Unit = {},
     profileState: @Composable () -> ProfileState = {
         remember(accountType, userKey) { ProfilePresenter(accountType, userKey) }.invoke()
     },
@@ -394,6 +399,10 @@ internal fun ProfileScreen(
                                             profileState = state.state,
                                             onClick = onProfileInsightClick,
                                         )
+                                        ProfileShareAction(
+                                            profileState = state.state,
+                                            onClick = onProfileShareClick,
+                                        )
                                         ProfileMenu(
                                             profileState = state.state,
                                             modifier = Modifier.padding(horizontal = 8.dp),
@@ -480,6 +489,10 @@ internal fun ProfileScreen(
                                     ProfileInsightAction(
                                         profileState = state.state,
                                         onClick = onProfileInsightClick,
+                                    )
+                                    ProfileShareAction(
+                                        profileState = state.state,
+                                        onClick = onProfileShareClick,
                                     )
                                     ProfileMenu(
                                         profileState = state.state,
@@ -592,6 +605,28 @@ private fun ProfileInsightAction(
             FAIcon(
                 imageVector = FontAwesomeIcons.Solid.Robot,
                 contentDescription = stringResource(Res.string.profile_insight_title),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileShareAction(
+    profileState: ProfileState,
+    onClick: (MicroBlogKey) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    profileState.userState.onSuccess { profile ->
+        SubtleButton(
+            onClick = {
+                onClick(profile.key)
+            },
+            iconOnly = true,
+            modifier = modifier,
+        ) {
+            FAIcon(
+                imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                contentDescription = stringResource(Res.string.settings_post_action_family_share),
             )
         }
     }

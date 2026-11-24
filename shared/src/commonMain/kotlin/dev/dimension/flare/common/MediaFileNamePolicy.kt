@@ -99,9 +99,13 @@ public object MediaFileNamePolicy {
         return safeDownloadFileName(fileName)
     }
 
-    public fun screenshotFileName(statusKey: String): String {
+    public fun screenshotFileName(
+        key: String,
+        prefix: String = "status",
+    ): String {
+        val safePrefix = sanitizeFileName(prefix, fallback = "status")
         val timestampMillis = Clock.System.now().toEpochMilliseconds()
-        return "status_${sanitizeFileName(statusKey)}_$timestampMillis.png"
+        return "${safePrefix}_${sanitizeFileName(key)}_$timestampMillis.png"
     }
 
     public fun sanitizeFileName(

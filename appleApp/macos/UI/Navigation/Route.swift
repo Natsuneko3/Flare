@@ -62,6 +62,8 @@ enum Route: Hashable, Identifiable {
     case profileUser(AccountType, MicroBlogKey)
     case profileUserNameWithHost(AccountType, String, String)
     case profileInsight(AccountType, MicroBlogKey)
+    case profileShareSheet(AccountType, MicroBlogKey)
+    case profileCrossPost(AccountType, MicroBlogKey)
     case userFollowing(AccountType, MicroBlogKey)
     case userFans(AccountType, MicroBlogKey)
     case mediaImage(String, String?, [String: String]?, ProxyRef)
@@ -277,6 +279,8 @@ enum Route: Hashable, Identifiable {
                 onFollowingClick: { key in onNavigate(.userFollowing(accountType, key)) },
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
                 onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
+                onProfileShareScreenshot: { key in onNavigate(.profileShareSheet(accountType, key)) },
+                onProfileCrossPost: { key in onNavigate(.profileCrossPost(accountType, key)) },
                 goBack: goBack
             )
         case .profileUserNameWithHost(let accountType, let userName, let host):
@@ -287,6 +291,8 @@ enum Route: Hashable, Identifiable {
                 onFollowingClick: { key in onNavigate(.userFollowing(accountType, key)) },
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
                 onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
+                onProfileShareScreenshot: { key in onNavigate(.profileShareSheet(accountType, key)) },
+                onProfileCrossPost: { key in onNavigate(.profileCrossPost(accountType, key)) },
                 goBack: goBack
             )
         case .profileInsight(let accountType, let userKey):
@@ -329,6 +335,30 @@ enum Route: Hashable, Identifiable {
             MacStatusShareSheet(
                 statusKey: statusKey,
                 accountType: accountType
+            )
+        case .profileShareSheet(let accountType, let userKey):
+            MacProfileShareSheet(
+                userKey: userKey,
+                accountType: accountType
+            )
+        case .profileCrossPost(let accountType, let userKey):
+            MacProfileShareSheet(
+                userKey: userKey,
+                accountType: accountType,
+                purpose: .crossPost,
+                onCrossPost: { imageData, fileName, resolvedShareUrl in
+                    let resolvedUrl = MacProfileShareMenu<EmptyView>.resolveShareURL(from: resolvedShareUrl)?.url.absoluteString
+                    onNavigate(
+                        .composeCrossPost(
+                            MacComposePrefill(
+                                text: resolvedUrl.map { "\n\n\($0)" } ?? "",
+                                cursorPosition: 0,
+                                imageData: imageData,
+                                fileName: fileName
+                            )
+                        )
+                    )
+                }
             )
         case .statusCrossPost(let accountType, let statusKey, let shareUrl):
             MacStatusShareSheet(

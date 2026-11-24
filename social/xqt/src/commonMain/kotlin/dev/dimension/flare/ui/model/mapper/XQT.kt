@@ -53,6 +53,7 @@ import dev.dimension.flare.data.platform.XQT_PLATFORM_ID
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.ReferenceType
+import dev.dimension.flare.model.xqtHost
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiArticle
 import dev.dimension.flare.ui.model.UiArticleAuthor
@@ -1039,6 +1040,7 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
             },
         platformId = XQT_PLATFORM_ID,
         platformIcon = UiIcon.X.asType(),
+        url = xqtProfileUrl(legacy.screenName ?: core?.screenName),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1371,6 +1373,7 @@ private fun Admin.render(accountKey: MicroBlogKey): UiProfile {
             ),
         platformId = XQT_PLATFORM_ID,
         platformIcon = UiIcon.X.asType(),
+        url = xqtProfileUrl(twitterScreenName),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1388,6 +1391,9 @@ private fun Admin.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
     ).withProxy(ProxyRef.forAccount(accountKey))
 }
+
+private fun xqtProfileUrl(screenName: String?): String? =
+    screenName?.trim()?.takeIf { it.isNotEmpty() }?.let { "https://$xqtHost/$it" }
 
 internal val User.name: String
     get() = legacy.name ?: core?.name ?: "Unknown"

@@ -20,7 +20,7 @@ final class StatusPostPresentationTests: XCTestCase {
                              platformIcon: IconType.Material(icon: .x), clickEvent: ClickEventNoop.shared,
                              banner: nil, description: nil, sourceLanguages: [], translationDisplayState: .hidden,
                              matrices: UiProfile.Matrices(fansCount: 0, followsCount: 0, statusesCount: 0, platformFansCount: nil),
-                             mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [])
+                             mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [], url: nil)
         let message = UiTimelineV2.Message(user: user, statusKey: MicroBlogKey(id: "repost", host: "x.com"), icon: .retweet,
                                           type: UiTimelineV2.MessageTypeLocalized(data: .repost, args: []),
                                           createdAt: replyPost("repost").createdAt, clickEvent: ClickEventNoop.shared,
@@ -297,7 +297,7 @@ final class StatusPostPresentationTests: XCTestCase {
                 avatar: avatar, nameInternal: replyPost(handle, text: name).content.original,
                 platformId: fixtureUser.platformId, platformIcon: fixtureUser.platformIcon, clickEvent: ClickEventNoop.shared,
                 banner: nil, description: nil, sourceLanguages: [], translationDisplayState: .hidden,
-                matrices: fixtureUser.matrices, mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [])
+                matrices: fixtureUser.matrices, mark: [], bottomContent: nil, pluginId: nil, clearedMarks: [], url: nil)
         }
         let createdAt = KotlinInstant.companion.fromEpochMilliseconds(
             epochMilliseconds: Int64((Date().timeIntervalSince1970 - 300) * 1_000)).toUi()

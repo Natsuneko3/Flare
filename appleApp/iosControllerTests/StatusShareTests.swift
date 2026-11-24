@@ -469,7 +469,8 @@ final class StatusShareTests: XCTestCase {
             mark: [],
             bottomContent: nil,
             pluginId: nil,
-            clearedMarks: []
+            clearedMarks: [],
+            url: nil
         )
     }
 

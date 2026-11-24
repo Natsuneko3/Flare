@@ -314,6 +314,12 @@ internal sealed interface Route : NavKey {
         ) : Profile
 
         @Serializable
+        data class ShareSheet(
+            val accountType: AccountType,
+            val userKey: MicroBlogKey,
+        ) : Profile
+
+        @Serializable
         data class Me(
             val accountType: AccountType,
         ) : Profile

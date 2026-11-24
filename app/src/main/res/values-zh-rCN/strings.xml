@@ -787,6 +787,8 @@
     <string name="home_timeline_view_latest">查看最新内容</string>
     <string name="share_replies_too_large">图片过长，请减少所选回复。</string>
     <string name="share_replies_render_failed">图片生成失败，请重试或移除媒体不可用的回复。</string>
+    <string name="share_image_too_large">图片过长，无法分享。</string>
+    <string name="share_image_render_failed">无法准备图片，请重试。</string>
     <string name="share_replies_preparing">正在生成图片…</string>
     <string name="share_replies_title">选择回复</string>
     <string name="share_replies_count">已选 %1$d 条</string>

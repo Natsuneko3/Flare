@@ -8,6 +8,8 @@ struct ProfileScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShareScreenshot: (MicroBlogKey) -> Void
+    let onProfileCrossPost: (MicroBlogKey) -> Void
     let goBack: () -> Void
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     @Environment(\.timelineAppearance.aiConfig.agent) private var agentEnabled
@@ -21,12 +23,16 @@ struct ProfileScreen: View {
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
         onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShareScreenshot: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileCrossPost: @escaping (MicroBlogKey) -> Void = { _ in },
         goBack: @escaping () -> Void = {}
     ) {
         self.accountType = accountType
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
         self.onProfileInsight = onProfileInsight
+        self.onProfileShareScreenshot = onProfileShareScreenshot
+        self.onProfileCrossPost = onProfileCrossPost
         self.goBack = goBack
         _presenter = .init(
             wrappedValue: .init(
@@ -106,16 +112,35 @@ struct ProfileScreen: View {
 //                    Text(String(localized: "profile_title", defaultValue: "Profile", bundle: .main))
 //                }
 //            }
-            if agentEnabled || !presenter.state.actions.isEmpty {
+            if loadedProfile != nil || agentEnabled || !presenter.state.actions.isEmpty {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    if agentEnabled, case .success(let userState) = onEnum(of: presenter.state.userState) {
-                        Button {
-                            onProfileInsight(userState.data.key)
-                        } label: {
-                            Image(fontAwesome: .robot)
+                    if let user = loadedProfile {
+                        if agentEnabled {
+                            Button {
+                                onProfileInsight(user.key)
+                            } label: {
+                                Image(fontAwesome: .robot)
+                            }
+                            .accessibilityLabel(Text("profile_insight_title", bundle: .main))
+                            .help(String(localized: "profile_insight_title", defaultValue: "Profile insight", bundle: .main))
                         }
-                        .accessibilityLabel(Text("profile_insight_title", bundle: .main))
-                        .help(String(localized: "profile_insight_title", defaultValue: "Profile insight", bundle: .main))
+                        MacProfileShareMenu(
+                            data: MacProfileShareData(
+                                userKey: user.key,
+                                accountType: accountType,
+                                shareUrl: user.url
+                            ),
+                            onShareScreenshot: {
+                                onProfileShareScreenshot(user.key)
+                            },
+                            onCrossPost: {
+                                onProfileCrossPost(user.key)
+                            }
+                        ) {
+                            Image(fontAwesome: .shareNodes)
+                        }
+                        .accessibilityLabel(Text("fx_share"))
+                        .help(String(localized: "fx_share", defaultValue: "Share", bundle: .main))
                     }
                     if let group = presenter.state.actions.first as? ActionMenu.Group {
                         ProfileToolbarMenu(group: group)
@@ -125,6 +150,13 @@ struct ProfileScreen: View {
         }
     }
     
+    private var loadedProfile: UiProfile? {
+        if case .success(let userState) = onEnum(of: presenter.state.userState) {
+            return userState.data
+        }
+        return nil
+    }
+
     private var title: Text {
         if case .success(let data) = onEnum(of: presenter.state.userState) {
             Text(data.data.name.raw)
@@ -203,6 +235,8 @@ struct ProfileWithUserNameAndHostScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShareScreenshot: (MicroBlogKey) -> Void
+    let onProfileCrossPost: (MicroBlogKey) -> Void
     let goBack: () -> Void
 
     init(
@@ -212,12 +246,16 @@ struct ProfileWithUserNameAndHostScreen: View {
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
         onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShareScreenshot: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileCrossPost: @escaping (MicroBlogKey) -> Void = { _ in },
         goBack: @escaping () -> Void = {}
     ) {
         self.accountType = accountType
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
         self.onProfileInsight = onProfileInsight
+        self.onProfileShareScreenshot = onProfileShareScreenshot
+        self.onProfileCrossPost = onProfileCrossPost
         self.goBack = goBack
         _presenter = .init(
             wrappedValue: .init(
@@ -238,6 +276,8 @@ struct ProfileWithUserNameAndHostScreen: View {
                 onFollowingClick: onFollowingClick,
                 onFansClick: onFansClick,
                 onProfileInsight: onProfileInsight,
+                onProfileShareScreenshot: onProfileShareScreenshot,
+                onProfileCrossPost: onProfileCrossPost,
                 goBack: goBack
             )
         } loadingContent: {

@@ -297,6 +297,8 @@ struct Router: View {
                 .statusAddReaction,
                 .statusShareSheet,
                 .statusCrossPost,
+                .profileShareSheet,
+                .profileCrossPost,
                 .statusBlueskyReport,
                 .statusMisskeyReport,
                 .editUserList:

@@ -314,58 +314,7 @@ private fun ProfileHeaderSuccess(
             }
         },
         handleTrailing = {
-            user.mark.fastForEach {
-                when (it) {
-                    UiProfile.Mark.Verified -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.CircleCheck,
-                            contentDescription = stringResource(Res.string.profile_mark_verified),
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                            tint = Color.Blue,
-                        )
-                    }
-
-                    UiProfile.Mark.Cat -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Cat,
-                            contentDescription = stringResource(Res.string.profile_mark_cat),
-                            tint = PlatformTheme.colorScheme.caption,
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                        )
-                    }
-
-                    UiProfile.Mark.Bot -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Robot,
-                            contentDescription = stringResource(Res.string.profile_mark_bot),
-                            tint = PlatformTheme.colorScheme.caption,
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                        )
-                    }
-
-                    UiProfile.Mark.Locked -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Lock,
-                            contentDescription = stringResource(Res.string.profile_mark_locked),
-                            tint = PlatformTheme.colorScheme.caption,
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                        )
-                    }
-                }
-            }
-            AnimatedVisibility(user.translationDisplayState != TranslationDisplayState.Hidden) {
-                TranslationDisplayBadge(
-                    state = user.translationDisplayState,
-                )
-            }
+            ProfileMarksAndTranslation(user)
         },
         content = {
             user.description?.let {
@@ -375,47 +324,7 @@ private fun ProfileHeaderSuccess(
                     )
                 }
             }
-            when (val content = user.bottomContent) {
-                is UiProfile.BottomContent.Fields -> {
-                    UserFields(
-                        fields = content.fields,
-                        modifier =
-                            Modifier
-                                .background(PlatformTheme.colorScheme.cardAlt)
-                                .ignoreHorizontalParentPadding(screenHorizontalPadding)
-                                .padding(vertical = 8.dp)
-                                .fillMaxWidth(),
-                    )
-                }
-
-                is UiProfile.BottomContent.Iconify -> {
-                    content.items.forEach { (key, value) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            val (icon, iconDescriptionResource) =
-                                when (key) {
-                                    UiProfile.BottomContent.Iconify.Icon.Location -> {
-                                        FontAwesomeIcons.Solid.LocationDot to Res.string.profile_field_location
-                                    }
-
-                                    UiProfile.BottomContent.Iconify.Icon.Url -> {
-                                        FontAwesomeIcons.Solid.Globe to Res.string.profile_field_website
-                                    }
-
-                                    UiProfile.BottomContent.Iconify.Icon.Verify -> {
-                                        FontAwesomeIcons.Solid.CircleCheck to Res.string.profile_field_verified_link
-                                    }
-                                }
-                            FAIcon(icon, contentDescription = stringResource(iconDescriptionResource))
-                            RichText(text = value)
-                        }
-                    }
-                }
-
-                null -> {}
-            }
+            ProfileBottomContent(user.bottomContent)
             MatricesDisplay(
                 data = user.matrices,
                 expanded = expandMatrices,
@@ -428,6 +337,107 @@ private fun ProfileHeaderSuccess(
             )
         },
     )
+}
+
+@Composable
+internal fun RowScope.ProfileMarksAndTranslation(user: UiProfile) {
+    user.mark.fastForEach {
+        when (it) {
+            UiProfile.Mark.Verified -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.CircleCheck,
+                    contentDescription = stringResource(Res.string.profile_mark_verified),
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                    tint = Color.Blue,
+                )
+            }
+
+            UiProfile.Mark.Cat -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Cat,
+                    contentDescription = stringResource(Res.string.profile_mark_cat),
+                    tint = PlatformTheme.colorScheme.caption,
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                )
+            }
+
+            UiProfile.Mark.Bot -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Robot,
+                    contentDescription = stringResource(Res.string.profile_mark_bot),
+                    tint = PlatformTheme.colorScheme.caption,
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                )
+            }
+
+            UiProfile.Mark.Locked -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Lock,
+                    contentDescription = stringResource(Res.string.profile_mark_locked),
+                    tint = PlatformTheme.colorScheme.caption,
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                )
+            }
+        }
+    }
+    AnimatedVisibility(user.translationDisplayState != TranslationDisplayState.Hidden) {
+        TranslationDisplayBadge(
+            state = user.translationDisplayState,
+        )
+    }
+}
+
+@Composable
+internal fun ProfileBottomContent(bottomContent: UiProfile.BottomContent?) {
+    when (bottomContent) {
+        is UiProfile.BottomContent.Fields -> {
+            UserFields(
+                fields = bottomContent.fields,
+                modifier =
+                    Modifier
+                        .background(PlatformTheme.colorScheme.cardAlt)
+                        .ignoreHorizontalParentPadding(screenHorizontalPadding)
+                        .padding(vertical = 8.dp)
+                        .fillMaxWidth(),
+            )
+        }
+
+        is UiProfile.BottomContent.Iconify -> {
+            bottomContent.items.forEach { (key, value) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    val (icon, iconDescriptionResource) =
+                        when (key) {
+                            UiProfile.BottomContent.Iconify.Icon.Location -> {
+                                FontAwesomeIcons.Solid.LocationDot to Res.string.profile_field_location
+                            }
+
+                            UiProfile.BottomContent.Iconify.Icon.Url -> {
+                                FontAwesomeIcons.Solid.Globe to Res.string.profile_field_website
+                            }
+
+                            UiProfile.BottomContent.Iconify.Icon.Verify -> {
+                                FontAwesomeIcons.Solid.CircleCheck to Res.string.profile_field_verified_link
+                            }
+                        }
+                    FAIcon(icon, contentDescription = stringResource(iconDescriptionResource))
+                    RichText(text = value)
+                }
+            }
+        }
+
+        null -> {}
+    }
 }
 
 @Composable

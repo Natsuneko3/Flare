@@ -887,6 +887,8 @@
     <string name="settings_remember_home_timeline_position_description">刷新和重新開啟後保持您的位置。使用查看最新貼文跳轉到新貼文。</string>
     <string name="share_replies_too_large">圖片太長。請選擇較少的回覆。</string>
     <string name="share_replies_render_failed">無法準備圖片。請重試或移除媒體不可用的回覆。</string>
+    <string name="share_image_too_large">圖片過長，無法分享。</string>
+    <string name="share_image_render_failed">無法準備圖片，請重試。</string>
     <string name="share_replies_preparing">準備圖片…</string>
     <string name="share_replies_title">選擇回覆</string>
     <string name="share_replies_cancel">取消</string>

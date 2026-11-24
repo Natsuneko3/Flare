@@ -1,14 +1,20 @@
 package dev.dimension.flare.data.datasource.fanbox
 
 import dev.dimension.flare.common.JSON
+import dev.dimension.flare.data.network.fanbox.FanboxCommentItem
+import dev.dimension.flare.data.network.fanbox.FanboxCreatorDetailBody
 import dev.dimension.flare.data.network.fanbox.FanboxPostDetailBody
 import dev.dimension.flare.data.network.fanbox.FanboxPostDetailResponse
+import dev.dimension.flare.data.network.fanbox.FanboxUserEntity
+import dev.dimension.flare.data.platform.FanboxCredential
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.model.UiArticleAuthor
 import dev.dimension.flare.ui.model.UiArticleBlock
 import dev.dimension.flare.ui.render.RenderRun
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FanboxMapperTest {
@@ -86,6 +92,40 @@ class FanboxMapperTest {
 
         assertEquals("Hello world.", runs.joinToString(separator = "") { it.text })
         assertTrue(runs.single { it.text == "world" }.style.bold)
+    }
+
+    @Test
+    fun profileMappersPopulateCanonicalFanboxUrlOnlyWithNonBlankCreatorId() {
+        val accountKey = MicroBlogKey(id = "1", host = "fanbox.cc")
+        val creatorDetail = FanboxCreatorDetailBody(creatorId = "artist")
+        val blankCreatorDetail = FanboxCreatorDetailBody(creatorId = "   ")
+        val supporterCredential = FanboxCredential(sessionId = "s", userId = "99", creatorId = null)
+        val creatorCredential = FanboxCredential(sessionId = "s", userId = "99", creatorId = "artist")
+        val articleAuthor =
+            assertIs<UiArticleAuthor.Profile>(
+                FanboxPostDetailBody(
+                    creatorId = "artist",
+                    id = "post",
+                    publishedDatetime = "2024-01-02T03:04:05+00:00",
+                    user = FanboxUserEntity(name = "Artist", userId = "99"),
+                ).toUiArticle(accountKey = accountKey).author,
+            ).profile
+        val commentAuthor =
+            FanboxCommentItem(
+                createdDatetime = "2024-01-02T03:04:05+00:00",
+                id = "comment",
+                user = FanboxUserEntity(name = "Commenter", userId = "99"),
+            ).toUiTimeline(
+                accountKey = accountKey,
+                postKey = fanboxPostKey("post"),
+            ).user
+
+        assertEquals("https://www.fanbox.cc/@artist", creatorDetail.toUiProfile().url)
+        assertNull(blankCreatorDetail.toUiProfile().url)
+        assertNull(supporterCredential.toUiProfile().url)
+        assertEquals("https://www.fanbox.cc/@artist", creatorCredential.toUiProfile().url)
+        assertEquals("https://www.fanbox.cc/@artist", articleAuthor.url)
+        assertNull(commentAuthor?.url)
     }
 
     private fun decodeArticle(response: String) =

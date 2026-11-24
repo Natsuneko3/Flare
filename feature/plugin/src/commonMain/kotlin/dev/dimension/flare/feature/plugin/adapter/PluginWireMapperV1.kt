@@ -157,6 +157,7 @@ internal class PluginWireMapperV1(
                     ?: value.displayName.toUiPlainText(value.sourceLanguages),
             platformId = platformId,
             platformIcon = platformIcon,
+            url = value.url?.trim()?.takeIf { it.isNotEmpty() },
             clickEvent =
                 if (capabilities.canExpose(PluginAbiV1.Capabilities.PROFILE)) {
                     ClickEvent.Deeplink(DeeplinkRoute.Profile.User(accountType, key))

@@ -804,43 +804,21 @@ public struct MacStatusShareMenu<LabelContent: View>: View {
     }
 }
 
-public enum MacStatusSharePurpose {
-    case shareScreenshot
-    case crossPost
-}
-
-private enum MacStatusSharePreviewStyle: Hashable {
-    case card
-    case content
-}
+public typealias MacStatusSharePurpose = MacSharePurpose
 
 public struct MacStatusShareSheet: View {
     private let statusKey: MicroBlogKey
     private let purpose: MacStatusSharePurpose
     private let onCrossPost: ((Data, String) -> Void)?
 
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.timelineAppearance) private var timelineAppearance
     @Environment(\.translateConfig) private var translateConfig
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var presenter: KotlinPresenter<StatusSharePresenterState>
-    @State private var theme: ColorScheme?
-    @State private var previewStyle: MacStatusSharePreviewStyle = .card
-    @State private var screenshotURL: URL?
-    @State private var isRenderingScreenshot = false
-    @State private var renderRequestID: UUID?
-    @State private var alert: MacStatusShareAlert?
-    @State private var crossPostDispatched = false
-    @State private var renderedRevision: String?
-    @State private var renderAttempt = 0
 
-    private var previewRevision: String {
+    private var previewRevisionKey: String {
         let statusHash: Int32 = if case .success(let data) = onEnum(of: presenter.state.status) { data.data.renderHash } else { 0 }
-        return "\(statusHash)-\(Array(presenter.state.selectedReplies).map { $0.renderHash })-\(resolvedColorScheme)-\(previewStyle)-\(renderAttempt)-\(timelineAppearance.hash)-\(translateConfig.showOriginalWithTranslation)-\(dynamicTypeSize)"
+        return "\(statusHash)-\(Array(presenter.state.selectedReplies).map { $0.renderHash })"
     }
-
-    private var currentScreenshotURL: URL? { renderedRevision == previewRevision ? screenshotURL : nil }
 
     public init(
         statusKey: MicroBlogKey,
@@ -862,37 +840,33 @@ public struct MacStatusShareSheet: View {
     }
 
     public var body: some View {
-        StateView(state: presenter.state.status) { state in
-            VStack(spacing: 0) {
-                ScrollView {
-                    previewView(data: state)
-                        .frame(maxWidth: .infinity)
-                        .allowsHitTesting(false)
+        MacShareSheetScaffold(
+            state: presenter.state.status,
+            purpose: purpose,
+            previewRevisionKey: previewRevisionKey,
+            fileName: "flare-status-\(statusKey.description()).png",
+            directoryPrefix: "flare-status-share",
+            fallbackFileName: "flare-status.png",
+            appliesContentPadding: true,
+            onCrossPost: onCrossPost
+        ) { data in
+            StatusShareContent(
+                data: data,
+                statusKey: statusKey,
+                replies: Array(presenter.state.selectedReplies)
+            )
+        } extraOptions: {
+            Divider()
+            HStack {
+                Text("share_replies_title", bundle: FlareAppleUILocalization.bundle)
+                Spacer()
+                Button { presenter.state.selectReplies() } label: {
+                    Text(String(format: String(localized: "share_replies_count", bundle: FlareAppleUILocalization.bundle), Int(presenter.state.selectedCount)))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Divider()
-                footer.padding(20)
             }
-            .frame(width: 560, height: 720)
-            .task(id: previewRevision) {
-                await renderScreenshot(data: state)
-            }
-        } errorContent: { error in
-            ContentUnavailableView {
-                Label("share_screenshot_failed", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(error.message ?? String(localized: "share_screenshot_failed"))
-            } actions: {
-                Button("Cancel") {
-                    dismiss()
-                }
-            }
-            .frame(width: 560, height: 720)
         } loadingContent: {
             TimelinePlaceholderView()
-                .frame(width: 560, height: 720)
         }
-        .navigationTitle(navigationTitle)
         .sheet(isPresented: Binding(
             get: { presenter.state.selecting },
             set: { if !$0 { presenter.state.cancelSelection() } }
@@ -901,253 +875,7 @@ public struct MacStatusShareSheet: View {
                 .environment(\.timelineAppearance, timelineAppearance)
                 .environment(\.translateConfig, translateConfig)
         }
-        .alert(item: $alert) { alert in
-            Alert(
-                title: Text("share_screenshot_failed"),
-                message: Text(verbatim: alert.message),
-                dismissButton: .default(Text("Ok"))
-            )
-        }
     }
-
-    private var resolvedColorScheme: ColorScheme {
-        theme ?? colorScheme
-    }
-
-    private var navigationTitle: LocalizedStringKey {
-        switch purpose {
-        case .shareScreenshot:
-            "share_screenshot"
-        case .crossPost:
-            "share_crosspost"
-        }
-    }
-
-    @ViewBuilder
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox {
-                VStack(spacing: 12) {
-                    LabeledContent("appearance_layout_group_title") {
-                        Picker("appearance_layout_group_title", selection: $previewStyle) {
-                            Text("appearance_timeline_display_mode_card").tag(MacStatusSharePreviewStyle.card)
-                            Text("status_share_sheet_preview_content").tag(MacStatusSharePreviewStyle.content)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                    }
-                    LabeledContent("appearance_theme") {
-                        Picker("appearance_theme", selection: $theme) {
-                            Text("appearance_theme_system").tag(nil as ColorScheme?)
-                            Text("appearance_theme_light").tag(Optional(ColorScheme.light))
-                            Text("appearance_theme_dark").tag(Optional(ColorScheme.dark))
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                    }
-                    Divider()
-                    HStack {
-                        Text("share_replies_title", bundle: FlareAppleUILocalization.bundle)
-                        Spacer()
-                        Button { presenter.state.selectReplies() } label: {
-                            Text(String(format: String(localized: "share_replies_count", bundle: FlareAppleUILocalization.bundle), Int(presenter.state.selectedCount)))
-                        }
-                    }
-                }
-                .padding(8)
-            }
-            HStack {
-                Button("Cancel") { dismiss() }
-                Spacer()
-                if let url = currentScreenshotURL {
-                    switch purpose {
-                    case .shareScreenshot:
-                        ShareLink(item: url) { Text("done") }.buttonStyle(.borderedProminent)
-                    case .crossPost:
-                        Button("share_crosspost") {
-                            do {
-                                let data = try Data(contentsOf: url)
-                                crossPostDispatched = true
-                                onCrossPost?(data, url.lastPathComponent)
-                            } catch {
-                                alert = MacStatusShareAlert(message: error.localizedDescription)
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(crossPostDispatched)
-                    }
-                } else if isRenderingScreenshot {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button("share_replies_retry") { renderAttempt += 1 }
-                }
-            }
-        }
-    }
-
-    private func previewView(data: UiTimelineV2) -> MacStatusSharePreview {
-        MacStatusSharePreview(
-            data: data,
-            statusKey: statusKey,
-            replies: Array(presenter.state.selectedReplies),
-            colorScheme: resolvedColorScheme,
-            previewStyle: previewStyle,
-            timelineAppearance: timelineAppearance,
-            translateConfig: translateConfig,
-            dynamicTypeSize: dynamicTypeSize
-        )
-    }
-
-    private func renderScreenshot(data: UiTimelineV2) async {
-        guard !crossPostDispatched else { return }
-        let requestID = UUID()
-        let revision = previewRevision
-        renderRequestID = requestID
-        screenshotURL = nil
-        isRenderingScreenshot = true
-        do {
-            let screenshot = try await MacStatusShareScreenshotRenderer.render(
-                view: previewView(data: data),
-                fileName: "flare-status-\(statusKey.description()).png"
-            )
-            guard !Task.isCancelled, renderRequestID == requestID, revision == previewRevision else {
-                try? FileManager.default.removeItem(at: screenshot.fileURL.deletingLastPathComponent())
-                return
-            }
-            screenshotURL = screenshot.fileURL
-            renderedRevision = revision
-        } catch is CancellationError {
-        } catch {
-            guard renderRequestID == requestID else { return }
-            alert = MacStatusShareAlert(message: error.localizedDescription)
-        }
-        guard renderRequestID == requestID else { return }
-        isRenderingScreenshot = false
-    }
-}
-
-private struct MacStatusShareScreenshot {
-    let data: Data
-    let fileURL: URL
-}
-
-private struct MacStatusSharePreview: View {
-    let data: UiTimelineV2
-    let statusKey: MicroBlogKey
-    let replies: [UiTimelineV2]
-    let colorScheme: ColorScheme
-    let previewStyle: MacStatusSharePreviewStyle
-    let timelineAppearance: TimelineAppearance
-    let translateConfig: AppSettings.TranslateConfig
-    let dynamicTypeSize: DynamicTypeSize
-
-    var body: some View {
-        StatusShareContent(data: data, statusKey: statusKey, replies: replies)
-        .frame(width: 360, alignment: .leading)
-        .padding()
-        .background(Color.flareSecondarySystemGroupedBackground)
-        .if(previewStyle == .card) { view in
-            view
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .contentShape(RoundedRectangle(cornerRadius: 16))
-                .shadow(radius: 8)
-                .padding(64)
-        }
-        .background(Color.flareSystemGroupedBackground)
-        .environment(\.colorScheme, colorScheme)
-        .environment(\.timelineAppearance, timelineAppearance)
-        .environment(\.translateConfig, translateConfig)
-        .dynamicTypeSize(dynamicTypeSize)
-    }
-}
-
-private enum MacStatusShareScreenshotRenderer {
-    @MainActor
-    static func render<Content: View>(
-        view: Content,
-        fileName: String
-    ) async throws -> MacStatusShareScreenshot {
-        let scale: CGFloat = 2
-        let loading = ShareImageLoading()
-        let hostingView = NSHostingView(rootView: view.environment(\.shareImageLoading, loading).fixedSize(horizontal: false, vertical: true))
-        // Screenshot padding must not inherit the window's safe area.
-        hostingView.safeAreaRegions = []
-        var fittingSize = hostingView.fittingSize
-        try ShareImageLoading.checkSize(fittingSize, scale: scale)
-        guard fittingSize.width > 0, fittingSize.height > 0 else {
-            throw MacStatusShareError.invalidSnapshotSize
-        }
-
-        hostingView.frame = NSRect(origin: CGPoint(x: -fittingSize.width * 2, y: 0), size: fittingSize)
-        guard let container = NSApp.keyWindow?.contentView else { throw StatusShareRenderError.mediaUnavailable }
-        container.addSubview(hostingView)
-        defer { hostingView.removeFromSuperview() }
-        hostingView.wantsLayer = true
-        hostingView.layer?.contentsScale = scale
-        hostingView.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(100))
-        try await loading.awaitReady()
-        try await Task.sleep(for: .milliseconds(50))
-        fittingSize = hostingView.fittingSize
-        try ShareImageLoading.checkSize(fittingSize, scale: scale)
-        hostingView.frame = NSRect(origin: CGPoint(x: -fittingSize.width * 2, y: 0), size: fittingSize)
-        hostingView.layoutSubtreeIfNeeded()
-
-        let pixelWidth = max(1, Int((fittingSize.width * scale).rounded(.up)))
-        let pixelHeight = max(1, Int((fittingSize.height * scale).rounded(.up)))
-        guard let representation = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pixelWidth,
-            pixelsHigh: pixelHeight,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            throw MacStatusShareError.snapshotFailed
-        }
-        representation.size = fittingSize
-        hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
-
-        guard let pngData = representation.representation(using: .png, properties: [:]) else {
-            throw MacStatusShareError.pngEncodingFailed
-        }
-
-        let directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("flare-status-share-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-
-        let fileURL = directoryURL.appendingPathComponent(
-            MediaFileNamePolicy.shared.safeLocalFileName(value: fileName, fallback: "flare-status.png")
-        )
-        try pngData.write(to: fileURL, options: .atomic)
-        return MacStatusShareScreenshot(data: pngData, fileURL: fileURL)
-    }
-}
-
-private enum MacStatusShareError: LocalizedError {
-    case invalidSnapshotSize
-    case snapshotFailed
-    case pngEncodingFailed
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidSnapshotSize:
-            String(localized: "share_screenshot_invalid_size")
-        case .snapshotFailed:
-            String(localized: "share_screenshot_failed")
-        case .pngEncodingFailed:
-            String(localized: "share_screenshot_encoding_failed")
-        }
-    }
-}
-
-private struct MacStatusShareAlert: Identifiable {
-    let id = UUID()
-    let message: String
 }
 
 #endif

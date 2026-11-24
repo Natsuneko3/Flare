@@ -1,14 +1,10 @@
 import SwiftUI
+import UIKit
 import KotlinSharedUI
 import SwiftUIBackports
 import UniformTypeIdentifiers
 import FlareAppleCore
 import FlareAppleUI
-
-private enum SharePreviewStyle: Hashable {
-    case card
-    case content
-}
 
 struct StatusShareSheet: View {
     let statusKey: MicroBlogKey
@@ -218,22 +214,15 @@ struct StatusShareSheetContent: View {
     
     @ViewBuilder
     private func previewView(data: UiTimelineV2) -> some View {
-        StatusShareContent(data: data, statusKey: statusKey, replies: Array(state.selectedReplies))
-            .frame(width: 360)
-            .padding()
-            .flareTextBackground(.flareSecondarySystemGroupedBackground)
-            .background(Color(.secondarySystemGroupedBackground))
-            .if(previewStyle == .card) { view in
-                view
-                    .clipShape(.rect(cornerRadius: 16))
-                    .contentShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(radius: 8)
-                    .padding(64)
-            }
-            .background(Color(.systemGroupedBackground))
-            .environment(\.colorScheme, theme ?? colorScheme)
-            .environment(\.timelineAppearance, timelineAppearance)
-            .environment(\.translateConfig, translateConfig)
+        ShareSheetCardContainer(
+            previewStyle: previewStyle,
+            theme: theme ?? colorScheme,
+            appliesContentPadding: true
+        ) {
+            StatusShareContent(data: data, statusKey: statusKey, replies: Array(state.selectedReplies))
+        }
+        .environment(\.timelineAppearance, timelineAppearance)
+        .environment(\.translateConfig, translateConfig)
     }
     
     
@@ -253,41 +242,5 @@ struct StatusShareSheetContent: View {
                 fileName: "flare-crosspost.png"
             )
         )
-    }
-}
-
-extension View {
-    @MainActor
-    func snapshot(colorScheme: ColorScheme, dynamicTypeSize: DynamicTypeSize = .large) async throws -> UIImage {
-        let loading = ShareImageLoading()
-        let controller = UIHostingController(rootView: self.environment(\.shareImageLoading, loading).dynamicTypeSize(dynamicTypeSize).fixedSize())
-        // Screenshot padding must not inherit the window's safe area.
-        controller.safeAreaRegions = []
-        controller.overrideUserInterfaceStyle = colorScheme == .dark ? .dark : .light
-        let view = controller.view!
-        var targetSize = view.intrinsicContentSize
-        try ShareImageLoading.checkSize(targetSize, scale: 3)
-        view.frame = CGRect(origin: CGPoint(x: -targetSize.width * 2, y: 0), size: targetSize)
-        view.backgroundColor = .systemGroupedBackground
-        guard let window = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow) else {
-            throw StatusShareRenderError.mediaUnavailable
-        }
-        window.addSubview(view)
-        defer { view.removeFromSuperview() }
-        view.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(100))
-        try await loading.awaitReady()
-        try await Task.sleep(for: .milliseconds(50))
-        targetSize = view.intrinsicContentSize
-        try ShareImageLoading.checkSize(targetSize, scale: 3)
-        view.frame = CGRect(origin: CGPoint(x: -targetSize.width * 2, y: 0), size: targetSize)
-        view.layoutIfNeeded()
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 3
-        format.opaque = true
-        return UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
-            view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
-        }
     }
 }
