@@ -605,8 +605,112 @@ class PluginJavaScriptEngineTest {
                         .jsonObject
                 assertEquals(
                     listOf("host.unsupported", "host.unsupported", "host.unsupported"),
-                    result.getValue("codes").jsonArray.map { it.jsonPrimitive.content },
+                    result
+                        .getValue("codes")
+                        .jsonArray
+                        .map { it.jsonPrimitive.content },
                 )
+            } finally {
+                runtime.close()
+            }
+        }
+
+    @Test
+    fun htmlFacadeEnforcesBridgeArgumentAndOutputBudgetsWithoutRetiringRuntime() =
+        runBlocking<Unit> {
+            val runtime =
+                htmlTestRuntime(
+                    apiVersion = 2,
+                    body =
+                        """
+                        if (request.mode === "reuse") {
+                          const items = await flare.html.query({
+                            html: "<ul><li>Reused</li></ul>",
+                            selector: "li",
+                            fields: { label: { extract: "text" } }
+                          });
+                          return { items };
+                        }
+                        let over5MExtractCode = null;
+                        try {
+                          await flare.html.extract({
+                            html: "a".repeat(6 * 1024 * 1024),
+                            spec: { p: { selector: "p", extract: "text" } }
+                          });
+                        } catch (e) {
+                          over5MExtractCode = e.code;
+                        }
+                        let over8MExtractCode = null;
+                        try {
+                          await flare.html.extract({
+                            html: "a".repeat(9 * 1024 * 1024),
+                            spec: { p: { selector: "p", extract: "text" } }
+                          });
+                        } catch (e) {
+                          over8MExtractCode = e.code;
+                        }
+                        let over5MDecodeCode = null;
+                        try {
+                          await flare.html.decodeEntities("a".repeat(6 * 1024 * 1024));
+                        } catch (e) {
+                          over5MDecodeCode = e.code;
+                        }
+                        const escapedUnit = "<p data-a='\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"'>ok</p>";
+                        const escapedHtml = escapedUnit.repeat(115000);
+                        const escapedResult = await flare.html.extract({
+                          html: escapedHtml,
+                          spec: { first: { selector: "p", extract: "text" } }
+                        });
+                        const nestedHtml = "<div>".repeat(70) + "a".repeat(90 * 1024) + "</div>".repeat(70);
+                        let amplifiedOutputCode = null;
+                        try {
+                          await flare.html.extract({
+                            html: nestedHtml,
+                            spec: { items: { selector: "div", all: true, extract: "outerHtml" } }
+                          });
+                        } catch (e) {
+                          amplifiedOutputCode = e.code;
+                        }
+                        return {
+                          over5MExtractCode,
+                          over8MExtractCode,
+                          over5MDecodeCode,
+                          escapedFirst: escapedResult.first,
+                          amplifiedOutputCode
+                        };
+                        """.trimIndent(),
+                )
+            try {
+                val hash = "a".repeat(64)
+                val context = PluginInvocationContextV1.guest("dev.example.html", "html", hash, "https://gallery.example", "en")
+                val first =
+                    runtime
+                        .invoke(
+                            "capabilities.timeline.page",
+                            JsonObject(mapOf("mode" to JsonPrimitive("check"))),
+                            context,
+                            PluginCallTimeoutV1.Normal,
+                        ) {}
+                        .jsonObject
+                assertEquals("host.invalid-request", first.getValue("over5MExtractCode").jsonPrimitive.content)
+                assertEquals("host.invalid-request", first.getValue("over8MExtractCode").jsonPrimitive.content)
+                assertEquals("host.invalid-request", first.getValue("over5MDecodeCode").jsonPrimitive.content)
+                assertEquals("ok", first.getValue("escapedFirst").jsonPrimitive.content)
+                assertEquals("host.invalid-request", first.getValue("amplifiedOutputCode").jsonPrimitive.content)
+
+                val second =
+                    runtime
+                        .invoke(
+                            "capabilities.timeline.page",
+                            JsonObject(mapOf("mode" to JsonPrimitive("reuse"))),
+                            context,
+                            PluginCallTimeoutV1.Normal,
+                        ) {}
+                        .jsonObject
+                val items = second.getValue("items").jsonArray
+                assertEquals(1, items.size)
+                val item = items[0].jsonObject
+                assertEquals("Reused", item.getValue("label").jsonPrimitive.content)
             } finally {
                 runtime.close()
             }

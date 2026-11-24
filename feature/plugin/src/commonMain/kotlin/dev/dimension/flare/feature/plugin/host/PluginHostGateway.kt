@@ -30,9 +30,14 @@ internal class PluginHostGateway(
         callTimeoutMillis: Long,
         apiVersion: Int = 1,
         storage: PluginStorageAccessV1? = null,
-    ): String {
-        require(argumentsJson.encodeToByteArray().size <= MAX_HOST_ARGUMENT_BYTES) { "Host arguments are too large" }
-        return try {
+    ): String =
+        try {
+            val maxArgumentBytes =
+                if (operation == "html.extract") MAX_HTML_HOST_ARGUMENT_BYTES else MAX_HOST_ARGUMENT_BYTES
+            require(
+                argumentsJson.length <= maxArgumentBytes &&
+                    argumentsJson.encodeToByteArray().size <= maxArgumentBytes,
+            ) { "Host arguments are too large" }
             if (apiVersion >= 2) context.accountHttp?.ensureActive()
             val value =
                 when (operation) {
@@ -162,7 +167,6 @@ internal class PluginHostGateway(
         } catch (_: Throwable) {
             failure("host.unavailable", "Host operation failed")
         }
-    }
 }
 
 @Serializable
@@ -220,6 +224,7 @@ private fun failure(
     }.toString()
 
 private const val MAX_HOST_ARGUMENT_BYTES = 5 * 1_024 * 1_024
+private const val MAX_HTML_HOST_ARGUMENT_BYTES = 8 * 1_024 * 1_024
 private const val MAX_HASH_INPUT_BYTES = 1024 * 1_024
 private const val MAX_RANDOM_BYTES = 1_024
 private const val MAX_HOST_ERROR_LENGTH = 512

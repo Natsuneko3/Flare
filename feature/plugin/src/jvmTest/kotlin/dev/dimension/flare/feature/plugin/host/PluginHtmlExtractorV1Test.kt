@@ -857,4 +857,126 @@ class PluginHtmlExtractorV1Test {
             }.code,
         )
     }
+
+    @Test
+    fun enforcesFourMibExtractedOutputBudgetAcrossNestedAndRepeatedFields() {
+        val nestedPayload = "<div>".repeat(70) + "a".repeat(90 * 1_024) + "</div>".repeat(70)
+        val nestedAmplified =
+            buildJsonObject {
+                put("html", nestedPayload)
+                putJsonObject("spec") {
+                    putJsonObject("items") {
+                        put("selector", "div")
+                        put("all", true)
+                        put("extract", "outerHtml")
+                    }
+                }
+            }.toString()
+        assertEquals(
+            "host.invalid-request",
+            assertFailsWith<PluginHostException> { PluginHtmlExtractorV1.extract(nestedAmplified, apiVersion = 2) }.code,
+        )
+
+        val multiFieldHtml = "<div class='big'>${"x".repeat(90 * 1_024)}</div>"
+        val multiFieldAmplified =
+            buildJsonObject {
+                put("html", multiFieldHtml)
+                putJsonObject("spec") {
+                    repeat(64) { i ->
+                        putJsonObject("f$i") {
+                            put("selector", ".big")
+                            put("extract", "outerHtml")
+                        }
+                    }
+                }
+            }.toString()
+        assertEquals(
+            "host.invalid-request",
+            assertFailsWith<PluginHostException> { PluginHtmlExtractorV1.extract(multiFieldAmplified, apiVersion = 2) }.code,
+        )
+
+        val largeValidText = "a".repeat(4 * 1_024 * 1_024 - 64)
+        val nearLimitRequest =
+            buildJsonObject {
+                put("html", "<p>$largeValidText</p>")
+                putJsonObject("spec") {
+                    putJsonObject("body") {
+                        put("selector", "p")
+                        put("extract", "text")
+                    }
+                }
+            }.toString()
+        val nearLimitResult = PluginHtmlExtractorV1.extract(nearLimitRequest, apiVersion = 2).jsonObject
+        val nearLimitBody = nearLimitResult.getValue("body").jsonPrimitive.content
+        assertEquals(largeValidText.length, nearLimitBody.length)
+    }
+
+    @Test
+    fun gatewayMapsOversizedHostArgumentsToInvalidRequestAndAllowsEscapedFourMibHtml() =
+        runBlocking {
+            val gateway =
+                PluginHostGateway(
+                    object : PluginHttpTransport {
+                        override suspend fun execute(request: PluginTransportRequestV1): PluginTransportResponseV1 =
+                            error("Offline HTML gateway test must never perform network requests")
+                    },
+                )
+            val hash = "a".repeat(64)
+            val context = PluginInvocationContextV1.guest("dev.example.plugin", "example", hash, "https://site.example", "en")
+
+            // <= 4 MiB decoded HTML with heavy JSON escaping expands > 5 MiB and <= 8 MiB on wire.
+            val escapedChunk = "<p data-a='\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"'>ok</p>"
+            val repeatCount = 115_000
+            val escapedHtml = escapedChunk.repeat(repeatCount)
+            assertTrue(escapedHtml.encodeToByteArray().size <= 4 * 1_024 * 1_024)
+            val escapedExtractArgs =
+                buildJsonObject {
+                    put("html", escapedHtml)
+                    putJsonObject("spec") {
+                        putJsonObject("first") {
+                            put("selector", "p")
+                            put("extract", "text")
+                        }
+                    }
+                }.toString()
+            assertTrue(escapedExtractArgs.encodeToByteArray().size > 5 * 1_024 * 1_024)
+            assertTrue(escapedExtractArgs.encodeToByteArray().size <= 8 * 1_024 * 1_024)
+            val escapedRaw = gateway.call("html.extract", escapedExtractArgs, context, 5_000, apiVersion = 2)
+            val escapedResponse = PluginJsonV1.parseToJsonElement(escapedRaw).jsonObject
+            assertTrue(escapedResponse.getValue("ok").jsonPrimitive.boolean)
+            val escapedValue = escapedResponse.getValue("value").jsonObject
+            assertEquals("ok", escapedValue.getValue("first").jsonPrimitive.content)
+
+            // > 8 MiB html.extract envelope maps to host.invalid-request (not uncaught IllegalArgumentException).
+            val over8MExtractArgs =
+                buildJsonObject {
+                    put("html", "a".repeat(8 * 1_024 * 1_024 + 128))
+                    putJsonObject("spec") {
+                        putJsonObject("p") {
+                            put("selector", "p")
+                            put("extract", "text")
+                        }
+                    }
+                }.toString()
+            val over8MRaw = gateway.call("html.extract", over8MExtractArgs, context, 5_000, apiVersion = 2)
+            val over8MResponse = PluginJsonV1.parseToJsonElement(over8MRaw).jsonObject
+            assertFalse(over8MResponse.getValue("ok").jsonPrimitive.boolean)
+            val over8MError = over8MResponse.getValue("error").jsonObject
+            assertEquals("host.invalid-request", over8MError.getValue("code").jsonPrimitive.content)
+
+            // > 5 MiB html.decodeEntities and non-HTML envelopes map to host.invalid-request.
+            val over5MDecodeArgs = buildJsonObject { put("value", "a".repeat(5 * 1_024 * 1_024 + 64)) }.toString()
+            val over5MDecodeRaw = gateway.call("html.decodeEntities", over5MDecodeArgs, context, 5_000, apiVersion = 2)
+            val over5MDecode = PluginJsonV1.parseToJsonElement(over5MDecodeRaw).jsonObject
+            assertFalse(over5MDecode.getValue("ok").jsonPrimitive.boolean)
+            val over5MDecodeError = over5MDecode.getValue("error").jsonObject
+            assertEquals("host.invalid-request", over5MDecodeError.getValue("code").jsonPrimitive.content)
+
+            val over5MHashArgs = buildJsonObject { put("value", "a".repeat(5 * 1_024 * 1_024 + 64)) }.toString()
+            val over5MHashRaw = gateway.call("crypto.sha256", over5MHashArgs, context, 5_000, apiVersion = 2)
+            val over5MHash = PluginJsonV1.parseToJsonElement(over5MHashRaw).jsonObject
+            assertFalse(over5MHash.getValue("ok").jsonPrimitive.boolean)
+            val over5MHashError = over5MHash.getValue("error").jsonObject
+            assertEquals("host.invalid-request", over5MHashError.getValue("code").jsonPrimitive.content)
+        }
 }

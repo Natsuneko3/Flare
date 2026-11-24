@@ -195,6 +195,7 @@ internal object PluginHtmlExtractorV1 {
 
     private class ExtractionSession {
         private var visitedNodes = 0
+        private var outputBytes = 0L
 
         private fun recordVisit() {
             visitedNodes += 1
@@ -203,15 +204,84 @@ internal object PluginHtmlExtractorV1 {
             }
         }
 
+        private fun chargeBytes(delta: Long) {
+            outputBytes += delta
+            require(outputBytes <= MAX_OUTPUT_BYTES) {
+                "HTML extraction output exceeds $MAX_OUTPUT_BYTES bytes"
+            }
+        }
+
+        private fun chargeJsonString(value: String) {
+            // Fast fail before scanning if raw length already exceeds remaining budget.
+            require(outputBytes + value.length + 2L <= MAX_OUTPUT_BYTES) {
+                "HTML extraction output exceeds $MAX_OUTPUT_BYTES bytes"
+            }
+            var bytes = 2L
+            var index = 0
+            while (index < value.length) {
+                val ch = value[index]
+                when {
+                    ch == '"' || ch == '\\' || ch == '\b' || ch == '\u000C' || ch == '\n' || ch == '\r' || ch == '\t' -> {
+                        bytes += 2
+                    }
+
+                    ch < ' ' -> {
+                        bytes += 6
+                    }
+
+                    ch.code <= 0x7F -> {
+                        bytes += 1
+                    }
+
+                    ch.code <= 0x7FF -> {
+                        bytes += 2
+                    }
+
+                    ch.isHighSurrogate() && index + 1 < value.length && value[index + 1].isLowSurrogate() -> {
+                        bytes += 4
+                        index += 1
+                    }
+
+                    else -> {
+                        bytes += 3
+                    }
+                }
+                index += 1
+            }
+            chargeBytes(bytes)
+        }
+
+        private fun jsonStringPrimitive(value: String): JsonPrimitive {
+            chargeJsonString(value)
+            return JsonPrimitive(value)
+        }
+
+        private fun jsonNull(): JsonNull {
+            chargeBytes(4)
+            return JsonNull
+        }
+
+        private fun jsonBoolean(value: Boolean): JsonPrimitive {
+            chargeBytes(if (value) 4 else 5)
+            return JsonPrimitive(value)
+        }
+
         fun extractObject(
             root: Element,
             fields: Map<String, CompiledNodeSpec>,
-        ): JsonObject =
-            buildJsonObject {
+        ): JsonObject {
+            chargeBytes(2) // {}
+            var first = true
+            return buildJsonObject {
                 for ((key, spec) in fields) {
+                    if (!first) chargeBytes(1) // ,
+                    first = false
+                    chargeJsonString(key)
+                    chargeBytes(1) // :
                     put(key, extractNode(root, spec))
                 }
             }
+        }
 
         private fun extractNode(
             root: Element,
@@ -221,6 +291,7 @@ internal object PluginHtmlExtractorV1 {
             val evaluator = spec.evaluator
             if (spec.all) {
                 requireNotNull(evaluator)
+                chargeBytes(2) // []
                 val matches = ArrayList<Element>()
                 try {
                     for (matched in Selector.selectStream(evaluator, root)) {
@@ -231,12 +302,17 @@ internal object PluginHtmlExtractorV1 {
                 } finally {
                     evaluator.reset()
                 }
-                return JsonArray(matches.map { extractMatched(it, spec) })
+                val results = ArrayList<JsonElement>(matches.size)
+                for (index in matches.indices) {
+                    if (index > 0) chargeBytes(1) // ,
+                    results.add(extractMatched(matches[index], spec))
+                }
+                return JsonArray(results)
             }
 
             val target = if (evaluator != null) root.selectFirst(evaluator) else root
             if (target == null) {
-                return if (spec.extract == HtmlExtractModeV1.Exists) JsonPrimitive(false) else JsonNull
+                return if (spec.extract == HtmlExtractModeV1.Exists) jsonBoolean(false) else jsonNull()
             }
             return extractMatched(target, spec)
         }
@@ -250,12 +326,12 @@ internal object PluginHtmlExtractorV1 {
                 return extractObject(element, fields)
             }
             return when (requireNotNull(spec.extract)) {
-                HtmlExtractModeV1.Text -> JsonPrimitive(element.text())
-                HtmlExtractModeV1.OwnText -> JsonPrimitive(element.ownText())
-                HtmlExtractModeV1.Html -> JsonPrimitive(element.html())
-                HtmlExtractModeV1.OuterHtml -> JsonPrimitive(element.outerHtml())
+                HtmlExtractModeV1.Text -> jsonStringPrimitive(element.text())
+                HtmlExtractModeV1.OwnText -> jsonStringPrimitive(element.ownText())
+                HtmlExtractModeV1.Html -> jsonStringPrimitive(element.html())
+                HtmlExtractModeV1.OuterHtml -> jsonStringPrimitive(element.outerHtml())
                 HtmlExtractModeV1.Attr -> extractAttribute(element, requireNotNull(spec.attrName), spec.absoluteUrl)
-                HtmlExtractModeV1.Exists -> JsonPrimitive(true)
+                HtmlExtractModeV1.Exists -> jsonBoolean(true)
             }
         }
 
@@ -264,22 +340,23 @@ internal object PluginHtmlExtractorV1 {
             attrName: String,
             absoluteUrl: Boolean,
         ): JsonElement {
-            if (!element.hasAttr(attrName)) return JsonNull
+            if (!element.hasAttr(attrName)) return jsonNull()
             val raw = element.attr(attrName)
-            if (!absoluteUrl) return JsonPrimitive(raw)
-            if (raw.isBlank()) return JsonNull
+            if (!absoluteUrl) return jsonStringPrimitive(raw)
+            if (raw.isBlank()) return jsonNull()
             val resolved = element.absUrl(attrName).trim()
-            if (resolved.isBlank()) return JsonNull
-            val parsed = parseUrl(resolved) ?: return JsonNull
+            if (resolved.isBlank()) return jsonNull()
+            val parsed = parseUrl(resolved) ?: return jsonNull()
             return if ((parsed.protocol == URLProtocol.HTTP || parsed.protocol == URLProtocol.HTTPS) && parsed.host.isNotBlank()) {
-                JsonPrimitive(resolved)
+                jsonStringPrimitive(resolved)
             } else {
-                JsonNull
+                jsonNull()
             }
         }
     }
 
     private const val MAX_HTML_BYTES = 4 * 1_024 * 1_024
+    private const val MAX_OUTPUT_BYTES = 4 * 1_024 * 1_024
     private const val MAX_DECODE_ENTITIES_BYTES = 1_024 * 1_024
     private const val MAX_SELECTOR_LENGTH = 512
     private const val MAX_ATTR_NAME_LENGTH = 128
