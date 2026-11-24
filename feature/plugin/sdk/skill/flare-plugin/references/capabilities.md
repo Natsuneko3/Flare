@@ -9,6 +9,7 @@ JavaScript methods live under
 | --- | --- | --- | --- | --- |
 | `timeline-page` | `timelinePage` | `load` | None | API v2 temporary native lists; no home timeline or tabCatalog required |
 | `account-http` | `accountHttp` | `authenticate` | None | API v2 account-only authentication for platform extensions; explicit authOrigins; no displayable entry |
+| `session-challenge` | `sessionChallenge` | `complete` | None | API v2 account-only interactive WebView challenge recovery; requires `challengeProbes`; no displayable entry; non-auto-granted on upgrade (pair with `account-capabilities/v1`) |
 | `account-capabilities` | `accountCapabilities` | `negotiate` | None | Optional read-only account renegotiation after upgrade; runtime APIs 1 and 2; no displayable entry |
 | `timeline` | `timeline` | `page` | None | Static timelines, including at least one default |
 | `search` | `search` | At least one search operation | `posts`, `profiles`, `discoverPosts`, `discoverProfiles`, `discoverHashtags` | Each supported operation enables its own section |
@@ -163,3 +164,32 @@ do not become Compose context: comment keys must also work with `post.detail`
 and the existing reply reference. Like/reply/delete controls remain subject to
 their ordinary capabilities. Successful publish/delete invalidates this account's
 temporary lists; hidden lists refresh when shown again.
+
+## API v2 manga reader and worker concurrency
+
+`flare.datasource.manga/v1` requires `detail` and `pages` plus `permissions.mediaNetwork: true`.
+Optional `pages` request fields (`offset`, `limit`, `cursor`) and response fields
+(`offset`, `totalCount`, `nextCursor`, `endReached` defaulting to `true`) support
+chunked and cursor-based chapter loading. Optional `pageImage` receives retry
+context (`attempt`, `reason`, `failedUrl`) when resolving or reloading deferred pages.
+
+> **Concurrency warning:** Up to 3 `manga.pageImage` invocations run in parallel
+> across separate isolated worker VMs (`workerLane`). Cross-page or cross-chunk
+> state (such as `ptoken` lookup tables populated during `manga.pages`) MUST be
+> stored in `flare.storage` (`apiVersion >= 2`), never in JavaScript module globals.
+
+See [manga pagination and parallel resolution](wire-data.md#manga-pagination-and-parallel-image-resolution)
+for exact chunk alignment, overlap consistency, and `totalCount` validation rules.
+
+## API v2 session challenge recovery
+
+Declare `flare.datasource.session-challenge/v1` with operation `complete` and
+`challengeProbes` (`1..16` probes on `$accountOrigin` or `permissions.authOrigins`).
+When an authenticated account call throws `flare.error({ code: "ChallengeRequired",
+message, challenge: { url, seedCookies? } })`, Flare presents an interactive WebView
+and invokes `capabilities.sessionChallenge.complete` until it returns `{ type: "completed" }`.
+`challengeProbes` are audited as `Cookie` permissions on install and upgrade, and
+existing accounts do not receive this capability automatically on upgrade — strongly
+pair it with `flare.datasource.account-capabilities/v1` so saved accounts can
+adopt it via `negotiate` without re-login. See
+[session challenge recovery](authentication.md#session-challenge-recovery-api-v2).

@@ -29,6 +29,21 @@ Do not claim every reachable host. Detection has no credential access and may
 request only the candidate origin. Omit the declaration and method if explicit
 platform selection is sufficient, as in the template.
 
+### Recommended origins and single-site plugins (API v2)
+
+Declare `platform.recommendedOrigins` (up to `8` unique exact HTTPS origins with
+optional `name` and `description`) in API v2 to show preset instances in the
+service selector and match them statically with priority `0`, **without launching
+a JavaScript runtime**.
+
+Set `platform.allowCustomOrigin: false` (API v2) for single-site or fixed-mirror
+plugins. When `false`:
+- `platform.recommendedOrigins` must be nonempty.
+- Users cannot enter arbitrary custom origins or run custom-origin JS `detector.detect`.
+- Login and standalone `platform.guest.origin` (when `guest.enabled` is true) are
+  restricted to origins declared in `recommendedOrigins`.
+`allowCustomOrigin` defaults to `true`.
+
 ## State transitions
 
 The method key is the manifest method **ID**, not necessarily its interaction
@@ -233,7 +248,10 @@ session's disposal; the plugin supplies no lifecycle hook.
 
 ### API v2 Cookie state
 
-Declare `apiVersion: 2`. Each Cookie entry may include `attributes` with domain,
+Declare `apiVersion: 2`. `CookieCheckRequestV1` includes optional `userAgent`
+containing the WebView's normalized User-Agent (`1..1024` non-control characters,
+trimmed) when available; `userAgent` is always omitted in API v1. Each Cookie
+entry may include `attributes` with domain,
 hostOnly, path, expiresAt (epoch milliseconds), session, secure, httpOnly, and
 sameSite (`strict`/`lax`/`none`). Only reliable native fields are supplied. Android
 CookieManager exposes values without these attributes; Apple/Desktop expose
@@ -322,11 +340,54 @@ Network/provider failures retain the previous capabilities; even an
 results are rejected. A later app launch or package update can retry them.
 Normal account methods remain responsible for refreshing tokens.
 
-For example, returning newly supported compose/v2 Quote, compose/v3 or
-account-http enables them without login. Cross-plugin account HTTP still needs
+For example, returning newly supported compose/v2 Quote, compose/v3,
+account-http, or session-challenge enables them without login. Cross-plugin account HTTP still needs
 the extension's separate user grant. Plugins without this declaration continue
 using their saved negotiation and existing additive upgrade rules. Changing
 `credentialSchemaVersion` still requires relogin; this callback does not reinterpret opaque credentials.
+
+## Session challenge recovery (API v2)
+
+Use `flare.datasource.session-challenge/v1` when an authenticated account encounters
+an interactive anti-bot, Cloudflare, or secondary verification page that cannot be
+satisfied headlessly by `flare.http.request`.
+
+1. **Manifest declaration (`apiVersion: 2`)**: Declare `flare.datasource.session-challenge/v1`
+   with `operations: { "complete": {} }` and `challengeProbes`: `1..16` probes on
+   `$accountOrigin` or `permissions.authOrigins` (`1..32` unique Cookie names per
+   probe; `httpOrigins` does not grant probe origins). Every `challengeProbes` entry
+   is surfaced as a `Cookie` permission during install and upgrade review.
+2. **Existing-account upgrades (non-auto-grant)**: `flare.datasource.session-challenge/v1`
+   is **never** auto-granted to pre-existing accounts on upgrade. Strongly pair it
+   with `flare.datasource.account-capabilities/v1` (`negotiate`) so saved accounts
+   adopt challenge recovery without forcing re-login.
+3. **Triggering a challenge**: From an authenticated account invocation, throw:
+   ```js
+   throw flare.error({
+     code: "ChallengeRequired",
+     message: { value: "Complete verification to continue" },
+     challenge: {
+       url: context.origin + "/challenge",
+       seedCookies: [{ name: "session_hint", value: "abc" }],
+     },
+   });
+   ```
+   `challenge.url` must be an approved HTTPS URL on `$accountOrigin` or
+   `permissions.authOrigins` (no whitespace, control characters, or `#` fragment).
+   Optional `seedCookies` supports up to `32` entries (`64 KiB` aggregate UTF-8
+   name+value bytes).
+4. **Completing the challenge**: The Host opens an interactive WebView routed through
+   the account's proxy, seeds `seedCookies`, monitors `challengeProbes`, and calls
+   `capabilities.sessionChallenge.complete(request, context)` with
+   `{ challengeUrl, cookies, userAgent?, pendingPayload? }`.
+   - `cookies.cookies` contains only Cookies matching the declared `challengeProbes`.
+   - `userAgent` carries the normalized WebView User-Agent (`1..1024` non-control chars) when available.
+   - Return `{ type: "pending", pendingPayload? }` (up to `64 KiB` JSON; whole replacement,
+     omission/null clears) to keep waiting, or `{ type: "completed" }` once verified
+     and any updated credential state has been saved via `flare.credential.replace`.
+   - Throw `AuthenticationRequired` if the session is permanently invalid and needs relogin.
+   - Tickets expire after 15 minutes (at most 16 active challenge tickets) and do not
+     persist across app restarts.
 
 ## Refresh and relogin
 

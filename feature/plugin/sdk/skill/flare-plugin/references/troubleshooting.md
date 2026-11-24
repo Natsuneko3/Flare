@@ -60,6 +60,7 @@ throw flare.error({
 | Code | Typical use |
 | --- | --- |
 | AuthenticationRequired | Rejected/expired credentials; an account call can trigger relogin |
+| ChallengeRequired | Interactive WebView challenge required; includes `challenge: { url, seedCookies? }` for `flare.datasource.session-challenge/v1` |
 | NotFound | The requested entity does not exist |
 | Validation | Invalid user input, with a useful non-sensitive message |
 | RateLimited | Website throttling; optional retryAfterSeconds |
@@ -126,6 +127,8 @@ requests/responses well below them.
 | Inline parents / quotes / user list / reactions | At most 100 each; user lists cannot be empty |
 | Poll options | 2..100, distinct valid ownVotes indices |
 | Crypto randomHex input / sha256 and md5 input | 1..1024 random bytes / 1 MiB UTF-8 text |
+| HTML extraction / entity decoding | 4 MiB HTML / 8 MiB `html.extract` bridge envelope / 4 MiB output / 20,000 visited nodes / 1 MiB `decodeEntities` |
+| Session challenge `seedCookies` / tickets | 32 cookies (64 KiB bytes) / 16 active tickets, 15-minute TTL |
 
 Multipart calls have at most 64 parts; text parts are at most 256 KiB. Assets have
 their own Host/compose constraints, up to 1 GiB per asset at the bridge boundary;

@@ -190,6 +190,10 @@ interface SocialPluginDefinitionV1 {
     /** Optional read-only renegotiation using saved credentials, without invoking login. */
     accountCapabilities?: { negotiate(request: AccountCapabilitiesRequestV1, context: PluginInvocationContextV1): MaybePromise<AccountCapabilitiesV1> };
     accountHttp?: { authenticate(request: AccountHttpAuthenticationRequestV1, context: PluginInvocationContextV1): MaybePromise<Record<string, string>> };
+    /** API v2: account-only interactive WebView challenge recovery.
+     * Strongly recommended to pair with accountCapabilities so existing accounts can adopt it after upgrade without re-login.
+     */
+    sessionChallenge?: { complete(request: SessionChallengeCompleteRequestV1, context: PluginInvocationContextV1): MaybePromise<SessionChallengeResultV1> };
     /** API v2: transient native lists, independent of home timelines and tabCatalog. */
     timelinePage?: { load(request: TimelinePageLoadRequestV2, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>> };
     timeline?: { page(request: TimelinePageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>> };
@@ -296,10 +300,14 @@ interface GalleryServiceV1 {
   comments(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
   recommendations(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
 }
-/** API v2. Required: detail and pages. Optional: pageImage (image or gif only), comments, recommendations. */
+/** API v2. Required: detail and pages. Optional: pageImage (image or gif only), comments, recommendations.
+ * Up to 3 manga.pageImage calls execute in parallel across isolated worker VMs (workerLane);
+ * store cross-page or cross-chunk state (such as ptoken tables) in flare.storage rather than JS module globals.
+ */
 interface MangaServiceV1 {
   detail(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaV1>;
   pages(request: MangaPagesRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaPagesV1>;
+  /** Executed across up to 3 parallel isolated worker VMs; use flare.storage for cross-page shared state, not module globals. */
   pageImage?(request: MangaPageImageRequestV1, context: PluginInvocationContextV1): MaybePromise<MediaV1>;
   comments?(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
   recommendations?(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
@@ -348,7 +356,21 @@ interface CookieCheckRequestV1 {
   cookies: { cookies: CookieValueV1[] };
   /** API v2: latest Pending payload for this flow; survives runtime eviction, not app restart. */
   pendingPayload?: JsonValue;
+  /** API v2: normalized WebView User-Agent (1..1024 non-control characters), when available. Omitted in API v1. */
+  userAgent?: string;
 }
+/** API v2 account-only interactive WebView challenge completion request. */
+interface SessionChallengeCompleteRequestV1 {
+  challengeUrl: string;
+  cookies: { cookies: CookieValueV1[] };
+  /** Normalized WebView User-Agent (1..1024 non-control characters), when available. */
+  userAgent?: string;
+  /** Latest pending payload returned by a previous "pending" result in this challenge attempt. */
+  pendingPayload?: JsonValue;
+}
+type SessionChallengeResultV1 =
+  | { type: "pending"; /** Whole replacement, omitted/null clears; at most 64 KiB JSON. */ pendingPayload?: JsonValue }
+  | { type: "completed" };
 interface QrPollRequestV2 {
   methodId: string;
   origin: string;
@@ -798,6 +820,12 @@ interface MangaPagesRequestV1 {
   chapterId: string;
   entityToken?: string;
   chapterToken?: string;
+  /** Optional range paging start index (>= 0); mutually exclusive with cursor. */
+  offset?: number;
+  /** Optional requested chunk size (1..2000). */
+  limit?: number;
+  /** Optional cursor for sequential chunk paging; mutually exclusive with offset. */
+  cursor?: string;
 }
 interface MangaPageV1 {
   id: string;
@@ -810,7 +838,19 @@ interface MangaPageV1 {
   height?: number;
   customHeaders?: Record<string, string>;
 }
-interface MangaPagesV1 { pages: MangaPageV1[] }
+interface MangaPagesV1 {
+  /** 1..2000 pages per chunk. */
+  pages: MangaPageV1[];
+  /** Starting page index of this chunk (>= 0). Initial response must be 0 when present; range chunks at offset > 0 must cover requested offset. */
+  offset?: number;
+  /** Total chapter page count (1..50000) for range mode; must stay constant across chunks and cannot be combined with cursor requests. */
+  totalCount?: number;
+  /** Required when endReached is false (1..4096 non-blank characters). */
+  nextCursor?: string;
+  /** Defaults to true when omitted. */
+  endReached?: boolean;
+}
+type MangaPageImageReasonV1 = "initial" | "resolveRetry" | "imageLoadFailed";
 interface MangaPageImageRequestV1 {
   key: EntityKeyV1;
   chapterId: string;
@@ -818,6 +858,11 @@ interface MangaPageImageRequestV1 {
   pageToken: string;
   entityToken?: string;
   chapterToken?: string;
+  /** Retry attempt index (0..100). */
+  attempt?: number;
+  reason?: MangaPageImageReasonV1;
+  /** Failing HTTPS image URL; provided only when reason is "imageLoadFailed". */
+  failedUrl?: string;
 }
 type HostIconV1 =
   | "Home" | "Notification" | "Search" | "Profile" | "Local" | "World" | "Featured"
@@ -935,20 +980,70 @@ interface HttpResponseV1 {
 }
 interface CredentialSnapshotV2 { value: JsonValue; revision: string }
 
+type HtmlExtractModeV1 = "text" | "ownText" | "html" | "outerHtml" | "attr" | "exists";
+/** Exactly one of extract or fields is required. Top-level nodes and all: true require selector.
+ * name (1..128 non-blank chars) and absoluteUrl are allowed only when extract is "attr";
+ * absoluteUrl: true requires HTTPS baseUrl (non-HTTP(S) or blank resolved values return null).
+ * all: true forbids extract: "exists".
+ */
+interface HtmlNodeSpecV1 {
+  /** CSS selector (1..512 non-blank chars). Required on top-level nodes and when all is true. */
+  selector?: string;
+  all?: boolean;
+  /** Maximum matches when all is true (1..2000; defaults to 500). */
+  limit?: number;
+  extract?: HtmlExtractModeV1;
+  /** Attribute name (1..128 non-blank chars); allowed and required only when extract is "attr". */
+  name?: string;
+  /** Resolve relative URL against baseUrl; allowed only when extract is "attr". */
+  absoluteUrl?: boolean;
+  /** 1..64 fields per level; max nesting depth 4, max 128 spec nodes total. */
+  fields?: Record<string, HtmlNodeSpecV1>;
+}
+interface HtmlExtractRequestV1 {
+  /** HTML input (max 4 MiB UTF-8; 8 MiB max bridge request envelope). */
+  html: string;
+  /** Optional HTTPS base URL; required when any spec node sets absoluteUrl: true. */
+  baseUrl?: string;
+  /** 1..64 top-level fields; each must provide selector. */
+  spec: Record<string, HtmlNodeSpecV1>;
+}
+interface HtmlQueryRequestV1 {
+  /** HTML input (max 4 MiB UTF-8; 8 MiB max bridge request envelope). */
+  html: string;
+  /** Optional HTTPS base URL; required when any field node sets absoluteUrl: true. */
+  baseUrl?: string;
+  /** CSS selector (1..512 non-blank chars) selecting items to extract. */
+  selector: string;
+  /** Maximum matched items (1..2000; defaults to 500). */
+  limit?: number;
+  /** 1..64 fields per level; max nesting depth 3 inside fields (depth 4 total), max 128 spec nodes total. */
+  fields: Record<string, HtmlNodeSpecV1>;
+}
+
 type PluginErrorCodeV1 =
-  | "AuthenticationRequired" | "NotFound" | "Validation" | "RateLimited" | "Network"
+  | "AuthenticationRequired" | "ChallengeRequired" | "NotFound" | "Validation" | "RateLimited" | "Network"
   | "Remote" | "Unsupported" | "InvalidResponse" | "Cancelled";
+interface PluginChallengeV1 {
+  /** Approved HTTPS challenge URL on $accountOrigin or permissions.authOrigins (no whitespace, control chars, or fragment). */
+  url: string;
+  /** Optional seed cookies (max 32 entries, 64 KiB aggregate UTF-8 name+value bytes). */
+  seedCookies?: { name: string; value: string }[];
+}
 /** Exactly one of value/key; localized key requires fallback.
  * args accepts finite numbers, booleans, or strings; omit null arguments.
  * Manifest text instead uses a string or { key, fallback }.
  */
 interface WireTextV1 { value?: string; key?: string; fallback?: string; args?: Record<string, JsonPrimitive> }
-/** Throw flare.error(value) for recoverable failures; retryAfterSeconds is 0..604800. */
+/** Throw flare.error(value) for recoverable failures; retryAfterSeconds is 0..604800.
+ * challenge is required when code is "ChallengeRequired" and forbidden for all other codes.
+ */
 interface PluginErrorV1 {
   code: PluginErrorCodeV1;
   message: WireTextV1;
   retryAfterSeconds?: number;
   remoteCode?: string;
+  challenge?: PluginChallengeV1;
 }
 
 interface PluginStorageSnapshotV1 { values: Record<string, JsonValue>; revision: string }
@@ -977,6 +1072,15 @@ interface FlareHostV1 {
     sha256(value: string): Promise<string>;
     /** MD5 of UTF-8 input (at most 1 MiB). Returns lowercase hex for legacy protocol compatibility. */
     md5(value: string): Promise<string>;
+  };
+  /** API v2 across all scopes: native HTML extraction, list query, and entity decoding (4 MiB HTML / 4 MiB output / 20000 visited nodes).
+   * Invalid requests, selectors, or exceeded limits reject with host.invalid-request (catchable with try/catch without retiring the runtime).
+   */
+  readonly html: {
+    extract(request: HtmlExtractRequestV1): Promise<Record<string, JsonValue>>;
+    query(request: HtmlQueryRequestV1): Promise<Record<string, JsonValue>[]>;
+    /** Decodes HTML entities in a UTF-8 string up to 1 MiB. */
+    decodeEntities(value: string): Promise<string>;
   };
   readonly locale: { current(): Promise<string> };
   error(value: PluginErrorV1): Error;

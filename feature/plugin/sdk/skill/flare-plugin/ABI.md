@@ -123,6 +123,7 @@ The following services live under `capabilities` in the social definition.
 | --- | --- |
 | `flare.datasource.account-capabilities/v1` | `accountCapabilities.negotiate` |
 | `flare.datasource.account-http/v1` | `accountHttp.authenticate` |
+| `flare.datasource.session-challenge/v1` | `sessionChallenge.complete` (API v2) |
 | `flare.datasource.timeline-page/v1` | `timelinePage.load` |
 | `flare.datasource.timeline/v1` | `timeline.page` |
 | `flare.datasource.search/v1` | `search.posts`, `profiles`, `discoverPosts`, `discoverProfiles`, `discoverHashtags` |
@@ -189,7 +190,10 @@ are disposable cache only. Plugins have no lifecycle or migration hooks.
 
 Runtime scopes cover detector attempts, login flows, accounts, guest origins,
 plugin translation and authorized extensions. See [invocation context](references/runtime-http.md#invocation-context).
-Calls in one Runtime serialize. A fatal JavaScript error, timeout, cancellation,
+Calls in one Runtime serialize. However, `manga.pageImage` executes concurrently across
+up to 3 separate isolated worker VMs (`workerLane`), so cross-page or cross-chunk
+state (such as `ptoken` tables) must use `flare.storage` in API v2 rather than
+JavaScript module globals. A fatal JavaScript error, timeout, cancellation,
 out-of-memory condition, or invalid Wire result retires that Runtime.
 
 Social operations exchange JSON Wire v1 DTOs. IDs use
@@ -273,9 +277,11 @@ upgraded; a newer plugin cannot retrofit compatibility into them.
 ## API v2 sessions
 
 Declare `apiVersion: 2` for application response headers (including Set-Cookie),
-manual redirects, versioned credential updates, and WebCookie pending state and
-Cookie metadata. Shared `V1` type names describe both Host API versions. Fields
-marked v2 require a v2 manifest. See [Host API requirements](references/manifest.md#host-api-versions).
+manual redirects, versioned credential updates, WebCookie pending state, normalized
+`User-Agent` and Cookie metadata, native `flare.html` parsing, static `recommendedOrigins` /
+`allowCustomOrigin`, and `flare.datasource.session-challenge/v1` challenge recovery. Shared
+`V1` type names describe both Host API versions. Fields marked v2 require a v2 manifest.
+See [Host API requirements](references/manifest.md#host-api-versions).
 
 API v2 exposes headers only from requests the plugin explicitly makes to approved
 origins. It does not read browser traffic or maintain a Cookie jar. The plugin
@@ -302,9 +308,9 @@ are platform dependent; see [HTTP behavior](references/runtime-http.md#http-requ
 4. Keep `compose/v1` and `replyTo` for legacy publishing. When adopting
    `compose/v2`, declare `supportedTypes` and read `request.reference`. Existing
    accounts keep their negotiated publish access and restrictions. Use
-   `account-capabilities/v1` to negotiate newly supported Quote, `compose/v3`
-   or `account-http` for saved accounts, or have the user sign in again. Follow the
-   [renegotiation contract](references/authentication.md#account-capability-renegotiation).
+   `account-capabilities/v1` to negotiate newly supported Quote, `compose/v3`,
+   `account-http`, or `session-challenge` for saved accounts, or have the user sign
+   in again. Follow the [renegotiation contract](references/authentication.md#account-capability-renegotiation).
 5. Test the upgrade with the saved account, including the applicable login,
    credential refresh, new operations and timeline or publishing behavior.
    Follow the [upgrade rules](references/publishing.md#updates-and-compatibility)
@@ -318,6 +324,7 @@ The frozen `flare` object exposes these methods.
 - `flare.account.http.request` sends authenticated HTTP for [authorized platform actions](references/platform-extensions.md#authorization-and-http) in API v2.
 - `flare.storage.open(namespace).read/write` accesses plugin-owned storage in API v2.
 - `flare.credential.read/replace` accesses the current account credential.
+- `flare.html.extract/query/decodeEntities` parses HTML and decodes entities natively in API v2 across all scopes.
 - `flare.crypto.randomHex/uuid/sha256/md5` provides randomness and hashing.
 - `flare.locale.current` returns the current Host locale.
 - `flare.error` marks a typed error safe to cross the ABI.
@@ -442,9 +449,11 @@ throw flare.error({
 });
 ```
 
-Codes are `AuthenticationRequired`, `NotFound`, `Validation`, `RateLimited`,
+Codes are `AuthenticationRequired`, `ChallengeRequired`, `NotFound`, `Validation`, `RateLimited`,
 `Network`, `Remote`, `Unsupported`, `InvalidResponse`, and `Cancelled`.
-Unmarked exceptions are fatal and retire the Runtime generation.
+`ChallengeRequired` includes `challenge: { url, seedCookies? }` and invokes
+[API v2 session challenge recovery](references/authentication.md#session-challenge-recovery-api-v2)
+when enabled for that account. Unmarked exceptions are fatal and retire the Runtime generation.
 
 ## Manifest text, icon, and Deep Links
 
@@ -487,7 +496,8 @@ check receives it even after runtime eviction. Each pending result replaces the
 whole payload; omission/null clears it. The flow lasts at most 15 minutes and
 is kept in memory, not restored after app restart. Cookie `attributes` are
 optional and duplicate names are preserved; unknown fields remain absent.
-After a verified success, local save retries reuse that result until the flow
+API v2 also passes the normalized WebView `userAgent` on `CookieCheckRequestV1`
+when available (omitted in API v1). After a verified success, local save retries reuse that result until the flow
 expires or closes rather than repeating a remote exchange. V1 Cookie checks
 keep their original selection and completion behavior.
 

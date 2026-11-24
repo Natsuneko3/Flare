@@ -2939,6 +2939,132 @@
       },
       "schemaValid": true,
       "hostValid": false
+    },
+    {
+      "name": "API v2 recommendedOrigins rejects more than 8 items",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "recommendedOrigins": [
+            { "origin": "https://a0.example.org" },
+            { "origin": "https://a1.example.org" },
+            { "origin": "https://a2.example.org" },
+            { "origin": "https://a3.example.org" },
+            { "origin": "https://a4.example.org" },
+            { "origin": "https://a5.example.org" },
+            { "origin": "https://a6.example.org" },
+            { "origin": "https://a7.example.org" },
+            { "origin": "https://a8.example.org" }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 recommendedOrigins rejects duplicate origins",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "recommendedOrigins": [
+            { "origin": "https://exhentai.org", "name": "ExHentai" },
+            { "origin": "https://exhentai.org", "name": "Duplicate" }
+          ]
+        }
+      },
+      "schemaValid": true,
+      "hostValid": false
+    },
+    {
+      "name": "API v1 rejects allowCustomOrigin false with empty recommendedOrigins",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": []
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 session-challenge rejects more than 16 challengeProbes",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": { "complete": {} },
+              "challengeProbes": [
+                { "url": "$accountOrigin/p0", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p1", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p2", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p3", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p4", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p5", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p6", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p7", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p8", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p9", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p10", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p11", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p12", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p13", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p14", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p15", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p16", "cookies": [{ "name": "c" }] }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 session-challenge editor schema rejects unknown operation while Host ignores additively",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {},
+                "extra": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [{ "name": "cf_clearance" }]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": true
+    },
+    {
+      "name": "API v2 session-challenge requires complete operation",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {},
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [{ "name": "cf_clearance" }]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
     }
   ]
 }

@@ -387,8 +387,8 @@ or `{ type: "mangaChapter", key, chapterId }` on `PostV1.target` to jump straigh
 | Method | Input | Return |
 | --- | --- | --- |
 | detail | EntityRequestV1 | MangaV1 |
-| pages | MangaPagesRequestV1 (`{ key, chapterId, entityToken?, chapterToken? }`) | MangaPagesV1 |
-| pageImage (optional) | MangaPageImageRequestV1 (`{ key, chapterId, pageId, pageToken, entityToken?, chapterToken? }`) | MediaV1 (`image` or `gif` only) |
+| pages | MangaPagesRequestV1 (`{ key, chapterId, entityToken?, chapterToken?, offset?, limit?, cursor? }`) | MangaPagesV1 (`{ pages, offset?, totalCount?, nextCursor?, endReached? }`) |
+| pageImage (optional) | MangaPageImageRequestV1 (`{ key, chapterId, pageId, pageToken, entityToken?, chapterToken?, attempt?, reason?, failedUrl? }`) | MediaV1 (`image` or `gif` only) |
 | comments / recommendations (optional) | EntityPageRequestV1 | PageV1<TimelineItemV1> |
 
 Return `chapters` (or up to 32 `chapterGroups`, up to 5,000 chapters total) in
@@ -399,10 +399,14 @@ per group) are mutually exclusive, as are `chapters` and `chapterGroups`. Locked
 (`locked: true`) require either `chapter.url` or `MangaV1.url` so the reader can link to
 the origin site.
 
-Each chapter returns 1..2,000 `MangaPageV1` entries. Every page must provide strictly one
+Each `manga.pages` chunk returns 1..2,000 `MangaPageV1` entries (with `totalCount`
+1..50,000 in range mode, or `nextCursor` + `endReached: false` in cursor mode;
+`endReached` defaults to `true`). Every page must provide strictly one
 of `media` (`type: "image" | "gif"` — video, audio, and ugoira are rejected) or `pageToken`
 (only when `manga.pageImage` is declared and negotiated, for sites that resolve temporary
-per-page image URLs on demand). Only `comments` and `recommendations` may declare paging
+per-page image URLs on demand). Up to 3 `manga.pageImage` calls run concurrently across
+isolated worker VMs (`workerLane`), so store cross-page or cross-chunk state (such as
+`ptoken` tables) in `flare.storage`, never in module globals. Only `comments` and `recommendations` may declare paging
 `directions`. Pair with API v2 `post.mutate` (without `post.detail`) when authenticated
 accounts support bookmarking manga without post detail pages.
 

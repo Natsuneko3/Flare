@@ -61,7 +61,10 @@ API on a build that implements the capability.
 | Plugin feature | Host `apiVersion` |
 | --- | --- |
 | Social adapter using API v1 features | `1` |
-| Application response headers, manual redirects, credential revisions or V2 WebCookie state and metadata | `2` |
+| Application response headers, manual redirects, credential revisions or V2 WebCookie state, `userAgent` and metadata | `2` |
+| Native HTML extraction and entity decoding (`flare.html.{extract,query,decodeEntities}`) | `2` |
+| Static recommended origins and single-site origin restriction (`platform.recommendedOrigins`, `allowCustomOrigin: false`) | `2` |
+| Interactive WebView session challenge recovery (`flare.datasource.session-challenge/v1`) | `2` |
 | QR login (`QrCode`) | `2` |
 | Configurable post detail tabs (`contextTabs` and `contextPage`) | `2` |
 | Plugin storage, text translation or offline settings | `2` |
@@ -141,7 +144,9 @@ version omits the platform; see [update compatibility](publishing.md#updates-and
 | `deepLinks` | `[]` | Up to 64 structured rules; see [Deep Links](recipes.md#deep-links) |
 | `composeDefaults` | Omitted | Required conservative defaults when declaring `compose.publish` |
 | `composeDefaultsV3` | Omitted | Required defaults with visibility when declaring `composeV3.publish` |
-| `guest` | Omitted | `{ "enabled": true, "origin": "https://api.example.org" }`; `enabled` defaults true; optional exact HTTPS `origin` (API v2) enables standalone no-login guest tabs, search, and detail routing |
+| `guest` | Omitted | `{ "enabled": true, "origin": "https://api.example.org" }`; `enabled` defaults true; optional exact HTTPS `origin` (API v2) enables standalone no-login guest tabs, search, and detail routing (must be in `recommendedOrigins` when `allowCustomOrigin: false`) |
+| `recommendedOrigins` | `[]` | API v2: up to 8 unique exact HTTPS origins (`{ "origin", "name"?, "description"? }`), shown in the service selector and matched statically at priority `0` without launching JS |
+| `allowCustomOrigin` | `true` | API v2 when `false`: whether users may enter custom origins beyond `recommendedOrigins`; `false` requires nonempty `recommendedOrigins` and disables custom detector/login origins |
 | `credentialSchemaVersion` | `1` | Integer 1..1000000; changing it requires existing accounts to log in again |
 | `timelineSchemaVersion` | `1` | Integer 1..1000000; changes timeline identity; see [upgrades](publishing.md#updates-and-compatibility) |
 
@@ -185,6 +190,16 @@ Host API v2 `flare.datasource.account-http/v1` requires `authenticate` and
 capabilities cannot declare authentication origins. It is account-only and must
 be negotiated at login; it is not a displayable entry. See
 [account HTTP providers](platform-extensions.md#supplying-authentication-from-a-social-plugin).
+
+Host API v2 `flare.datasource.session-challenge/v1` requires `complete` and
+`challengeProbes`: `1..16` Cookie probes on `$accountOrigin` or
+`permissions.authOrigins` (`1..32` unique Cookie names per probe). Placing
+`challengeProbes` on any other capability is invalid, and `httpOrigins` alone
+does not grant challenge probe origins. All `challengeProbes` entries are
+audited as `Cookie` permissions during installation and upgrades, and the
+capability is never auto-granted to existing accounts on upgrade; pair it with
+`flare.datasource.account-capabilities/v1` so saved accounts can negotiate it
+without re-login. See [session challenge recovery](authentication.md#session-challenge-recovery-api-v2).
 
 ### Timelines and profile tabs
 
