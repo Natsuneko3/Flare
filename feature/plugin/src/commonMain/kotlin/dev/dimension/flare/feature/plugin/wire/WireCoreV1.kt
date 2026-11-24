@@ -139,6 +139,9 @@ public enum class PostDetailTypeV1 {
     @SerialName("gallery")
     Gallery,
 
+    @SerialName("manga")
+    Manga,
+
     @SerialName("link")
     Link,
 

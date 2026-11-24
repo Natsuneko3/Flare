@@ -518,4 +518,14 @@
     <string name="plugin_widget_trend_flat">平穩趨勢</string>
     <string name="plugin_widget_trend_fluctuating">波動趨勢</string>
     <string name="plugin_widget_trend_range">最低 %1$s，最高 %2$s</string>
+    <string name="manga_boundary_previous_chapter">上一話：%1$s</string>
+    <string name="manga_boundary_next_chapter">下一話：%1$s</string>
+    <string name="manga_boundary_read_previous">閱讀上一話</string>
+    <string name="manga_boundary_read_next">閱讀下一話</string>
+    <string name="manga_locked_chapter_title">章節已鎖定</string>
+    <string name="manga_locked_chapter_message">%1$s 已鎖定，是否在瀏覽器中打開原網站查看？</string>
+    <string name="manga_open_in_browser">在瀏覽器中打開</string>
+    <string name="manga_page_retry">重試本頁</string>
+    <string name="session_challenge_complete_verification">完成驗證</string>
+    <string name="session_challenge_required_message">需要完成驗證才能繼續。</string>
 </resources>

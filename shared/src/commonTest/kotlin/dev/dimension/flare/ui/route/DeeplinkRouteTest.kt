@@ -6,10 +6,14 @@ import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.datasource.TimelinePageDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.notSupported
+import dev.dimension.flare.data.model.tab.TimelineSpec
+import dev.dimension.flare.data.model.tab.remoteLoaderFactory
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.asType
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +24,32 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class DeeplinkRouteTest {
+    @Test
+    fun roundTripsGuestPluginDeeplinkAndPagingKeys() {
+        val accountType = AccountType.GuestPlugin(platformId = "manga.example", host = "api.manga.example")
+        val route = DeeplinkRoute.Article(accountType = accountType, articleKey = MicroBlogKey("1", "api.manga.example"))
+        assertEquals(route, DeeplinkRoute.parse(route.toUri()))
+        assertEquals("guest_plugin_manga.example_api.manga.example", accountType.toString())
+        assertEquals(
+            "/guest-plugin@manga.example@api.manga.example/status/1@api.manga.example",
+            DeeplinkRoute.Status.Detail(MicroBlogKey("1", "api.manga.example"), accountType).toWebPath(),
+        )
+        val spec =
+            TimelineSpec(
+                id = "plugin:test:manga.example:schema1:guest-timeline:latest",
+                title = UiText.Raw("Latest"),
+                icon = UiIcon.Home.asType(),
+                serializer = TimelineSpec.GuestPluginResourceData.serializer(),
+                targetId = { "${it.platformId}:${it.host}:${it.resourceId}" },
+                loaderFactory = remoteLoaderFactory { notSupported() },
+            )
+        val data = TimelineSpec.GuestPluginResourceData("manga.example", "api.manga.example", "latest")
+        val source = spec.source(data)
+        assertEquals("manga.example", source.ownerPlatformId)
+        assertNull(source.ownerAccountKey)
+        assertEquals(data, spec.decode(source.data))
+    }
+
     @Test
     fun temporaryTimelinePageRoundTripsWithItsBoundAccountAndParameters() {
         val route =
@@ -122,7 +152,7 @@ class DeeplinkRouteTest {
                 accountType = AccountType.Specific(MicroBlogKey("23", "m.weibo.cn")),
             )
         assertEquals("/23@m.weibo.cn/status/5357831171867297@m.weibo.cn", route.toWebPath())
-        assertEquals(56, dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION)
+        assertEquals(57, dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION)
     }
 
     @Test
@@ -135,6 +165,36 @@ class DeeplinkRouteTest {
         val uri = route.toUri()
         val parsed = DeeplinkRoute.parse(uri)
         assertEquals(route, parsed)
+    }
+
+    @Test
+    fun testMangaDetailAndReaderRoundTrip() {
+        val guestAccountType = AccountType.GuestPlugin(platformId = "manga.example", host = "api.manga.example")
+        listOf(activeAccountType, guestAccountType).forEach { accountType ->
+            val detail =
+                DeeplinkRoute.Manga.Detail(
+                    mangaKey = MicroBlogKey("manga-1", "api.manga.example"),
+                    accountType = accountType,
+                )
+            assertEquals(detail, DeeplinkRoute.parse(detail.toUri()))
+
+            val reader =
+                DeeplinkRoute.Manga.Reader(
+                    mangaKey = MicroBlogKey("manga-1", "api.manga.example"),
+                    chapterId = "ch-2",
+                    initialPage = 5,
+                    accountType = accountType,
+                )
+            assertEquals(reader, DeeplinkRoute.parse(reader.toUri()))
+
+            val readerDefaultPage =
+                DeeplinkRoute.Manga.Reader(
+                    mangaKey = MicroBlogKey("manga-1", "api.manga.example"),
+                    chapterId = "ch-2",
+                    accountType = accountType,
+                )
+            assertEquals(readerDefaultPage, DeeplinkRoute.parse(readerDefaultPage.toUri()))
+        }
     }
 
     @Test

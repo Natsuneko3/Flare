@@ -549,7 +549,12 @@ class TimelineGapTest : RobolectricTest() {
     fun legacyJoinedSingleSourceClosesWithoutFetchingOlderHistory() =
         runTest {
             val accounts =
-                listOf(AccountType.Guest, AccountType.GuestHost("guest:host"), AccountType.Specific(MicroBlogKey("a:@,b", "host")))
+                listOf(
+                    AccountType.Guest,
+                    AccountType.GuestHost("guest:host"),
+                    AccountType.GuestPlugin("manga.example", "guest:host"),
+                    AccountType.Specific(MicroBlogKey("a:@,b", "host")),
+                )
             for ((account, feed) in accounts.flatMap { listOf(it to false, it to true) }) {
                 for (alreadyFilled in listOf(false, true)) {
                     fun item(id: Int): UiTimelineV2 =

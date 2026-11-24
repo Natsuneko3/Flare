@@ -574,6 +574,79 @@ class PluginInstallerTest {
         }
 
     @Test
+    fun sessionChallengeProbesEmitCookiePermissionsAndTriggerAddedPermissionOnUpgrade() =
+        runBlocking<Unit> {
+            val baseManifest =
+                TestFppFactory.validManifest.replace("\"apiVersion\": 1", "\"apiVersion\": 2")
+            TestFppFactory.write(input, TestFppFactory.validEntries(manifest = baseManifest))
+            installer.inspect(input).also { installer.commit(it, confirmed = true, activate = stateStore::install) }
+
+            val challengeManifest =
+                baseManifest
+                    .replace(
+                        "\"name\": \"Test plugin\",",
+                        "\"name\": \"Test plugin\", \"permissions\": { \"authOrigins\": [\"https://challenge.example\"] },",
+                    ).replace(
+                        "\"capabilities\": {",
+                        """
+                        "capabilities": {
+                          "flare.datasource.session-challenge/v1": {
+                            "operations": { "complete": {} },
+                            "challengeProbes": [
+                              {
+                                "url": "${'$'}accountOrigin/gallery",
+                                "cookies": [
+                                  { "name": "cf_clearance", "required": true },
+                                  { "name": "ipb_session_id", "required": false }
+                                ]
+                              },
+                              {
+                                "url": "https://challenge.example/verify",
+                                "cookies": [{ "name": "igneous", "required": true }]
+                              }
+                            ]
+                          },
+                        """.trimIndent(),
+                    )
+            val challengeScript =
+                TestFppFactory.validScript.replace(
+                    "capabilities: {",
+                    "capabilities: { sessionChallenge: { async complete() { return { type: 'completed' }; } },",
+                )
+            TestFppFactory.write(input, TestFppFactory.validEntries(manifest = challengeManifest, script = challengeScript))
+            val preview = installer.inspect(input)
+            val cookiePermissions = preview.permissions.filter { it.type == PluginPermissionType.Cookie }.toSet()
+            assertEquals(
+                setOf(
+                    dev.dimension.flare.data.model.PluginPermission(
+                        type = PluginPermissionType.Cookie,
+                        origin = "${'$'}accountOrigin/gallery",
+                        cookieName = "cf_clearance",
+                    ),
+                    dev.dimension.flare.data.model.PluginPermission(
+                        type = PluginPermissionType.Cookie,
+                        origin = "${'$'}accountOrigin/gallery",
+                        cookieName = "ipb_session_id",
+                    ),
+                    dev.dimension.flare.data.model.PluginPermission(
+                        type = PluginPermissionType.Cookie,
+                        origin = "https://challenge.example/verify",
+                        cookieName = "igneous",
+                    ),
+                ),
+                cookiePermissions,
+            )
+            val addedCookieWarnings =
+                preview.warnings
+                    .filter { it.type == PluginInstallWarningTypeV1.AddedPermission && it.permission?.type == PluginPermissionType.Cookie }
+                    .mapNotNull { it.permission }
+                    .toSet()
+            assertEquals(cookiePermissions, addedCookieWarnings)
+            assertFailsWith<IllegalArgumentException> { installer.commit(preview, confirmed = false, activate = stateStore::install) }
+            installer.discard(preview)
+        }
+
+    @Test
     fun updateCannotChangePersistedPlatformIdentity() =
         runBlocking<Unit> {
             TestFppFactory.write(input)

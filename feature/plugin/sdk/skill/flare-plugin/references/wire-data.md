@@ -69,7 +69,7 @@ platform-reported badges. Omission leaves a cached badge unspecified and
 explicit `false` clears it. A supplied `url` opens the website when the native
 profile capability is unavailable.
 
-Omitting `detailType` means `post`. An unfamiliar string such as `manga` or
+Omitting `detailType` means `post`. An unfamiliar string such as `audiobook` or
 `novel` keeps the preview but disables post, cover, and grid navigation; it does
 not fall back to `post` or `url`. Author and known action clicks remain independent.
 Null and non-string detail types remain invalid.
@@ -184,7 +184,8 @@ values; their content stays shared. Feed identity uses its URL, so repeated feed
 URLs represent the same feed entry. Gap rows, account identity, media proxies,
 translation state, render hashes and callbacks remain Host-owned.
 
-Navigation targets are `{ type: "post" | "profile" | "article" | "gallery", key }`
+Navigation targets are `{ type: "post" | "profile" | "article" | "gallery" | "manga", key }`,
+`{ type: "mangaChapter", key, chapterId }` (direct chapter entry into the manga reader),
 or `{ type: "link", url }`. API v2 also accepts
 `{ type: "timelinePage", pageId, title: WireTextV1, parameters?: Record<string, string> }`
 on posts (including quote posts), feeds and messages. A Post's optional target
@@ -319,6 +320,8 @@ credentials in `flare.credential`, and do not encode URLs that bypass origin che
 | DirectMessageV1 | key, roomKey, sender, createdAt, content, optional body. fromCurrentAccount defaults false. |
 | ArticleV1 | key, title, content, optional author/attribution/createdAt/url/coverUrl/blocks |
 | GalleryV1 | key, title, createdAt, url, nonempty images; all MediaV1 types are supported; orientation defaults vertical |
+| MangaV1 | key, title, optional image-only cover, author/authors/artists, status, content, url, updatedAt, readingDirection, mutually exclusive tags/tagGroups, mutually exclusive ascending chapters/chapterGroups |
+| MangaPagesV1 | 1..2,000 MangaPageV1 items; optional offset/totalCount (1..50,000)/nextCursor/endReached (defaults true); each page supplies strictly one of image/gif media or pageToken (when manga.pageImage is negotiated) |
 | TimelineDescriptorV1 | id, title as WireText, icon; display defaults List; optional string parameters |
 | TimelineSectionV1 | id, title as WireText, timelines as PageV1 of descriptors |
 
@@ -354,3 +357,31 @@ File headers follow the same rules as media headers.
 For incoming direct messages, set `body` to `{ type: "media", media }`,
 `{ type: "post", post }` or `{ type: "deleted" }`. Keep the required
 `content` as a readable text fallback. The send request carries text.
+
+### Manga pagination and parallel image resolution
+
+`manga.pages(request)` receives optional `offset` (`>= 0`), `limit` (`1..2,000`),
+and `cursor` (`1..4,096` non-blank characters); `offset` and `cursor` are mutually
+exclusive. `MangaPagesV1` returns `1..2,000` `pages` plus optional `offset`,
+`totalCount` (`1..50,000`), `nextCursor`, and `endReached` (defaults to `true`;
+`endReached: false` requires `nextCursor`).
+
+- **Range mode (`totalCount` present):** Return `offset: 0` (or omit) on the
+  initial response. For requests with `offset > 0`, return `totalCount` matching
+  the initial `totalCount` (drift fails validation) and a natural chunk whose
+  `offset` covers the requested `offset` (`offset <= requestedOffset < offset + pages.length`)
+  without exceeding `totalCount`. Overlapping slices must preserve identical
+  `page.id` values at each index and never duplicate IDs elsewhere in the chapter.
+- **Cursor mode (`request.cursor` set or `totalCount` omitted):** Cursor requests
+  cannot return `totalCount`. Subsequent chunks must not duplicate page IDs, and
+  if `offset` is returned it must equal the number of already-loaded pages.
+
+`manga.pageImage(request)` receives optional retry context: `attempt` (`0..100`),
+`reason` (`"initial" | "resolveRetry" | "imageLoadFailed"`), and `failedUrl`
+(an HTTPS URL provided only when `reason` is `"imageLoadFailed"`).
+
+> **Concurrency warning:** The Host runs up to 3 `manga.pageImage` invocations in
+> parallel across separate isolated worker VMs (`workerLane`). Cross-page or
+> cross-chunk state (such as `ptoken` lookup tables populated during `manga.pages`)
+> MUST be persisted in `flare.storage` (`apiVersion >= 2`), never in JavaScript
+> module globals.

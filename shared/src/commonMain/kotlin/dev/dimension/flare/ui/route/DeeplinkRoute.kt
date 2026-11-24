@@ -125,6 +125,23 @@ public sealed class DeeplinkRoute {
     }
 
     @Serializable
+    public sealed class Manga : DeeplinkRoute() {
+        @Serializable
+        public data class Detail(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : Manga()
+
+        @Serializable
+        public data class Reader(
+            val mangaKey: MicroBlogKey,
+            val chapterId: String,
+            val initialPage: Int? = null,
+            val accountType: AccountType,
+        ) : Manga()
+    }
+
+    @Serializable
     public sealed class Rss : DeeplinkRoute() {
         @Serializable
         public data class Detail(

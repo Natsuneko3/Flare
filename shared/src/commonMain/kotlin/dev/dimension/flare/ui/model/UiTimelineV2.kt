@@ -70,6 +70,7 @@ public sealed class UiTimelineV2 {
             when (val account = accountType) {
                 AccountType.Guest -> listOf("guest")
                 is AccountType.GuestHost -> listOf("guest_host", account.host)
+                is AccountType.GuestPlugin -> listOf("guest_plugin", account.platformId, account.host)
                 is AccountType.Specific -> listOf("specific", account.accountKey.id, account.accountKey.host)
             }
         val identity = notificationKey ?: statusKey

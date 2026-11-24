@@ -15,8 +15,10 @@ import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.navigation3.ListDetailSceneStrategy
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -86,6 +88,11 @@ import dev.dimension.flare.ui.screen.home.TimelineScreen
 import dev.dimension.flare.ui.screen.home.UnblockUserDialog
 import dev.dimension.flare.ui.screen.home.UnmuteUserDialog
 import dev.dimension.flare.ui.screen.list.AllListScreen
+import dev.dimension.flare.ui.screen.manga.DesktopMangaReaderWindowCoordinator
+import dev.dimension.flare.ui.screen.manga.LocalDesktopMangaReaderWindowCoordinator
+import dev.dimension.flare.ui.screen.manga.MangaCommentsScreen
+import dev.dimension.flare.ui.screen.manga.MangaDetailScreen
+import dev.dimension.flare.ui.screen.manga.MangaReaderScreen
 import dev.dimension.flare.ui.screen.media.RawMediaScreen
 import dev.dimension.flare.ui.screen.media.StatusMediaScreen
 import dev.dimension.flare.ui.screen.misskey.AntennasListScreen
@@ -121,6 +128,18 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.launch
 import java.io.File
 
+internal fun dispatchDesktopRouterNavigation(
+    route: Route,
+    coordinator: DesktopMangaReaderWindowCoordinator?,
+    fallback: (Route) -> Unit,
+) {
+    if (route is Route.Manga.Reader && coordinator != null) {
+        coordinator.open(route)
+    } else {
+        fallback(route)
+    }
+}
+
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 internal fun Router(
@@ -133,11 +152,35 @@ internal fun Router(
 ) {
     val coroutineScope = rememberCoroutineScope()
     val pluginOAuthCallbacks: PluginOAuthCallbackCoordinatorV1 by koinInject()
+    val mangaReaderCoordinator = LocalDesktopMangaReaderWindowCoordinator.current
+    val currentNavigate by rememberUpdatedState(navigate)
+    val currentReplace by rememberUpdatedState(replace)
+    val currentMangaReaderCoordinator by rememberUpdatedState(mangaReaderCoordinator)
+    val effectiveNavigate: (Route) -> Unit =
+        remember {
+            { route ->
+                dispatchDesktopRouterNavigation(
+                    route = route,
+                    coordinator = currentMangaReaderCoordinator,
+                    fallback = currentNavigate,
+                )
+            }
+        }
+    val effectiveReplace: (Route) -> Unit =
+        remember {
+            { route ->
+                dispatchDesktopRouterNavigation(
+                    route = route,
+                    coordinator = currentMangaReaderCoordinator,
+                    fallback = currentReplace,
+                )
+            }
+        }
     val listDetailStrategy = rememberListDetailSceneStrategy<Route>()
 
     val isBigScreen = isBigScreen()
     val navigateToAgentChat: (String?) -> Unit = { initialMessage ->
-        navigate(
+        effectiveNavigate(
             Route.AgentChat(
                 conversationId = "generic-chat:${kotlin.time.Clock.System.now().toEpochMilliseconds()}",
                 initialMessage = initialMessage,
@@ -154,7 +197,7 @@ internal fun Router(
             } else {
                 val route = Route.parse(it)
                 if (route != null) {
-                    navigate(route)
+                    effectiveNavigate(route)
                 }
                 route != null
             }
@@ -261,7 +304,7 @@ internal fun Router(
                     DeepLinkAccountPicker(
                         originalUrl = args.originalUrl,
                         data = args.data,
-                        onNavigate = navigate,
+                        onNavigate = effectiveNavigate,
                         onDismissRequest = onBack,
                     )
                 }
@@ -269,7 +312,7 @@ internal fun Router(
                     ArticleScreen(
                         accountType = args.accountType,
                         articleKey = args.articleKey,
-                        navigate = navigate,
+                        navigate = effectiveNavigate,
                     )
                 }
                 entry<Route.RssDetail> { args ->
@@ -359,7 +402,7 @@ internal fun Router(
                         fixvxShareUrl = args.fixvxShareUrl,
                         onBack = onBack,
                         onCrossPost = { imageFile ->
-                            replace(
+                            effectiveReplace(
                                 Route.Compose.CrossPost(
                                     shareUrl = args.shareUrl,
                                     imagePath = imageFile.absolutePath,
@@ -376,7 +419,7 @@ internal fun Router(
                         accountType = args.accountType,
                         statusKey = args.statusKey,
                         onBack = onBack,
-                        navigate = navigate,
+                        navigate = effectiveNavigate,
                     )
                 }
 
@@ -387,7 +430,7 @@ internal fun Router(
                         accountType = args.accountType,
                         userKey = args.userKey,
                         onBack = onBack,
-                        navigate = navigate,
+                        navigate = effectiveNavigate,
                     )
                 }
 
@@ -398,7 +441,7 @@ internal fun Router(
                         onDismissRequest = onBack,
                         id = null,
                         onImport = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.ImportOPML(it),
                             )
                         },
@@ -412,7 +455,7 @@ internal fun Router(
                         onDismissRequest = onBack,
                         id = args.id,
                         onImport = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.ImportOPML(it),
                             )
                         },
@@ -455,7 +498,7 @@ internal fun Router(
                             onBack = onBack,
                             accountType = null,
                             onOpenDraftBox = {
-                                navigate(Route.DraftBox)
+                                effectiveNavigate(Route.DraftBox)
                             },
                         )
                     }
@@ -470,7 +513,7 @@ internal fun Router(
                             accountType = null,
                             draftGroupId = args.draftGroupId,
                             onOpenDraftBox = {
-                                navigate(Route.DraftBox)
+                                effectiveNavigate(Route.DraftBox)
                             },
                         )
                     }
@@ -485,7 +528,7 @@ internal fun Router(
                             status = Quote(args.statusKey),
                             accountType = Specific(accountKey = args.accountKey),
                             onOpenDraftBox = {
-                                navigate(Route.DraftBox)
+                                effectiveNavigate(Route.DraftBox)
                             },
                         )
                     }
@@ -500,7 +543,7 @@ internal fun Router(
                             status = Reply(args.statusKey),
                             accountType = Specific(accountKey = args.accountKey),
                             onOpenDraftBox = {
-                                navigate(Route.DraftBox)
+                                effectiveNavigate(Route.DraftBox)
                             },
                         )
                     }
@@ -515,7 +558,7 @@ internal fun Router(
                             accountType = Specific(accountKey = args.accountKey),
                             status = VVOComment(args.replyTo, args.rootId),
                             onOpenDraftBox = {
-                                navigate(Route.DraftBox)
+                                effectiveNavigate(Route.DraftBox)
                             },
                         )
                     }
@@ -527,7 +570,7 @@ internal fun Router(
                         onAddList = {
                         },
                         toList = {
-                            navigate(
+                            effectiveNavigate(
                                 Timeline(
                                     CommonTimelineSpecs.list
                                         .candidate(
@@ -553,7 +596,7 @@ internal fun Router(
                     FeedListScreen(
                         accountType = args.accountType,
                         toFeed = {
-                            navigate(
+                            effectiveNavigate(
                                 Timeline(
                                     BlueskyPlatformSpec.feedTimelineSpec
                                         .candidate(
@@ -574,7 +617,7 @@ internal fun Router(
                 entry<Route.Discover> { args ->
                     DiscoverScreen(
                         toSearch = { accountType, keyword ->
-                            navigate(
+                            effectiveNavigate(
                                 Search(
                                     accountType = accountType,
                                     keyword = keyword,
@@ -598,7 +641,7 @@ internal fun Router(
                         accountType = args.accountType,
                         userKey = null,
                         onMediaClick = { statusKey, index, preview ->
-                            navigate(
+                            effectiveNavigate(
                                 Route.StatusMedia(
                                     accountType = args.accountType,
                                     statusKey = statusKey,
@@ -608,7 +651,7 @@ internal fun Router(
                             )
                         },
                         onRawMediaClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.RawImage(
                                     rawImage = it.url,
                                     customHeaders = it.customHeaders,
@@ -617,7 +660,7 @@ internal fun Router(
                             )
                         },
                         onProfileInsightClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.ProfileInsight(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -636,7 +679,7 @@ internal fun Router(
                         accountType = args.accountType,
                         userKey = args.userKey,
                         onFollowListClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.Following(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -644,7 +687,7 @@ internal fun Router(
                             )
                         },
                         onFansListClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.Fans(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -652,7 +695,7 @@ internal fun Router(
                             )
                         },
                         onMediaClick = { statusKey, index, preview ->
-                            navigate(
+                            effectiveNavigate(
                                 Route.StatusMedia(
                                     accountType = args.accountType,
                                     statusKey = statusKey,
@@ -662,7 +705,7 @@ internal fun Router(
                             )
                         },
                         onRawMediaClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.RawImage(
                                     rawImage = it.url,
                                     customHeaders = it.customHeaders,
@@ -671,7 +714,7 @@ internal fun Router(
                             )
                         },
                         onProfileInsightClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.ProfileInsight(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -685,7 +728,7 @@ internal fun Router(
                     ServiceSelectScreen(
                         onBack = onBack,
                         onWebViewLogin = { request, callback ->
-                            navigate(
+                            effectiveNavigate(
                                 Route.WebViewLogin(
                                     request = request,
                                     callback = callback,
@@ -700,7 +743,7 @@ internal fun Router(
                         target = args.target,
                         onBack = onBack,
                         onWebViewLogin = { request, callback ->
-                            navigate(
+                            effectiveNavigate(
                                 Route.WebViewLogin(
                                     request = request,
                                     callback = callback,
@@ -713,34 +756,34 @@ internal fun Router(
                 entry<Route.Settings> {
                     SettingsScreen(
                         toPlugins = {
-                            navigate(Route.PluginManagement)
+                            effectiveNavigate(Route.PluginManagement)
                         },
                         toLogin = {
-                            navigate(Route.ServiceSelect)
+                            effectiveNavigate(Route.ServiceSelect)
                         },
                         toRelogin = {
-                            navigate(Route.Relogin(it))
+                            effectiveNavigate(Route.Relogin(it))
                         },
                         toDraftBox = {
-                            navigate(Route.DraftBox)
+                            effectiveNavigate(Route.DraftBox)
                         },
                         toLocalCache = {
-                            navigate(Route.LocalCache)
+                            effectiveNavigate(Route.LocalCache)
                         },
                         toAgentHistory = {
-                            navigate(Route.AgentHistory)
+                            effectiveNavigate(Route.AgentHistory)
                         },
                         toAppLog = {
-                            navigate(Route.AppLogging)
+                            effectiveNavigate(Route.AppLogging)
                         },
                         toRSSManagement = {
-                            navigate(Route.RssList)
+                            effectiveNavigate(Route.RssList)
                         },
                         toNostrRelays = {
-                            navigate(Route.NostrRelays(it))
+                            effectiveNavigate(Route.NostrRelays(it))
                         },
                         toPostActionLayout = {
-                            navigate(Route.PostActionLayout)
+                            effectiveNavigate(Route.PostActionLayout)
                         },
                     )
                 }
@@ -749,7 +792,7 @@ internal fun Router(
                     DesktopPluginManagementScreen(
                         onBack = onBack,
                         onCreateWithAI = { navigateToAgentChat(null) },
-                        onOpenMarketplace = { navigate(Route.PluginMarketplace) },
+                        onOpenMarketplace = { effectiveNavigate(Route.PluginMarketplace) },
                     )
                 }
                 entry<Route.PluginMarketplace> {
@@ -763,7 +806,7 @@ internal fun Router(
                 entry<Route.DraftBox> {
                     DraftBoxScreen(
                         onEdit = { groupId ->
-                            navigate(Route.Compose.Draft(draftGroupId = groupId))
+                            effectiveNavigate(Route.Compose.Draft(draftGroupId = groupId))
                         },
                     )
                 }
@@ -784,7 +827,7 @@ internal fun Router(
                     HomeTimelineScreen(
                         args.accountType,
                         onAddTab = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.TabSetting,
                             )
                         },
@@ -795,7 +838,7 @@ internal fun Router(
                     DeckTimelineScreen(
                         id = args.id,
                         toTabSettings = {
-                            navigate(Route.TabSetting)
+                            effectiveNavigate(Route.TabSetting)
                         },
                     )
                 }
@@ -803,12 +846,12 @@ internal fun Router(
                 entry<Route.TabSetting> {
                     TabSettingScreen(
                         toAddRssSource = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.CreateRssSource,
                             )
                         },
                         toGroupConfig = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.TabGroupConfig(it?.id),
                             )
                         },
@@ -819,7 +862,7 @@ internal fun Router(
                     GroupConfigScreen(
                         groupId = args.groupId,
                         toAddRssSource = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.CreateRssSource,
                             )
                         },
@@ -837,13 +880,38 @@ internal fun Router(
                     GalleryDetailScreen(
                         statusKey = args.statusKey,
                         accountType = args.accountType,
-                        navigate = navigate,
+                        navigate = effectiveNavigate,
                     )
                 }
 
                 entry<Route.Gallery.Comments> { args ->
                     GalleryCommentsScreen(
                         statusKey = args.statusKey,
+                        accountType = args.accountType,
+                    )
+                }
+
+                entry<Route.Manga.Detail> { args ->
+                    MangaDetailScreen(
+                        mangaKey = args.mangaKey,
+                        accountType = args.accountType,
+                        navigate = effectiveNavigate,
+                    )
+                }
+
+                entry<Route.Manga.Reader> { args ->
+                    MangaReaderScreen(
+                        mangaKey = args.mangaKey,
+                        chapterId = args.chapterId,
+                        initialPage = args.initialPage,
+                        accountType = args.accountType,
+                        onBack = onBack,
+                    )
+                }
+
+                entry<Route.Manga.Comments> { args ->
+                    MangaCommentsScreen(
+                        mangaKey = args.mangaKey,
                         accountType = args.accountType,
                     )
                 }
@@ -855,7 +923,7 @@ internal fun Router(
                         accountType = args.accountType,
                         onBack = onBack,
                         onFollowListClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.Following(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -863,7 +931,7 @@ internal fun Router(
                             )
                         },
                         onFansListClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.Fans(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -871,7 +939,7 @@ internal fun Router(
                             )
                         },
                         onMediaClick = { statusKey, index, preview ->
-                            navigate(
+                            effectiveNavigate(
                                 Route.StatusMedia(
                                     accountType = args.accountType,
                                     statusKey = statusKey,
@@ -881,7 +949,7 @@ internal fun Router(
                             )
                         },
                         onRawMediaClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.RawImage(
                                     rawImage = it.url,
                                     customHeaders = it.customHeaders,
@@ -890,7 +958,7 @@ internal fun Router(
                             )
                         },
                         onProfileInsightClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.ProfileInsight(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -916,19 +984,19 @@ internal fun Router(
                 ) { args ->
                     RssListScreen(
                         toItem = {
-                            navigate(
+                            effectiveNavigate(
                                 RssTimeline(it),
                             )
                         },
                         onEdit = {
-                            navigate(
+                            effectiveNavigate(
                                 EditRssSource(
                                     id = it,
                                 ),
                             )
                         },
                         onAdd = {
-                            navigate(Route.CreateRssSource)
+                            effectiveNavigate(Route.CreateRssSource)
                         },
                     )
                 }
@@ -978,7 +1046,7 @@ internal fun Router(
                     DmListScreen(
                         accountType = args.accountType,
                         onItemClicked = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.DmConversation(
                                     accountType = args.accountType,
                                     roomKey = it,
@@ -999,7 +1067,7 @@ internal fun Router(
                         roomKey = args.roomKey,
                         onBack = onBack,
                         toProfile = {
-                            navigate(
+                            effectiveNavigate(
                                 Profile(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -1020,7 +1088,7 @@ internal fun Router(
                         userKey = args.userKey,
                         onBack = onBack,
                         toProfile = {
-                            navigate(
+                            effectiveNavigate(
                                 Profile(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -1034,7 +1102,7 @@ internal fun Router(
                     AntennasListScreen(
                         accountType = args.accountType,
                         toTimeline = {
-                            navigate(
+                            effectiveNavigate(
                                 Timeline(
                                     MisskeyPlatformSpec.antennaTimelineSpec
                                         .candidate(
@@ -1055,7 +1123,7 @@ internal fun Router(
                 entry<Route.LocalCache> {
                     LocalCacheScreen(
                         toAskAi = { query, target ->
-                            navigate(
+                            effectiveNavigate(
                                 Route.LocalHistoryAgent(
                                     conversationId = "local-history:${kotlin.time.Clock.System.now().toEpochMilliseconds()}",
                                     query = query,
@@ -1069,10 +1137,10 @@ internal fun Router(
                 entry<Route.AgentHistory> {
                     AgentHistoryScreen(
                         onConversationClick = { conversationId ->
-                            navigate(Route.AgentChat(conversationId = conversationId))
+                            effectiveNavigate(Route.AgentChat(conversationId = conversationId))
                         },
                         onNewConversationClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.AgentChat(
                                     conversationId = "generic-chat:${kotlin.time.Clock.System.now().toEpochMilliseconds()}",
                                 ),
@@ -1086,7 +1154,7 @@ internal fun Router(
                         conversationId = args.conversationId,
                         initialMessage = args.initialMessage,
                         onBack = onBack,
-                        navigate = navigate,
+                        navigate = effectiveNavigate,
                     )
                 }
 
@@ -1096,7 +1164,7 @@ internal fun Router(
                         query = args.query,
                         target = args.target,
                         onBack = onBack,
-                        navigate = navigate,
+                        navigate = effectiveNavigate,
                     )
                 }
 
@@ -1111,7 +1179,7 @@ internal fun Router(
                         accountType = args.accountType,
                         userKey = args.userKey,
                         onUserClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Profile(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -1126,7 +1194,7 @@ internal fun Router(
                         accountType = args.accountType,
                         userKey = args.userKey,
                         onUserClick = {
-                            navigate(
+                            effectiveNavigate(
                                 Profile(
                                     accountType = args.accountType,
                                     userKey = it,
@@ -1206,7 +1274,7 @@ internal fun Router(
                     ChannelListScreen(
                         accountType = args.accountType,
                         toTimeline = {
-                            navigate(
+                            effectiveNavigate(
                                 Route.MisskeyChannelTimeline(
                                     args.accountType,
                                     it.id,

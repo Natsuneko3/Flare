@@ -2,6 +2,7 @@ package dev.dimension.flare.feature.plugin.manifest
 
 import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
+import dev.dimension.flare.feature.plugin.installer.validatePluginCatalogs
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTextArgument
@@ -443,6 +444,342 @@ class PluginManifestV1Test {
         assertEquals("欢迎，Flare：2", bundle.resolve(text, "zh-Hans-CN"))
         assertEquals("Welcome, Flare: 2", bundle.resolve(text, "fr-FR"))
         assertIs<UiText.ExternalRef>(PluginTextV1.Localized("welcome", "Hello").toUiText(bundle.pluginId))
+    }
+
+    @Test
+    fun guestOriginRequiresApiV2AndExactHttpsOrigin() {
+        assertFalse(validateManifest(apiVersion = 1, guest = """{"enabled":true,"origin":"https://manga.example"}""").isValid)
+        assertFalse(validateManifest(apiVersion = 2, guest = """{"enabled":true,"origin":"https://manga.example/path"}""").isValid)
+        assertFalse(validateManifest(apiVersion = 2, guest = """{"enabled":false,"origin":"https://manga.example"}""").isValid)
+        assertTrue(validateManifest(apiVersion = 2, guest = """{"enabled":false,"origin":null}""").isValid)
+        assertTrue(
+            validateManifest(
+                apiVersion = 2,
+                loginMethods = "[]",
+                guest = """{"enabled":true,"origin":"https://manga.example"}""",
+            ).isValid,
+        )
+        assertEquals("https://manga.example", GuestManifestV1(enabled = true, origin = "https://manga.example").origin)
+    }
+
+    @Test
+    fun postMutateOnlyAllowsForwardCompatibleUnknownOperationsOnApiV2() {
+        val base = PluginJsonV1.decodeFromString<PluginManifestV1>(VALID_MANIFEST)
+        val postWithFutureOp =
+            CapabilityManifestV1(
+                operations =
+                    mapOf(
+                        "mutate" to CapabilityOperationManifestV1(),
+                        "futureReactionSummary" to CapabilityOperationManifestV1(),
+                    ),
+            )
+        val v2MutatePlusUnknown =
+            base.copy(
+                apiVersion = 2,
+                platform =
+                    base.socialPlatform.copy(
+                        capabilities = base.socialPlatform.capabilities + (PluginAbiV1.Capabilities.POST to postWithFutureOp),
+                    ),
+            )
+        assertTrue(v2MutatePlusUnknown.validate().isValid)
+
+        val v1MutatePlusUnknown = v2MutatePlusUnknown.copy(apiVersion = 1)
+        assertTrue(v1MutatePlusUnknown.validate().errors.any { it.code == "capability.incomplete" })
+
+        val v2MutatePlusKnownContextWithoutDetail =
+            base.copy(
+                apiVersion = 2,
+                platform =
+                    base.socialPlatform.copy(
+                        capabilities =
+                            base.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.POST to
+                                        CapabilityManifestV1(
+                                            operations =
+                                                mapOf(
+                                                    "mutate" to CapabilityOperationManifestV1(),
+                                                    "context" to CapabilityOperationManifestV1(),
+                                                ),
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(v2MutatePlusKnownContextWithoutDetail.validate().errors.any { it.code == "capability.incomplete" })
+    }
+
+    @Test
+    fun recommendedOriginsAndAllowCustomOriginRequireApiV2AndStrictOriginRules() {
+        assertFalse(
+            validateManifest(
+                apiVersion = 1,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"}]""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 1,
+                allowCustomOrigin = false,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"}]""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                allowCustomOrigin = false,
+                recommendedOrigins = "[]",
+            ).isValid,
+        )
+        val tooMany = (1..9).joinToString(",") { """{"origin":"https://site$it.example"}""" }
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = "[$tooMany]",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"},{"origin":"https://exhentai.org"}]""",
+            ).isValid,
+        )
+        listOf(
+            "http://exhentai.org",
+            "https://exhentai.org/",
+            "https://exhentai.org/gallery",
+            "https://EXHENTAI.ORG",
+            "https://exhentai.org:443",
+            "https://bad..host",
+        ).forEach { invalidOrigin ->
+            assertFalse(
+                validateManifest(
+                    apiVersion = 2,
+                    recommendedOrigins = """[{"origin":"$invalidOrigin"}]""",
+                ).isValid,
+                "Expected invalid origin to fail: $invalidOrigin",
+            )
+        }
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                allowCustomOrigin = false,
+                recommendedOrigins = """[{"origin":"https://exhentai.org"}]""",
+                guest = """{"enabled":true,"origin":"https://e-hentai.org"}""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = """[{"origin":"https://exhentai.org","name":"   "}]""",
+            ).isValid,
+        )
+        assertFalse(
+            validateManifest(
+                apiVersion = 2,
+                recommendedOrigins = """[{"origin":"https://exhentai.org","description":{"key":"1bad","fallback":"Desc"}}]""",
+            ).isValid,
+        )
+        assertTrue(
+            validateManifest(
+                apiVersion = 2,
+                allowCustomOrigin = false,
+                recommendedOrigins =
+                    """[
+                      {"origin":"https://exhentai.org","name":{"key":"origin.eh.name","fallback":"ExHentai"},"description":{"key":"origin.eh.desc","fallback":"Gallery"}},
+                      {"origin":"https://e-hentai.org:8443"}
+                    ]""",
+                guest = """{"enabled":true,"origin":"https://exhentai.org"}""",
+            ).isValid,
+        )
+
+        val base = PluginJsonV1.decodeFromString<PluginManifestV1>(VALID_MANIFEST)
+        val localizedManifest =
+            base.copy(
+                apiVersion = 2,
+                platform =
+                    base.socialPlatform.copy(
+                        name = PluginTextV1.Literal("Single Site"),
+                        recommendedOrigins =
+                            listOf(
+                                RecommendedOriginManifestV1(
+                                    origin = "https://exhentai.org",
+                                    name = PluginTextV1.Localized("origin.eh.name", "ExHentai"),
+                                    description = PluginTextV1.Localized("origin.eh.desc", "Gallery"),
+                                ),
+                            ),
+                        allowCustomOrigin = false,
+                    ),
+            )
+        assertFailsWith<IllegalArgumentException> {
+            validatePluginCatalogs(
+                localizedManifest,
+                mapOf("en" to mapOf("origin.eh.name" to "ExHentai")),
+            )
+        }
+        validatePluginCatalogs(
+            localizedManifest,
+            mapOf("en" to mapOf("origin.eh.name" to "ExHentai", "origin.eh.desc" to "Gallery")),
+        )
+    }
+
+    @Test
+    fun sessionChallengeRequiresApiV2ExclusiveProbesAndAuthOrigins() {
+        assertEquals("flare.datasource.session-challenge/v1", PluginAbiV1.Capabilities.SESSION_CHALLENGE)
+        assertEquals(
+            "capabilities.sessionChallenge.complete",
+            PluginAbiV1.capabilityMethod(PluginAbiV1.Capabilities.SESSION_CHALLENGE, "complete"),
+        )
+        assertFalse(
+            PluginAbiV1.isDisplayableCapability(
+                PluginAbiV1.Capabilities.SESSION_CHALLENGE,
+                setOf("complete"),
+            ),
+        )
+
+        val base = PluginJsonV1.decodeFromString<PluginManifestV1>(VALID_MANIFEST)
+        val validProbes =
+            listOf(
+                CookieProbeManifestV1(
+                    url = "${PluginAbiV1.ACCOUNT_ORIGIN}/gallery",
+                    cookies = listOf(CookieRequirementManifestV1("cf_clearance")),
+                ),
+                CookieProbeManifestV1(
+                    url = "https://auth.example/session",
+                    cookies =
+                        listOf(
+                            CookieRequirementManifestV1("igneous", required = true),
+                            CookieRequirementManifestV1("hint", required = false),
+                        ),
+                ),
+            )
+        val valid =
+            base.copy(
+                apiVersion = 2,
+                permissions = PluginPermissionsV1(authOrigins = setOf("https://auth.example")),
+                platform =
+                    base.socialPlatform.copy(
+                        capabilities =
+                            base.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                                            challengeProbes = validProbes,
+                                        )
+                                ),
+                    ),
+            )
+        val table =
+            validMethodTable().copy(
+                apiVersion = 2,
+                methods = validMethodTable().methods + "capabilities.sessionChallenge.complete",
+            )
+        assertTrue(valid.validate(table).isValid)
+
+        assertTrue(
+            valid
+                .copy(apiVersion = 1)
+                .validate()
+                .errors
+                .any { it.code == "capability.version" },
+        )
+
+        val emptyProbes =
+            valid.copy(
+                platform =
+                    valid.socialPlatform.copy(
+                        capabilities =
+                            valid.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                                            challengeProbes = emptyList(),
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(emptyProbes.validate().errors.any { it.code == "cookie.probes" })
+
+        val tooManyProbes =
+            valid.copy(
+                platform =
+                    valid.socialPlatform.copy(
+                        capabilities =
+                            valid.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                                            challengeProbes =
+                                                (1..17).map { index ->
+                                                    CookieProbeManifestV1(
+                                                        url = "${PluginAbiV1.ACCOUNT_ORIGIN}/p$index",
+                                                        cookies = listOf(CookieRequirementManifestV1("c$index")),
+                                                    )
+                                                },
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(tooManyProbes.validate().errors.any { it.code == "cookie.probes" })
+
+        val httpOriginOnly =
+            valid.copy(
+                permissions = PluginPermissionsV1(httpOrigins = setOf("https://auth.example")),
+            )
+        assertTrue(httpOriginOnly.validate().errors.any { it.code == "cookie.probe.origin" })
+
+        val probesOnTimeline =
+            valid.copy(
+                platform =
+                    valid.socialPlatform.copy(
+                        capabilities =
+                            valid.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.TIMELINE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("page" to CapabilityOperationManifestV1()),
+                                            challengeProbes = listOf(validProbes.first()),
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(probesOnTimeline.validate().errors.any { it.code == "capability.config" })
+    }
+
+    private fun validateManifest(
+        apiVersion: Int,
+        loginMethods: String = """[{"id":"oauth","interaction":"OAuth","title":"OAuth"}]""",
+        guest: String? = null,
+        recommendedOrigins: String? = null,
+        allowCustomOrigin: Boolean? = null,
+    ): ManifestValidationV1 {
+        val root = PluginJsonV1.parseToJsonElement(VALID_MANIFEST).jsonObject
+        val platform = root.getValue("platform").jsonObject
+        val updatedPlatform =
+            buildMap {
+                putAll(platform)
+                put("loginMethods", PluginJsonV1.parseToJsonElement(loginMethods))
+                if (guest != null) {
+                    put("guest", PluginJsonV1.parseToJsonElement(guest))
+                }
+                if (recommendedOrigins != null) {
+                    put("recommendedOrigins", PluginJsonV1.parseToJsonElement(recommendedOrigins))
+                }
+                if (allowCustomOrigin != null) {
+                    put("allowCustomOrigin", JsonPrimitive(allowCustomOrigin))
+                }
+            }
+        val updatedManifest =
+            JsonObject(
+                buildMap {
+                    putAll(root)
+                    put("apiVersion", JsonPrimitive(apiVersion))
+                    put("platform", JsonObject(updatedPlatform))
+                },
+            )
+        return PluginJsonV1.decodeFromJsonElement<PluginManifestV1>(updatedManifest).validate()
     }
 
     private fun validMethodTable(): PluginMethodTableV1 =

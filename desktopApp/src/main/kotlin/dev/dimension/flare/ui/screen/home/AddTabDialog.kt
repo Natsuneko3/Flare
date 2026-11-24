@@ -45,7 +45,7 @@ import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
 import dev.dimension.flare.ui.component.listCard
 import dev.dimension.flare.ui.model.asText
-import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.screen.settings.AllTabsPresenter
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.AccentButton
@@ -56,6 +56,7 @@ import io.github.composefluent.component.PillButton
 import io.github.composefluent.component.SubtleButton
 import io.github.composefluent.component.Text
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import org.jetbrains.compose.resources.stringResource
 import dev.dimension.flare.ui.component.Text as UiText
 
@@ -100,91 +101,125 @@ internal fun AddTabDialog(
                 modifier = Modifier.heightIn(max = 480.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                allTabs.accountTabs.onSuccess { accountTabGroups ->
-                    var selectedPage by remember(accountTabGroups) { mutableIntStateOf(0) }
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.Top,
+                val guestGroups = allTabs.guestPluginTabs
+                val accountTabGroups = allTabs.accountTabs.takeSuccess() ?: persistentListOf()
+                var selectedPage by remember(guestGroups.size, accountTabGroups.size) { mutableIntStateOf(0) }
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.width(140.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        LazyColumn(
-                            modifier = Modifier.width(140.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            item {
-                                SubtleButton(
-                                    buttonColors =
-                                        if (selectedPage == 0) {
-                                            ButtonDefaults.accentButtonColors()
-                                        } else {
-                                            ButtonDefaults.subtleButtonColors()
-                                        },
-                                    onClick = {
-                                        selectedPage = 0
+                        item {
+                            SubtleButton(
+                                buttonColors =
+                                    if (selectedPage == 0) {
+                                        ButtonDefaults.accentButtonColors()
+                                    } else {
+                                        ButtonDefaults.subtleButtonColors()
                                     },
+                                onClick = {
+                                    selectedPage = 0
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = stringResource(Res.string.rss_title),
                                     modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                        itemsIndexed(guestGroups) { index, group ->
+                            val pageIndex = index + 1
+                            SubtleButton(
+                                buttonColors =
+                                    if (selectedPage == pageIndex) {
+                                        ButtonDefaults.accentButtonColors()
+                                    } else {
+                                        ButtonDefaults.subtleButtonColors()
+                                    },
+                                onClick = {
+                                    selectedPage = pageIndex
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = stringResource(Res.string.rss_title),
-                                        modifier = Modifier.fillMaxWidth(),
+                                    TabIcon(
+                                        icon = group.icon,
+                                        title = group.title,
+                                        size = 20.dp,
                                     )
+                                    UiText(group.title)
                                 }
                             }
-                            itemsIndexed(accountTabGroups) { index, tab ->
-                                SubtleButton(
-                                    buttonColors =
-                                        if (selectedPage == index + 1) {
-                                            ButtonDefaults.accentButtonColors()
-                                        } else {
-                                            ButtonDefaults.subtleButtonColors()
-                                        },
-                                    onClick = {
-                                        selectedPage = index + 1
+                        }
+                        itemsIndexed(accountTabGroups) { index, tab ->
+                            val pageIndex = 1 + guestGroups.size + index
+                            SubtleButton(
+                                buttonColors =
+                                    if (selectedPage == pageIndex) {
+                                        ButtonDefaults.accentButtonColors()
+                                    } else {
+                                        ButtonDefaults.subtleButtonColors()
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    selectedPage = pageIndex
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp),
+                                    horizontalAlignment = Alignment.Start,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Column(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 8.dp),
-                                        horizontalAlignment = Alignment.Start,
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            AvatarComponent(
-                                                tab.profile.avatar,
-                                                size = 24.dp,
-                                            )
-                                            RichText(
-                                                text = tab.profile.name,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                        Text(
-                                            text = tab.profile.handle.normalizedHost,
-                                            style = FluentTheme.typography.caption,
+                                        AvatarComponent(
+                                            tab.profile.avatar,
+                                            size = 24.dp,
+                                        )
+                                        RichText(
+                                            text = tab.profile.name,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                     }
+                                    Text(
+                                        text = tab.profile.handle.normalizedHost,
+                                        style = FluentTheme.typography.caption,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
                             }
                         }
-                        Box(
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
-                        ) {
-                            if (selectedPage == 0) {
+                    }
+                    Box(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                    ) {
+                        when {
+                            selectedPage == 0 -> {
                                 LazyColumn(
                                     verticalArrangement = Arrangement.spacedBy(2.dp),
                                 ) {
@@ -223,45 +258,68 @@ internal fun AddTabDialog(
                                         }
                                     }
                                 }
-                            } else {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
+                            }
+
+                            selectedPage in 1..guestGroups.size -> {
+                                val group = guestGroups[selectedPage - 1]
+                                LazyColumn(
                                     verticalArrangement = Arrangement.spacedBy(2.dp),
-                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    val accountTabs = accountTabGroups[selectedPage - 1]
-                                    var selectedIndex by remember(accountTabs.profile.key) {
-                                        mutableIntStateOf(0)
+                                    itemsIndexed(group.tabs) { index, tab ->
+                                        TabItem(
+                                            tab,
+                                            modifier =
+                                                Modifier
+                                                    .listCard(
+                                                        index = index,
+                                                        totalCount = group.tabs.size,
+                                                    ),
+                                        )
                                     }
-                                    if (accountTabs.tabs.size > 1) {
-                                        LiteFilter(
-                                            modifier = Modifier.fillMaxWidth(),
-                                        ) {
-                                            accountTabs.tabs.forEachIndexed { index, section ->
-                                                PillButton(
-                                                    selected = selectedIndex == index,
-                                                    onSelectedChanged = { selectedIndex = index },
-                                                ) {
-                                                    UiText(section.title)
+                                }
+                            }
+
+                            else -> {
+                                val accountTabs = accountTabGroups.getOrNull(selectedPage - 1 - guestGroups.size)
+                                if (accountTabs != null) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        var selectedIndex by remember(accountTabs.profile.key) {
+                                            mutableIntStateOf(0)
+                                        }
+                                        if (accountTabs.tabs.size > 1) {
+                                            LiteFilter(
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) {
+                                                accountTabs.tabs.forEachIndexed { index, section ->
+                                                    PillButton(
+                                                        selected = selectedIndex == index,
+                                                        onSelectedChanged = { selectedIndex = index },
+                                                    ) {
+                                                        UiText(section.title)
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                    val section = accountTabs.tabs.elementAtOrNull(selectedIndex)
-                                    if (section != null) {
-                                        LazyColumn(
-                                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                                        ) {
-                                            itemsIndexed(section.data) { index, totalCount, item ->
-                                                TabItem(
-                                                    item,
-                                                    modifier =
-                                                        Modifier
-                                                            .listCard(
-                                                                index = index,
-                                                                totalCount = totalCount,
-                                                            ),
-                                                )
+                                        val section = accountTabs.tabs.elementAtOrNull(selectedIndex)
+                                        if (section != null) {
+                                            LazyColumn(
+                                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                            ) {
+                                                itemsIndexed(section.data) { index, totalCount, item ->
+                                                    TabItem(
+                                                        item,
+                                                        modifier =
+                                                            Modifier
+                                                                .listCard(
+                                                                    index = index,
+                                                                    totalCount = totalCount,
+                                                                ),
+                                                    )
+                                                }
                                             }
                                         }
                                     }

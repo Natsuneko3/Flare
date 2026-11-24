@@ -57,6 +57,15 @@ public data class PluginPlatformManifestV1(
     val credentialSchemaVersion: Int = 1,
     val timelineSchemaVersion: Int = 1,
     val composeDefaultsV3: ComposeConfigV2? = null,
+    val recommendedOrigins: List<RecommendedOriginManifestV1> = emptyList(),
+    val allowCustomOrigin: Boolean = true,
+)
+
+@Serializable
+public data class RecommendedOriginManifestV1(
+    val origin: String,
+    val name: PluginTextV1? = null,
+    val description: PluginTextV1? = null,
 )
 
 @Serializable
@@ -67,6 +76,7 @@ public data class DetectorManifestV1(
 @Serializable
 public data class GuestManifestV1(
     val enabled: Boolean = true,
+    val origin: String? = null,
 )
 
 @Serializable
@@ -75,6 +85,7 @@ public data class CapabilityManifestV1(
     val notificationFilters: Set<NotificationFilterKindV1> = emptySet(),
     val relationActions: Set<RelationActionKindV1> = emptySet(),
     val authOrigins: Set<String> = emptySet(),
+    val challengeProbes: List<CookieProbeManifestV1> = emptyList(),
 )
 
 @Serializable

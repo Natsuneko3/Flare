@@ -225,6 +225,68 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
         platform.detector?.let {
             check(it.priority in -10_000..10_000, "detector.priority", "platform.detector.priority", "Invalid detector priority")
         }
+        if (platform.recommendedOrigins.isNotEmpty() || !platform.allowCustomOrigin) {
+            check(
+                apiVersion >= 2,
+                "recommendedOrigins.version",
+                if (platform.recommendedOrigins.isNotEmpty()) "platform.recommendedOrigins" else "platform.allowCustomOrigin",
+                "Recommended origins and single-site origin restrictions require Host API v2",
+            )
+        }
+        check(
+            platform.recommendedOrigins.size <= 8,
+            "recommendedOrigins.count",
+            "platform.recommendedOrigins",
+            "Too many recommended origins",
+        )
+        if (!platform.allowCustomOrigin) {
+            check(
+                platform.recommendedOrigins.isNotEmpty(),
+                "recommendedOrigins.required",
+                "platform.recommendedOrigins",
+                "Single-site platforms must declare at least one recommended origin",
+            )
+        }
+        val seenRecommendedOrigins = mutableSetOf<String>()
+        platform.recommendedOrigins.forEachIndexed { index, item ->
+            val path = "platform.recommendedOrigins[$index]"
+            check(
+                item.origin.isExactHttpsOrigin(),
+                "recommendedOrigins.origin",
+                "$path.origin",
+                "Recommended origin must be exact HTTPS origin",
+            )
+            check(
+                seenRecommendedOrigins.add(item.origin.lowercase()),
+                "recommendedOrigins.duplicate",
+                "$path.origin",
+                "Duplicate recommended origin",
+            )
+            item.name?.let { validateText(it, "$path.name", errors) }
+            item.description?.let { validateText(it, "$path.description", errors) }
+        }
+        platform.guest?.let { guest ->
+            if (!guest.enabled) {
+                check(
+                    guest.origin == null,
+                    "guest.origin.disabled",
+                    "platform.guest.origin",
+                    "Disabled guest config cannot declare an origin",
+                )
+            }
+            guest.origin?.let { origin ->
+                check(apiVersion >= 2, "guest.origin.version", "platform.guest.origin", "Standalone guest origin requires Host API v2")
+                check(origin.isExactHttpsOrigin(), "guest.origin", "platform.guest.origin", "Guest origin must be exact HTTPS origin")
+                if (!platform.allowCustomOrigin && guest.enabled) {
+                    check(
+                        platform.recommendedOrigins.any { it.origin.equals(origin, ignoreCase = true) },
+                        "guest.origin.unrecommended",
+                        "platform.guest.origin",
+                        "Standalone guest origin must be listed in recommendedOrigins when custom origins are disallowed",
+                    )
+                }
+            }
+        }
 
         check(platform.capabilities.size <= 32, "capability.count", "platform.capabilities", "Too many capabilities")
         platform.capabilities.forEach { (capabilityId, declaration) ->
@@ -234,6 +296,18 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 "capability.version",
                 path,
                 "Timeline pages require plugin API v2",
+            )
+            check(
+                capabilityId != PluginAbiV1.Capabilities.MANGA || apiVersion >= 2,
+                "capability.version",
+                path,
+                "Manga capability requires plugin API v2",
+            )
+            check(
+                capabilityId != PluginAbiV1.Capabilities.SESSION_CHALLENGE || apiVersion >= 2,
+                "capability.version",
+                path,
+                "Session challenge requires plugin API v2",
             )
             check(CAPABILITY_ID.matches(capabilityId), "capability.id", path, "Invalid capability ID")
             val knownOperations = PluginAbiV1.knownCapabilityOperations[capabilityId] ?: return@forEach
@@ -263,15 +337,29 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                     "Authentication origins are only valid for account HTTP",
                 )
             }
+            if (capabilityId == PluginAbiV1.Capabilities.SESSION_CHALLENGE) {
+                validateCookieProbes(declaration.challengeProbes, "$path.challengeProbes", permissions, errors)
+            } else {
+                check(
+                    declaration.challengeProbes.isEmpty(),
+                    "capability.config",
+                    "$path.challengeProbes",
+                    "Challenge probes are only valid for session challenge",
+                )
+            }
             check(declaration.operations.isNotEmpty(), "capability.empty", path, "Capability has no operations")
+            val operations = declaration.operations.keys
+            val allowsPostMutateOnly =
+                apiVersion >= 2 &&
+                    capabilityId == PluginAbiV1.Capabilities.POST &&
+                    operations.intersect(knownOperations) == setOf("mutate")
             check(
-                declaration.operations.keys.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
+                allowsPostMutateOnly || operations.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
                 "capability.incomplete",
                 path,
                 "Capability is missing operations required by the Host interface",
             )
             if (capabilityId == PluginAbiV1.Capabilities.POST) {
-                val operations = declaration.operations.keys
                 check(
                     apiVersion >= 2 || operations.none { it in PluginAbiV1.postContextTabOperations },
                     "capability.version",
@@ -284,6 +372,22 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                     path,
                     "Post context tabs require both contextTabs and contextPage",
                 )
+            }
+            if (capabilityId == PluginAbiV1.Capabilities.MANGA) {
+                check(
+                    permissions.mediaNetwork,
+                    "capability.permission",
+                    path,
+                    "Manga capability requires permissions.mediaNetwork",
+                )
+                listOf("detail", "pages", "pageImage").forEach { operation ->
+                    check(
+                        declaration.operations[operation]?.directions.isNullOrEmpty(),
+                        "capability.directions",
+                        "$path.$operation.directions",
+                        "Non-paging manga operations cannot declare directions",
+                    )
+                }
             }
             declaration.operations.forEach { (operation, config) ->
                 if (operation in knownOperations) {
@@ -572,15 +676,24 @@ private fun validateCookie(
         "$parentPath.cookie.startUrl",
         "Cookie start URL origin is not approved",
     )
+    validateCookieProbes(cookie.probes, "$parentPath.cookie.probes", permissions, errors)
+}
+
+private fun validateCookieProbes(
+    probes: List<CookieProbeManifestV1>,
+    probesPath: String,
+    permissions: PluginPermissionsV1,
+    errors: MutableList<ManifestIssueV1>,
+) {
     addErrorUnless(
-        cookie.probes.isNotEmpty() && cookie.probes.size <= 16,
+        probes.isNotEmpty() && probes.size <= 16,
         errors,
         "cookie.probes",
-        "$parentPath.cookie.probes",
+        probesPath,
         "Invalid Cookie probe count",
     )
-    cookie.probes.forEachIndexed { index, probe ->
-        val path = "$parentPath.cookie.probes[$index]"
+    probes.forEachIndexed { index, probe ->
+        val path = "$probesPath[$index]"
         addErrorUnless(probe.url.isHttpsUrl(), errors, "cookie.probe.url", "$path.url", "Cookie probe URL must use HTTPS")
         val origin = probe.url.approvedOriginOrNull()
         addErrorUnless(

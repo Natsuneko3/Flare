@@ -191,6 +191,14 @@ struct Router: View {
             )
         case .mediaImage, .mediaRaw:
             MacMediaWindowCoordinator.shared.open(route: route, openWindow: openWindow)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            MacMangaReaderWindowCoordinator.shared.open(
+                accountType: accountType,
+                mangaKey: mangaKey,
+                chapterId: chapterId,
+                initialPage: initialPage,
+                openWindow: openWindow
+            )
         case .mediaStatusMedia(let accountType, let statusKey, let selectedIndex, let preview):
             statusMediaResolveRequest = MacStatusMediaResolveRequest(
                 accountType: accountType,
@@ -224,6 +232,7 @@ struct Router: View {
     private func shouldForwardToMainWindow(_ route: Route) -> Bool {
         switch route {
         case .statusDetail,
+                .mangaDetail,
                 .profileUser,
                 .profileUserNameWithHost:
             true
@@ -251,6 +260,7 @@ struct Router: View {
                 .mediaImage,
                 .mediaRaw,
                 .mediaStatusMedia,
+                .mangaReader,
                 .directMessages,
                 .dmConversation,
                 .userDirectMessages,

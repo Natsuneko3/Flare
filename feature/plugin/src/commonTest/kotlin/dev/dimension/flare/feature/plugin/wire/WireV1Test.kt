@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class WireV1Test {
@@ -96,7 +97,7 @@ class WireV1Test {
 
     @Test
     fun internalPostDetailsKeepUrlOptional() {
-        listOf(PostDetailTypeV1.Post, PostDetailTypeV1.Article, PostDetailTypeV1.Gallery).forEach { type ->
+        listOf(PostDetailTypeV1.Post, PostDetailTypeV1.Article, PostDetailTypeV1.Gallery, PostDetailTypeV1.Manga).forEach { type ->
             validPost().copy(detailType = type, url = null).requireValid()
         }
     }
@@ -107,6 +108,7 @@ class WireV1Test {
             PostDetailTypeV1.Post to "post",
             PostDetailTypeV1.Article to "article",
             PostDetailTypeV1.Gallery to "gallery",
+            PostDetailTypeV1.Manga to "manga",
             PostDetailTypeV1.Link to "link",
         ).forEach { (type, name) ->
             val post = validPost().copy(detailType = type)
@@ -120,7 +122,7 @@ class WireV1Test {
     @Test
     fun unknownPostDetailTypesDoNotUseTheDefault() {
         val post = PluginJsonV1.encodeToJsonElement(validPost()).jsonObject
-        listOf("manga", "novel", "Article").forEach { type ->
+        listOf("audiobook", "novel", "Article").forEach { type ->
             val value = PluginJsonV1.decodeFromJsonElement<PostV1>(JsonObject(post + ("detailType" to JsonPrimitive(type))))
             value.requireValid()
             assertEquals(PostDetailTypeV1.Unknown, value.detailType)
@@ -293,6 +295,65 @@ class WireV1Test {
         assertFailsWith<IllegalArgumentException> {
             WireTextV1(value = "   ").requireValid()
         }
+    }
+
+    @Test
+    fun cookieSnapshotAndCheckRequestRoundTripWithOptionalUserAgent() {
+        val ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"
+        val snapshot = CookieSnapshotV1(cookies = listOf(CookieValueV1("https://example.social/login", "session", "abc")), userAgent = ua)
+        snapshot.requireValid()
+        val encodedSnapshot = PluginJsonV1.encodeToString(snapshot)
+        assertContains(encodedSnapshot, "\"userAgent\":\"$ua\"")
+        assertEquals(snapshot, PluginJsonV1.decodeFromString<CookieSnapshotV1>(encodedSnapshot))
+
+        val v2Request =
+            CookieCheckRequestV1(
+                methodId = "cookie",
+                origin = "https://example.social",
+                flowId = "flow-1",
+                cookies = snapshot.copy(userAgent = null),
+                userAgent = ua,
+            )
+        v2Request.requireValid()
+        val encodedV2 = PluginJsonV1.encodeToString(v2Request)
+        assertContains(encodedV2, "\"userAgent\":\"$ua\"")
+        assertEquals(v2Request, PluginJsonV1.decodeFromString<CookieCheckRequestV1>(encodedV2))
+
+        val v1Request = v2Request.copy(userAgent = null)
+        v1Request.requireValid()
+        val encodedV1 = PluginJsonV1.encodeToString(v1Request)
+        assertFalse(encodedV1.contains("userAgent"))
+        assertEquals(v1Request, PluginJsonV1.decodeFromString<CookieCheckRequestV1>(encodedV1))
+
+        listOf("", "   ", "a".repeat(1_025), "Mozilla/5.0\r\nBad: 1", "Mozilla/5.0\n", "Mozilla/5.0\u0000").forEach { invalidUa ->
+            assertFailsWith<IllegalArgumentException>("invalidUa=$invalidUa") {
+                v2Request.copy(userAgent = invalidUa).requireValid()
+            }
+        }
+    }
+
+    @Test
+    fun normalizeUserAgentEnforcesLengthAndControlCharacterBoundaries() {
+        assertEquals("Mozilla/5.0 (Test)", normalizeUserAgent("  Mozilla/5.0 (Test)  "))
+        assertEquals("x".repeat(1_024), normalizeUserAgent("x".repeat(1_024)))
+        listOf(
+            null,
+            "",
+            "   ",
+            "\t",
+            "x".repeat(1_025),
+            "Mozilla/5.0\r\nInjected: 1",
+            "Mozilla/5.0\n",
+            "Mozilla/5.0\r",
+            "Mozilla/5.0\u0000",
+            "Mozilla/5.0\u007f",
+        ).forEach { invalid ->
+            assertNull(normalizeUserAgent(invalid), "Expected null for $invalid")
+        }
+
+        // Oversized or malformed UA on CookieSnapshotV1 must be safely ignored rather than failing snapshot validation.
+        CookieSnapshotV1(cookies = emptyList(), userAgent = "x".repeat(100_000)).requireValid()
+        CookieSnapshotV1(cookies = emptyList(), userAgent = "Mozilla/5.0\r\n").requireValid()
     }
 
     private fun validProfile(): ProfileV1 =

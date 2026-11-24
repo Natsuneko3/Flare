@@ -615,6 +615,16 @@ internal interface PagingTimelineDao {
             paging_key = paging_key,
         )
 
+    @Query(
+        "SELECT DISTINCT DbPagingTimeline.pagingKey FROM DbPagingTimeline " +
+            "INNER JOIN DbStatus ON DbStatus.id = DbPagingTimeline.statusId " +
+            "WHERE DbStatus.accountType = :accountType",
+    )
+    suspend fun getPagingKeysByAccountType(accountType: DbAccountType): List<String>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM DbPagingTimeline WHERE pagingKey = :pagingKey AND isGap = 0)")
+    suspend fun anyNonGapPaging(pagingKey: String): Boolean
+
     @Query("DELETE FROM DbPagingTimeline")
     suspend fun clear()
 

@@ -346,6 +346,20 @@
           "maximum": 1000000,
           "default": 1,
           "description": "Bump for incompatible timeline identity/parameter changes."
+        },
+        "recommendedOrigins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/recommendedOrigin"
+          },
+          "default": [],
+          "maxItems": 8,
+          "description": "Optional static recommended HTTPS origins (API v2 only, max 8) shown in the service selector and matched statically with priority 0 without starting JS."
+        },
+        "allowCustomOrigin": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether users may connect custom origins beyond recommendedOrigins (API v2 only when false; requires nonempty recommendedOrigins)."
         }
       },
       "required": [
@@ -679,7 +693,67 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "allowCustomOrigin"
+            ],
+            "properties": {
+              "allowCustomOrigin": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "recommendedOrigins"
+            ],
+            "properties": {
+              "recommendedOrigins": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
         }
+      ]
+    },
+    "recommendedOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string",
+          "description": "Exact canonical HTTPS origin; no path, credentials, wildcard, or trailing slash. Flare checks DNS/port normalization.",
+          "pattern": "^(?:https://[a-z0-9.-]+(?::[0-9]{1,5})?)(?![\\s\\S])"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "origin"
       ]
     },
     "detector": {
@@ -701,6 +775,32 @@
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "origin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional standalone guest HTTPS origin (API v2 only). Exact canonical HTTPS origin; no path, credentials, wildcard, or trailing slash. Flare checks DNS/port normalization.",
+          "pattern": "^(?:https://[a-z0-9.-]+(?::[0-9]{1,5})?)(?![\\s\\S])"
+        }
+      },
+      "if": {
+        "properties": {
+          "enabled": {
+            "const": false
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "then": {
+        "properties": {
+          "origin": {
+            "type": "null"
+          }
         }
       }
     },
@@ -1034,6 +1134,14 @@
             ]
           },
           "default": []
+        },
+        "challengeProbes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/cookieProbe"
+          },
+          "default": [],
+          "maxItems": 16
         }
       },
       "required": [
@@ -1071,6 +1179,10 @@
               "maxItems": 0
             },
             "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -1118,6 +1230,10 @@
               "maxItems": 0
             },
             "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -1171,6 +1287,10 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         }
@@ -1211,12 +1331,11 @@
                   "$ref": "#/definitions/operation"
                 }
               },
-              "required": [
-                "detail"
-              ],
               "dependencies": {
-                "contextTabs": ["contextPage"],
-                "contextPage": ["contextTabs"]
+                "context": ["detail"],
+                "delete": ["detail"],
+                "contextTabs": ["detail", "contextPage"],
+                "contextPage": ["detail", "contextTabs"]
               }
             },
             "notificationFilters": {
@@ -1228,6 +1347,10 @@
               "maxItems": 0
             },
             "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -1272,6 +1395,10 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           },
           "required": [
@@ -1313,6 +1440,10 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         }
@@ -1345,6 +1476,10 @@
               "maxItems": 0
             },
             "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -1449,6 +1584,10 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         }
@@ -1519,6 +1658,10 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         }
@@ -1559,6 +1702,10 @@
               "maxItems": 0
             },
             "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -1610,6 +1757,107 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
+        }
+      ]
+    },
+    "capability-manga": {
+      "type": "object",
+      "description": "API v2 manga capability. Implement every declared operation in plugin.js.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/capability"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "detail": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/operation"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "directions": {
+                          "type": "array",
+                          "maxItems": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "pages": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/operation"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "directions": {
+                          "type": "array",
+                          "maxItems": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "pageImage": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/operation"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "directions": {
+                          "type": "array",
+                          "maxItems": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "comments": {
+                  "$ref": "#/definitions/operation"
+                },
+                "recommendations": {
+                  "$ref": "#/definitions/operation"
+                }
+              },
+              "required": [
+                "detail",
+                "pages"
+              ]
+            },
+            "notificationFilters": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "relationActions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         }
@@ -1646,6 +1894,10 @@
               "maxItems": 0
             },
             "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -1720,6 +1972,9 @@
         "flare.datasource.gallery/v1": {
           "$ref": "#/definitions/capability-gallery"
         },
+        "flare.datasource.manga/v1": {
+          "$ref": "#/definitions/capability-manga"
+        },
         "flare.datasource.tab-catalog/v1": {
           "$ref": "#/definitions/capability-tab-catalog"
         },
@@ -1734,6 +1989,9 @@
         },
         "flare.datasource.account-capabilities/v1": {
           "$ref": "#/definitions/capability-account-capabilities"
+        },
+        "flare.datasource.session-challenge/v1": {
+          "$ref": "#/definitions/capability-session-challenge"
         }
       },
       "additionalProperties": {
@@ -2439,6 +2697,10 @@
             "authOrigins": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         }
@@ -2489,6 +2751,10 @@
               "maxItems": 0
             },
             "relationActions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "challengeProbes": {
               "type": "array",
               "maxItems": 0
             }
@@ -2563,8 +2829,62 @@
             "relationActions": {
               "type": "array",
               "maxItems": 0
+            },
+            "challengeProbes": {
+              "type": "array",
+              "maxItems": 0
             }
           }
+        }
+      ]
+    },
+    "capability-session-challenge": {
+      "type": "object",
+      "description": "API v2 account-only interactive WebView challenge recovery. Pair with flare.datasource.account-capabilities/v1 so existing accounts adopt it after upgrade without re-login.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/capability"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "complete"
+              ],
+              "properties": {
+                "complete": {
+                  "$ref": "#/definitions/operation"
+                }
+              }
+            },
+            "challengeProbes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "description": "1..16 Cookie probes on $accountOrigin or permissions.authOrigins; audited as Cookie permissions on install and upgrade.",
+              "items": {
+                "$ref": "#/definitions/cookieProbe"
+              }
+            },
+            "notificationFilters": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "relationActions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "authOrigins": {
+              "type": "array",
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "challengeProbes"
+          ]
         }
       ]
     },
@@ -2782,6 +3102,26 @@
         "properties": {
           "platform": {
             "properties": {
+              "guest": {
+                "if": {
+                  "type": "object"
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "origin": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "recommendedOrigins": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "allowCustomOrigin": {
+                "const": true
+              },
               "loginMethods": {
                 "type": "array",
                 "items": {
@@ -2799,12 +3139,18 @@
                 "properties": {
                   "flare.datasource.timeline-page/v1": false,
                   "flare.datasource.account-http/v1": false,
+                  "flare.datasource.session-challenge/v1": false,
+                  "flare.datasource.manga/v1": false,
                   "flare.datasource.post/v1": {
                     "type": "object",
                     "properties": {
                       "operations": {
                         "type": "object",
+                        "required": [
+                          "detail"
+                        ],
                         "properties": {
+                          "detail": true,
                           "contextTabs": false,
                           "contextPage": false
                         }
@@ -2816,6 +3162,52 @@
               }
             },
             "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "platform": {
+            "type": "object",
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "type": "object",
+                "required": [
+                  "flare.datasource.manga/v1"
+                ],
+                "properties": {
+                  "flare.datasource.manga/v1": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "platform"
+        ]
+      },
+      "then": {
+        "required": [
+          "permissions"
+        ],
+        "properties": {
+          "permissions": {
+            "type": "object",
+            "required": [
+              "mediaNetwork"
+            ],
+            "properties": {
+              "mediaNetwork": {
+                "const": true
+              }
+            }
           }
         }
       }

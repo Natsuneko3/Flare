@@ -32,6 +32,7 @@ struct UITimelineCollectionView: UIViewControllerRepresentable {
     @Environment(\.translateConfig) private var translateConfig
     @Environment(\.networkKind) private var networkKind
     @Environment(\.openURL) private var openURL
+    @Environment(\.launchSessionChallenge) private var launchSessionChallenge
     @Environment(\.refresh) private var refreshAction: RefreshAction?
     @Environment(\.timelineReading) private var reading
     @Environment(\.tabBarNotificationCenter) private var tabBarNotificationCenter
@@ -94,6 +95,7 @@ struct UITimelineCollectionView: UIViewControllerRepresentable {
         controller.openURL = { url in
             openURL.callAsFunction(url)
         }
+        controller.onSessionChallenge = launchSessionChallenge
         controller.networkKind = networkKind
         controller.accessoryItems = accessoryItems
         controller.suppressInitialRefreshIndicator = suppressInitialRefreshIndicator
@@ -243,6 +245,7 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
     var onContentOffsetChanged: ((CGFloat) -> Void)?
     var onScrollInteractionBegan: (() -> Void)?
     var openURL: ((URL) -> Void)?
+    var onSessionChallenge: ((SessionChallengeException, @escaping () -> Void) -> Void)?
     var suppressInitialRefreshIndicator = false
     var restoresScrollAnchorOnSnapshotChanges = true
     var usesGroupedBackgroundOverride: Bool? {
@@ -1074,6 +1077,7 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
                   let headerState, case .error(let error) = onEnum(of: headerState) {
             let errorView = ListErrorUIView()
             errorView.onOpenURL = openURL
+            errorView.onSessionChallenge = onSessionChallenge
             errorView.configure(error: error.throwable, onRetry: { [weak self] in
                 Task { @MainActor [weak self] in
                     await self?.refreshCallback?()
@@ -1213,6 +1217,7 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
     private func configureErrorCell(_ cell: TimelineHostedViewCell) {
         let errorView = ListErrorUIView()
         errorView.onOpenURL = openURL
+        errorView.onSessionChallenge = onSessionChallenge
         guard let failure = content.failure else { return }
         errorView.configure(error: failure.error, onRetry: failure.retry)
         cell.setHostedView(CenteredCellContentView(content: errorView))
@@ -1221,6 +1226,7 @@ final class UITimelineCollectionViewController: UIViewController, UICollectionVi
     private func configureFooterErrorCell(_ cell: TimelineHostedViewCell) {
         let errorView = ListErrorUIView()
         errorView.onOpenURL = openURL
+        errorView.onSessionChallenge = onSessionChallenge
         guard let failure = content.appendFailure else { return }
         errorView.configure(error: failure.error, onRetry: failure.retry)
         cell.setHostedView(

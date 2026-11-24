@@ -21,6 +21,7 @@ import dev.dimension.flare.ui.model.takeSuccessOr
 import dev.dimension.flare.ui.presenter.EnvironmentSettingsPresenter
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.screen.home.HomeScreen
+import dev.dimension.flare.ui.screen.serviceselect.ProvideAndroidSessionChallengeHost
 import dev.dimension.flare.ui.theme.FlareTheme
 import moe.tlaster.precompose.molecule.producePresenter
 
@@ -72,6 +73,8 @@ fun FlareApp(content: @Composable () -> Unit) {
                         ),
                 )
             },
-        content = content,
+        content = {
+            ProvideAndroidSessionChallengeHost(content = content)
+        },
     )
 }

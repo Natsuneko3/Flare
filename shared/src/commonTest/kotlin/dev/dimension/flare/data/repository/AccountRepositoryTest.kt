@@ -19,6 +19,7 @@ import dev.dimension.flare.data.database.cache.model.DbListPaging
 import dev.dimension.flare.data.database.cache.model.DbMessageItem
 import dev.dimension.flare.data.database.cache.model.DbMessageRoom
 import dev.dimension.flare.data.database.cache.model.DbMessageRoomReference
+import dev.dimension.flare.data.database.cache.model.DbPagingKey
 import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.database.cache.model.DbStatus
@@ -26,6 +27,8 @@ import dev.dimension.flare.data.database.cache.model.DbStatusReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationType
 import dev.dimension.flare.data.database.cache.model.DbTranslation
+import dev.dimension.flare.data.database.cache.model.DbUser
+import dev.dimension.flare.data.database.cache.model.DbUserHistory
 import dev.dimension.flare.data.database.cache.model.DbUserRelation
 import dev.dimension.flare.data.database.cache.model.TranslationEntityType
 import dev.dimension.flare.data.database.cache.model.TranslationStatus
@@ -37,6 +40,7 @@ import dev.dimension.flare.data.datasource.microblog.ComposeType
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.TimelineTabConfigurationDataSource
+import dev.dimension.flare.data.datasource.microblog.paging.notSupported
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AccountSelectionPreferences
 import dev.dimension.flare.data.io.OkioFileStorage
@@ -44,8 +48,13 @@ import dev.dimension.flare.data.model.IconType
 import dev.dimension.flare.data.model.ProxyMode
 import dev.dimension.flare.data.model.ProxyPolicy
 import dev.dimension.flare.data.model.ProxySettings
+import dev.dimension.flare.data.model.tab.GroupSource
+import dev.dimension.flare.data.model.tab.SYSTEM_HOME_MIXED_TIMELINE_ID
 import dev.dimension.flare.data.model.tab.ShortcutSpec
+import dev.dimension.flare.data.model.tab.TimelinePresentation
 import dev.dimension.flare.data.model.tab.TimelineResolver
+import dev.dimension.flare.data.model.tab.TimelineSlot
+import dev.dimension.flare.data.model.tab.TimelineSlotContent
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.platform.CommonTimelineSpecs
 import dev.dimension.flare.deleteTestRootPath
@@ -75,6 +84,7 @@ import dev.dimension.flare.ui.presenter.compose.SaveDraftUseCase
 import dev.dimension.flare.ui.presenter.home.RememberedAccountSelection
 import dev.dimension.flare.ui.render.toUiPlainText
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -92,6 +102,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -601,7 +612,7 @@ class AccountRepositoryTest : RobolectricTest() {
                 )
             val tabId = "common.home:$otherAccountKey"
             try {
-                AccountTabSyncCoordinator(repository, settings, scope, resolver)
+                AccountTabSyncCoordinator(repository, settings, scope, resolver, MangaProgressRepository(cacheDatabase))
                 withContext(Dispatchers.Default) {
                     withTimeout(5_000) {
                         laterAccountCreated.await()
@@ -615,6 +626,166 @@ class AccountRepositoryTest : RobolectricTest() {
                         settings.tabSettingsV2.first { it.homeSlots.none { slot -> slot.id == tabId } }
                     }
                 }
+            } finally {
+                job.cancelAndJoin()
+            }
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginDefaultTabsAreAddedAndCleanedUpWhenPlatformRemovedOrGuestDisabled() =
+        runTest {
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+            val guestPlatform = registry.mangaGuestPlatform("api.manga.example")
+            val guestCandidate = guestPlatform.guestDefaultTabs.single()
+
+            val accountPlatform =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "AccountTest"
+                    override val isDefaultGuest = false
+
+                    override fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource =
+                        object : MicroblogDataSource by UnavailableMicroblogDataSource, TimelineTabConfigurationDataSource {
+                            override val defaultTabs =
+                                persistentListOf(CommonTimelineSpecs.home.candidate(TimelineSpec.AccountBasedData(context.accountKey)))
+                            override val builtInTimelineTabs = defaultTabs
+                            override val shortcuts = persistentListOf<ShortcutSpec>()
+                        }
+                }
+            registry.replaceExternal("AccountTest", accountPlatform)
+
+            val repository = createRepository(backgroundScope, registry = registry)
+            val resolver = TimelineResolver(runtimeData, RepositoryAccountService(repository))
+            val settings = SettingsRepository(fileStorage, appDataStore, resolver, cacheDatabase)
+            val job = SupervisorJob()
+            val scope = CoroutineScope(backgroundScope.coroutineContext + job)
+            try {
+                val coordinator =
+                    AccountTabSyncCoordinator(repository, settings, scope, resolver, MangaProgressRepository(cacheDatabase))
+                repository.addAccount(UiAccount(accountKey, "AccountTest"), "valid")
+                val accountTabId = "common.home:$accountKey"
+                runCurrent()
+                settings.tabSettingsV2.first { it.homeSlots.any { slot -> slot.id == accountTabId } }
+
+                registry.replaceExternal("MangaGuest", guestPlatform)
+                coordinator.addGuestPluginDefaultTabs("MangaGuest")
+                runCurrent()
+
+                val afterAdd =
+                    settings.tabSettingsV2.first {
+                        it.homeSlots.any { slot -> slot.id == guestCandidate.id }
+                    }
+                assertEquals(
+                    listOf(
+                        SYSTEM_HOME_MIXED_TIMELINE_ID,
+                        accountTabId,
+                        guestCandidate.id,
+                    ),
+                    afterAdd.homeSlots.map { it.id },
+                )
+
+                // Also embed the guest slot inside a manual group to verify recursive cleanup.
+                val guestSlot = resolver.toSlot(guestCandidate)
+                val manualGroup =
+                    TimelineSlot(
+                        id = "manual_manga_group",
+                        content =
+                            TimelineSlotContent.Group(
+                                children = listOf(guestSlot),
+                                source = GroupSource.Manual,
+                            ),
+                    )
+                settings.updateTabSettingsV2 {
+                    copy(homeSlots = homeSlots + manualGroup)
+                }
+
+                // Disabling standalone guest host removes guest slots and collapses SystemHome back to the single account tab.
+                registry.replaceExternal("MangaGuest", registry.mangaGuestPlatform(null))
+                runCurrent()
+                val afterDisable =
+                    settings.tabSettingsV2.first {
+                        it.homeSlots.map { slot -> slot.id } == listOf(accountTabId)
+                    }
+                assertEquals(listOf(accountTabId), afterDisable.homeSlots.map { it.id })
+            } finally {
+                job.cancelAndJoin()
+            }
+        }
+
+    @Test
+    fun savedGuestTabsFollowTheInstalledOriginAtStartupAndAfterAnUpdate() =
+        runTest {
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+            val old = registry.mangaGuestPlatform("old.manga.example")
+            val installed = registry.mangaGuestPlatform("api.manga.example")
+            registry.replaceExternal(installed.platformId, installed)
+            val repository = createRepository(backgroundScope, registry = registry)
+            val resolver = TimelineResolver(runtimeData, RepositoryAccountService(repository))
+            val settings = SettingsRepository(fileStorage, appDataStore, resolver, cacheDatabase)
+            val progress = MangaProgressRepository(cacheDatabase)
+            val unrelated = resolver.toSlot(CommonTimelineSpecs.guestHome.candidate(CommonTimelineSpecs.GuestHomeData("other.example")))
+            val presentation =
+                TimelinePresentation(titleOverride = "Weekend reading", iconOverride = UiIcon.Featured.asType(), enabled = false)
+
+            fun savedTabs(platform: PlatformSpec): List<TimelineSlot> {
+                val popular = resolver.toSlot(platform.guestDefaultTabs.single()).copy(presentation = presentation)
+                val latest = resolver.toSlot(platform.guestTimelineTabs.last()).copy(id = "custom-latest")
+                val group =
+                    TimelineSlot(
+                        id = "reading-group",
+                        content = TimelineSlotContent.Group(children = listOf(latest, unrelated, popular)),
+                        presentation = presentation,
+                    )
+                return listOf(unrelated, popular, group)
+            }
+
+            val (_, previousDefault, previousGroup) = savedTabs(old)
+            val currentDefault = resolver.toSlot(installed.guestDefaultTabs.single())
+            val source = assertIs<TimelineSlotContent.Source>(previousDefault.content).source
+            val legacyDefault = previousDefault.copy(content = TimelineSlotContent.Source(source.copy(ownerPlatformId = null)))
+            val group = assertIs<TimelineSlotContent.Group>(previousGroup.content)
+            val groupWithDuplicate = previousGroup.copy(content = group.copy(children = group.children + currentDefault))
+            settings.updateTabSettingsV2 {
+                copy(homeSlots = listOf(unrelated, legacyDefault, groupWithDuplicate, currentDefault))
+            }
+            val owner = AccountType.GuestPlugin(installed.platformId, requireNotNull(installed.standaloneGuestHost))
+            val manga = MicroBlogKey("series", owner.host)
+            progress.recordPage(owner, manga, "chapter", pageIndex = 1, pageCount = 5, isCompleted = false)
+            val job = SupervisorJob()
+            try {
+                AccountTabSyncCoordinator(repository, settings, CoroutineScope(backgroundScope.coroutineContext + job), resolver, progress)
+                val atStartup = settings.tabSettingsV2.first { tabSettings -> tabSettings.homeSlots.none { it.id == previousDefault.id } }
+                assertEquals(savedTabs(installed), atStartup.homeSlots)
+
+                val updated = registry.mangaGuestPlatform("new.manga.example:8443")
+                registry.replaceExternal(updated.platformId, updated)
+                val afterUpdate = settings.tabSettingsV2.first { tabSettings -> tabSettings.homeSlots.none { it.id == currentDefault.id } }
+                assertEquals(savedTabs(updated), afterUpdate.homeSlots)
+                assertEquals("chapter", progress.observe(owner, manga).first().lastChapterId)
+
+                // Plugin update removes one guest timeline specId while keeping standaloneGuestHost -> stale tab is pruned.
+                val withoutPopular = registry.mangaGuestPlatform("new.manga.example:8443", timelineIds = listOf("latest"))
+                registry.replaceExternal(withoutPopular.platformId, withoutPopular)
+                val afterRemoval =
+                    settings.tabSettingsV2.first { tabSettings ->
+                        tabSettings.homeSlots.none { it.id == savedTabs(updated)[1].id }
+                    }
+                val expectedLatestGroup =
+                    TimelineSlot(
+                        id = "reading-group",
+                        content =
+                            TimelineSlotContent.Group(
+                                children =
+                                    listOf(
+                                        resolver.toSlot(withoutPopular.guestTimelineTabs.single()).copy(id = "custom-latest"),
+                                        unrelated,
+                                    ),
+                            ),
+                        presentation = presentation,
+                    )
+                assertEquals(listOf(unrelated, expectedLatestGroup), afterRemoval.homeSlots)
             } finally {
                 job.cancelAndJoin()
             }
@@ -676,6 +847,125 @@ class AccountRepositoryTest : RobolectricTest() {
                     .single()
                     .platformAvailable,
             )
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginObserversRebindAcrossPluginReloadRemovalAndReattachment() =
+        runTest {
+            val registry = testPlatformRegistry()
+            val first = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+            val second = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+
+            fun platform(
+                source: MicroblogDataSource,
+                id: String = "MangaPlugin",
+            ) = object : PlatformSpec by registry.defaultGuest {
+                override val platformId = id
+                override val isDefaultGuest = false
+
+                override fun guestDataSource(
+                    host: String,
+                    locale: String,
+                ): MicroblogDataSource {
+                    assertEquals("api.manga.example", host)
+                    return source
+                }
+            }
+            registry.replaceExternal("MangaPlugin", platform(first))
+            val repository = createRepository(backgroundScope, registry = registry)
+            val guest = AccountType.GuestPlugin("MangaPlugin", "api.manga.example")
+            assertNull(repository.peekDataSource(guest))
+            val emitted = Channel<MicroblogDataSource>(Channel.UNLIMITED)
+            backgroundScope.launch {
+                accountServiceFlow(guest, repository).collect(emitted::send)
+            }
+            assertSame(first, emitted.receive())
+            registry.replaceExternal("Unrelated", platform(first, "Unrelated"))
+            runCurrent()
+            assertTrue(emitted.tryReceive().isFailure)
+            registry.replaceExternal("MangaPlugin", platform(second))
+            assertSame(second, emitted.receive())
+            registry.replaceExternal("MangaPlugin", null)
+            assertSame(UnavailableMicroblogDataSource, emitted.receive())
+            registry.replaceExternal("MangaPlugin", platform(first))
+            assertSame(first, emitted.receive())
+        }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginAccountServiceDegradesToUnavailableWhenGuestDisabledUnsupportedOrHostInvalid() =
+        runTest {
+            val registry = testPlatformRegistry()
+            val first = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+            val second = object : MicroblogDataSource by UnavailableMicroblogDataSource {}
+
+            fun standalonePlatform(source: MicroblogDataSource) =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource {
+                        require(host == "api.manga.example") { "Guest origin mismatch: $host" }
+                        return source
+                    }
+                }
+
+            val disabledGuestPlatform =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource = throw IllegalArgumentException("Plugin guest access is unavailable")
+                }
+
+            val unsupportedGuestPlatform =
+                object : PlatformSpec by registry.defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource = throw UnsupportedOperationException("Guest data source is not supported")
+                }
+
+            registry.replaceExternal("MangaPlugin", standalonePlatform(first))
+            val repository = createRepository(backgroundScope, registry = registry)
+
+            assertSame(
+                UnavailableMicroblogDataSource,
+                accountServiceFlow(AccountType.GuestPlugin("MangaPlugin", "evil.example"), repository).first(),
+            )
+
+            val emitted = Channel<MicroblogDataSource>(Channel.UNLIMITED)
+            backgroundScope.launch {
+                accountServiceFlow(
+                    AccountType.GuestPlugin("MangaPlugin", "api.manga.example"),
+                    repository,
+                ).collect(emitted::send)
+            }
+            assertSame(first, emitted.receive())
+
+            registry.replaceExternal("MangaPlugin", disabledGuestPlatform)
+            assertSame(UnavailableMicroblogDataSource, emitted.receive())
+
+            registry.replaceExternal("MangaPlugin", unsupportedGuestPlatform)
+            runCurrent()
+            assertTrue(emitted.tryReceive().isFailure)
+            assertSame(
+                UnavailableMicroblogDataSource,
+                accountServiceFlow(AccountType.GuestPlugin("MangaPlugin", "api.manga.example"), repository).first(),
+            )
+
+            registry.replaceExternal("MangaPlugin", standalonePlatform(second))
+            assertSame(second, emitted.receive())
         }
 
     @Test
@@ -1516,6 +1806,167 @@ class AccountRepositoryTest : RobolectricTest() {
             )
         }
 
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun guestPluginInvalidateUninstallAndDeactivationPurgeGuestCacheTables() =
+        runTest {
+            val runtimeData = testPlatformRuntimeData()
+            val registry = PlatformRegistry(runtimeData)
+
+            fun guestPlatform(
+                id: String,
+                host: String?,
+            ) = object : PlatformSpec by registry.defaultGuest {
+                override val platformId = id
+                override val isDefaultGuest = false
+                override val standaloneGuestHost = host
+            }
+
+            registry.replaceExternal("MangaPlugin", guestPlatform("MangaPlugin", "api.manga.example"))
+            registry.replaceExternal("SurvivorPlugin", guestPlatform("SurvivorPlugin", "survivor.manga.example"))
+
+            val repository = createRepository(backgroundScope, registry = registry)
+            val progressRepository = MangaProgressRepository(cacheDatabase) { 12_000L }
+            repository.addAccount(UiAccount(accountKey, "Mastodon"), "specific")
+
+            val targetGuest = AccountType.GuestPlugin("MangaPlugin", "api.manga.example")
+            val survivorGuest = AccountType.GuestPlugin("SurvivorPlugin", "survivor.manga.example")
+            val specificAccount = AccountType.Specific(accountKey)
+
+            val guestAuthorKey = MicroBlogKey("author-1", "api.manga.example")
+            val survivorAuthorKey = MicroBlogKey("author-2", "survivor.manga.example")
+            val sampleUser = createSampleUser()
+            val samplePost = createSampleStatus(sampleUser)
+
+            suspend fun seedGuestCache(
+                owner: AccountType.GuestPlugin,
+                authorKey: MicroBlogKey,
+                timelinePagingKey: String,
+            ): DbStatus {
+                val author =
+                    DbUser(
+                        userKey = authorKey,
+                        name = "Author ${authorKey.id}",
+                        canonicalHandle = authorKey.id,
+                        host = owner.host,
+                        content = sampleUser.copy(key = authorKey),
+                    )
+                cacheDatabase.userDao().insert(author)
+                cacheDatabase.userDao().insertHistory(DbUserHistory(userKey = authorKey, accountType = owner, lastVisit = 100L))
+                cacheDatabase.userDao().insertUserRelation(DbUserRelation(owner, authorKey, UiRelation(following = true)))
+                cacheDatabase.userDao().insertProfileTabs(DbProfileTabs(owner, authorKey, """["works"]"""))
+
+                val statusKey = MicroBlogKey("manga-item-${owner.platformId}", owner.host)
+                val status = DbStatus(statusKey, owner, samplePost.copy(statusKey = statusKey, accountType = owner), 0, "guest manga")
+                cacheDatabase.statusDao().insertAll(listOf(status))
+                cacheDatabase.statusReferenceDao().insertAll(listOf(DbStatusReference(ReferenceType.Quote, status.id, status.id)))
+                cacheDatabase.translationDao().insert(
+                    DbTranslation(TranslationEntityType.Status, status.id, "en", "hash", TranslationStatus.Completed, updatedAt = 1L),
+                )
+
+                val historyRow = DbPagingTimeline(STATUS_HISTORY_PAGING_KEY, status.id, 100L)
+                val feedRow = DbPagingTimeline(timelinePagingKey, status.id, 200L)
+                cacheDatabase.pagingTimelineDao().insertAll(listOf(historyRow, feedRow))
+                cacheDatabase.pagingTimelineDao().insertPagingKey(DbPagingKey(pagingKey = timelinePagingKey, nextKey = "cursor-next"))
+                cacheDatabase.pagingTimelineDao().insertPresentationReferences(
+                    listOf(
+                        DbTimelineItemPresentationReference(
+                            pagingKey = timelinePagingKey,
+                            timelineId = feedRow._id,
+                            referenceStatusId = status.id,
+                            presentationType = DbTimelineItemPresentationType.Quote,
+                        ),
+                    ),
+                )
+                progressRepository.recordPage(
+                    accountType = owner,
+                    mangaKey = MicroBlogKey("series-1", owner.host),
+                    chapterId = "ch-1",
+                    pageIndex = 4,
+                    pageCount = 10,
+                    isCompleted = false,
+                )
+                return status
+            }
+
+            val specificStatus =
+                DbStatus(samplePost.statusKey, specificAccount, samplePost.copy(accountType = specificAccount), 0, "specific post")
+            cacheDatabase.statusDao().insertAll(listOf(specificStatus))
+            cacheDatabase.pagingTimelineDao().insertAll(listOf(DbPagingTimeline(STATUS_HISTORY_PAGING_KEY, specificStatus.id, 300L)))
+
+            val targetStatus1 = seedGuestCache(targetGuest, guestAuthorKey, "plugin:MangaPlugin:popular")
+            val survivorStatus = seedGuestCache(survivorGuest, survivorAuthorKey, "plugin:SurvivorPlugin:popular")
+
+            // 1. invalidatePlatform(platformId) clears timelines, statuses, history, profile tabs, references & translations,
+            //    while preserving DbMangaState/DbMangaChapterProgress and other platforms' rows!
+            repository.invalidatePlatform("MangaPlugin")
+
+            assertTrue(cacheDatabase.statusDao().getVersions(listOf(targetStatus1.id)).isEmpty())
+            assertFalse(cacheDatabase.pagingTimelineDao().existsPaging(targetGuest, STATUS_HISTORY_PAGING_KEY))
+            assertFalse(cacheDatabase.pagingTimelineDao().anyPaging("plugin:MangaPlugin:popular"))
+            assertNull(cacheDatabase.pagingTimelineDao().getPagingKey("plugin:MangaPlugin:popular"))
+            assertTrue(cacheDatabase.statusReferenceDao().getByStatusId(targetStatus1.id).isEmpty())
+            assertNull(cacheDatabase.translationDao().get(TranslationEntityType.Status, targetStatus1.id, "en"))
+            assertNull(cacheDatabase.userDao().getProfileTabsSync(targetGuest, guestAuthorKey))
+            assertEquals(
+                4,
+                progressRepository.observe(targetGuest, MicroBlogKey("series-1", targetGuest.host)).first().lastPageIndex,
+                "invalidatePlatform must preserve guest manga reading progress across plugin updates",
+            )
+            assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(survivorGuest, STATUS_HISTORY_PAGING_KEY))
+            assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(specificAccount, STATUS_HISTORY_PAGING_KEY))
+
+            // 2. Re-seed MangaPlugin cache rows, then uninstall via deleteAccounts -> purges EVERYTHING for MangaPlugin
+            //    including manga progress and orphaned DbUser rows on api.manga.example!
+            val targetStatus2 = seedGuestCache(targetGuest, guestAuthorKey, "plugin:MangaPlugin:popular")
+            repository.deleteAccounts(
+                platformId = "MangaPlugin",
+                ownsCredential = { true },
+                beforeDelete = { registry.replaceExternal("MangaPlugin", null) },
+            )
+
+            assertTrue(cacheDatabase.statusDao().getVersions(listOf(targetStatus2.id)).isEmpty())
+            assertFalse(cacheDatabase.pagingTimelineDao().existsPaging(targetGuest, STATUS_HISTORY_PAGING_KEY))
+            assertFalse(cacheDatabase.pagingTimelineDao().anyPaging("plugin:MangaPlugin:popular"))
+            assertNull(cacheDatabase.pagingTimelineDao().getPagingKey("plugin:MangaPlugin:popular"))
+            assertTrue(cacheDatabase.statusReferenceDao().getByStatusId(targetStatus2.id).isEmpty())
+            assertNull(cacheDatabase.translationDao().get(TranslationEntityType.Status, targetStatus2.id, "en"))
+            assertNull(cacheDatabase.userDao().getProfileTabsSync(targetGuest, guestAuthorKey))
+            assertNull(cacheDatabase.userDao().getUserRelation(targetGuest, guestAuthorKey).first())
+            assertNull(cacheDatabase.userDao().findByKey(guestAuthorKey).first())
+            assertEquals(
+                MangaProgressSnapshot(),
+                progressRepository.observe(targetGuest, MicroBlogKey("series-1", targetGuest.host)).first(),
+            )
+            // SurvivorPlugin and Specific account remain intact!
+            assertEquals(1, cacheDatabase.statusDao().getVersions(listOf(survivorStatus.id)).size)
+            assertNotNull(cacheDatabase.userDao().findByKey(survivorAuthorKey).first())
+            assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(specificAccount, STATUS_HISTORY_PAGING_KEY))
+
+            // 3. Deactivating SurvivorPlugin's standaloneGuestHost while AccountTabSyncCoordinator is active also purges all its guest rows!
+            val resolver = TimelineResolver(runtimeData, RepositoryAccountService(repository))
+            val settings = SettingsRepository(fileStorage, appDataStore, resolver, cacheDatabase)
+            val coordinatorJob = SupervisorJob()
+            val coordinatorScope = CoroutineScope(backgroundScope.coroutineContext + coordinatorJob)
+            try {
+                AccountTabSyncCoordinator(repository, settings, coordinatorScope, resolver, progressRepository)
+                registry.replaceExternal("SurvivorPlugin", guestPlatform("SurvivorPlugin", null))
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) {
+                        progressRepository
+                            .observe(survivorGuest, MicroBlogKey("series-1", survivorGuest.host))
+                            .first { it == MangaProgressSnapshot() }
+                    }
+                }
+                assertTrue(cacheDatabase.statusDao().getVersions(listOf(survivorStatus.id)).isEmpty())
+                assertFalse(cacheDatabase.pagingTimelineDao().existsPaging(survivorGuest, STATUS_HISTORY_PAGING_KEY))
+                assertNull(cacheDatabase.userDao().findByKey(survivorAuthorKey).first())
+                assertTrue(cacheDatabase.pagingTimelineDao().existsPaging(specificAccount, STATUS_HISTORY_PAGING_KEY))
+            } finally {
+                coordinatorJob.cancelAndJoin()
+            }
+        }
+
     private class ControlledProxyStore(
         initial: ProxySettings,
     ) : DataStore<ProxySettings> {
@@ -1528,6 +1979,35 @@ class AccountRepositoryTest : RobolectricTest() {
             beforeWrite()
             settings.value = updated
             return updated
+        }
+    }
+
+    private fun PlatformRegistry.mangaGuestPlatform(
+        host: String?,
+        timelineIds: List<String> = listOf("popular", "latest"),
+    ): PlatformSpec {
+        val timelines =
+            timelineIds.associateWith { id ->
+                TimelineSpec(
+                    id = "plugin:manga:MangaGuest:schema1:guest-timeline:$id",
+                    title = UiText.Raw(id),
+                    icon = UiIcon.World.asType(),
+                    serializer = TimelineSpec.GuestPluginResourceData.serializer(),
+                    targetId = { "${it.platformId}:${it.host}:${it.resourceId}" },
+                    loaderFactory = { _, _ -> flowOf(notSupported()) },
+                )
+            }
+        return object : PlatformSpec by defaultGuest {
+            override val platformId = "MangaGuest"
+            override val isDefaultGuest = false
+            override val standaloneGuestHost = host
+            override val timelineSpecs = timelines.values.toImmutableList()
+            override val guestTimelineTabs =
+                timelines
+                    .mapNotNull { (id, spec) ->
+                        host?.let { spec.candidate(TimelineSpec.GuestPluginResourceData(platformId, it, id)) }
+                    }.toImmutableList()
+            override val guestDefaultTabs = guestTimelineTabs.take(1).map { it.copy(title = UiText.Raw("Manga Guest")) }.toImmutableList()
         }
     }
 

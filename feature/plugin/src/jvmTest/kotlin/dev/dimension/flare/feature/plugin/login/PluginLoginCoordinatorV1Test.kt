@@ -46,6 +46,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -803,6 +804,164 @@ class PluginLoginCoordinatorV1Test {
         }
 
     @Test
+    fun v2CookieLoginForwardsNormalizedUserAgentAndV1OmitsIt() =
+        runBlocking {
+            val captureScript =
+                LOGIN_SCRIPT.replace(
+                    "return session?.value === \"valid\" ? success(request, { cookies: request.cookies.cookies }) : { type: \"pending\" };",
+                    """
+                    return session?.value === "valid"
+                      ? success(request, {
+                          cookies: request.cookies.cookies,
+                          hasUserAgent: Object.prototype.hasOwnProperty.call(request, "userAgent"),
+                          userAgent: request.userAgent ?? null,
+                          hasNestedUserAgent: Object.prototype.hasOwnProperty.call(request.cookies, "userAgent")
+                        })
+                      : { type: "pending" };
+                    """.trimIndent(),
+                )
+
+            plugin = install(captureScript, v2Manifest())
+            val v2Accounts = RecordingAccountService()
+            val v2Handler = cookieHandler(v2Accounts)
+            try {
+                v2Handler.perform("login")
+                assertTrue(
+                    v2Handler.checkCookies(
+                        LoginCookieSnapshot(
+                            values = listOf(LoginCookieValue("$ORIGIN/api/cookie", "session", "valid")),
+                            userAgent = "  Mozilla/5.0 (FlareTest)  ",
+                        ),
+                    ),
+                )
+                val credential = assertIs<PluginAccountCredentialV1>(v2Accounts.added.single().second).credential.jsonObject
+                assertTrue(credential.getValue("hasUserAgent").jsonPrimitive.boolean)
+                assertEquals("Mozilla/5.0 (FlareTest)", credential.getValue("userAgent").jsonPrimitive.content)
+                assertFalse(credential.getValue("hasNestedUserAgent").jsonPrimitive.boolean)
+            } finally {
+                v2Handler.close()
+            }
+
+            plugin = install(captureScript, LOGIN_MANIFEST)
+            val v1Accounts = RecordingAccountService()
+            val v1Handler = cookieHandler(v1Accounts)
+            try {
+                v1Handler.perform("login")
+                assertTrue(
+                    v1Handler.checkCookies(
+                        LoginCookieSnapshot(
+                            values = listOf(LoginCookieValue("$ORIGIN/api/cookie", "session", "valid")),
+                            userAgent = "Mozilla/5.0 (FlareTest)",
+                        ),
+                    ),
+                )
+                val credential = assertIs<PluginAccountCredentialV1>(v1Accounts.added.single().second).credential.jsonObject
+                assertFalse(credential.getValue("hasUserAgent").jsonPrimitive.boolean)
+                assertFalse(credential.getValue("hasNestedUserAgent").jsonPrimitive.boolean)
+            } finally {
+                v1Handler.close()
+            }
+        }
+
+    @Test
+    fun invalidUserAgentIsSafelyDiscardedWithoutFailingCookieLogin() =
+        runBlocking {
+            val captureScript =
+                LOGIN_SCRIPT.replace(
+                    "return session?.value === \"valid\" ? success(request, { cookies: request.cookies.cookies }) : { type: \"pending\" };",
+                    """
+                    return session?.value === "valid"
+                      ? success(request, {
+                          cookies: request.cookies.cookies,
+                          hasUserAgent: Object.prototype.hasOwnProperty.call(request, "userAgent"),
+                          userAgent: request.userAgent ?? null
+                        })
+                      : { type: "pending" };
+                    """.trimIndent(),
+                )
+            plugin = install(captureScript, v2Manifest())
+
+            val invalidUserAgents =
+                listOf(
+                    "",
+                    "   ",
+                    "a".repeat(1_025),
+                    "a".repeat(100_000),
+                    "Mozilla/5.0\r",
+                    "Mozilla/5.0\n",
+                    "Mozilla/5.0\r\nX-Test: 1",
+                    "Mozilla/5.0\u0000",
+                    "Mozilla/5.0\u007f",
+                )
+            for (badUa in invalidUserAgents) {
+                val session = PluginWebCookieLoginCoordinatorV1(pool, FixedEntropy).begin(plugin, "cookie", ORIGIN, "en")
+                try {
+                    val result =
+                        assertIs<PluginCookieCheckResultV1.Success>(
+                            session.check(
+                                CookieSnapshotV1(
+                                    cookies = listOf(CookieValueV1("$ORIGIN/api/cookie", "session", "valid")),
+                                    userAgent = badUa,
+                                ),
+                            ),
+                        )
+                    assertFalse(
+                        result.value.credential.jsonObject
+                            .getValue("hasUserAgent")
+                            .jsonPrimitive.boolean,
+                        "Expected bad UA to be omitted: $badUa",
+                    )
+                } finally {
+                    session.close()
+                }
+
+                val accounts = RecordingAccountService()
+                val handler = cookieHandler(accounts)
+                try {
+                    handler.perform("login")
+                    assertTrue(
+                        handler.checkCookies(
+                            LoginCookieSnapshot(
+                                values = listOf(LoginCookieValue("$ORIGIN/api/cookie", "session", "valid")),
+                                userAgent = badUa,
+                            ),
+                        ),
+                    )
+                    val saved = assertIs<PluginAccountCredentialV1>(accounts.added.single().second)
+                    assertFalse(
+                        saved.credential.jsonObject
+                            .getValue("hasUserAgent")
+                            .jsonPrimitive.boolean,
+                    )
+                } finally {
+                    handler.close()
+                }
+            }
+
+            val maxLenSession = PluginWebCookieLoginCoordinatorV1(pool, FixedEntropy).begin(plugin, "cookie", ORIGIN, "en")
+            try {
+                val maxUa = "u".repeat(1_024)
+                val result =
+                    assertIs<PluginCookieCheckResultV1.Success>(
+                        maxLenSession.check(
+                            CookieSnapshotV1(
+                                cookies = listOf(CookieValueV1("$ORIGIN/api/cookie", "session", "valid")),
+                                userAgent = maxUa,
+                            ),
+                        ),
+                    )
+                assertEquals(
+                    maxUa,
+                    result.value.credential.jsonObject
+                        .getValue("userAgent")
+                        .jsonPrimitive.content,
+                )
+            } finally {
+                maxLenSession.close()
+            }
+        }
+
+    @Test
     fun v2FlowExpiresWithoutExtendingItsLifetimeAndRejectsClosedOrRetiredResults() =
         runBlocking {
             plugin = install(LOGIN_SCRIPT, v2Manifest())
@@ -1135,6 +1294,111 @@ class PluginLoginCoordinatorV1Test {
                 assertTrue(accounts.added.isEmpty())
             } finally {
                 handler.close()
+            }
+        }
+
+    @Test
+    fun apiV2LoginAcceptsMangaAndPostMutateWithoutPostDetail() =
+        runBlocking<Unit> {
+            val mangaManifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "$PLUGIN_ID",
+                  "version": "1.0.0",
+                  "defaultLocale": "en",
+                  "name": "Manga login test",
+                  "permissions": { "mediaNetwork": true },
+                  "platform": {
+                    "id": "TestPlugin",
+                    "name": "Test platform",
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": { "detail": {}, "pages": {} }
+                      },
+                      "flare.datasource.post/v1": {
+                        "operations": { "mutate": {} }
+                      }
+                    },
+                    "loginMethods": [
+                      {
+                        "id": "form",
+                        "interaction": "Form",
+                        "title": "Form",
+                        "fields": [
+                          { "id": "token", "type": "Secret", "label": "Token" },
+                          { "id": "mode", "type": "Text", "label": "Mode", "required": false }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            val mangaScript =
+                """
+                defineFlareSocialPlugin({
+                  login: {
+                    form: {
+                      async begin(request) {
+                        const capabilities =
+                          request.values.mode === "mutateOnly"
+                            ? { "flare.datasource.post/v1": ["mutate"] }
+                            : { "flare.datasource.manga/v1": ["detail", "pages"], "flare.datasource.post/v1": ["mutate"] };
+                        return {
+                          type: "success",
+                          value: {
+                            accountId: "account-1",
+                            origin: request.origin,
+                            credential: { token: request.values.token },
+                            profile: {
+                              key: { id: "account-1", host: "plugin.example" },
+                              handle: "test@plugin.example",
+                              displayName: "Test"
+                            },
+                            capabilities
+                          }
+                        };
+                      }
+                    }
+                  },
+                  capabilities: {
+                    manga: {
+                      async detail(req) { return { key: req.key, title: "Manga" }; },
+                      async pages() { return { pages: [] }; }
+                    },
+                    post: {
+                      async mutate() { return { type: "noChange" }; }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val mangaPlugin = install(mangaScript, mangaManifest)
+            val coordinator = PluginFormLoginCoordinatorV1(pool, FixedEntropy)
+            val negotiated =
+                coordinator.login(
+                    plugin = mangaPlugin,
+                    methodId = "form",
+                    origin = ORIGIN,
+                    locale = "en",
+                    values = mapOf("token" to "secret", "mode" to "full"),
+                )
+            assertEquals(
+                mapOf(
+                    "flare.datasource.manga/v1" to setOf("detail", "pages"),
+                    "flare.datasource.post/v1" to setOf("mutate"),
+                ),
+                negotiated.capabilities,
+            )
+            // Negotiating post.mutate alone without any displayable capability must still fail
+            assertFailsWith<Exception> {
+                coordinator.login(
+                    plugin = mangaPlugin,
+                    methodId = "form",
+                    origin = ORIGIN,
+                    locale = "en",
+                    values = mapOf("token" to "secret", "mode" to "mutateOnly"),
+                )
             }
         }
 

@@ -26,24 +26,38 @@ final class WebLoginSession {
     let proxy = WebViewProxy()
     var viewModel: (any WebLoginPageModel)?
     private(set) var completed = false
+    private(set) var userAgent: String?
     private let cookieCheck: CookieCheck
-    private let validateCookies: @MainActor ([HTTPCookie]) async -> Bool
+    private let validateCookies: @MainActor ([HTTPCookie], String?) async -> Bool
     @ObservationIgnored private var closed = false
 
-    init(url: String, cookieCheck: CookieCheck, validateCookies: @escaping @MainActor ([HTTPCookie]) async -> Bool) {
+    init(
+        url: String,
+        cookieCheck: CookieCheck,
+        validateCookies: @escaping @MainActor ([HTTPCookie], String?) async -> Bool
+    ) {
         self.url = url
         self.cookieCheck = cookieCheck
         self.validateCookies = validateCookies
         proxy.start()
     }
 
+    func updateUserAgent(_ userAgent: String?) {
+        guard !closed, let trimmed = userAgent?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return
+        }
+        self.userAgent = trimmed
+    }
+
     func checkCookies(_ cookies: [HTTPCookie]) {
         guard let route = proxy.route, route.isValid, !completed else { return }
+        let userAgent = self.userAgent
         // An account update may still be finishing when the sheet closes.
         Task { [weak self, cookieCheck, validateCookies] in
             await cookieCheck.run {
                 guard route.isValid, self?.completed == false else { return }
-                let accepted = await validateCookies(cookies)
+                let resolvedUserAgent = self?.userAgent ?? userAgent
+                let accepted = await validateCookies(cookies, resolvedUserAgent)
                 if accepted, let self, !self.closed {
                     self.completed = true
                 }

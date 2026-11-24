@@ -183,8 +183,9 @@ internal class AndroidDownloadManager(
         byteArray: ByteArray,
         fileName: String,
         mimeType: String = imageMimeType(byteArray),
+        keepExisting: Boolean = false,
     ): Boolean =
-        saveFile(fileName = fileName, mimeType = mimeType) { outputStream ->
+        saveFile(fileName = fileName, mimeType = mimeType, keepExisting = keepExisting) { outputStream ->
             outputStream.write(byteArray)
             outputStream.flush()
             true
@@ -198,12 +199,14 @@ internal class AndroidDownloadManager(
         media: UiMedia,
         fileName: String,
         callback: DownloadCallback? = null,
+        keepExisting: Boolean = false,
     ): Long {
         val downloadId = nextDownloadId.incrementAndGet()
         val success =
             saveMedia(
                 media = media,
                 fileName = fileName,
+                keepExisting = keepExisting,
                 onDownloadStarted = {
                     withContext(Dispatchers.Main) {
                         callback?.onDownloadStarted(downloadId)
@@ -280,6 +283,7 @@ internal class AndroidDownloadManager(
         fileName: String,
         onDownloadStarted: suspend () -> Unit,
         askDirectoryUri: Uri? = null,
+        keepExisting: Boolean = false,
     ): Boolean =
         withContext(Dispatchers.IO) {
             var downloadStarted = false
@@ -303,7 +307,7 @@ internal class AndroidDownloadManager(
             if (uri.startsWith("file://")) {
                 if (!isImageTranslationFile(media, context.cacheDir)) return@withContext false
                 onDownloadStarted()
-                return@withContext saveFile(fileName = fileName, mimeType = mimeType, askDirectoryUri = askDirectoryUri) { output ->
+                return@withContext saveFile(fileName, mimeType, askDirectoryUri, keepExisting = keepExisting) { output ->
                     java.io
                         .File(java.net.URI(uri))
                         .inputStream()
@@ -315,7 +319,7 @@ internal class AndroidDownloadManager(
             if (media3VideoCacheManager.isFullyCached(media)) {
                 val saveMode = mediaSaveLocationRepository.state.value.mode
                 val savedFromCache =
-                    saveFile(fileName = fileName, mimeType = mimeType, askDirectoryUri = askDirectoryUri) { outputStream ->
+                    saveFile(fileName, mimeType, askDirectoryUri, keepExisting = keepExisting) { outputStream ->
                         exportToStream(
                             media = media,
                             outputStream = outputStream,
@@ -333,7 +337,7 @@ internal class AndroidDownloadManager(
 
             if (!downloadStarted) onDownloadStarted()
 
-            saveFile(fileName = fileName, mimeType = mimeType, askDirectoryUri = askDirectoryUri) { outputStream ->
+            saveFile(fileName, mimeType, askDirectoryUri, keepExisting = keepExisting) { outputStream ->
                 exportToStream(
                     media = media,
                     outputStream = outputStream,
@@ -471,6 +475,7 @@ internal class AndroidDownloadManager(
         mimeType: String,
         askDirectoryUri: Uri? = null,
         motionPhoto: Boolean = false,
+        keepExisting: Boolean = motionPhoto,
         writer: (OutputStream) -> Boolean,
     ): Boolean {
         askDirectoryUri?.let { directoryUri ->
@@ -479,7 +484,7 @@ internal class AndroidDownloadManager(
                     directoryUri = directoryUri,
                     fileName = fileName,
                     mimeType = mimeType,
-                    keepExisting = motionPhoto,
+                    keepExisting = keepExisting,
                     writer = writer,
                 )
             }
@@ -492,7 +497,7 @@ internal class AndroidDownloadManager(
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         saveToMediaStore(fileName = fileName, mimeType = mimeType, motionPhoto = motionPhoto, writer = writer)
                     } else {
-                        saveToPublicDirectory(fileName = fileName, motionPhoto = motionPhoto, writer = writer)
+                        saveToPublicDirectory(fileName, motionPhoto, keepExisting, writer)
                     }
                 }
             }
@@ -508,7 +513,7 @@ internal class AndroidDownloadManager(
                         directoryUri = directoryUri,
                         fileName = fileName,
                         mimeType = mimeType,
-                        keepExisting = motionPhoto,
+                        keepExisting = keepExisting,
                         writer = writer,
                     )
                 }
@@ -688,20 +693,27 @@ internal class AndroidDownloadManager(
     private fun saveToPublicDirectory(
         fileName: String,
         motionPhoto: Boolean,
+        keepExisting: Boolean,
         writer: (OutputStream) -> Boolean,
     ): Boolean {
         val directory =
             Environment.getExternalStoragePublicDirectory(
                 if (motionPhoto) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_DOWNLOADS,
             )
-        if (!directory.exists() && !directory.mkdirs()) {
-            return false
-        }
+        directory.mkdirs()
+        if (!directory.isDirectory) return false
         var file = File(directory, fileName)
-        var canDelete = !motionPhoto
+        var canDelete = !keepExisting
         val success =
             try {
-                if (motionPhoto) file = reserveMotionPhotoFile(file)
+                if (keepExisting) {
+                    file =
+                        when {
+                            motionPhoto -> reserveMotionPhotoFile(file)
+                            file.createNewFile() -> file
+                            else -> File.createTempFile("${file.nameWithoutExtension.padEnd(3, '_')}-", ".${file.extension}", directory)
+                        }
+                }
                 canDelete = true
                 FileOutputStream(file).use(writer)
             } catch (e: Exception) {

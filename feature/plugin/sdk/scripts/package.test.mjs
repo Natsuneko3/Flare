@@ -144,8 +144,104 @@ defineFlareSocialPlugin({ capabilities: { post: {
     const filter: string | undefined = request.filterId;
     return request.tabId === "replies" && filter === undefined ? page : { endReached: true };
   },
+}, manga: {
+  detail(request): MangaV1 {
+    return { key: request.key, title: "Manga", readingDirection: "rtl", status: "ongoing", chapters: [{ id: "1", title: "Ch 1" }] };
+  },
+  pages(request): MangaPagesV1 {
+    const chapterTarget: NavigationTargetV1 = { type: "mangaChapter", key: request.key, chapterId: request.chapterId };
+    void chapterTarget;
+    return { pages: [{ id: "p1", media: { id: "m1", type: "image", url: "https://cdn.example.org/1.jpg" } }] };
+  },
 } } });
+// @ts-expect-error MangaPageV1 media accepts only image or gif.
+const invalidMangaPage: MangaPageV1 = { id: "p-video", media: { id: "m2", type: "video", url: "https://cdn.example.org/1.mp4" } };
+void invalidMangaPage;
 const md5: Promise<string> = flare.crypto.md5("abc");
+const extracted: Promise<Record<string, JsonValue>> = flare.html.extract({
+  html: "<main><a href='/1'>One</a></main>",
+  baseUrl: "https://example.org",
+  spec: {
+    link: { selector: "a", extract: "attr", name: "href", absoluteUrl: true },
+    hasMain: { selector: "main", extract: "exists" },
+    items: { selector: "a", all: true, limit: 10, fields: { text: { extract: "ownText" } } },
+  },
+});
+const queried: Promise<Record<string, JsonValue>[]> = flare.html.query({
+  html: "<ul><li>Item</li></ul>",
+  baseUrl: "https://example.org",
+  selector: "li",
+  limit: 20,
+  fields: { title: { extract: "text" } },
+});
+const decodedHtml: Promise<string> = flare.html.decodeEntities("1 &amp; 2");
+void [extracted, queried, decodedHtml];
+// @ts-expect-error Unsupported HTML extract mode.
+flare.html.extract({ html: "<p>a</p>", spec: { p: { selector: "p", extract: "markdown" } } });
+// @ts-expect-error html.query requires fields.
+flare.html.query({ html: "<p>a</p>", selector: "p" });
+defineFlareSocialPlugin({
+  login: {
+    browser: {
+      begin: () => ({ type: "webCookie", startUrl: "https://example.org/login" }),
+      check(request: CookieCheckRequestV1): LoginTransitionV1 {
+        const ua: string | undefined = request.userAgent;
+        void ua;
+        return { type: "pending", pendingPayload: request.pendingPayload ?? null };
+      },
+    },
+  },
+  capabilities: {
+    sessionChallenge: {
+      complete(request: SessionChallengeCompleteRequestV1): SessionChallengeResultV1 {
+        const url: string = request.challengeUrl;
+        const ua: string | undefined = request.userAgent;
+        const cookies: CookieValueV1[] = request.cookies.cookies;
+        const pending: JsonValue | undefined = request.pendingPayload;
+        return url && ua && cookies.length >= 0 && pending !== undefined
+          ? { type: "pending", pendingPayload: { step: 1 } }
+          : { type: "completed" };
+      },
+    },
+    manga: {
+      detail(request): MangaV1 {
+        return { key: request.key, title: "Manga" };
+      },
+      pages(request: MangaPagesRequestV1): MangaPagesV1 {
+        const offset: number | undefined = request.offset;
+        const limit: number | undefined = request.limit;
+        const cursor: string | undefined = request.cursor;
+        void [offset, limit, cursor];
+        return {
+          pages: [{ id: "p1", pageToken: "tok-1" }],
+          offset: 0,
+          totalCount: 10,
+          nextCursor: "next-1",
+          endReached: false,
+        };
+      },
+      pageImage(request: MangaPageImageRequestV1): MediaV1 {
+        const attempt: number | undefined = request.attempt;
+        const reason: MangaPageImageReasonV1 | undefined = request.reason;
+        const failedUrl: string | undefined = request.failedUrl;
+        void [attempt, reason, failedUrl];
+        return { id: request.pageId, type: "image", url: "https://cdn.example.org/1.jpg" };
+      },
+    },
+  },
+});
+// @ts-expect-error Invalid SessionChallengeResultV1 type.
+const invalidChallengeResult: SessionChallengeResultV1 = { type: "failed" };
+// @ts-expect-error Invalid MangaPageImageReasonV1 value.
+const invalidImageReason: MangaPageImageReasonV1 = "timeout";
+const challengeError: Error = flare.error({
+  code: "ChallengeRequired",
+  message: { value: "Verify session" },
+  challenge: { url: "https://example.org/challenge", seedCookies: [{ name: "s", value: "1" }] },
+});
+// @ts-expect-error PluginChallengeV1 requires url.
+const invalidChallengeError: PluginErrorV1 = { code: "ChallengeRequired", message: { value: "Verify" }, challenge: {} };
+void [invalidChallengeResult, invalidImageReason, challengeError, invalidChallengeError];
 // @ts-expect-error Unsupported Host method.
 flare.fetch("https://example.org");
 // @ts-expect-error Invalid SDK error code.

@@ -49,13 +49,6 @@ import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.seconds
 import android.webkit.WebView as AndroidWebView
 
-private val userAgent =
-    mapOf(
-        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.3",
-        "Pragma" to "no-cache",
-        "Cache-Control" to "no-cache",
-    )
-
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 internal fun WebCookieLoginScreen(
@@ -160,6 +153,7 @@ private fun ProxyLoginWebView(
     }
     var unsubscribe by remember { mutableStateOf<(() -> Unit)?>(null) }
     var disposed by remember { mutableStateOf(false) }
+    var webViewUserAgent by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(request) {
         while (route.isValid) {
             webViewState.lastLoadedUrl?.let { loadedUrl ->
@@ -183,7 +177,7 @@ private fun ProxyLoginWebView(
                                     )
                                 }
                         }
-                if (route.isValid && callback(LoginCookieSnapshot(values = values, rawHeader = rawHeader))) {
+                if (route.isValid && callback(LoginCookieSnapshot(values = values, rawHeader = rawHeader, userAgent = webViewUserAgent))) {
                     onBack()
                     return@LaunchedEffect
                 }
@@ -222,7 +216,7 @@ private fun ProxyLoginWebView(
         onCreated = { view ->
             view.clearCache(true)
             with(view.settings) {
-                userAgentString = userAgent.getValue("user-agent")
+                webViewUserAgent = userAgentString
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 javaScriptCanOpenWindowsAutomatically = false

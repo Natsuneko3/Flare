@@ -42,6 +42,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -486,6 +487,165 @@ class PluginManagementPresenterV1Test {
                 subsystem.runtimePool.close()
             }
         }
+
+    @Test
+    fun newGuestPluginInstallAddsDefaultTabsWhenCheckedAndSkipsWhenUnchecked() =
+        runTest {
+            val guestPackage = root / "guest-plugin-v1.fpp"
+            writeGuestPluginPackage(guestPackage, version = "1.0.0")
+            val subsystem = subsystem()
+            val registry = testPluginRegistry(subsystem, backgroundScope)
+            val homeSlots = mutableListOf<Pair<String, String>>()
+            val observer =
+                backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    registry.platforms.collect { platforms ->
+                        val activeGuestPlatformIds =
+                            platforms.mapNotNull { spec -> spec.platformId.takeIf { spec.standaloneGuestHost != null } }.toSet()
+                        homeSlots.removeAll { (ownerPlatformId, _) -> ownerPlatformId !in activeGuestPlatformIds }
+                    }
+                }
+            val presenter =
+                PluginManagementPresenterV1(
+                    subsystem = subsystem,
+                    scope = backgroundScope,
+                    registry = { registry },
+                    accounts = { PluginTestAccounts() },
+                    addGuestPluginDefaultTabs = { platformId ->
+                        val defaults =
+                            registry.platforms.value
+                                .firstOrNull { it.platformId == platformId && it.standaloneGuestHost != null }
+                                ?.guestDefaultTabs
+                                .orEmpty()
+                        defaults.forEach { candidate ->
+                            val item = platformId to candidate.id
+                            if (item !in homeSlots) homeSlots += item
+                        }
+                    },
+                )
+            try {
+                // Non-guest plugin does not offer default guest tabs.
+                val regularReview = presenter.inspect(packagePath.toString())
+                assertEquals(emptyList(), regularReview.defaultGuestTabTitles)
+                assertFalse(regularReview.canAutoAddDefaultTabs)
+                presenter.cancelInstall()
+
+                // 1. Inspect fresh guest plugin -> defaultGuestTabTitles == listOf("Popular")
+                val review = presenter.inspect(guestPackage.toString())
+                assertEquals(listOf("Popular"), review.defaultGuestTabTitles)
+                assertTrue(review.canAutoAddDefaultTabs)
+
+                // 2. confirmInstall(addDefaultTabs = false) -> homeSlots unchanged
+                presenter.confirmInstall(addDefaultTabs = false)
+                runCurrent()
+                assertTrue(homeSlots.isEmpty())
+                val firstSource = registry.require("MangaGuest").guestDataSource("api.manga.example", "en")
+
+                // 3. Uninstall, re-inspect, confirmInstall(addDefaultTabs = true) -> homeSlots contains GuestPlugin slot
+                presenter.uninstall(review.pluginId)
+                runCurrent()
+                val secondReview = presenter.inspect(guestPackage.toString())
+                assertEquals(listOf("Popular"), secondReview.defaultGuestTabTitles)
+                presenter.confirmInstall(addDefaultTabs = true)
+                runCurrent()
+                assertNotSame(firstSource, registry.require("MangaGuest").guestDataSource("api.manga.example", "en"))
+                assertEquals(1, homeSlots.size)
+                assertEquals("MangaGuest", homeSlots.single().first)
+                assertTrue(homeSlots.single().second.endsWith(":MangaGuest:api.manga.example:popular"))
+
+                // 4. Uninstall -> GuestPlugin slot automatically removed from homeSlots
+                presenter.uninstall(review.pluginId)
+                runCurrent()
+                assertTrue(homeSlots.isEmpty())
+            } finally {
+                observer.cancel()
+                presenter.close()
+                subsystem.runtimePool.close()
+            }
+        }
+
+    @Test
+    fun upgradeDoesNotOfferOrReAddGuestDefaultTabs() =
+        runTest {
+            val v1Package = root / "guest-plugin-1.0.0.fpp"
+            val v2Package = root / "guest-plugin-1.1.0.fpp"
+            writeGuestPluginPackage(v1Package, version = "1.0.0")
+            writeGuestPluginPackage(v2Package, version = "1.1.0")
+            val subsystem = subsystem()
+            val registry = testPluginRegistry(subsystem, backgroundScope)
+            val addedPlatforms = mutableListOf<String>()
+            val presenter =
+                PluginManagementPresenterV1(
+                    subsystem = subsystem,
+                    scope = backgroundScope,
+                    registry = { registry },
+                    accounts = { PluginTestAccounts() },
+                    addGuestPluginDefaultTabs = { platformId -> addedPlatforms += platformId },
+                )
+            try {
+                val initialReview = presenter.inspect(v1Package.toString())
+                assertEquals(listOf("Popular"), initialReview.defaultGuestTabTitles)
+                presenter.confirmInstall(addDefaultTabs = false)
+                assertTrue(addedPlatforms.isEmpty())
+                val firstSource = registry.require("MangaGuest").guestDataSource("api.manga.example", "en")
+
+                val upgradeReview = presenter.inspect(v2Package.toString())
+                assertEquals(emptyList(), upgradeReview.defaultGuestTabTitles)
+                assertFalse(upgradeReview.canAutoAddDefaultTabs)
+                presenter.confirmInstall(addDefaultTabs = true)
+                assertTrue(addedPlatforms.isEmpty())
+                assertNotSame(firstSource, registry.require("MangaGuest").guestDataSource("api.manga.example", "en"))
+            } finally {
+                presenter.close()
+                subsystem.runtimePool.close()
+            }
+        }
+
+    private fun writeGuestPluginPackage(
+        path: Path,
+        version: String,
+    ) {
+        val manifest =
+            """
+            {
+              "schemaVersion": 1,
+              "apiVersion": 2,
+              "id": "dev.dimension.flare.test.guest.plugin",
+              "version": "$version",
+              "defaultLocale": "en",
+              "name": "Guest manga plugin",
+              "permissions": {
+                "httpOrigins": ["https://api.manga.example"]
+              },
+              "platform": {
+                "id": "MangaGuest",
+                "name": "Manga Guest",
+                "loginMethods": [],
+                "guest": {
+                  "enabled": true,
+                  "origin": "https://api.manga.example"
+                },
+                "capabilities": {
+                  "flare.datasource.timeline/v1": {
+                    "operations": { "page": { "directions": ["refresh", "older"] } }
+                  }
+                },
+                "timelines": [
+                  { "id": "popular", "title": "Popular", "defaultForNewAccount": true },
+                  { "id": "latest", "title": "Latest", "defaultForNewAccount": false }
+                ]
+              }
+            }
+            """.trimIndent()
+        val script =
+            """
+            defineFlareSocialPlugin({
+              capabilities: {
+                timeline: { async page(request) { return { items: [] }; } },
+              },
+            });
+            """.trimIndent()
+        TestFppFactory.write(path, TestFppFactory.validEntries(manifest = manifest, script = script))
+    }
 
     private fun subsystem(): PluginSubsystemV1 =
         PluginSubsystemV1(

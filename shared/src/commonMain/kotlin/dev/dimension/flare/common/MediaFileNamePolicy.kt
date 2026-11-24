@@ -51,6 +51,27 @@ public object MediaFileNamePolicy {
         }
     }
 
+    public fun mangaPageFileName(
+        mangaId: String,
+        chapterId: String,
+        pageIndex: Int,
+        original: UiMedia,
+        displayed: UiMedia,
+    ): String {
+        // Leave room for the page, translation suffix and extension on 255-byte filesystems.
+        val manga = safeLocalFileName(mangaId, "manga").take(32)
+        val chapter = safeLocalFileName(chapterId, "chapter").take(32)
+        val translated = if (displayed.url == original.url) "" else "_translated"
+        val extension =
+            if (displayed is UiMedia.Gif) {
+                "gif"
+            } else {
+                rawMediaFileName(displayed).substringAfterLast('.').takeIf { it.matches(MediaExtensionRegex) }
+                    ?: displayed.fallbackExtension
+            }
+        return "${manga}_${chapter}_p${pageIndex + 1}$translated.$extension"
+    }
+
     public fun rawMediaFileNames(medias: List<UiMedia>): Map<String, UiMedia> = indexedMediaFileNames(medias, ::rawMediaFileName)
 
     public fun articleFileName(
@@ -232,6 +253,8 @@ private val UiMedia.fallbackExtension: String
             is UiMedia.Video,
             -> "mp4"
         }
+
+private val MediaExtensionRegex = Regex("[A-Za-z0-9]{1,10}")
 
 private val UnsafeFileNameCharacterRegex = Regex("[^A-Za-z0-9._-]")
 

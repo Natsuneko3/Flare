@@ -22,6 +22,18 @@ enum Route: Hashable, Identifiable {
                 lhsPlatformId == rhsPlatformId
         case (.composeCrossPost(let lhs), .composeCrossPost(let rhs)):
             return lhs == rhs
+        case (.mangaDetail(let lAccount, let lKey), .mangaDetail(let rAccount, let rKey)):
+            return lAccount == rAccount && lKey == rKey
+        case (
+            .mangaReader(let lAccount, let lKey, let lChapter, let lPage),
+            .mangaReader(let rAccount, let rKey, let rChapter, let rPage)
+        ):
+            return lAccount == rAccount &&
+                lKey == rKey &&
+                lChapter == rChapter &&
+                lPage == rPage
+        case (.mangaComments(let lAccount, let lKey), .mangaComments(let rAccount, let rKey)):
+            return lAccount == rAccount && lKey == rKey
         default:
             return lhs.hashValue == rhs.hashValue
         }
@@ -45,6 +57,20 @@ enum Route: Hashable, Identifiable {
         case .composeCrossPost(let prefill):
             hasher.combine("composeCrossPost")
             hasher.combine(prefill)
+        case .mangaDetail(let accountType, let mangaKey):
+            hasher.combine("mangaDetail")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            hasher.combine("mangaReader")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
+            hasher.combine(chapterId)
+            hasher.combine(initialPage)
+        case .mangaComments(let accountType, let mangaKey):
+            hasher.combine("mangaComments")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
         default:
             hasher.combine(String(describing: self))
         }
@@ -83,6 +109,19 @@ enum Route: Hashable, Identifiable {
             GalleryDetailScreen(accountType: accountType, statusKey: statusKey, onNavigate: onNavigate)
         case .galleryComments(let accountType, let statusKey):
             GalleryCommentsScreen(accountType: accountType, statusKey: statusKey)
+        case .mangaDetail(let accountType, let mangaKey):
+            MangaDetailScreen(accountType: accountType, mangaKey: mangaKey, onNavigate: onNavigate)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            MangaReaderScreen(
+                accountType: accountType,
+                mangaKey: mangaKey,
+                chapterId: chapterId,
+                initialPage: initialPage,
+                onNavigate: onNavigate,
+                goBack: goBack
+            )
+        case .mangaComments(let accountType, let mangaKey):
+            MangaCommentsScreen(accountType: accountType, mangaKey: mangaKey)
         case .profileUser(let accountType, let userKey):
             ProfileScreen(
                 accountType: accountType,
@@ -318,6 +357,9 @@ enum Route: Hashable, Identifiable {
     case statusDetail(AccountType, MicroBlogKey)
     case galleryDetail(AccountType, MicroBlogKey)
     case galleryComments(AccountType, MicroBlogKey)
+    case mangaDetail(AccountType, MicroBlogKey)
+    case mangaReader(AccountType, MicroBlogKey, String, Int?)
+    case mangaComments(AccountType, MicroBlogKey)
     case statusInsight(AccountType, MicroBlogKey)
     case statusMastodonReport(AccountType, MicroBlogKey, MicroBlogKey?)
     case statusMisskeyReport(AccountType, MicroBlogKey, MicroBlogKey?)
@@ -415,6 +457,20 @@ enum Route: Hashable, Identifiable {
             return Route.galleryDetail(data.accountType, data.statusKey)
         }
     }
+
+    fileprivate static func fromManga(_ manga: DeeplinkRoute.Manga) -> Route? {
+        switch onEnum(of: manga) {
+        case .detail(let data):
+            return Route.mangaDetail(data.accountType, data.mangaKey)
+        case .reader(let data):
+            return Route.mangaReader(
+                data.accountType,
+                data.mangaKey,
+                data.chapterId,
+                data.initialPage?.intValue
+            )
+        }
+    }
     
     fileprivate static func fromProfile(_ profile: DeeplinkRoute.Profile) -> Route? {
         switch onEnum(of: profile) {
@@ -464,6 +520,8 @@ enum Route: Hashable, Identifiable {
             return fromMedia(media)
         case .gallery(let gallery):
             return fromGallery(gallery)
+        case .manga(let manga):
+            return fromManga(manga)
         case .profile(let profile):
             return fromProfile(profile)
         case .rss(let rss):

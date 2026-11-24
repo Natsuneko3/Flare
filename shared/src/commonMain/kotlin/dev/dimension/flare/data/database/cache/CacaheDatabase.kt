@@ -6,9 +6,10 @@ import androidx.room3.Database
 import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
 import androidx.room3.withWriteTransaction
+import dev.dimension.flare.model.AccountType
 
-// Removed legacy VVOStatus and VVOComment DeeplinkRoute variants from cached status payloads.
-internal const val CACHE_DATABASE_VERSION = 56
+// Bumped past PR #2907 so prior master/experimental v56 caches silently rebuild with manga tables.
+internal const val CACHE_DATABASE_VERSION = 57
 
 @Database(
     entities = [
@@ -32,6 +33,8 @@ internal const val CACHE_DATABASE_VERSION = 56
         dev.dimension.flare.data.database.cache.model.DbProfileTabs::class,
         dev.dimension.flare.data.database.cache.model.DbTranslation::class,
         dev.dimension.flare.data.database.cache.model.DbPluginPostWidget::class,
+        dev.dimension.flare.data.database.cache.model.DbMangaState::class,
+        dev.dimension.flare.data.database.cache.model.DbMangaChapterProgress::class,
     ],
     version = CACHE_DATABASE_VERSION,
     exportSchema = false,
@@ -44,6 +47,7 @@ internal const val CACHE_DATABASE_VERSION = 56
     dev.dimension.flare.data.database.cache.model.DbStatusContentConverter::class,
     dev.dimension.flare.data.database.cache.model.ListContentConverters::class,
     dev.dimension.flare.data.database.cache.model.TranslationConverters::class,
+    dev.dimension.flare.data.database.cache.model.MangaProgressConverters::class,
 )
 @ConstructedBy(CacheDatabaseConstructor::class)
 internal abstract class CacheDatabase : RoomDatabase() {
@@ -66,6 +70,8 @@ internal abstract class CacheDatabase : RoomDatabase() {
     abstract fun translationDao(): dev.dimension.flare.data.database.cache.dao.TranslationDao
 
     abstract fun pluginPostWidgetDao(): dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
+
+    abstract fun mangaProgressDao(): dev.dimension.flare.data.database.cache.dao.MangaProgressDao
 }
 
 internal suspend fun CacheDatabase.clearHomeTimelinesForAccount(accountKey: dev.dimension.flare.model.MicroBlogKey) {
@@ -79,6 +85,86 @@ internal suspend fun CacheDatabase.clearHomeTimelinesForAccount(accountKey: dev.
                         .decodeFromString<Set<dev.dimension.flare.model.MicroBlogKey>>(dao.getAccountKeys(it) ?: "[]")
             }.forEach { dao.clearHomeTimeline(it) }
     }
+}
+
+internal suspend fun CacheDatabase.invalidateGuestPluginCachedContent(
+    platformId: String,
+    nonCursorPagingKeys: Set<String> = emptySet(),
+) {
+    connect {
+        val guestTypes =
+            statusDao()
+                .getDistinctAccountTypesAcrossCache()
+                .filterIsInstance<AccountType.GuestPlugin>()
+                .filter { it.platformId == platformId }
+        guestTypes.forEach { guestType ->
+            purgeGuestPluginTimelineAndStatusesInTx(guestType, nonCursorPagingKeys)
+        }
+    }
+}
+
+internal suspend fun CacheDatabase.clearGuestPluginData(
+    platformId: String,
+    additionalHosts: Set<String> = emptySet(),
+    preservedHosts: Set<String> = emptySet(),
+    nonCursorPagingKeys: Set<String> = emptySet(),
+) {
+    connect {
+        val guestTypes =
+            buildSet {
+                statusDao()
+                    .getDistinctAccountTypesAcrossCache()
+                    .filterIsInstance<AccountType.GuestPlugin>()
+                    .filterTo(this) { it.platformId == platformId }
+                additionalHosts.forEach { host ->
+                    add(AccountType.GuestPlugin(platformId = platformId, host = host))
+                }
+            }
+        guestTypes.forEach { guestType ->
+            messageDao().exclusiveRoomKeys(guestType).forEach { roomKey ->
+                messageDao().deleteRoomMessages(roomKey)
+                messageDao().deleteRoomReference(roomKey)
+                messageDao().deleteRoom(roomKey)
+            }
+            listDao().deleteExclusiveMembersByAccountType(guestType)
+            listDao().deletePagingByAccountType(guestType)
+            listDao().deleteByAccountType(guestType)
+            userDao().deleteRelationsByAccountType(guestType)
+            purgeGuestPluginTimelineAndStatusesInTx(guestType, nonCursorPagingKeys)
+            mangaProgressDao().deleteByAccountType(guestType)
+        }
+        val candidateHosts = (guestTypes.mapTo(linkedSetOf()) { it.host } + additionalHosts) - preservedHosts
+        candidateHosts.forEach { host ->
+            userDao().deleteOrphanedUsersByHost(host)
+        }
+    }
+}
+
+private suspend fun CacheDatabase.purgeGuestPluginTimelineAndStatusesInTx(
+    guestType: AccountType.GuestPlugin,
+    nonCursorPagingKeys: Set<String>,
+) {
+    val pagingDao = pagingTimelineDao()
+    val affectedPagingKeys = pagingDao.getPagingKeysByAccountType(guestType)
+    translationDao().deleteByAccountType(guestType)
+    statusReferenceDao().deleteByAccountType(guestType)
+    pagingDao.deletePresentationReferencesByAccountType(guestType)
+    pagingDao.deleteByAccountType(guestType)
+    affectedPagingKeys
+        .filterNot { it in nonCursorPagingKeys }
+        .forEach { pagingKey ->
+            if (!pagingDao.anyNonGapPaging(pagingKey)) {
+                pagingDao.clearHomeTimeline(pagingKey)
+            } else {
+                pagingDao.deletePagingKey(pagingKey)
+            }
+        }
+    pluginPostWidgetDao().deleteByAccountType(guestType)
+    statusDao().deleteByAccountType(guestType)
+    userDao().deleteProfileTabsByAccountType(guestType)
+    userDao().deleteHistoryByAccountType(guestType)
+    emojiDao().clearHistoryByAccountType(guestType)
+    messageDao().clearMessageTimeline(guestType)
 }
 
 // The Room compiler generates the `actual` implementations.

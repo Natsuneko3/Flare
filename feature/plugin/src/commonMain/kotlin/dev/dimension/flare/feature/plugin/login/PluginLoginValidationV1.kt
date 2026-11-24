@@ -30,18 +30,27 @@ internal fun RunningPluginV1.requireLoginSuccess(
     value.requireValid()
     val origin = PluginUrlPolicy.requireOrigin(value.origin)
     require(origin == expectedOrigin) { "Login origin does not match the selected instance" }
+    val platform = installed.manifest.socialPlatform
+    if (!platform.allowCustomOrigin) {
+        require(
+            platform.recommendedOrigins.any {
+                PluginUrlPolicy.requireOrigin(it.origin).equals(origin, ignoreCase = true)
+            },
+        ) { "Login origin is not in recommendedOrigins" }
+    }
     require(value.accountId == value.profile.key.id) { "Login account ID does not match the profile" }
     require(
         value.profile.key.host
             .equals(Url(origin).accountHost(), ignoreCase = true),
     ) { "Login profile host does not match the selected instance" }
     require(expectedAccountId == null || value.accountId == expectedAccountId) { "Relogin account does not match" }
+    val apiVersion = installed.manifest.apiVersion
     val declared = installed.manifest.socialPlatform.capabilities
     val capabilities = PluginAbiV1.knownCapabilities(value.capabilities)
     require(
         capabilities.all { (capability, operations) ->
             declared[capability]?.operations?.keys?.containsAll(operations) == true &&
-                PluginAbiV1.hasRequiredOperations(capability, operations)
+                PluginAbiV1.hasValidCapabilityOperations(capability, operations, apiVersion)
         },
     ) { "Login returned undeclared or incomplete capabilities" }
     require(capabilities.any { (capability, operations) -> PluginAbiV1.isDisplayableCapability(capability, operations) }) {

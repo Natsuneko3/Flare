@@ -177,6 +177,7 @@ internal class PluginRuntimeSwitcherV1(
             form = subsystem.form,
             webCookie = subsystem.webCookie,
             coroutineScope = scope,
+            sessionChallenge = subsystem.sessionChallenge,
         ).load(
             registry.all
                 .filterNot {

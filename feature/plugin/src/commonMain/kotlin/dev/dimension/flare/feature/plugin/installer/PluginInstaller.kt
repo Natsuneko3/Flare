@@ -566,6 +566,17 @@ internal fun PluginManifestV1.sensitivePermissions(): Set<PluginPermission> =
                 }
             }
         }
+        platform?.capabilities?.get(PluginAbiV1.Capabilities.SESSION_CHALLENGE)?.challengeProbes.orEmpty().forEach { probe ->
+            probe.cookies.forEach { cookie ->
+                add(
+                    PluginPermission(
+                        type = PluginPermissionType.Cookie,
+                        origin = probe.url,
+                        cookieName = cookie.name,
+                    ),
+                )
+            }
+        }
     }
 
 internal fun compareSemVer(

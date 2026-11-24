@@ -8,6 +8,7 @@ import dev.dimension.flare.data.io.AppFileStore
 import dev.dimension.flare.data.plugin.TimelineProcessorService
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.data.repository.PluginAuthoring
+import dev.dimension.flare.data.repository.SessionChallengeCoordinator
 import dev.dimension.flare.data.repository.SettingsRepository
 import dev.dimension.flare.data.translation.PluginTranslationService
 import dev.dimension.flare.feature.plugin.adapter.PluginTimelineProcessorServiceV1
@@ -67,4 +68,7 @@ internal class PluginKoinModule {
             accountService = accountService,
             onUnattendedFailure = { notification.onError(Message.Plugin, it) },
         )
+
+    @Single
+    fun sessionChallengeCoordinator(subsystem: PluginSubsystemV1): SessionChallengeCoordinator = subsystem.sessionChallenge
 }

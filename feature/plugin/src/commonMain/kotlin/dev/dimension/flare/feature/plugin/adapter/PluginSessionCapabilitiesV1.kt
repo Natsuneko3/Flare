@@ -55,6 +55,7 @@ internal class PluginSessionCapabilitiesV1(
                 Capabilities.COMPOSE_V1,
                 Capabilities.COMPOSE_V3,
                 Capabilities.ACCOUNT_HTTP,
+                Capabilities.SESSION_CHALLENGE,
                 Capabilities.RELATION,
                 Capabilities.NOTIFICATION,
                 Capabilities.LIST,

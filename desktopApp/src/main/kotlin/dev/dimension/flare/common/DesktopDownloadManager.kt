@@ -1,8 +1,10 @@
 package dev.dimension.flare.common
 
 import dev.dimension.flare.Res
+import dev.dimension.flare.copied_to_clipboard
 import dev.dimension.flare.data.network.applyMedia
 import dev.dimension.flare.data.network.ktorClient
+import dev.dimension.flare.manga_reader_copy_page_failed
 import dev.dimension.flare.media_download_started
 import dev.dimension.flare.media_save_fail
 import dev.dimension.flare.media_save_success
@@ -16,14 +18,21 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
+import java.awt.Toolkit
+import java.awt.datatransfer.Clipboard
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
+import java.awt.datatransfer.UnsupportedFlavorException
 import java.io.Closeable
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import javax.imageio.ImageIO
 
 @Single
 internal class DesktopDownloadManager(
@@ -93,6 +102,36 @@ internal class DesktopDownloadManager(
             }
         }
 
+    suspend fun copyImageToClipboard(
+        media: UiMedia,
+        fileName: String,
+        clipboard: Clipboard? = null,
+    ) = withContext(Dispatchers.IO) {
+        var file: File? = null
+        var copied = false
+        try {
+            val target = Files.createTempFile("flare-", "-$fileName").toFile()
+            file = target
+            val export = prepareImageTranslationExport(media, FileSystemUtilsExt.flareCacheDirectory())
+            if (download(export, target, notify = false)) {
+                val selection = ClipboardImageFile(target)
+                (clipboard ?: Toolkit.getDefaultToolkit().systemClipboard).setContents(selection) { _, _ -> target.delete() }
+                target.deleteOnExit()
+                copied = true
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // A busy system clipboard or an unavailable download leaves the previous clipboard intact.
+        } finally {
+            if (!copied) file?.delete()
+        }
+        inAppNotification.message(
+            if (copied) Res.string.copied_to_clipboard else Res.string.manga_reader_copy_page_failed,
+            success = copied,
+        )
+    }
+
     suspend fun downloadAll(
         mediaByFileName: Map<String, UiMedia>,
         targetDirectory: File,
@@ -130,6 +169,28 @@ internal class DesktopDownloadManager(
     override fun close() {
         client.close()
     }
+}
+
+private class ClipboardImageFile(
+    private val file: File,
+) : Transferable {
+    private val flavors =
+        if (ImageIO.createImageInputStream(file).use { ImageIO.getImageReaders(it).hasNext() }) {
+            arrayOf(DataFlavor.javaFileListFlavor, DataFlavor.imageFlavor)
+        } else {
+            arrayOf(DataFlavor.javaFileListFlavor)
+        }
+
+    override fun getTransferDataFlavors(): Array<DataFlavor> = flavors.copyOf()
+
+    override fun isDataFlavorSupported(flavor: DataFlavor): Boolean = flavor in flavors
+
+    override fun getTransferData(flavor: DataFlavor): Any =
+        when {
+            flavor == DataFlavor.javaFileListFlavor -> listOf(file)
+            flavor == DataFlavor.imageFlavor && isDataFlavorSupported(flavor) -> ImageIO.read(file)
+            else -> throw UnsupportedFlavorException(flavor)
+        }
 }
 
 internal data class DownloadProgress(

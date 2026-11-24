@@ -8,6 +8,8 @@ import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.login.requireLoginSuccess
 import dev.dimension.flare.feature.plugin.manifest.CapabilityManifestV1
 import dev.dimension.flare.feature.plugin.manifest.CapabilityOperationManifestV1
+import dev.dimension.flare.feature.plugin.manifest.CookieProbeManifestV1
+import dev.dimension.flare.feature.plugin.manifest.CookieRequirementManifestV1
 import dev.dimension.flare.feature.plugin.manifest.PluginManifestV1
 import dev.dimension.flare.feature.plugin.manifest.PluginPlatformManifestV1
 import dev.dimension.flare.feature.plugin.manifest.PluginTextV1
@@ -744,6 +746,94 @@ class PluginAccountV1Test {
                 composeConfig(minMedia = 0, maxMedia = 2),
             )
         }
+    }
+
+    @Test
+    fun sessionChallengeIsAccountScopedAndExcludedFromUpgradeAutoGrant() {
+        val declarations =
+            mapOf(
+                PluginAbiV1.Capabilities.TIMELINE to CapabilityManifestV1(mapOf("page" to CapabilityOperationManifestV1())),
+                PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                    CapabilityManifestV1(
+                        operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                        challengeProbes =
+                            listOf(
+                                CookieProbeManifestV1(
+                                    url = "${PluginAbiV1.ACCOUNT_ORIGIN}/challenge",
+                                    cookies = listOf(CookieRequirementManifestV1("cf_clearance")),
+                                ),
+                            ),
+                    ),
+            )
+        val guestCaps =
+            PluginSessionCapabilitiesV1(
+                declarations = declarations,
+                operations =
+                    mapOf(
+                        PluginAbiV1.Capabilities.TIMELINE to setOf("page"),
+                        PluginAbiV1.Capabilities.SESSION_CHALLENGE to setOf("complete"),
+                    ),
+                authenticated = false,
+            )
+        assertFalse(guestCaps.canExpose(PluginAbiV1.Capabilities.SESSION_CHALLENGE))
+        val accountCaps =
+            PluginSessionCapabilitiesV1(
+                declarations = declarations,
+                operations =
+                    mapOf(
+                        PluginAbiV1.Capabilities.TIMELINE to setOf("page"),
+                        PluginAbiV1.Capabilities.SESSION_CHALLENGE to setOf("complete"),
+                    ),
+                authenticated = true,
+            )
+        assertTrue(accountCaps.canExpose(PluginAbiV1.Capabilities.SESSION_CHALLENGE))
+
+        val previous = plugin(setOf("detail"), apiVersion = 2)
+        val upgraded =
+            previous.copy(
+                installed =
+                    previous.installed.copy(
+                        manifest =
+                            previous.installed.manifest.copy(
+                                platform =
+                                    previous.installed.manifest.socialPlatform.copy(
+                                        capabilities =
+                                            previous.installed.manifest.socialPlatform.capabilities +
+                                                (
+                                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                                        declarations.getValue(PluginAbiV1.Capabilities.SESSION_CHALLENGE)
+                                                ),
+                                    ),
+                            ),
+                    ),
+            )
+        val unnegotiated = credential(previous, setOf("detail"), setOf("detail"))
+        assertFalse(PluginAbiV1.Capabilities.SESSION_CHALLENGE in unnegotiated.effectiveCapabilities(upgraded))
+
+        val previouslyDeclaredUnnegotiated =
+            unnegotiated.copy(
+                snapshot =
+                    unnegotiated.snapshot.copy(
+                        manifestCapabilities =
+                            unnegotiated.snapshot.manifestCapabilities +
+                                (PluginAbiV1.Capabilities.SESSION_CHALLENGE to setOf("complete")),
+                    ),
+            )
+        assertFalse(PluginAbiV1.Capabilities.SESSION_CHALLENGE in previouslyDeclaredUnnegotiated.effectiveCapabilities(upgraded))
+
+        val negotiated =
+            unnegotiated.copy(
+                snapshot =
+                    unnegotiated.snapshot.copy(
+                        negotiatedCapabilities =
+                            unnegotiated.snapshot.negotiatedCapabilities +
+                                (PluginAbiV1.Capabilities.SESSION_CHALLENGE to setOf("complete")),
+                    ),
+            )
+        assertEquals(
+            setOf("complete"),
+            negotiated.effectiveCapabilities(upgraded)[PluginAbiV1.Capabilities.SESSION_CHALLENGE],
+        )
     }
 
     private fun credential(

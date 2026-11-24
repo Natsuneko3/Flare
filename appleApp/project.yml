@@ -292,7 +292,11 @@ targets:
       - path: macosTests
       - path: macos
         includes:
+          - App/MacMangaReaderWindowCoordinator.swift
           - UI/Component/TimelineReadingScrollView.swift
+          - UI/Navigation/Route.swift
+          - UI/Screen/MangaDetailScreen.swift
+          - UI/Screen/MangaReaderScreen.swift
     dependencies:
       - target: FlareAppleCore
       - target: FlareAppleUI
@@ -311,6 +315,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: dev.dimension.flare.mac-timeline-tests
         INFOPLIST_FILE: ""
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FLARE_MAC_UNIT_TESTS"
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
 
   TimelineUnitTestHost:

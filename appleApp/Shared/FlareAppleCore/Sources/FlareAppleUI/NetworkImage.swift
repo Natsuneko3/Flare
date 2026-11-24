@@ -35,10 +35,11 @@ public struct NetworkImage: View {
     public var body: some View {
         let identity = "\(String(describing: data?.proxy))|\(data?.cacheKey ?? "")"
         let taskIdentity = "\(identity)|\(ProxyMediaImages.shared.revision)"
+        let url = data.flatMap { URL(string: $0.url) }
         Group {
             if let prepared, preparedIdentity == identity || keepsCurrentImage {
                 ResolvedNetworkImage(source: prepared.source, downloader: prepared.downloader, redirectHandler: prepared.redirectHandler,
-                    mediaPlaceholder: placeholder, data: data.flatMap { URL(string: $0.url) },
+                    mediaPlaceholder: placeholder, data: url, isGIF: data is UiMediaGif || AppleMediaFileExtension.isGIF(url: url),
                     requestModifier: prepared.requestModifier, contentMode: contentMode,
                     usesCrossfade: usesCrossfade && !keepsCurrentImage, onProgress: onProgress, onImageSize: onImageSize,
                     onImageFailure: preparedIdentity == identity ? onImageFailure : nil,
@@ -77,6 +78,7 @@ private struct ResolvedNetworkImage: View {
     let redirectHandler: AnyRedirectHandler
     let mediaPlaceholder: UiMedia?
     let data: URL?
+    let isGIF: Bool
     let requestModifier: AnyModifier
     let contentMode: SwiftUI.ContentMode
     let usesCrossfade: Bool
@@ -94,7 +96,7 @@ private struct ResolvedNetworkImage: View {
 
     public var body: some View {
         NetworkImageBoundsLayout {
-            if AppleMediaFileExtension.isGIF(url: data) {
+            if isGIF {
                 KFAnimatedImage(source: source)
                     .downloader(downloader)
                     .cacheMemoryOnly(data.map(ImageTranslationExportFile.isOwned) == true)

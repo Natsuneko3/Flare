@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { parseAccountType, parseMicroBlogKey } from "$lib/deeplink/accountRoute";
     import { page } from "$app/state";
     import AppBackButton from "$lib/components/AppBackButton.svelte";
     import AppTopBar from "$lib/components/AppTopBar.svelte";
@@ -237,46 +238,6 @@
         };
     }
 
-    function parseAccountType(value: string | null): AccountType {
-        if (!value || value === "guest") return { type: "Guest" };
-        if (value.startsWith("guest@")) {
-            return { type: "GuestHost", host: value.slice("guest@".length) };
-        }
-        return { type: "Specific", accountKey: parseMicroBlogKey(value) };
-    }
-
-    function parseMicroBlogKey(value: string): MicroBlogKey {
-        let escaping = false;
-        let idFinished = false;
-        let id = "";
-        let host = "";
-
-        for (const char of value) {
-            if (escaping) {
-                if (idFinished) host += char;
-                else id += char;
-                escaping = false;
-                continue;
-            }
-
-            if (char === "\\") {
-                escaping = true;
-                continue;
-            }
-
-            if (char === "@" && !idFinished) {
-                idFinished = true;
-                continue;
-            }
-
-            if (char === ",") break;
-
-            if (idFinished) host += char;
-            else id += char;
-        }
-
-        return { id, host };
-    }
     const followButtonOutlined = $derived(
         followButtonState?.type === "Following" ||
             followButtonState?.type === "Requested",

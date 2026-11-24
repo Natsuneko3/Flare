@@ -20,6 +20,7 @@ import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformRuntimeData
+import dev.dimension.flare.model.PlatformSpec
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiText
@@ -370,6 +371,7 @@ internal data class TimelineSourceRef(
     val icon: IconType,
     val data: String,
     val ownerAccountKey: MicroBlogKey? = null,
+    val ownerPlatformId: String? = null,
 )
 
 internal fun TimelineSourceRef.toSlot(
@@ -560,6 +562,7 @@ public data class TimelineSpec<T : TimelineSpec.Data>(
             icon = icon,
             data = ProtoBuf.encodeToHexString(serializer, data),
             ownerAccountKey = (data as? AccountData)?.accountKey,
+            ownerPlatformId = (data as? GuestPluginData)?.platformId,
         )
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -581,6 +584,18 @@ public data class TimelineSpec<T : TimelineSpec.Data>(
         public override val accountKey: MicroBlogKey,
         public val resourceId: String,
     ) : AccountData
+
+    public interface GuestPluginData : Data {
+        public val platformId: String
+        public val host: String
+    }
+
+    @Serializable
+    public data class GuestPluginResourceData(
+        public override val platformId: String,
+        public override val host: String,
+        public val resourceId: String,
+    ) : GuestPluginData
 }
 
 @HiddenFromObjC
@@ -708,6 +723,32 @@ internal class TimelineResolver(
             is TimelineSlotContent.Source -> resolveAccountKey(content.source)
             is TimelineSlotContent.Group -> null
         }
+
+    fun bindGuestSource(
+        source: TimelineSourceRef,
+        platforms: Map<String, PlatformSpec>,
+    ): TimelineSourceRef? {
+        val guest = runCatching { specs[source.specId]?.decode(source.data) }.getOrNull() as? TimelineSpec.GuestPluginData
+        val platformId = source.ownerPlatformId ?: guest?.platformId ?: return source
+        val platform = platforms[platformId] ?: return null
+        val host = platform.standaloneGuestHost ?: return null
+        if (guest == null || guest.platformId != platformId) return null
+        val targetData =
+            if (guest is TimelineSpec.GuestPluginResourceData && guest.host != host) {
+                guest.copy(host = host)
+            } else {
+                guest
+            }
+        val candidate =
+            platform.guestTimelineTabs.firstOrNull {
+                it.target.spec.id == source.specId && it.target.data == targetData
+            } ?: return null
+        return if (targetData != guest) {
+            candidate.target.toSource(source.title, source.icon)
+        } else {
+            source.copy(ownerPlatformId = platformId)
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun resolveLoader(source: TimelineSourceRef): Flow<RemoteLoader<UiTimelineV2>> =

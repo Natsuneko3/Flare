@@ -13,6 +13,7 @@ import dev.dimension.flare.feature.plugin.wire.CookieValueV1
 import dev.dimension.flare.feature.plugin.wire.LoginBeginRequestV1
 import dev.dimension.flare.feature.plugin.wire.LoginSuccessV1
 import dev.dimension.flare.feature.plugin.wire.LoginTransitionV1
+import dev.dimension.flare.feature.plugin.wire.normalizeUserAgent
 import dev.dimension.flare.feature.plugin.wire.requireValid
 import io.ktor.http.URLProtocol
 import io.ktor.http.parseUrl
@@ -188,9 +189,10 @@ public class PluginWebCookieSessionV1 internal constructor(
                             methodId = methodId,
                             origin = context.metadata.origin,
                             flowId = flowId,
-                            cookies = filtered,
+                            cookies = filtered.copy(userAgent = null),
                             pendingPayload = pendingPayload,
-                        ),
+                            userAgent = filtered.userAgent,
+                        ).apply { requireValid() },
                     requestSerializer = CookieCheckRequestV1.serializer(),
                     responseSerializer = LoginTransitionV1.serializer(),
                     validate = LoginTransitionV1::requireValid,
@@ -287,7 +289,10 @@ public class PluginWebCookieSessionV1 internal constructor(
         if (plugin.installed.manifest.apiVersion == 1) {
             require(cookies.distinctBy { it.sourceUrl to it.name }.size == cookies.size) { "Duplicate Cookie value" }
         }
-        return CookieSnapshotV1(cookies.sortedWith(compareBy(CookieValueV1::sourceUrl, CookieValueV1::name))).also {
+        return CookieSnapshotV1(
+            cookies = cookies.sortedWith(compareBy(CookieValueV1::sourceUrl, CookieValueV1::name)),
+            userAgent = normalizeUserAgent(snapshot.userAgent).takeIf { plugin.installed.manifest.apiVersion >= 2 },
+        ).also {
             it.requireValid()
         }
     }

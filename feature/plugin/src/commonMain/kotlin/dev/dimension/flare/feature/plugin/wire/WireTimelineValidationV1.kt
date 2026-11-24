@@ -111,6 +111,17 @@ public fun NavigationTargetV1.requireValid() {
             key.requireValid()
         }
 
+        is NavigationTargetV1.Manga -> {
+            key.requireValid()
+        }
+
+        is NavigationTargetV1.MangaChapter -> {
+            key.requireValid()
+            require(chapterId.isNotBlank() && chapterId.length <= WireLimitsV1.MAX_ID_LENGTH && chapterId.none(Char::isISOControl)) {
+                "Invalid manga chapter ID"
+            }
+        }
+
         is NavigationTargetV1.TimelinePage -> {
             title.requireValid()
             TimelinePageLoadRequestV2(pageId, PageRequestV1(PageDirectionV1.Refresh, 1, parameters = parameters)).requireValid()

@@ -52,6 +52,7 @@ import dev.dimension.flare.feature.plugin.host.accountHost
 import dev.dimension.flare.feature.plugin.host.platformUuid
 import dev.dimension.flare.feature.plugin.host.validateAuthenticationHeaders
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.manifest.ProfileTabManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
 import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
@@ -137,7 +138,9 @@ internal class PluginDataSourceV1 private constructor(
 
     private val originHost: String = Url(origin).accountHost()
 
-    private val accountType: AccountType = accountKey?.let(AccountType::Specific) ?: AccountType.GuestHost(originHost)
+    private val accountType: AccountType =
+        accountKey?.let(AccountType::Specific)
+            ?: AccountType.GuestPlugin(plugin.installed.manifest.socialPlatform.id, originHost)
 
     internal val extraCapabilities: PluginExtraCapabilitiesV1 by lazy {
         PluginExtraCapabilitiesV1(
@@ -186,7 +189,13 @@ internal class PluginDataSourceV1 private constructor(
             profile = if (capabilities.canExpose(PluginAbiV1.Capabilities.PROFILE)) ProfileCapability(this, userDataSource) else null,
             post =
                 if (capabilities.canExpose(PluginAbiV1.Capabilities.POST) ||
-                    (accountKey != null && capabilities.hasOperation(PluginAbiV1.Capabilities.RELATION, "mutate"))
+                    (
+                        accountKey != null &&
+                            (
+                                capabilities.hasOperation(PluginAbiV1.Capabilities.RELATION, "mutate") ||
+                                    capabilities.hasOperation(PluginAbiV1.Capabilities.POST, "mutate")
+                            )
+                    )
                 ) {
                     PostCapability(this, postDataSource)
                 } else {
@@ -199,6 +208,7 @@ internal class PluginDataSourceV1 private constructor(
             directMessage = extraCapabilities.directMessage,
             article = extraCapabilities.article,
             gallery = extraCapabilities.gallery,
+            manga = extraCapabilities.manga,
             tabCatalog =
                 if (
                     accountKey != null &&
@@ -344,8 +354,10 @@ internal class PluginDataSourceV1 private constructor(
 
                     is MutationResultV1.Invalidate -> {
                         result.keys.forEach {
-                            updater.deleteFromCache(it.toKey())
-                            extraCapabilities.refreshGallery(it.toKey())
+                            val key = it.toKey()
+                            updater.deleteFromCache(key)
+                            extraCapabilities.refreshGallery(key)
+                            extraCapabilities.refreshManga(key)
                         }
                         pageRevision.update { it + 1 }
                     }
@@ -385,7 +397,10 @@ internal class PluginDataSourceV1 private constructor(
 
                     MutationResultV1.NoChange -> {}
                 }
-                if (!profileAction && result !is MutationResultV1.Invalidate) extraCapabilities.refreshGallery(event.postKey)
+                if (!profileAction && result !is MutationResultV1.Invalidate) {
+                    extraCapabilities.refreshGallery(event.postKey)
+                    extraCapabilities.refreshManga(event.postKey)
+                }
             }
         }
     }
@@ -924,11 +939,14 @@ internal class PluginDataSourceV1 private constructor(
             timelineSpecs: Map<String, TimelineSpec<TimelineSpec.AccountResourceData>>,
             dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>?,
             coroutineScope: CoroutineScope,
+            sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
         ): PluginDataSourceV1 {
             val credentialAccess = PlatformDataSourceCredentialAccessV1(plugin, context)
             val account = credentialAccess.initial()
             val operations = account.effectiveCapabilities(plugin)
             val platform = plugin.installed.manifest.socialPlatform
+            val activeEpoch = account.sessionEpoch.takeIf { plugin.installed.manifest.apiVersion >= 2 }
+            sessionChallenge?.onAccountSession(context.accountKey, activeEpoch)
             val composeConfig =
                 try {
                     if ("publish" in operations[PluginAbiV1.Capabilities.COMPOSE_V3].orEmpty()) {
@@ -950,14 +968,24 @@ internal class PluginDataSourceV1 private constructor(
                     plugin.installed.packageHash,
                     account.snapshot.origin,
                     account.snapshot.accountId,
-                    epoch = account.sessionEpoch.takeIf { plugin.installed.manifest.apiVersion >= 2 },
+                    epoch = activeEpoch,
                 )
+            val sessionChallengeEnabled =
+                plugin.installed.manifest.apiVersion >= 2 &&
+                    PluginSessionCapabilitiesV1(
+                        platform.capabilities,
+                        operations,
+                        authenticated = true,
+                    ).canExpose(PluginAbiV1.Capabilities.SESSION_CHALLENGE)
             val invoker =
                 PluginAccountInvokerV1(
                     plugin = plugin,
                     runtimePool = runtimePool,
                     runtimeKey = runtimeKey,
                     accountKey = context.accountKey,
+                    sessionChallenge = sessionChallenge,
+                    sessionChallengeEnabled = sessionChallengeEnabled,
+                    credentialAccess = credentialAccess,
                     context = { locale, assets ->
                         plugin.accountInvocationContext(credentialAccess.current(), locale, credentialAccess, assets)
                     },
@@ -995,11 +1023,15 @@ internal class PluginDataSourceV1 private constructor(
             timelineSpecs: Map<String, TimelineSpec<TimelineSpec.AccountResourceData>>,
             dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>?,
         ): PluginDataSourceV1 {
-            require(
-                plugin.installed.manifest.socialPlatform.guest
-                    ?.enabled == true,
-            ) { "Plugin guest access is unavailable" }
+            val guest = plugin.installed.manifest.socialPlatform.guest
+            require(guest?.enabled == true) { "Plugin guest access is unavailable" }
             val canonicalOrigin = PluginUrlPolicy.requireOrigin(origin)
+            guest.origin?.let { guestOrigin ->
+                require(
+                    plugin.installed.manifest.apiVersion >= 2 &&
+                        canonicalOrigin == PluginUrlPolicy.requireOrigin(guestOrigin),
+                ) { "Guest origin does not match plugin standalone guest origin" }
+            }
             val runtimeKey =
                 PluginRuntimeKeyV1.guest(
                     plugin.installed.pluginId,

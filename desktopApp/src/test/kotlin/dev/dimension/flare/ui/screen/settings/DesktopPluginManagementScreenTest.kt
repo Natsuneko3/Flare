@@ -825,6 +825,48 @@ class DesktopPluginManagementScreenTest {
     }
 
     @Test
+    fun installReviewShowsDefaultTabsCheckboxOnlyForFreshGuestPluginsAndForwardsSelection() {
+        val confirmations = mutableListOf<Boolean>()
+        var review by mutableStateOf(
+            dev.dimension.flare.feature.plugin.management.PluginInstallReviewV1(
+                pluginId = "guest.manga.plugin",
+                platformId = "MangaGuest",
+                name = "Manga Guest",
+                version = "1.0.0",
+                capabilities = emptyList(),
+                permissions = emptyList(),
+                warnings = emptyList(),
+                sourceUrl = null,
+                defaultGuestTabTitles = listOf("Popular", "Latest"),
+            ),
+        )
+        compose.setContent {
+            if (visible) {
+                FlareTheme(isDarkTheme = false) {
+                    PluginInstallReviewDialog(
+                        review = review,
+                        busy = false,
+                        onConfirm = { confirmations += it },
+                        onCancel = {},
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Automatically add default tabs after installing").assertIsDisplayed()
+        compose.onNodeWithText("Popular, Latest").assertIsDisplayed()
+        compose.onNodeWithText("Install").performClick()
+        compose.runOnIdle { assertEquals(listOf(true), confirmations) }
+
+        compose.onNodeWithText("Automatically add default tabs after installing").performClick()
+        compose.onNodeWithText("Install").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(true, false), confirmations)
+            review = review.copy(pluginId = "non.guest.plugin", defaultGuestTabTitles = emptyList())
+        }
+        compose.onNodeWithText("Automatically add default tabs after installing").assertDoesNotExist()
+    }
+
+    @Test
     fun installReviewDisclosesTimelinePostAccessPermission() {
         compose.setContent {
             if (visible) {

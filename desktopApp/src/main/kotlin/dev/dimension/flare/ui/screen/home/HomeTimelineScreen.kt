@@ -72,7 +72,9 @@ import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.rememberTimelineItemPresenterWithLazyListState
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.Router
+import dev.dimension.flare.ui.route.dispatchDesktopRouterNavigation
 import dev.dimension.flare.ui.screen.compose.ComposeDialog
+import dev.dimension.flare.ui.screen.manga.LocalDesktopMangaReaderWindowCoordinator
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.FlyoutPlacement
@@ -98,6 +100,7 @@ internal fun HomeTimelineScreen(
     onAddTab: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
+    val currentMangaReaderCoordinator = rememberUpdatedState(LocalDesktopMangaReaderWindowCoordinator.current)
     val state by producePresenter(key = "home_timeline_$accountType") {
         presenter(accountType)
     }
@@ -125,7 +128,12 @@ internal fun HomeTimelineScreen(
                                 DeepLinkPresenter(
                                     onRoute = {
                                         Route.from(it)?.let { route ->
-                                            backStack.add(route)
+                                            dispatchDesktopRouterNavigation(
+                                                route = route,
+                                                coordinator = currentMangaReaderCoordinator.value,
+                                            ) { target ->
+                                                backStack.add(target)
+                                            }
                                         }
                                     },
                                     onLink = {

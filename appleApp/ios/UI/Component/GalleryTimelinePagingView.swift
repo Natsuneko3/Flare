@@ -8,12 +8,13 @@ import FlareAppleCore
 // MARK: - SwiftUI Wrapper
 
 struct UIGalleryTimelinePagingView: UIViewControllerRepresentable {
-    let data: PagingState<UiTimelineV2>
+    let data: PagingState<UiTimelineV2>?
     var suppressInitialRefreshIndicator = false
     var onIsAtTopChanged: (Bool) -> Void = { _ in }
     @Environment(\.timelineAppearance) private var timelineAppearance
     @Environment(\.translateConfig) private var translateConfig
     @Environment(\.openURL) private var openURL
+    @Environment(\.launchSessionChallenge) private var launchSessionChallenge
     @Environment(\.refresh) private var refreshAction: RefreshAction?
     @Environment(\.timelineReading) private var reading
     @Environment(\.tabBarNotificationCenter) private var tabBarNotificationCenter
@@ -23,7 +24,9 @@ struct UIGalleryTimelinePagingView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIGalleryTimelineController {
         let controller = UIGalleryTimelineController()
         apply(to: controller)
-        controller.update(data: data)
+        if let data {
+            controller.update(data: data)
+        }
         return controller
     }
 
@@ -32,12 +35,15 @@ struct UIGalleryTimelinePagingView: UIViewControllerRepresentable {
             { await action() }
         }
         controller.openURL = { url in openURL.callAsFunction(url) }
+        controller.onSessionChallenge = launchSessionChallenge
         controller.onIsAtTopChanged = onIsAtTopChanged
         controller.reading = reading
         controller.suppressInitialRefreshIndicator = suppressInitialRefreshIndicator
         // Apply data before appearance so the appearance setter's reconfigure
         // sees a coherent itemIndexMap / currentSuccess pair.
-        controller.update(data: data)
+        if let data {
+            controller.update(data: data)
+        }
         controller.appearance = GalleryUIKitAppearance(
             timeline: timelineAppearance,
             showOriginalWithTranslation: translateConfig.showOriginalWithTranslation
@@ -56,6 +62,7 @@ struct UIGalleryTimelinePagingView: UIViewControllerRepresentable {
             showOriginalWithTranslation: translateConfig.showOriginalWithTranslation
         )
         controller.openURL = { url in openURL.callAsFunction(url) }
+        controller.onSessionChallenge = launchSessionChallenge
         controller.onIsAtTopChanged = onIsAtTopChanged
         controller.reading = reading
         controller.suppressInitialRefreshIndicator = suppressInitialRefreshIndicator
@@ -182,6 +189,7 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
     var refreshCallback: (() async -> Void)?
     var suppressInitialRefreshIndicator = false
     var openURL: ((URL) -> Void)?
+    var onSessionChallenge: ((SessionChallengeException, @escaping () -> Void) -> Void)?
     var onIsAtTopChanged: ((Bool) -> Void)?
     var appearance = GalleryUIKitAppearance(timeline: TimelineAppearance.companion.Default) {
         didSet {
@@ -343,6 +351,7 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
         } else if itemID == Self.errorID, let errorState = currentData?.failure {
             let view = ListErrorUIView()
             view.onOpenURL = openURL
+            view.onSessionChallenge = onSessionChallenge
             view.configure(error: errorState.error) { errorState.retry() }
             cell.setHostedView(view)
         } else if itemID == Self.footerLoadingID {
@@ -350,6 +359,7 @@ final class UIGalleryTimelineController: UIViewController, UICollectionViewDeleg
         } else if itemID == Self.footerErrorID, let error = currentData?.appendFailure {
             let view = ListErrorUIView()
             view.onOpenURL = openURL
+            view.onSessionChallenge = onSessionChallenge
             view.configure(error: error.error) { error.retry() }
             cell.setHostedView(view)
         } else if itemID == Self.footerEndID {

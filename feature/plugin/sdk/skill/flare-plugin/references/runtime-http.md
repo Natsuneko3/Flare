@@ -35,7 +35,10 @@ storage, credential, crypto, and locale calls belong inside registered invocatio
 Requests and contexts are deeply frozen. Copy data before modifying it.
 
 Calls in one runtime serialize. Globals may cache derived data but are not
-persistent storage. Login begin/resume can use different runtime generations;
+persistent storage. In addition, `manga.pageImage` calls run concurrently across
+up to 3 separate isolated worker VMs (`workerLane`), so cross-page or cross-chunk
+state (such as `ptoken` tables) must use `flare.storage` in API v2 rather than
+module globals. Login begin/resume can use different runtime generations;
 OAuth state that your code needs belongs in `pendingPayload`; API v2 WebCookie
 checks and QR login polls can also return a payload for the next call. API v2 supplies
 [plugin-owned storage](storage-and-settings.md#opaque-plugin-storage), shared
@@ -289,3 +292,56 @@ Host bridge failures carry codes such as `host.unavailable`,
 classify meaningfully: the [template helper](../assets/github-template/plugin.js)
 maps unavailable transport to a typed Network error while leaving programming
 and permission mistakes visible. Do not mask every error as an empty page.
+
+## HTML extraction and entity decoding (API v2)
+
+Host API v2 exposes `flare.html.extract`, `flare.html.query`, and
+`flare.html.decodeEntities` across all invocation scopes (`detector`, `login`,
+`account`, `guest`, `plugin`, `extension`). Calling them under `apiVersion: 1`
+rejects with `host.unsupported`.
+
+```js
+const doc = await flare.html.extract({
+  html: response.body,
+  baseUrl: context.origin + "/gallery",
+  spec: {
+    title: { selector: "h1", extract: "text" },
+    nextUrl: { selector: "a.next", extract: "attr", name: "href", absoluteUrl: true },
+    hasWarning: { selector: ".content-warning", extract: "exists" },
+  },
+});
+
+const rows = await flare.html.query({
+  html: response.body,
+  baseUrl: context.origin,
+  selector: ".item",
+  limit: 100,
+  fields: {
+    title: { selector: ".title", extract: "ownText" },
+    href: { selector: "a", extract: "attr", name: "href", absoluteUrl: true },
+  },
+});
+
+const plain = await flare.html.decodeEntities("1 &amp; 2 &#x27;ok&#x27;");
+```
+
+`flare.html.query` delegates to `flare.html.extract` with
+`spec: { items: { selector, all: true, limit, fields } }` and resolves directly to
+the extracted `items` array.
+
+| Rule / bound | Contract |
+| --- | --- |
+| `html` input | At most `4 MiB` UTF-8 bytes (`4,194,304`); `html.extract` bridge argument envelope allows up to `8 MiB` (`8,388,608` bytes) |
+| Extracted JSON output | Capped at `4 MiB` (`4,194,304` bytes) |
+| `decodeEntities(value)` | At most `1 MiB` (`1,048,576` UTF-8 bytes) |
+| Spec tree | `1..64` fields per level, max `128` spec nodes total, max nesting depth `4` |
+| Node shape | Strictly one of `extract` or `fields` per node; top-level nodes require `selector` (`1..512` non-blank characters) |
+| `extract` modes | `"text"`, `"ownText"`, `"html"`, `"outerHtml"`, `"attr"`, `"exists"` |
+| `name` / `absoluteUrl` | Allowed only with `extract: "attr"` (`name` is `1..128` non-blank chars); `absoluteUrl: true` requires a valid HTTPS `baseUrl` |
+| `absoluteUrl` resolution | Blank values, missing attributes, or non-HTTP(S) / hostless resolved URLs (e.g. `javascript:`, `data:`) return `null` |
+| `all` and `limit` | When `all: true`, `selector` is required and `extract: "exists"` is forbidden; `limit` is `1..2,000` (default `500`) |
+| Traversal budget | At most `20,000` visited DOM nodes per `extract` call |
+
+Invalid HTML requests, invalid CSS selectors, or exceeded extraction limits reject
+with Host bridge error `host.invalid-request`, which plugin code can catch via
+`try/catch` without retiring the runtime.

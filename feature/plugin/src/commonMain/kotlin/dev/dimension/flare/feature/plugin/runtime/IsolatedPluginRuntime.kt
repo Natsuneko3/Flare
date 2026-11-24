@@ -7,6 +7,7 @@ import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
 import dev.dimension.flare.feature.plugin.host.PluginHostGateway
 import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.host.PluginInvocationMetadataV1
+import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
 import dev.dimension.flare.feature.plugin.host.platformUuid
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
@@ -14,6 +15,7 @@ import dev.dimension.flare.feature.plugin.manifest.TIMELINE_PROCESS_BATCH_METHOD
 import dev.dimension.flare.feature.plugin.manifest.requiredMethods
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.storage.PluginStorageAccessV1
+import dev.dimension.flare.feature.plugin.wire.PluginErrorCodeV1
 import dev.dimension.flare.feature.plugin.wire.PluginErrorV1
 import dev.dimension.flare.feature.plugin.wire.requireValid
 import dev.dimension.flare.ui.model.UiText
@@ -119,7 +121,7 @@ internal class IsolatedPluginRuntime(
                             }
                         }
                     require(result.encodeToByteArray().size <= MAX_INVOCATION_RESPONSE_BYTES) { "Plugin response is too large" }
-                    val value = decodeResult(result, plugin, context.metadata.locale)
+                    val value = decodeResult(result, plugin, context)
                     if (plugin.installed.manifest.apiVersion >= 2) context.accountHttp?.ensureActive()
                     validate(value)
                     value
@@ -226,7 +228,7 @@ internal class PluginRuntimeFatalException(
 private fun decodeResult(
     value: String,
     plugin: RunningPluginV1,
-    locale: String,
+    context: PluginInvocationContextV1,
 ): JsonElement {
     val objectValue = PluginJsonV1.parseToJsonElement(value).jsonObject
     return when (objectValue["ok"]?.jsonPrimitive?.booleanOrNull) {
@@ -237,9 +239,13 @@ private fun decodeResult(
         false -> {
             objectValue["fatal"]?.jsonPrimitive?.content?.let { throw PluginJavaScriptException(it) }
             val error = PluginJsonV1.decodeFromJsonElement(PluginErrorV1.serializer(), requireNotNull(objectValue["error"]))
-            error.message.requireValid()
-            require(error.retryAfterSeconds == null || error.retryAfterSeconds in 0..604_800) { "Invalid retry delay" }
-            require(error.remoteCode == null || error.remoteCode.length <= 512) { "Remote error code is too long" }
+            error.requireValid()
+            if (error.code == PluginErrorCodeV1.ChallengeRequired) {
+                val approvedChallengeOrigins =
+                    setOfNotNull(context.metadata.origin.takeIf(String::isNotEmpty)) +
+                        plugin.installed.manifest.permissions.authOrigins
+                PluginUrlPolicy.requireRequestUrl(requireNotNull(error.challenge).url, approvedChallengeOrigins)
+            }
             val message =
                 error.message.value
                     ?: PluginCatalogBundleV1(
@@ -248,7 +254,7 @@ private fun decodeResult(
                         catalogs = plugin.installed.catalogs,
                     ).resolve(
                         error.message.toUiText(plugin.installed.pluginId) as UiText.ExternalRef,
-                        locale,
+                        context.metadata.locale,
                     )
             throw PluginCallException(error, message)
         }
@@ -273,6 +279,7 @@ internal val RUNTIME_PRELUDE =
           const stringify = JSON.stringify.bind(JSON);
           const freeze = Object.freeze.bind(Object);
           const keys = Object.keys.bind(Object);
+          const isArray = Array.isArray.bind(Array);
           const owns = Function.call.bind(Object.prototype.hasOwnProperty);
           const then = Function.call.bind(Promise.prototype.then);
           const all = Promise.all.bind(Promise);
@@ -328,6 +335,28 @@ internal val RUNTIME_PRELUDE =
               uuid: () => hostCall("crypto.uuid"),
               sha256: value => hostCall("crypto.sha256", { value }),
               md5: value => hostCall("crypto.md5", { value }),
+            },
+            html: {
+              extract: request => hostCall("html.extract", request),
+              query: request => {
+                const payload =
+                  request && typeof request === "object" && !isArray(request)
+                    ? {
+                        html: request.html,
+                        baseUrl: request.baseUrl,
+                        spec: {
+                          items: {
+                            selector: request.selector,
+                            all: true,
+                            limit: request.limit,
+                            fields: request.fields,
+                          },
+                        },
+                      }
+                    : request;
+                return then(hostCall("html.extract", payload), res => res.items);
+              },
+              decodeEntities: value => hostCall("html.decodeEntities", { value }),
             },
             locale: { current: () => hostCall("locale.current") },
             error: value => {

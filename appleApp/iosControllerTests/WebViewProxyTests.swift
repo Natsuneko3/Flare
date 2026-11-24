@@ -162,9 +162,10 @@ final class WebViewProxyTests: XCTestCase {
             let path = modern ? "/modern-login" : "/legacy-login"
             let url = target.url.appending(path: path).absoluteString
             let isLoginRequest = { (request: String) in request.hasPrefix("GET \(path) ") }
-            var acceptCookies = false
-            let login = WebLoginSession(url: url, cookieCheck: .init()) { cookies in
-                acceptCookies && cookies.contains { $0.name == "webview" && $0.value == "ready" }
+            let validation = LoginValidationState()
+            let login = WebLoginSession(url: url, cookieCheck: .init()) { cookies, userAgent in
+                validation.observedUserAgents.append(userAgent)
+                return validation.acceptCookies && cookies.contains { $0.name == "webview" && $0.value == "ready" }
             }
             defer { login.close() }
             let screen: AnyView
@@ -219,8 +220,11 @@ final class WebViewProxyTests: XCTestCase {
                     target.requests.filter(isLoginRequest).count >= 2
             }
             let latestRoute = try XCTUnwrap(login.proxy.route)
-            acceptCookies = true
+            validation.acceptCookies = true
             try await eventually { login.completed }
+            let resolvedUserAgent = try XCTUnwrap(validation.observedUserAgents.compactMap { $0 }.last)
+            XCTAssertFalse(resolvedUserAgent.contains("iPhone OS 15_0"))
+            XCTAssertTrue(resolvedUserAgent.contains("AppleWebKit"))
             XCTAssertEqual(target.requests.filter(isLoginRequest).count, 2)
             XCTAssertTrue(try XCTUnwrap(target.requests.last(where: isLoginRequest)).contains("webview=ready"))
             login.close()
@@ -235,7 +239,7 @@ final class WebViewProxyTests: XCTestCase {
         let cookieCheck = WebLoginSession.CookieCheck()
         var resumeValidation: CheckedContinuation<Void, Never>?
         var wasCancelled: Bool?
-        let login = WebLoginSession(url: "", cookieCheck: cookieCheck) { _ in
+        let login = WebLoginSession(url: "", cookieCheck: cookieCheck) { _, _ in
             await withCheckedContinuation { resumeValidation = $0 }
             wasCancelled = Task.isCancelled
             return true
@@ -257,7 +261,7 @@ final class WebViewProxyTests: XCTestCase {
         try await eventually { wasCancelled != nil }
         XCTAssertEqual(wasCancelled, false)
 
-        let replacement = WebLoginSession(url: "", cookieCheck: cookieCheck) { _ in true }
+        let replacement = WebLoginSession(url: "", cookieCheck: cookieCheck) { _, _ in true }
         defer { replacement.close() }
         try await eventually { replacement.proxy.route?.isValid == true }
         replacement.checkCookies([])
@@ -307,11 +311,13 @@ final class WebViewProxyTests: XCTestCase {
         try await select(ProxyPolicy(mode: .system, proxyId: nil))
         let session = try await session()
         let route = try XCTUnwrap(session.route)
-        let legacy = BackportWebLoginViewModel(onCookie: { _ in }, url: "", route: route)
+        let legacy = BackportWebLoginViewModel(onCookie: { _ in }, onUserAgent: { _ in }, url: "", route: route)
         XCTAssertTrue(legacy.webView.configuration.websiteDataStore === route.dataStore)
+        XCTAssertTrue(legacy.webView.customUserAgent?.isEmpty != false)
         if #available(iOS 26.0, *) {
-            let modern = WebLoginViewModel(onCookie: { _ in }, url: "", route: route)
+            let modern = WebLoginViewModel(onCookie: { _ in }, onUserAgent: { _ in }, url: "", route: route)
             XCTAssertTrue(modern.route.dataStore === route.dataStore)
+            XCTAssertTrue(modern.page.customUserAgent?.isEmpty != false)
         }
     }
 
@@ -367,6 +373,12 @@ final class WebViewProxyTests: XCTestCase {
         XCTAssertTrue(condition(), file: file, line: line)
         if !condition() { throw URLError(.timedOut) }
     }
+}
+
+@MainActor
+private final class LoginValidationState {
+    var acceptCookies = false
+    var observedUserAgents: [String?] = []
 }
 
 @MainActor

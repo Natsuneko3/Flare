@@ -81,6 +81,19 @@ public sealed interface NavigationTargetV1 {
     ) : NavigationTargetV1
 
     @Serializable
+    @SerialName("manga")
+    public data class Manga(
+        val key: EntityKeyV1,
+    ) : NavigationTargetV1
+
+    @Serializable
+    @SerialName("mangaChapter")
+    public data class MangaChapter(
+        val key: EntityKeyV1,
+        val chapterId: String,
+    ) : NavigationTargetV1
+
+    @Serializable
     @SerialName("timelinePage")
     public data class TimelinePage(
         val pageId: String,

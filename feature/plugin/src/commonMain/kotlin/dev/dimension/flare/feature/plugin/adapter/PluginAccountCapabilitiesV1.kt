@@ -61,6 +61,7 @@ internal class PluginAccountCapabilitiesV1(
                                 PluginErrorCodeV1.Remote,
                                 PluginErrorCodeV1.RateLimited,
                                 PluginErrorCodeV1.AuthenticationRequired,
+                                PluginErrorCodeV1.ChallengeRequired,
                             )
                         ) {
                             return@withLock
