@@ -15,6 +15,7 @@ import dev.dimension.flare.ui.model.UiMedia
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -69,6 +71,9 @@ class VideoPlaybackSettingsPresenterTest : RobolectricTest() {
             } finally {
                 viewerScope.cancel()
                 persistenceScope.cancel()
+                withContext(NonCancellable) {
+                    runCatching { store.appSettingsStore.updateData { it } }
+                }
                 stopKoin()
                 deleteTestRootPath(root)
                 Dispatchers.resetMain()
