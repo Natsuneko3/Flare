@@ -92,13 +92,11 @@ import compose.icons.fontawesomeicons.solid.Retweet
 import dev.dimension.flare.R
 import dev.dimension.flare.common.AndroidDownloadManager
 import dev.dimension.flare.common.MediaFileNamePolicy
-import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.LocalNetworkImageAllowHardware
 import dev.dimension.flare.ui.component.LocalShareImageLoading
-import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.ShareImageLoading
 import dev.dimension.flare.ui.component.ViewBox
 import dev.dimension.flare.ui.component.status.StatusShareContent
@@ -625,16 +623,7 @@ private fun StatusShareCard(
     ) {
         val content: @Composable () -> Unit = {
             Box {
-                CompositionLocalProvider(
-                    LocalTimelineAppearance provides
-                        LocalTimelineAppearance.current.copy(
-                            expandContentWarning = true,
-                            showTranslateButton = false,
-                            videoAutoplay = VideoAutoplay.NEVER,
-                        ),
-                ) {
-                    StatusShareContent(status = status, statusKey = statusKey, replies = replies)
-                }
+                StatusShareContent(status = status, statusKey = statusKey, replies = replies)
                 if (blockInteractions) {
                     Box(
                         modifier =

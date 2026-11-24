@@ -898,6 +898,8 @@ public struct MacStatusShareSheet: View {
             set: { if !$0 { presenter.state.cancelSelection() } }
         )) {
             StatusShareReplyPicker(state: presenter.state)
+                .environment(\.timelineAppearance, timelineAppearance)
+                .environment(\.translateConfig, translateConfig)
         }
         .alert(item: $alert) { alert in
             Alert(

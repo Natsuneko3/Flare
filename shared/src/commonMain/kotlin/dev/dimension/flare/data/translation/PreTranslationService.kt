@@ -389,8 +389,14 @@ internal class OnlinePreTranslationService(
         allowLongText: Boolean,
         preferredDisplayMode: TranslationDisplayMode? = null,
     ): List<PreparedTranslationCandidate> {
-        val survivingIds = database.statusDao().getVersions(statuses.map { it.id }).mapTo(mutableSetOf()) { it.id }
-        val deduplicated = statuses.filter { it.id in survivingIds }.distinctBy { it.translationEntityKey() }
+        // A share picker can hold an older snapshot after the timeline saves an edit.
+        val storedById =
+            statuses
+                .map { it.id }
+                .chunked(500)
+                .flatMap { database.pagingTimelineDao().getPageStatuses(it) }
+                .associateBy { it.id }
+        val deduplicated = statuses.mapNotNull { storedById[it.id] }.distinctBy { it.translationEntityKey() }
         if (deduplicated.isEmpty()) {
             return emptyList()
         }
@@ -420,11 +426,6 @@ internal class OnlinePreTranslationService(
                     } else {
                         null
                     }
-                val effectiveCacheKey =
-                    status.content.effectiveTranslationCacheKey(
-                        providerCacheKey = providerCacheKey,
-                        preferPlatformTranslation = platformPayload != null,
-                    )
                 prepareCandidate(
                     entityType = TranslationEntityType.Status,
                     entityKey = entityKey,
@@ -433,11 +434,12 @@ internal class OnlinePreTranslationService(
                     existing = existing,
                     targetLanguage = targetLanguage,
                     autoTranslateExcludedLanguages = autoTranslateExcludedLanguages,
-                    providerCacheKey = effectiveCacheKey,
+                    providerCacheKey = providerCacheKey,
                     now = now,
                     allowLongText = allowLongText,
                     preferredDisplayMode = preferredDisplayMode,
                     platformPayload = platformPayload,
+                    platformCacheKey = platformCacheKey.takeIf { platformPayload != null },
                 )?.let { candidate ->
                     add(candidate)
                 }
@@ -484,6 +486,7 @@ internal class OnlinePreTranslationService(
         allowLongText: Boolean,
         preferredDisplayMode: TranslationDisplayMode? = null,
         platformPayload: TranslationPayload? = null,
+        platformCacheKey: String? = null,
     ): PreparedTranslationCandidate? {
         if (payload == null) {
             return null
@@ -491,7 +494,7 @@ internal class OnlinePreTranslationService(
         if (!allowLongText && payload.content?.isLongText == true) {
             return null
         }
-        val sourceHash = payload.sourceHash(providerCacheKey)
+        val sourceHash = payload.sourceHash(platformCacheKey ?: providerCacheKey)
         val displayMode = preferredDisplayMode ?: existing?.displayMode ?: TranslationDisplayMode.Auto
         val sourceDocument = PreTranslationPayloadSupport.toBatchPayload(payload, targetLanguage)
         val skipReason =
@@ -523,6 +526,11 @@ internal class OnlinePreTranslationService(
                 }
             }
         if (skipReason != null) {
+            if (existing != null && existing.displayMode != TranslationDisplayMode.Auto) {
+                val matchesProvider = existing.sourceHash == payload.sourceHash(providerCacheKey)
+                val matchesPlatform = platformCacheKey != null && existing.matchesPlatformTranslation(payload, platformCacheKey)
+                if (matchesProvider || matchesPlatform) return null
+            }
             PreTranslationStoreSupport.persistSkippedTranslationIfNeeded(
                 database = database,
                 entityType = entityType,

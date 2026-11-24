@@ -9,4 +9,14 @@ import kotlinx.serialization.Serializable
 public data class UiTranslatableText(
     public val original: UiRichText,
     public val translation: UiRichText? = null,
-)
+) {
+    public fun visiblePostText(
+        translated: Boolean,
+        showOriginal: Boolean,
+    ): List<UiRichText> =
+        when {
+            !translated || translation == null -> listOf(original)
+            showOriginal -> listOf(original, translation)
+            else -> listOf(translation)
+        }
+}
