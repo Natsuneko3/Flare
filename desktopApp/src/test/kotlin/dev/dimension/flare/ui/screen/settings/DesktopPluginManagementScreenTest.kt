@@ -927,18 +927,21 @@ class DesktopPluginManagementScreenTest {
         toggleNode.assertIsDisplayed().assertIsOff()
 
         toggleNode.performClick()
-        compose.waitUntil(timeoutMillis = 5_000) {
-            runBlocking {
-                koinGet<SettingsRepository>().appSettings.first().enabledTimelineProcessorPlugins[pluginId] ==
-                    setOf("https://api.example.com")
+        runBlocking {
+            withTimeout(5_000) {
+                koinGet<SettingsRepository>().appSettings.first {
+                    it.enabledTimelineProcessorPlugins[pluginId] == setOf("https://api.example.com")
+                }
             }
         }
         toggleNode.assertIsOn()
 
         toggleNode.performClick()
-        compose.waitUntil(timeoutMillis = 5_000) {
-            runBlocking {
-                pluginId !in koinGet<SettingsRepository>().appSettings.first().enabledTimelineProcessorPlugins
+        runBlocking {
+            withTimeout(5_000) {
+                koinGet<SettingsRepository>().appSettings.first {
+                    pluginId !in it.enabledTimelineProcessorPlugins
+                }
             }
         }
         toggleNode.assertIsOff()

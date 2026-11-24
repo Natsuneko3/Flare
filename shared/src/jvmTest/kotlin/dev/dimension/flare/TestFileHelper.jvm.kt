@@ -2,6 +2,7 @@ package dev.dimension.flare
 
 import dev.dimension.flare.common.FileItem
 import dev.dimension.flare.common.FileType
+import dev.dimension.flare.data.io.jvmPlatformFileSystem
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -15,7 +16,7 @@ internal actual fun deleteTestRootPath(path: Path) {
     File(path.toString()).deleteRecursively()
 }
 
-internal actual fun createTestFileSystem(): FileSystem = FileSystem.SYSTEM
+internal actual fun createTestFileSystem(): FileSystem = jvmPlatformFileSystem()
 
 internal actual fun createTestFileItem(
     root: Path,
