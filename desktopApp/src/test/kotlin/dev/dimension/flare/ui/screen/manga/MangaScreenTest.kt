@@ -1720,6 +1720,135 @@ class MangaScreenTest {
             assertEquals(1, reloginHandle.closedCount)
         }
     }
+
+    @Test
+    fun desktopSessionChallengeCheckFailureAllowsCancelAndCloseOnDismiss() {
+        val accountKey = MicroBlogKey("me", "manga.example")
+        val probe =
+            SessionChallengeCookieProbe(
+                url = "https://manga.example/gallery",
+                cookies = listOf(SessionChallengeCookieRequirement("cf_clearance", required = true)),
+            )
+        val errorHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "err-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+                throwOnCheck = IllegalStateException("Transient challenge check failure"),
+            )
+        var showDialog by mutableStateOf(true)
+        var completedCount = 0
+        var dismissedCount = 0
+        var navCallback: (() -> Unit)? = null
+        var snapshotCallback: ((() -> SessionChallengeCookieSnapshot?) -> Unit)? = null
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                if (showDialog) {
+                    SessionChallengeWebViewDialog(
+                        exception =
+                            SessionChallengeException(
+                                challengeId = "err-1",
+                                accountKey = accountKey,
+                                platformId = "MangaPlat",
+                                challengeUrl = "https://manga.example/challenge",
+                                displayMessage = "Verify",
+                            ),
+                        accountProxyMode = ProxyMode.SYSTEM,
+                        beginSession = { errorHandle },
+                        onCompleted = { completedCount++ },
+                        onRequireRelogin = {},
+                        onDismiss = {
+                            dismissedCount++
+                            showDialog = false
+                        },
+                        webViewContent = { _, _, onNavigationFinished, _, onSnapshotProvider ->
+                            navCallback = onNavigationFinished
+                            snapshotCallback = onSnapshotProvider
+                        },
+                    )
+                }
+            }
+        }
+
+        compose.runOnIdle {
+            snapshotCallback?.invoke {
+                SessionChallengeCookieSnapshot(cookies = emptyList(), userAgent = "FlareDesktopTestUA/1.0")
+            }
+            navCallback?.invoke()
+        }
+
+        compose.onNodeWithTag("session_challenge_error_view").assertIsDisplayed()
+        compose.onNodeWithText("Transient challenge check failure").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(0, completedCount)
+            assertEquals(0, errorHandle.cancelCount)
+            assertEquals(0, errorHandle.closeCount)
+        }
+
+        compose.onNodeWithText("Close").performClick()
+        compose.runOnIdle {
+            assertEquals(1, dismissedCount)
+            assertEquals(0, completedCount)
+            assertEquals(1, errorHandle.cancelCount)
+            assertEquals(1, errorHandle.closeCount)
+        }
+
+        // Also verify active-coroutine CancellationException from check() stops polling without blocking close() on disposal.
+        val expiredCheckHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "expired-check-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+                throwOnCheck = kotlinx.coroutines.CancellationException("ticket expired"),
+            )
+        var showExpiredDialog by mutableStateOf(true)
+        var expiredNavCallback: (() -> Unit)? = null
+        var expiredSnapshotCallback: ((() -> SessionChallengeCookieSnapshot?) -> Unit)? = null
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                if (showExpiredDialog) {
+                    SessionChallengeWebViewDialog(
+                        exception =
+                            SessionChallengeException(
+                                challengeId = "expired-check-1",
+                                accountKey = accountKey,
+                                platformId = "MangaPlat",
+                                challengeUrl = "https://manga.example/challenge",
+                                displayMessage = "Verify",
+                            ),
+                        accountProxyMode = ProxyMode.SYSTEM,
+                        beginSession = { expiredCheckHandle },
+                        onCompleted = { completedCount++ },
+                        onRequireRelogin = {},
+                        onDismiss = {},
+                        webViewContent = { _, _, onNavigationFinished, _, onSnapshotProvider ->
+                            expiredNavCallback = onNavigationFinished
+                            expiredSnapshotCallback = onSnapshotProvider
+                        },
+                    )
+                }
+            }
+        }
+        compose.runOnIdle {
+            expiredSnapshotCallback?.invoke {
+                SessionChallengeCookieSnapshot(cookies = emptyList(), userAgent = "FlareDesktopTestUA/1.0")
+            }
+            expiredNavCallback?.invoke()
+        }
+        compose.onNodeWithTag("session_challenge_error_view").assertIsDisplayed()
+        compose.runOnIdle {
+            showExpiredDialog = false
+        }
+        compose.runOnIdle {
+            assertEquals(0, completedCount)
+            assertEquals(1, expiredCheckHandle.closeCount)
+        }
+    }
 }
 
 private class FakeDesktopChallengeHandle(
@@ -1733,7 +1862,10 @@ private class FakeDesktopChallengeHandle(
     override val platformId: String = "MangaPlat"
     override val proxyRef: ProxyRef = ProxyRef.forAccount(accountKey)
     val nextResults = ArrayDeque<SessionChallengeCheckResult>()
-    var closedCount = 0
+    var cancelCount = 0
+    var closeCount = 0
+    val closedCount: Int
+        get() = cancelCount + closeCount
 
     override suspend fun check(snapshot: SessionChallengeCookieSnapshot): SessionChallengeCheckResult {
         throwOnCheck?.let { throw it }
@@ -1741,11 +1873,11 @@ private class FakeDesktopChallengeHandle(
     }
 
     override fun cancel() {
-        closedCount++
+        cancelCount++
     }
 
     override fun close() {
-        closedCount++
+        closeCount++
     }
 }
 

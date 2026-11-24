@@ -283,6 +283,7 @@ internal fun SessionChallengeWebViewDialog(
     val initialOrigin = remember(exception.challengeUrl) { exception.challengeUrl.challengeHttpsOriginOrNull() }
     var currentOrigin by remember(exception.challengeId) { mutableStateOf(initialOrigin.orEmpty()) }
     var sessionHandle by remember(exception.challengeId) { mutableStateOf<SessionChallengeHandle?>(null) }
+    var pollingFinished by remember(exception.challengeId) { mutableStateOf(false) }
     var sessionCompleted by remember(exception.challengeId) { mutableStateOf(false) }
     var errorText by remember(exception.challengeId) { mutableStateOf<String?>(null) }
     var cachedUserAgent by remember(exception.challengeId) { mutableStateOf<String?>(null) }
@@ -309,6 +310,7 @@ internal fun SessionChallengeWebViewDialog(
 
     LaunchedEffect(exception.challengeId) {
         sessionHandle = null
+        pollingFinished = false
         errorText = null
         val handle =
             try {
@@ -345,14 +347,14 @@ internal fun SessionChallengeWebViewDialog(
         coroutineScope {
             val ticker =
                 launch {
-                    while (isActive && !sessionCompleted) {
+                    while (isActive && !pollingFinished && !sessionCompleted) {
                         delay(2.seconds)
                         checkTriggers.trySend(Unit)
                     }
                 }
             try {
                 for (trigger in checkTriggers) {
-                    if (sessionCompleted) break
+                    if (pollingFinished || sessionCompleted) break
                     val provider = snapshotProvider ?: continue
                     val rawSnapshot = provider() ?: continue
                     val snapshot =
@@ -367,16 +369,17 @@ internal fun SessionChallengeWebViewDialog(
                                 activeHandle.check(snapshot)
                             } catch (e: CancellationException) {
                                 if (!isActive) throw e
-                                sessionCompleted = true
+                                pollingFinished = true
                                 errorText = expiredErrorText
                                 break
                             } catch (e: RequireReLoginException) {
+                                pollingFinished = true
                                 sessionCompleted = true
                                 activeHandle.close()
                                 latestOnRequireRelogin(e)
                                 break
                             } catch (e: Exception) {
-                                sessionCompleted = true
+                                pollingFinished = true
                                 errorText = e.message?.takeIf { it.isNotBlank() } ?: expiredErrorText
                                 break
                             }
@@ -389,6 +392,7 @@ internal fun SessionChallengeWebViewDialog(
                         }
 
                         SessionChallengeCheckResult.Completed -> {
+                            pollingFinished = true
                             sessionCompleted = true
                             activeHandle.close()
                             latestOnCompleted()
