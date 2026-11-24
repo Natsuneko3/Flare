@@ -120,6 +120,18 @@ public data class MangaPagesV1(
 )
 
 @Serializable
+public enum class MangaPageImageReasonV1 {
+    @SerialName("initial")
+    Initial,
+
+    @SerialName("resolveRetry")
+    ResolveRetry,
+
+    @SerialName("imageLoadFailed")
+    ImageLoadFailed,
+}
+
+@Serializable
 public data class MangaPageImageRequestV1(
     val key: EntityKeyV1,
     val chapterId: String,
@@ -127,6 +139,9 @@ public data class MangaPageImageRequestV1(
     val pageToken: String,
     val entityToken: String? = null,
     val chapterToken: String? = null,
+    val attempt: Int? = null,
+    val reason: MangaPageImageReasonV1? = null,
+    val failedUrl: String? = null,
 )
 
 internal object MangaStatusV1Serializer : KSerializer<MangaStatusV1> {

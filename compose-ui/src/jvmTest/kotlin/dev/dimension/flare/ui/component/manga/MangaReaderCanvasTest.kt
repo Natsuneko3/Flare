@@ -769,9 +769,46 @@ class MangaReaderCanvasTest {
         }
         composeRule.runOnIdle {
             assertEquals(listOf("flaky-0"), fakeState.retriedPageIds)
+            assertEquals(listOf<Pair<String, String?>>("flaky-0" to "https://manga.test/flaky.jpg"), fakeState.retriedPages)
             assertEquals(2, fetchAttempts)
         }
         composeRule.onNodeWithTag("manga_page_retry_flaky-0").assertDoesNotExist()
+    }
+
+    @Test
+    fun failedPageStatusRetryPassesNullFailedUrl() {
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Ltr,
+                initialPages =
+                    persistentListOf(
+                        ReaderPageState(
+                            id = "err-0",
+                            index = 0,
+                            status = PageMediaStatus.Failed(IllegalStateException("Resolve failed")),
+                            aspectRatio = null,
+                        ),
+                    ),
+                initialSlots = persistentListOf(ReaderSlot.Single(0)),
+            )
+
+        composeRule.setContent {
+            FluentTheme {
+                Box(Modifier.size(width = 600.dp, height = 800.dp)) {
+                    MangaReaderCanvas(
+                        state = fakeState,
+                        hudVisible = false,
+                        onToggleHud = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Resolve failed").assertExists()
+        composeRule.onNodeWithTag("manga_page_retry_err-0").performClick()
+        composeRule.runOnIdle {
+            assertEquals(listOf<Pair<String, String?>>("err-0" to null), fakeState.retriedPages)
+        }
     }
 
     @Test
@@ -1470,6 +1507,7 @@ private class FakeMangaReaderState(
     var stepBackwardCount: Int = 0
     var openedBoundaryChapterId: String? = null
     val retriedPageIds = mutableListOf<String>()
+    val retriedPages = mutableListOf<Pair<String, String?>>()
     val loadedDimensions = mutableMapOf<String, Pair<Float, Float>>()
 
     override fun setWideViewport(isWide: Boolean) {
@@ -1521,7 +1559,15 @@ private class FakeMangaReaderState(
     override fun retryChapter() {}
 
     override fun retryPage(pageId: String) {
+        retryPage(pageId = pageId, failedUrl = null)
+    }
+
+    override fun retryPage(
+        pageId: String,
+        failedUrl: String?,
+    ) {
         retriedPageIds += pageId
+        retriedPages += pageId to failedUrl
     }
 
     override fun setDirection(direction: MangaReadingDirection) {

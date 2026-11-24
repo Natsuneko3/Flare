@@ -177,6 +177,97 @@ class WireMangaV1Test {
     }
 
     @Test
+    fun validatesMangaPageImageRequestRetryAndFailedUrlRules() {
+        val baseRequest =
+            MangaPageImageRequestV1(
+                key = EntityKeyV1("m-1", "manga.example"),
+                chapterId = "ch-1",
+                pageId = "p-1",
+                pageToken = "ptok-1",
+            )
+        baseRequest.requireValid()
+
+        // Serialization & round-trip of MangaPageImageReasonV1 + retry fields
+        val retryRequest =
+            baseRequest.copy(
+                attempt = 0,
+                reason = MangaPageImageReasonV1.Initial,
+            )
+        retryRequest.requireValid()
+        val initialJson = PluginJsonV1.encodeToString(retryRequest)
+        assertContains(initialJson, "\"attempt\":0")
+        assertContains(initialJson, "\"reason\":\"initial\"")
+        assertFalse("\"failedUrl\"" in initialJson)
+        assertEquals(retryRequest, PluginJsonV1.decodeFromString<MangaPageImageRequestV1>(initialJson))
+
+        val resolveRetryRequest =
+            baseRequest.copy(
+                attempt = 1,
+                reason = MangaPageImageReasonV1.ResolveRetry,
+            )
+        resolveRetryRequest.requireValid()
+        val resolveRetryJson = PluginJsonV1.encodeToString(resolveRetryRequest)
+        assertContains(resolveRetryJson, "\"reason\":\"resolveRetry\"")
+
+        val imageFailedRequest =
+            baseRequest.copy(
+                attempt = 100,
+                reason = MangaPageImageReasonV1.ImageLoadFailed,
+                failedUrl = "https://hath.example/1.jpg?token=abc",
+            )
+        imageFailedRequest.requireValid()
+        val imageFailedJson = PluginJsonV1.encodeToString(imageFailedRequest)
+        assertContains(imageFailedJson, "\"reason\":\"imageLoadFailed\"")
+        assertContains(imageFailedJson, "\"failedUrl\":\"https://hath.example/1.jpg?token=abc\"")
+        assertEquals(imageFailedRequest, PluginJsonV1.decodeFromString<MangaPageImageRequestV1>(imageFailedJson))
+
+        // ImageLoadFailed is valid with failedUrl = null
+        baseRequest.copy(attempt = 2, reason = MangaPageImageReasonV1.ImageLoadFailed, failedUrl = null).requireValid()
+
+        // attempt bounds: only null or 0..100
+        listOf(-1, 101).forEach { invalidAttempt ->
+            assertFailsWith<IllegalArgumentException>("attempt=$invalidAttempt") {
+                baseRequest.copy(attempt = invalidAttempt).requireValid()
+            }
+        }
+
+        // failedUrl is rejected when reason is null, Initial, or ResolveRetry
+        listOf(null, MangaPageImageReasonV1.Initial, MangaPageImageReasonV1.ResolveRetry).forEach { invalidReason ->
+            assertFailsWith<IllegalArgumentException>("reason=$invalidReason") {
+                baseRequest
+                    .copy(
+                        attempt = 1,
+                        reason = invalidReason,
+                        failedUrl = "https://hath.example/1.jpg",
+                    ).requireValid()
+            }
+        }
+
+        // failedUrl must be non-blank, non-credential absolute HTTPS URL without #fragment
+        listOf(
+            "",
+            "   ",
+            "http://hath.example/1.jpg",
+            "/relative/1.jpg",
+            "https://user:pass@hath.example/1.jpg",
+            "https://user@hath.example/1.jpg",
+            "https://hath.example/1.jpg#frag",
+            "https://hath.example/1.jpg#",
+            "https://hath.example/1.jpg\n",
+            "https://hath.example/with space.jpg",
+        ).forEach { badUrl ->
+            assertFailsWith<IllegalArgumentException>("badUrl=$badUrl") {
+                baseRequest
+                    .copy(
+                        attempt = 1,
+                        reason = MangaPageImageReasonV1.ImageLoadFailed,
+                        failedUrl = badUrl,
+                    ).requireValid()
+            }
+        }
+    }
+
+    @Test
     fun apiV2AllowsPostMutateWithoutPostDetail() {
         val v2MutateOnly =
             manifestWithCapabilities(

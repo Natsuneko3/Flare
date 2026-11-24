@@ -293,6 +293,35 @@ final class MangaReaderAndDetailTests: XCTestCase {
         )
         hostBox.setState(flakyState)
         try await eventually(window: window) {
+            hostBox.retryPageIds.contains("flaky-p0") && controller.pageRetryHandlers["flaky-p0"] != nil
+        }
+        XCTAssertTrue(controller.triggerPageRetryForTesting(pageId: "flaky-p0"))
+        try await eventually(window: window) {
+            flakyState.retriedPages.contains { $0.0 == "flaky-p0" && $0.1 == brokenMedia.url }
+        }
+
+        let failedResolveState = FakeMangaReaderState(
+            direction: .ltr,
+            pages: [
+                ReaderPageState(
+                    id: "failed-p0",
+                    index: 0,
+                    status: PageMediaStatusFailed(error: KotlinThrowable(message: "Resolve failed")),
+                    aspectRatio: nil
+                ),
+            ],
+            slots: [ReaderSlotSingle(pageIndex: 0)]
+        )
+        hostBox.setState(failedResolveState)
+        try await eventually(window: window) {
+            hostBox.retryPageIds.contains("failed-p0") && controller.pageRetryHandlers["failed-p0"] != nil
+        }
+        XCTAssertTrue(controller.triggerPageRetryForTesting(pageId: "failed-p0"))
+        try await eventually(window: window) {
+            failedResolveState.retriedPages.contains { $0.0 == "failed-p0" && $0.1 == nil }
+        }
+        hostBox.setState(flakyState)
+        try await eventually(window: window) {
             hostBox.retryPageIds.contains("flaky-p0")
         }
 
@@ -2862,6 +2891,7 @@ private final class IOSMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     func openAdjacentChapter(boundary: ChapterBoundaryUnlocked) { backing.openAdjacentChapter(boundary: boundary) }
     func retryChapter() { backing.retryChapter() }
     func retryPage(pageId: String) { backing.retryPage(pageId: pageId) }
+    func retryPage(pageId: String, failedUrl: String?) { backing.retryPage(pageId: pageId, failedUrl: failedUrl) }
     func setDirection(direction: MangaReadingDirection) { backing.setDirection(direction: direction) }
     func setDoublePageSpread(enabled: Bool) { backing.setDoublePageSpread(enabled: enabled) }
     func setSpreadCoverSinglePage(enabled: Bool) { backing.setSpreadCoverSinglePage(enabled: enabled) }
@@ -2969,6 +2999,7 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
     var toggleChapterSortCount = 0
     var openedChapterRequests: [(String, Int32?)] = []
     var retriedPageIds: [String] = []
+    var retriedPages: [(String, String?)] = []
     var loadedPageIds: Set<String> = []
 
     init(
@@ -3052,7 +3083,12 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
     func retryChapter() {}
 
     func retryPage(pageId: String) {
+        retryPage(pageId: pageId, failedUrl: nil)
+    }
+
+    func retryPage(pageId: String, failedUrl: String?) {
         retriedPageIds.append(pageId)
+        retriedPages.append((pageId, failedUrl))
         onStateMutated?()
     }
 

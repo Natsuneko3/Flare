@@ -11,6 +11,12 @@ import dev.dimension.flare.ui.model.UiTimelineV2
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.native.HiddenFromObjC
 
+public enum class MangaPageImageResolveReason {
+    Initial,
+    ResolveRetry,
+    ImageLoadFailed,
+}
+
 @HiddenFromObjC
 public interface MangaDataSource {
     public fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail>
@@ -26,6 +32,22 @@ public interface MangaDataSource {
         pageId: String,
         pageToken: String,
     ): UiMedia
+
+    public suspend fun resolvePageMedia(
+        mangaKey: MicroBlogKey,
+        chapterId: String,
+        pageId: String,
+        pageToken: String,
+        attempt: Int,
+        reason: MangaPageImageResolveReason,
+        failedUrl: String?,
+    ): UiMedia =
+        resolvePageMedia(
+            mangaKey = mangaKey,
+            chapterId = chapterId,
+            pageId = pageId,
+            pageToken = pageToken,
+        )
 
     public val supportsComments: Boolean
         get() = false

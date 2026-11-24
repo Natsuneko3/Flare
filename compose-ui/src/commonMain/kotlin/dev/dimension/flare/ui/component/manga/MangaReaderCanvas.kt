@@ -1507,7 +1507,7 @@ private fun ReaderPageCell(
                     onRetry = {
                         loadError = null
                         retryNonce++
-                        state.retryPage(page.id)
+                        state.retryPage(page.id, status.original.url)
                     },
                     modifier = modifier,
                 )

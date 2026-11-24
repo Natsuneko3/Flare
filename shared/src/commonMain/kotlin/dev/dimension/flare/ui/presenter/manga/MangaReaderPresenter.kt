@@ -18,6 +18,7 @@ import androidx.paging.LoadState
 import dev.dimension.flare.common.CacheState
 import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPageImageResolveReason
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
 import dev.dimension.flare.data.model.ProxyRef
@@ -242,6 +243,13 @@ public class MangaReaderPresenter(
         public fun retryChapter()
 
         public fun retryPage(pageId: String)
+
+        public fun retryPage(
+            pageId: String,
+            failedUrl: String?,
+        ) {
+            retryPage(pageId)
+        }
 
         public fun setDirection(direction: MangaReadingDirection)
 
@@ -927,6 +935,13 @@ public class MangaReaderPresenter(
             }
 
             override fun retryPage(pageId: String) {
+                retryPage(pageId = pageId, failedUrl = null)
+            }
+
+            override fun retryPage(
+                pageId: String,
+                failedUrl: String?,
+            ) {
                 val currentSession = activeSessionHolder.session ?: return
                 val loaded = (currentSession.pagesLoadState as? UiState.Success)?.data ?: return
                 val deferred = loaded.firstOrNull { it.id == pageId } as? UiMangaPage.Deferred ?: return
@@ -935,6 +950,7 @@ public class MangaReaderPresenter(
                     page = deferred,
                     dataSource = source,
                     mangaKey = currentSession.mangaKey,
+                    failedUrl = failedUrl,
                 )
             }
 
@@ -1216,6 +1232,7 @@ private class ChapterPagesSession(
     private val scope = CoroutineScope(parentContext.minusKey(Job) + job)
     private val semaphore = Semaphore(3)
     private val inFlightJobs = mutableMapOf<String, Job>()
+    private val pageAttempts = mutableMapOf<String, Int>()
 
     var currentPageIndex by mutableIntStateOf(0)
     var hasStartedLoad: Boolean = false
@@ -1258,10 +1275,20 @@ private class ChapterPagesSession(
             if (deferred.id in resolvedMedia || deferred.id in failedPages || inFlightJobs[deferred.id]?.isActive == true) {
                 continue
             }
+            val pageAttempt = pageAttempts.getOrPut(deferred.id) { 0 }
+            val reason =
+                if (pageAttempt == 0) {
+                    MangaPageImageResolveReason.Initial
+                } else {
+                    MangaPageImageResolveReason.ResolveRetry
+                }
             launchResolvePage(
                 page = deferred,
                 dataSource = dataSource,
                 mangaKey = mangaKey,
+                attempt = pageAttempt,
+                reason = reason,
+                failedUrl = null,
             )
         }
     }
@@ -1270,15 +1297,28 @@ private class ChapterPagesSession(
         page: UiMangaPage.Deferred,
         dataSource: MangaDataSource,
         mangaKey: MicroBlogKey,
+        failedUrl: String?,
     ) {
         if (!job.isActive) return
         inFlightJobs.remove(page.id)?.cancel()
         resolvedMedia = resolvedMedia - page.id
         failedPages = failedPages - page.id
+        val normalizedFailedUrl = failedUrl?.takeIf { it.isNotBlank() }
+        val nextAttempt = ((pageAttempts[page.id] ?: 0) + 1).coerceAtMost(100)
+        pageAttempts[page.id] = nextAttempt
+        val reason =
+            if (normalizedFailedUrl != null) {
+                MangaPageImageResolveReason.ImageLoadFailed
+            } else {
+                MangaPageImageResolveReason.ResolveRetry
+            }
         launchResolvePage(
             page = page,
             dataSource = dataSource,
             mangaKey = mangaKey,
+            attempt = nextAttempt,
+            reason = reason,
+            failedUrl = normalizedFailedUrl,
         )
     }
 
@@ -1286,6 +1326,9 @@ private class ChapterPagesSession(
         page: UiMangaPage.Deferred,
         dataSource: MangaDataSource,
         mangaKey: MicroBlogKey,
+        attempt: Int,
+        reason: MangaPageImageResolveReason,
+        failedUrl: String?,
     ) {
         val pageJob =
             scope.launch {
@@ -1298,6 +1341,9 @@ private class ChapterPagesSession(
                                 chapterId = chapterId,
                                 pageId = page.id,
                                 pageToken = page.pageToken,
+                                attempt = attempt,
+                                reason = reason,
+                                failedUrl = failedUrl,
                             )
                         }
                     currentCoroutineContext().ensureActive()

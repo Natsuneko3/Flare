@@ -12,6 +12,7 @@ import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.SearchOperation
 import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPageImageResolveReason
 import dev.dimension.flare.data.datasource.microblog.list.ListMetaData
 import dev.dimension.flare.data.datasource.microblog.loader.RelationActionType
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
@@ -1680,6 +1681,161 @@ class PluginDetailCapabilityTest {
             assertEquals("c-1", guestComments.single().statusKey.id)
             assertEquals("rec-1", guestRecs.single().statusKey.id)
             assertNotSame(platform.guestDataSource(mangaKey.host, "fr"), platform.guestDataSource(mangaKey.host, "en"))
+        }
+
+    @Test
+    fun mangaAdapterForwardsPageImageRetryMetadataAndRejectsInvalidRetryArgs() =
+        runTest {
+            val manifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.example.manga.retry",
+                  "version": "1.0.0",
+                  "name": "Manga Retry Test",
+                  "permissions": { "mediaNetwork": true },
+                  "platform": {
+                    "id": "MangaRetryTest",
+                    "name": "Manga Retry Test",
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": {
+                          "detail": {},
+                          "pages": {},
+                          "pageImage": {}
+                        }
+                      }
+                    }
+                  }
+                }
+                """.trimIndent()
+            val script =
+                """
+                const seenRequests = [];
+                defineFlareSocialPlugin({
+                  capabilities: {
+                    manga: {
+                      detail(request) {
+                        return {
+                          key: request.key,
+                          title: "Retry Manga",
+                          chapters: [{ id: "ch-1", title: "Chapter 1" }]
+                        };
+                      },
+                      pages() {
+                        return {
+                          pages: [{ id: "p-1", pageToken: "ptok-1" }]
+                        };
+                      },
+                      pageImage(request) {
+                        const hasFailedUrl = Object.prototype.hasOwnProperty.call(request, "failedUrl");
+                        seenRequests.push({
+                          attempt: request.attempt,
+                          reason: request.reason,
+                          failedUrl: request.failedUrl,
+                          hasFailedUrl
+                        });
+                        const idx = seenRequests.length;
+                        return {
+                          id: "img-" + idx,
+                          type: "image",
+                          url: "https://cdn.plugin.example/page-" + idx + ".jpg",
+                          customHeaders: {
+                            "X-Seen-Attempt": String(request.attempt),
+                            "X-Seen-Reason": String(request.reason),
+                            "X-Seen-Failed-Url": hasFailedUrl ? String(request.failedUrl) : "<absent>",
+                            "X-Has-Failed-Url": String(hasFailedUrl),
+                            "X-Total-Calls": String(idx)
+                          }
+                        };
+                      }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val plugin = install(manifest, script)
+            val accountKey = MicroBlogKey("account-1", "plugin.example")
+            val source = authenticated(plugin, accountKey = accountKey)
+            val manga = requireNotNull(source.capabilitySet.manga)
+            val mangaKey = MicroBlogKey("m-retry", "plugin.example")
+
+            val initial = assertIs<UiMedia.Image>(manga.resolvePageMedia(mangaKey, "ch-1", "p-1", "ptok-1"))
+            assertEquals("0", initial.customHeaders?.get("X-Seen-Attempt"))
+            assertEquals("initial", initial.customHeaders?.get("X-Seen-Reason"))
+            assertEquals("false", initial.customHeaders?.get("X-Has-Failed-Url"))
+
+            val resolveRetry =
+                assertIs<UiMedia.Image>(
+                    manga.resolvePageMedia(
+                        mangaKey = mangaKey,
+                        chapterId = "ch-1",
+                        pageId = "p-1",
+                        pageToken = "ptok-1",
+                        attempt = 1,
+                        reason = MangaPageImageResolveReason.ResolveRetry,
+                        failedUrl = null,
+                    ),
+                )
+            assertEquals("1", resolveRetry.customHeaders?.get("X-Seen-Attempt"))
+            assertEquals("resolveRetry", resolveRetry.customHeaders?.get("X-Seen-Reason"))
+            assertEquals("false", resolveRetry.customHeaders?.get("X-Has-Failed-Url"))
+
+            val imageFailed =
+                assertIs<UiMedia.Image>(
+                    manga.resolvePageMedia(
+                        mangaKey = mangaKey,
+                        chapterId = "ch-1",
+                        pageId = "p-1",
+                        pageToken = "ptok-1",
+                        attempt = 2,
+                        reason = MangaPageImageResolveReason.ImageLoadFailed,
+                        failedUrl = "https://hath.example/1.jpg",
+                    ),
+                )
+            assertEquals("2", imageFailed.customHeaders?.get("X-Seen-Attempt"))
+            assertEquals("imageLoadFailed", imageFailed.customHeaders?.get("X-Seen-Reason"))
+            assertEquals("true", imageFailed.customHeaders?.get("X-Has-Failed-Url"))
+            assertEquals("https://hath.example/1.jpg", imageFailed.customHeaders?.get("X-Seen-Failed-Url"))
+
+            // Invalid arguments fail validation before invoking JS
+            assertFailsWith<IllegalArgumentException> {
+                manga.resolvePageMedia(
+                    mangaKey = mangaKey,
+                    chapterId = "ch-1",
+                    pageId = "p-1",
+                    pageToken = "ptok-1",
+                    attempt = 101,
+                    reason = MangaPageImageResolveReason.ResolveRetry,
+                    failedUrl = null,
+                )
+            }
+            assertFailsWith<IllegalArgumentException> {
+                manga.resolvePageMedia(
+                    mangaKey = mangaKey,
+                    chapterId = "ch-1",
+                    pageId = "p-1",
+                    pageToken = "ptok-1",
+                    attempt = 1,
+                    reason = MangaPageImageResolveReason.ResolveRetry,
+                    failedUrl = "https://hath.example/1.jpg",
+                )
+            }
+            assertFailsWith<IllegalArgumentException> {
+                manga.resolvePageMedia(
+                    mangaKey = mangaKey,
+                    chapterId = "ch-1",
+                    pageId = "p-1",
+                    pageToken = "ptok-1",
+                    attempt = 1,
+                    reason = MangaPageImageResolveReason.ImageLoadFailed,
+                    failedUrl = "http://hath.example/1.jpg",
+                )
+            }
+
+            // Confirm invalid calls did not reach JS
+            val finalCall = assertIs<UiMedia.Image>(manga.resolvePageMedia(mangaKey, "ch-1", "p-1", "ptok-1"))
+            assertEquals("4", finalCall.customHeaders?.get("X-Total-Calls"))
         }
 
     @Test

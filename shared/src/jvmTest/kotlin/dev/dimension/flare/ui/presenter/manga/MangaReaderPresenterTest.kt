@@ -15,6 +15,7 @@ import dev.dimension.flare.data.datasource.microblog.DataSourceCapabilitySet
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPageImageResolveReason
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AppSettings
@@ -1605,6 +1606,291 @@ class MangaReaderPresenterTest {
                 assertFalse(persistedConfig.webtoonConstrainWidthOnWideScreen)
                 assertTrue(persistedConfig.volumeKeysNavigation)
             } finally {
+                readerJob.cancelAndJoin()
+                presenter.awaitPendingWrites()
+                mockClient.close()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun pageImageRetryTracksAttemptsReasonsFailedUrlAndResetsOnChapterSwitchAndRetryChapter() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-reader-retry-meta-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val realStorage = OkioFileStorage(FileSystem.SYSTEM, tempDir.toString().toPath(), cacheRoot = tempDir.toString().toPath())
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            val progressRepository = MangaProgressRepository(cacheDatabase) { 40_000L }
+            val mockClient = HttpClient(MockEngine { respond(ByteArray(0)) })
+            val imageTranslationRepository =
+                ImageTranslationRepository(
+                    storage = realStorage,
+                    client = mockClient,
+                    adapters = emptyList(),
+                    sourceClient = { mockClient },
+                    imageCompressor = JvmImageCompressor(),
+                )
+
+            data class ResolveCall(
+                val chapterId: String,
+                val pageId: String,
+                val attempt: Int,
+                val reason: MangaPageImageResolveReason,
+                val failedUrl: String?,
+            )
+
+            val recordedCalls = CopyOnWriteArrayList<ResolveCall>()
+            var failCh1InitialOnce = true
+            var gatedImageRetryDeferred: CompletableDeferred<Unit>? = null
+            var gatedImageRetryStarted: CompletableDeferred<Unit>? = null
+            val detailCache = MutableStateFlow<UiMangaDetail?>(null)
+            val detail =
+                readerDetail(
+                    readingDirection = MangaReadingDirection.Ltr,
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "group-main",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-1", "Chapter 1", null, null, locked = false, url = null),
+                                        UiMangaChapter("ch-2", "Chapter 2", null, null, locked = false, url = null),
+                                    ),
+                            ),
+                        ),
+                )
+
+            val mangaDataSource =
+                object : MangaDataSource {
+                    override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> =
+                        Cacheable(
+                            fetchSource = { detailCache.value = detail },
+                            cacheSource = { detailCache.filterNotNull() },
+                        )
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ): ImmutableList<UiMangaPage> =
+                        when (chapterId) {
+                            "ch-1" -> {
+                                persistentListOf(
+                                    UiMangaPage.Deferred(
+                                        id = "p-0",
+                                        pageToken = "pt-ch1-0",
+                                        previewUrl = null,
+                                        width = 800f,
+                                        height = 1200f,
+                                        customHeaders = null,
+                                        proxy = ProxyRef.Global,
+                                    ),
+                                    UiMangaPage.Ready(
+                                        id = "p-static",
+                                        media = UiMedia.Image("https://manga.example/static-1.jpg"),
+                                    ),
+                                )
+                            }
+
+                            "ch-2" -> {
+                                persistentListOf(
+                                    UiMangaPage.Deferred(
+                                        id = "p-0",
+                                        pageToken = "pt-ch2-0",
+                                        previewUrl = null,
+                                        width = 800f,
+                                        height = 1200f,
+                                        customHeaders = null,
+                                        proxy = ProxyRef.Global,
+                                    ),
+                                )
+                            }
+
+                            else -> {
+                                error("Unexpected chapter $chapterId")
+                            }
+                        }
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ): UiMedia = error("4-arg overload should not be invoked when 7-arg overload is implemented")
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                        attempt: Int,
+                        reason: MangaPageImageResolveReason,
+                        failedUrl: String?,
+                    ): UiMedia {
+                        recordedCalls += ResolveCall(chapterId, pageId, attempt, reason, failedUrl)
+                        if (chapterId == "ch-1" && pageId == "p-0") {
+                            if (attempt == 0 && failCh1InitialOnce) {
+                                failCh1InitialOnce = false
+                                error("Initial page resolve failure")
+                            }
+                            if (reason == MangaPageImageResolveReason.ImageLoadFailed && attempt == 2) {
+                                gatedImageRetryStarted?.complete(Unit)
+                                gatedImageRetryDeferred?.await()
+                                return UiMedia.Image("https://hath.example/v2/1.jpg")
+                            }
+                            return UiMedia.Image("https://hath.example/v1/1.jpg")
+                        }
+                        return UiMedia.Image("https://hath.example/$chapterId/$pageId-v$attempt.jpg")
+                    }
+                }
+
+            val accountService = FakeReaderAccountService(accountKey, mangaDataSource)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                        testSingle { imageTranslationRepository }
+                    },
+                )
+            }
+
+            val readerJob = SupervisorJob()
+            val readerScope = CoroutineScope(dispatcher + readerJob)
+            val presenter = MangaReaderPresenter(accountType, mangaKey, initialChapterId = "ch-1", initialPage = 0)
+            try {
+                val states = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                readerScope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+
+                // 1. Initial resolution fails -> attempt = 0, reason = Initial, failedUrl = null
+                val failedInitial =
+                    awaitReaderState(states) {
+                        it.activeChapterId == "ch-1" && it.pages.firstOrNull()?.status is PageMediaStatus.Failed
+                    }
+                assertEquals(
+                    listOf(ResolveCall("ch-1", "p-0", attempt = 0, reason = MangaPageImageResolveReason.Initial, failedUrl = null)),
+                    recordedCalls.toList(),
+                )
+
+                // 2. Retry after PageMediaStatus.Failed -> attempt = 1, reason = ResolveRetry, failedUrl = null
+                failedInitial.retryPage("p-0")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val firstReady =
+                    awaitReaderState(states) {
+                        it.activeChapterId == "ch-1" && it.pages.firstOrNull()?.status is PageMediaStatus.Ready
+                    }
+                assertEquals(
+                    "https://hath.example/v1/1.jpg",
+                    (assertIs<PageMediaStatus.Ready>(firstReady.pages[0].status).original as UiMedia.Image).url,
+                )
+                assertEquals(
+                    ResolveCall("ch-1", "p-0", attempt = 1, reason = MangaPageImageResolveReason.ResolveRetry, failedUrl = null),
+                    recordedCalls.last(),
+                )
+
+                // 3. Retry after image load failure on Deferred Ready page -> clears resolvedMedia (Loading),
+                //    then calls attempt = 2, reason = ImageLoadFailed, failedUrl = "https://hath.example/v1/1.jpg"
+                val gate = CompletableDeferred<Unit>()
+                val started = CompletableDeferred<Unit>()
+                gatedImageRetryDeferred = gate
+                gatedImageRetryStarted = started
+                firstReady.retryPage("p-0", failedUrl = "https://hath.example/v1/1.jpg")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                withContext(Dispatchers.Default) {
+                    withTimeout(5_000) { started.await() }
+                }
+                val loadingDuringReResolve =
+                    awaitReaderState(states) {
+                        it.activeChapterId == "ch-1" && it.pages.firstOrNull()?.status is PageMediaStatus.Loading
+                    }
+                assertIs<PageMediaStatus.Loading>(loadingDuringReResolve.pages[0].status)
+                gate.complete(Unit)
+                val secondReady =
+                    awaitReaderState(states) { state ->
+                        val ready = state.pages.firstOrNull()?.status as? PageMediaStatus.Ready
+                        (ready?.original as? UiMedia.Image)?.url == "https://hath.example/v2/1.jpg"
+                    }
+                assertEquals(
+                    ResolveCall(
+                        chapterId = "ch-1",
+                        pageId = "p-0",
+                        attempt = 2,
+                        reason = MangaPageImageResolveReason.ImageLoadFailed,
+                        failedUrl = "https://hath.example/v1/1.jpg",
+                    ),
+                    recordedCalls.last(),
+                )
+
+                // 4. Retrying static UiMangaPage.Ready does NOT call resolvePageMedia
+                val callsBeforeStaticRetry = recordedCalls.size
+                secondReady.retryPage("p-static", failedUrl = "https://manga.example/static-1.jpg")
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                assertEquals(callsBeforeStaticRetry, recordedCalls.size)
+
+                // 5. Clamping: repeated retries cap attempt at 100
+                var latestReady = secondReady
+                for (expectedAttempt in 3..102) {
+                    val prevCalls = recordedCalls.size
+                    latestReady.retryPage("p-0", failedUrl = "https://hath.example/v2/1.jpg")
+                    Snapshot.sendApplyNotifications()
+                    runCurrent()
+                    latestReady =
+                        awaitReaderState(states) {
+                            recordedCalls.size > prevCalls && it.pages.firstOrNull()?.status is PageMediaStatus.Ready
+                        }
+                    assertEquals(expectedAttempt.coerceAtMost(100), recordedCalls.last().attempt)
+                }
+
+                // 6. retryChapter() clears pageAttempts -> p-0 resets back to attempt = 0, Initial, failedUrl = null
+                val callsBeforeRetryChapter = recordedCalls.size
+                latestReady.retryChapter()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val afterRetryChapter =
+                    awaitReaderState(states) {
+                        recordedCalls.size > callsBeforeRetryChapter &&
+                            it.activeChapterId == "ch-1" &&
+                            it.pages.firstOrNull()?.status is PageMediaStatus.Ready
+                    }
+                assertEquals(
+                    ResolveCall("ch-1", "p-0", attempt = 0, reason = MangaPageImageResolveReason.Initial, failedUrl = null),
+                    recordedCalls.last(),
+                )
+
+                // 7. Switching to ch-2 resets pageAttempts -> p-0 in ch-2 also starts at attempt = 0, Initial
+                val nextChapterBoundary = assertIs<ChapterBoundary.Unlocked>(afterRetryChapter.nextBoundary)
+                afterRetryChapter.openAdjacentChapter(nextChapterBoundary)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                awaitReaderState(states) {
+                    it.activeChapterId == "ch-2" && it.pages.firstOrNull()?.status is PageMediaStatus.Ready
+                }
+                assertEquals(
+                    ResolveCall("ch-2", "p-0", attempt = 0, reason = MangaPageImageResolveReason.Initial, failedUrl = null),
+                    recordedCalls.last(),
+                )
+            } finally {
+                gatedImageRetryDeferred?.complete(Unit)
                 readerJob.cancelAndJoin()
                 presenter.awaitPendingWrites()
                 mockClient.close()

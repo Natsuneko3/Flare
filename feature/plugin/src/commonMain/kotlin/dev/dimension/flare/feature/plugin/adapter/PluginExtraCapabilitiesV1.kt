@@ -13,6 +13,7 @@ import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDataSourc
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
 import dev.dimension.flare.data.datasource.microblog.datasource.ListDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPageImageResolveReason
 import dev.dimension.flare.data.datasource.microblog.datasource.NotificationDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabSection
@@ -60,6 +61,7 @@ import dev.dimension.flare.feature.plugin.wire.GalleryV1
 import dev.dimension.flare.feature.plugin.wire.ListMemberRequestV1
 import dev.dimension.flare.feature.plugin.wire.ListMutationRequestV1
 import dev.dimension.flare.feature.plugin.wire.MangaChapterGroupV1
+import dev.dimension.flare.feature.plugin.wire.MangaPageImageReasonV1
 import dev.dimension.flare.feature.plugin.wire.MangaPageImageRequestV1
 import dev.dimension.flare.feature.plugin.wire.MangaPagesRequestV1
 import dev.dimension.flare.feature.plugin.wire.MangaPagesV1
@@ -839,6 +841,25 @@ internal class PluginExtraCapabilitiesV1(
             chapterId: String,
             pageId: String,
             pageToken: String,
+        ): UiMedia =
+            resolvePageMedia(
+                mangaKey = mangaKey,
+                chapterId = chapterId,
+                pageId = pageId,
+                pageToken = pageToken,
+                attempt = 0,
+                reason = MangaPageImageResolveReason.Initial,
+                failedUrl = null,
+            )
+
+        override suspend fun resolvePageMedia(
+            mangaKey: MicroBlogKey,
+            chapterId: String,
+            pageId: String,
+            pageToken: String,
+            attempt: Int,
+            reason: MangaPageImageResolveReason,
+            failedUrl: String?,
         ): UiMedia {
             capabilities.requireOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
             val mediaNetwork = plugin.installed.manifest.permissions.mediaNetwork
@@ -851,6 +872,9 @@ internal class PluginExtraCapabilitiesV1(
                     pageToken = pageToken,
                     entityToken = mangaTokens.get(mangaKey),
                     chapterToken = chapterTokens.get(MangaChapterKey(mangaKey, chapterId)),
+                    attempt = attempt,
+                    reason = reason.toWire(),
+                    failedUrl = failedUrl,
                 ).also(MangaPageImageRequestV1::requireValid)
             return invoker
                 .invoke(
@@ -1096,6 +1120,13 @@ private data class MangaChapterKey(
     val mangaKey: MicroBlogKey,
     val chapterId: String,
 )
+
+private fun MangaPageImageResolveReason.toWire(): MangaPageImageReasonV1 =
+    when (this) {
+        MangaPageImageResolveReason.Initial -> MangaPageImageReasonV1.Initial
+        MangaPageImageResolveReason.ResolveRetry -> MangaPageImageReasonV1.ResolveRetry
+        MangaPageImageResolveReason.ImageLoadFailed -> MangaPageImageReasonV1.ImageLoadFailed
+    }
 
 internal class BoundedLruMap<K : Any, V : Any>(
     private val maxEntries: Int,

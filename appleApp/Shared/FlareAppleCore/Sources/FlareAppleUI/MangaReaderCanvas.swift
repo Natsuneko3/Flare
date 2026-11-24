@@ -49,6 +49,19 @@ private struct MangaReaderScrollAlignmentRevisionKey: EnvironmentKey {
     static let defaultValue: Int = 0
 }
 
+@MainActor
+private final class MangaReaderPageRetryBox: Sendable {
+    let register: @MainActor (String, UUID, (@MainActor () -> Void)?) -> Void
+
+    init(register: @escaping @MainActor (String, UUID, (@MainActor () -> Void)?) -> Void) {
+        self.register = register
+    }
+}
+
+private struct MangaReaderRegisterPageRetryKey: EnvironmentKey {
+    static let defaultValue: MangaReaderPageRetryBox? = nil
+}
+
 private struct ZoomGeometryToken: Equatable {
     var scale: CGFloat = 1.0
     var offsetX: CGFloat = 0
@@ -64,6 +77,11 @@ private extension EnvironmentValues {
     var mangaReaderScrollAlignmentRevision: Int {
         get { self[MangaReaderScrollAlignmentRevisionKey.self] }
         set { self[MangaReaderScrollAlignmentRevisionKey.self] = newValue }
+    }
+
+    var mangaReaderRegisterPageRetry: MangaReaderPageRetryBox? {
+        get { self[MangaReaderRegisterPageRetryKey.self] }
+        set { self[MangaReaderRegisterPageRetryKey.self] = newValue }
     }
 }
 
@@ -106,8 +124,16 @@ public final class MangaReaderInteractionController {
     @ObservationIgnored fileprivate var canvasID: UUID?
     @ObservationIgnored fileprivate weak var activeInteractionTracker: PagerScrollInteractionTracker?
     @ObservationIgnored fileprivate weak var activeWebtoonController: WebtoonScrollController?
+    @ObservationIgnored var pageRetryHandlers: [String: (token: UUID, action: @MainActor () -> Void)] = [:]
 
     public init() {}
+
+    @discardableResult
+    func triggerPageRetryForTesting(pageId: String) -> Bool {
+        guard let entry = pageRetryHandlers[pageId] else { return false }
+        entry.action()
+        return true
+    }
 
     var hasUnconsumedUserScroll: Bool {
         activeInteractionTracker?.hasUnconsumedUserScroll ?? false
@@ -478,6 +504,16 @@ public struct MangaReaderCanvas: View {
                             .id(pagedKey)
                         }
                     }
+                    .environment(
+                        \.mangaReaderRegisterPageRetry,
+                        MangaReaderPageRetryBox { pageId, token, handler in
+                            if let handler {
+                                controller.pageRetryHandlers[pageId] = (token, handler)
+                            } else if controller.pageRetryHandlers[pageId]?.token == token {
+                                controller.pageRetryHandlers.removeValue(forKey: pageId)
+                            }
+                        }
+                    )
                     .id(state.activeChapterId)
                 }
             }
@@ -2946,7 +2982,7 @@ private struct ReaderPageCell: View {
                             failedOriginalURL = nil
                             imageLoaded = false
                             retryNonce += 1
-                            state.retryPage(pageId: page.id)
+                            state.retryPage(pageId: page.id, failedUrl: ready.original.url)
                         }
                     )
                 } else {
@@ -3072,7 +3108,9 @@ private struct MangaPageFrameReporterView: View {
 private struct ReaderPageErrorView: View {
     let message: String?
     let pageId: String
-    let onRetry: () -> Void
+    let onRetry: @MainActor () -> Void
+    @Environment(\.mangaReaderRegisterPageRetry) private var registerPageRetry
+    @State private var retryRegistrationToken = UUID()
 
     private var retryLabel: String {
         FlareAppleUILocalization.string("manga_page_retry", fallback: "Retry page")
@@ -3097,6 +3135,16 @@ private struct ReaderPageErrorView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preference(key: MangaReaderRetryPageIdsPreferenceKey.self, value: [pageId])
+        .onAppear {
+            registerPageRetry?.register(pageId, retryRegistrationToken, onRetry)
+        }
+        .onChange(of: pageId) { oldPageId, newPageId in
+            registerPageRetry?.register(oldPageId, retryRegistrationToken, nil)
+            registerPageRetry?.register(newPageId, retryRegistrationToken, onRetry)
+        }
+        .onDisappear {
+            registerPageRetry?.register(pageId, retryRegistrationToken, nil)
+        }
     }
 }
 

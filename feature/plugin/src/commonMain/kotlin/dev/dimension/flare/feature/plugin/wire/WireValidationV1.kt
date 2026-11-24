@@ -5,6 +5,7 @@ import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
 import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
+import io.ktor.http.parseUrl
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -448,6 +449,18 @@ public fun MangaPageImageRequestV1.requireValid() {
     }
     require(chapterToken == null || chapterToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
         "Manga chapter token is too large"
+    }
+    require(attempt == null || attempt in 0..100) { "Invalid manga page image attempt" }
+    failedUrl?.let { url ->
+        require(reason == MangaPageImageReasonV1.ImageLoadFailed) {
+            "Manga page failedUrl requires imageLoadFailed reason"
+        }
+        require(url.isNotBlank() && url.none(Char::isISOControl) && url.none(Char::isWhitespace) && '#' !in url) {
+            "Invalid manga page failedUrl"
+        }
+        url.requireHttpsUrl(required = true)
+        requireNotNull(parseUrl(url)) { "Invalid HTTPS URL" }
+        PluginUrlPolicy.requireHttpsUrl(url)
     }
 }
 
