@@ -244,7 +244,7 @@ class WireMangaV1Test {
             }
         }
 
-        // failedUrl must be non-blank, non-credential absolute HTTPS URL without #fragment
+        // failedUrl and MediaV1.requireValidMangaPageMedia must symmetrically reject invalid/credential/fragment/whitespace URLs
         listOf(
             "",
             "   ",
@@ -257,7 +257,7 @@ class WireMangaV1Test {
             "https://hath.example/1.jpg\n",
             "https://hath.example/with space.jpg",
         ).forEach { badUrl ->
-            assertFailsWith<IllegalArgumentException>("badUrl=$badUrl") {
+            assertFailsWith<IllegalArgumentException>("failedUrl=$badUrl") {
                 baseRequest
                     .copy(
                         attempt = 1,
@@ -265,7 +265,23 @@ class WireMangaV1Test {
                         failedUrl = badUrl,
                     ).requireValid()
             }
+            assertFailsWith<IllegalArgumentException>("media.url=$badUrl") {
+                validImageMedia().copy(url = badUrl).requireValidMangaPageMedia(mediaNetwork = true)
+            }
+            assertFailsWith<IllegalArgumentException>("media.previewUrl=$badUrl") {
+                validImageMedia().copy(previewUrl = badUrl).requireValidMangaPageMedia(mediaNetwork = true)
+            }
         }
+        validImageMedia()
+            .copy(
+                url = "https://hath.example/1.jpg?token=abc",
+                previewUrl = "https://hath.example/1-thumb.jpg?token=abc",
+            ).requireValidMangaPageMedia(mediaNetwork = true)
+        validImageMedia()
+            .copy(
+                url = "https://hath.example/1.jpg?token=abc",
+                previewUrl = null,
+            ).requireValidMangaPageMedia(mediaNetwork = true)
     }
 
     @Test

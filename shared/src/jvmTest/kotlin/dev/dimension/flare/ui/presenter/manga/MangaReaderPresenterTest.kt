@@ -3151,6 +3151,13 @@ class MangaReaderPresenterTest {
                 runCurrent()
                 assertEquals(0, calls.count { it.chapterId == "ch-seq" && it.cursor == "cur-2" })
 
+                // Calling retryPage("__chunk_placeholder_<loadedCount>") while cursorAppendError == null must NOT launch an unsolicited append.
+                afterCur1.retryPage("__chunk_placeholder_30")
+                Snapshot.sendApplyNotifications()
+                testScheduler.advanceUntilIdle()
+                runCurrent()
+                assertEquals(0, calls.count { it.chapterId == "ch-seq" && it.cursor == "cur-2" })
+
                 afterCur1.goToPage(29)
                 Snapshot.sendApplyNotifications()
                 runCurrent()
@@ -3172,6 +3179,14 @@ class MangaReaderPresenterTest {
                 )
                 assertEquals(30, cur2Failed.pages.count { !it.id.startsWith("__chunk_placeholder_") })
                 assertIs<IllegalStateException>(assertIs<PageMediaStatus.Failed>(cur2Failed.pages[30].status).error)
+
+                // Calling retryPage("__chunk_placeholder_0") when cursorAppendError != null and loadedCount > 0 must NOT retry/clear cursor append.
+                cur2Failed.retryPage("__chunk_placeholder_0")
+                Snapshot.sendApplyNotifications()
+                testScheduler.advanceUntilIdle()
+                runCurrent()
+                assertEquals(1, calls.count { it.chapterId == "ch-seq" && it.cursor == "cur-2" })
+                assertIs<PageMediaStatus.Failed>(seqStates.value!!.pages[30].status)
 
                 // Retry cur-2 -> succeeds with explicit offset = 30 and endReached = true -> reaching page 34 marks isCompleted = true!
                 cur2Failed.retryPage("__chunk_placeholder_30")

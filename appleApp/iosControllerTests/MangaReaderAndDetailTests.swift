@@ -3266,6 +3266,143 @@ final class MangaReaderAndDetailTests: XCTestCase {
         XCTAssertEqual(dismissedCount, 1)
     }
 
+    func testIOSConsecutiveSessionChallengePresentationsDoNotReuseClosedController() async throws {
+        let accountKey = MicroBlogKey(id: "user-1", host: "challenge.example")
+        var begunChallengeIds: [String] = []
+        let service = SessionChallengeService(
+            beginSession: { challengeId in
+                begunChallengeIds.append(challengeId)
+                return nil
+            },
+            check: { _, _ in SessionChallengeCheckResultPending.shared },
+            cancel: { _ in },
+            close: { _ in }
+        )
+
+        var capturedLauncher: ((SessionChallengeException, @escaping () -> Void) -> Void)?
+        @MainActor
+        struct IOSChallengeHostProbeView: View {
+            @Environment(\.launchSessionChallenge) private var launchSessionChallenge
+            let onCapture: (@escaping (SessionChallengeException, @escaping () -> Void) -> Void) -> Void
+
+            var body: some View {
+                Color.clear
+                    .onAppear {
+                        if let launchSessionChallenge {
+                            onCapture(launchSessionChallenge)
+                        }
+                    }
+            }
+        }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let rootView = IOSChallengeHostProbeView { launcher in
+            capturedLauncher = launcher
+        }
+        .flareSessionChallengeHost(service: service)
+        window.rootViewController = UIHostingController(rootView: rootView)
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        try await eventually(window: window) {
+            capturedLauncher != nil
+        }
+
+        let launch = try XCTUnwrap(capturedLauncher)
+        let first = SessionChallengeException(
+            challengeId: "ios-seq-1",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: "https://challenge.example/gate-1",
+            displayMessage: "Verify 1"
+        )
+        let second = SessionChallengeException(
+            challengeId: "ios-seq-2",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: "https://challenge.example/gate-2",
+            displayMessage: "Verify 2"
+        )
+
+        launch(first) {}
+        try await eventuallyCondition { begunChallengeIds == ["ios-seq-1"] }
+
+        launch(second) {}
+        try await eventuallyCondition { begunChallengeIds == ["ios-seq-1", "ios-seq-2"] }
+    }
+
+    func testIOSSessionChallengeRefreshUserAgentCoalescesAndPopupTargetFrameNilDoesNotMutateOrigin() async throws {
+        let accountKey = MicroBlogKey(id: "user-1", host: "challenge.example")
+        let challengeURL = "https://challenge.example/gate"
+        let handle = FakeIOSSessionChallengeHandle(
+            challengeId: "ios-ua-popup",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: challengeURL,
+            seedCookies: [],
+            probes: []
+        )
+        handle.nextResults = [SessionChallengeCheckResultCompleted.shared]
+        var completedCount = 0
+        let controller = SessionChallengeSessionController(
+            exception: SessionChallengeException(
+                challengeId: "ios-ua-popup",
+                accountKey: accountKey,
+                platformId: "manga-plat",
+                challengeUrl: challengeURL,
+                displayMessage: "Verify"
+            ),
+            service: SessionChallengeService(
+                beginSession: { _ in handle },
+                check: { target, snapshot in
+                    try await (target as! FakeIOSSessionChallengeHandle).performCheck(snapshot)
+                },
+                cancel: { $0.cancel() },
+                close: { $0.close() }
+            ),
+            onCompleted: { completedCount += 1 },
+            onRequireRelogin: { _ in },
+            onDismiss: {}
+        )
+
+        await controller.start()
+        try await eventuallyCondition { controller.proxy?.route?.isValid == true }
+        let route = try XCTUnwrap(controller.proxy?.route)
+        await controller.prepareRouteIfNeeded(route)
+
+        let webConfig = WKWebViewConfiguration()
+        webConfig.websiteDataStore = route.dataStore
+        let slowWebView = DelayedIOSUAWKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 320), configuration: webConfig)
+        slowWebView.resolvedUA = "FlareSlowIOSUA/2.0"
+
+        // Finding 3: targetFrame == nil popup must never mutate currentOrigin / isOriginDeviated.
+        let navDelegate = controller.makeNavigationDelegate(for: route)
+        let popupAction = FakeIOSPopupNavigationAction(url: URL(string: "https://popup.other.example/help")!)
+        _ = await navDelegate.webView(slowWebView, decidePolicyFor: popupAction)
+        XCTAssertEqual(controller.currentOrigin, "https://challenge.example")
+        XCTAssertFalse(controller.isOriginDeviated)
+
+        // Finding 2: attachWebView starts UA evaluation; concurrent refreshUserAgent & initial check must await it rather than sending nil.
+        route.bind(slowWebView)
+        controller.attachWebView(slowWebView, route: route)
+        try await eventuallyCondition { slowWebView.evaluateCount == 1 }
+
+        let concurrentRefresh = Task { await controller.refreshUserAgent() }
+        controller.requestCheck(route: route)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(handle.recordedSnapshots.isEmpty, "Initial check must wait for in-flight UA evaluation rather than sending nil")
+
+        slowWebView.completePendingUserAgentEvaluations()
+        await concurrentRefresh.value
+        try await eventuallyCondition { completedCount == 1 }
+
+        XCTAssertEqual(slowWebView.evaluateCount, 1)
+        XCTAssertEqual(handle.recordedSnapshots.first?.userAgent, "FlareSlowIOSUA/2.0")
+    }
+
     private func eventuallyCondition(
         timeout: TimeInterval = 15,
         _ condition: @MainActor () -> Bool,
@@ -4073,4 +4210,45 @@ private final class IOSTestSocksProxyServer {
         listener.cancel()
         connections.forEach { $0.cancel() }
     }
+}
+
+@MainActor
+private final class DelayedIOSUAWKWebView: WKWebView {
+    var evaluateCount = 0
+    var resolvedUA = "FlareSlowIOSUA/2.0"
+    private var pendingCompletions: [(Any?, Error?) -> Void] = []
+
+    override func evaluateJavaScript(
+        _ javaScriptString: String,
+        completionHandler: (@MainActor @Sendable (Any?, (any Error)?) -> Void)? = nil
+    ) {
+        if javaScriptString == "navigator.userAgent" {
+            evaluateCount += 1
+            if let completionHandler {
+                pendingCompletions.append(completionHandler)
+            }
+            return
+        }
+        super.evaluateJavaScript(javaScriptString, completionHandler: completionHandler)
+    }
+
+    func completePendingUserAgentEvaluations() {
+        let completions = pendingCompletions
+        pendingCompletions.removeAll()
+        for completion in completions {
+            completion(resolvedUA, nil)
+        }
+    }
+}
+
+private final class FakeIOSPopupNavigationAction: WKNavigationAction {
+    private let mockRequest: URLRequest
+
+    init(url: URL) {
+        mockRequest = URLRequest(url: url)
+        super.init()
+    }
+
+    override var request: URLRequest { mockRequest }
+    override var targetFrame: WKFrameInfo? { nil }
 }

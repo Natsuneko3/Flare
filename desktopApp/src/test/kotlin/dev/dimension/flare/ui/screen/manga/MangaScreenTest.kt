@@ -94,6 +94,7 @@ import dev.dimension.flare.ui.screen.serviceselect.DesktopChallengePolicyDecisio
 import dev.dimension.flare.ui.screen.serviceselect.SessionChallengeWebViewDialog
 import dev.dimension.flare.ui.screen.serviceselect.collectDesktopProbeCookies
 import dev.dimension.flare.ui.screen.serviceselect.evaluateDesktopChallengePolicy
+import dev.dimension.flare.ui.screen.serviceselect.prepareDesktopChallengeWebView
 import dev.dimension.flare.ui.screen.serviceselect.shouldAllowDesktopChallengeRequest
 import dev.dimension.flare.ui.theme.FlareTheme
 import io.github.kdroidfilter.webview.wry.CookieSameSite
@@ -101,6 +102,7 @@ import io.github.kdroidfilter.webview.wry.WebViewCookie
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1848,6 +1850,139 @@ class MangaScreenTest {
             assertEquals(0, completedCount)
             assertEquals(1, expiredCheckHandle.closeCount)
         }
+    }
+
+    @Test
+    fun desktopSessionChallengeFailsClosedOnInvalidHandleUrlAndPreservesEarlyNavigationTrigger() {
+        val accountKey = MicroBlogKey("me", "manga.example")
+        val probe =
+            SessionChallengeCookieProbe(
+                url = "https://manga.example/gallery",
+                cookies = listOf(SessionChallengeCookieRequirement("cf_clearance", required = true)),
+            )
+
+        // 1. Non-HTTPS / invalid handle.challengeUrl fails closed upfront without mounting WebView and cancels/closes handle.
+        listOf(
+            "http://manga.example/challenge",
+            "https://user@manga.example/challenge",
+            "javascript:alert(1)",
+        ).forEach { invalidUrl ->
+            val invalidHandle =
+                FakeDesktopChallengeHandle(
+                    challengeId = "invalid-url-${invalidUrl.hashCode()}",
+                    accountKey = accountKey,
+                    challengeUrl = invalidUrl,
+                    seedCookies = emptyList(),
+                    probes = listOf(probe),
+                )
+            var mountedCount = 0
+            compose.setContent {
+                FlareTheme(isDarkTheme = false) {
+                    SessionChallengeWebViewDialog(
+                        exception =
+                            SessionChallengeException(
+                                challengeId = invalidHandle.challengeId,
+                                accountKey = accountKey,
+                                platformId = "MangaPlat",
+                                challengeUrl = "https://manga.example/challenge",
+                                displayMessage = "Verify",
+                            ),
+                        accountProxyMode = ProxyMode.SYSTEM,
+                        beginSession = { invalidHandle },
+                        onCompleted = {},
+                        onRequireRelogin = {},
+                        onDismiss = {},
+                        webViewContent = { _, _, _, _, _ -> mountedCount++ },
+                    )
+                }
+            }
+            compose.onNodeWithTag("session_challenge_error_view").assertIsDisplayed()
+            compose.runOnIdle {
+                assertEquals(0, mountedCount)
+                assertEquals(1, invalidHandle.cancelCount)
+                assertEquals(1, invalidHandle.closeCount)
+            }
+        }
+
+        // 2. Early onNavigationFinished before onCookieSnapshotProviderReady is not dropped once provider registers.
+        val earlyNavHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "early-nav-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+            ).apply {
+                nextResults.add(SessionChallengeCheckResult.Completed)
+            }
+        var earlyNavCallback: (() -> Unit)? = null
+        var earlySnapshotCallback: ((() -> SessionChallengeCookieSnapshot?) -> Unit)? = null
+        var completedCount = 0
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                SessionChallengeWebViewDialog(
+                    exception =
+                        SessionChallengeException(
+                            challengeId = "early-nav-1",
+                            accountKey = accountKey,
+                            platformId = "MangaPlat",
+                            challengeUrl = "https://manga.example/challenge",
+                            displayMessage = "Verify",
+                        ),
+                    accountProxyMode = ProxyMode.SYSTEM,
+                    beginSession = { earlyNavHandle },
+                    onCompleted = { completedCount++ },
+                    onRequireRelogin = {},
+                    onDismiss = {},
+                    webViewContent = { _, _, onNavigationFinished, _, onSnapshotProvider ->
+                        earlyNavCallback = onNavigationFinished
+                        earlySnapshotCallback = onSnapshotProvider
+                    },
+                )
+            }
+        }
+        compose.runOnIdle {
+            earlyNavCallback?.invoke()
+        }
+        compose.runOnIdle {
+            earlySnapshotCallback?.invoke {
+                SessionChallengeCookieSnapshot(cookies = emptyList(), userAgent = "FlareDesktopTestUA/1.0")
+            }
+        }
+        compose.runOnIdle {
+            assertEquals(1, completedCount)
+            assertEquals(1, earlyNavHandle.closeCount)
+        }
+
+        // 3. prepareDesktopChallengeWebView registers snapshotProvider BEFORE loadUrl and BEFORE slow UA read completes.
+        val events = mutableListOf<String>()
+        var providerRegisteredBeforeLoad = false
+        var snapshotProviderRegistered = false
+        runBlocking {
+            prepareDesktopChallengeWebView(
+                challengeUrl = "https://manga.example/challenge",
+                isReady = { true },
+                clearAllCookies = { events += "clear" },
+                registerSnapshotProvider = {
+                    snapshotProviderRegistered = true
+                    events += "registerSnapshotProvider"
+                },
+                loadUrl = {
+                    providerRegisteredBeforeLoad = snapshotProviderRegistered
+                    events += "loadUrl"
+                },
+                readUserAgent = {
+                    events += "readUserAgent"
+                    "FlareDesktopTestUA/1.0"
+                },
+                onUserAgentAvailable = { ua -> events += "ua:$ua" },
+            )
+        }
+        assertTrue("snapshotProvider must be registered before loadUrl", providerRegisteredBeforeLoad)
+        assertEquals(
+            listOf("clear", "registerSnapshotProvider", "loadUrl", "readUserAgent", "ua:FlareDesktopTestUA/1.0"),
+            events,
+        )
     }
 }
 

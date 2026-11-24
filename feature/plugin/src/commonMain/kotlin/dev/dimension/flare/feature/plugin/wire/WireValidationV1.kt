@@ -6,7 +6,6 @@ import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
 import dev.dimension.flare.feature.plugin.host.isCookieValueChar
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
-import io.ktor.http.parseUrl
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -484,6 +483,8 @@ public fun MediaV1.requireValidMangaPageMedia(mediaNetwork: Boolean) {
     require(mediaNetwork) { "Plugin has no media network permission" }
     require(type == MediaTypeV1.Image || type == MediaTypeV1.Gif) { "Manga page media must be image or gif" }
     requireValid()
+    url.requireStrictMangaHttpsUrl("Invalid manga page media url")
+    previewUrl?.requireStrictMangaHttpsUrl("Invalid manga page media previewUrl")
 }
 
 public fun MangaPageImageRequestV1.requireValid() {
@@ -502,13 +503,23 @@ public fun MangaPageImageRequestV1.requireValid() {
         require(reason == MangaPageImageReasonV1.ImageLoadFailed) {
             "Manga page failedUrl requires imageLoadFailed reason"
         }
-        require(url.isNotBlank() && url.none(Char::isISOControl) && url.none(Char::isWhitespace) && '#' !in url) {
-            "Invalid manga page failedUrl"
-        }
-        url.requireHttpsUrl(required = true)
-        requireNotNull(parseUrl(url)) { "Invalid HTTPS URL" }
-        PluginUrlPolicy.requireHttpsUrl(url)
+        url.requireStrictMangaHttpsUrl("Invalid manga page failedUrl")
     }
+}
+
+private fun String.requireStrictMangaHttpsUrl(message: String) {
+    require(
+        isNotBlank() &&
+            startsWith("https://", ignoreCase = true) &&
+            none(Char::isISOControl) &&
+            none(Char::isWhitespace) &&
+            '#' !in this,
+    ) {
+        message
+    }
+    val authority = substringAfter("://").substringBefore('/').substringBefore('?')
+    require(authority.isNotBlank()) { message }
+    PluginUrlPolicy.requireHttpsUrl(this)
 }
 
 public fun TimelineDescriptorV1.requireValid() {

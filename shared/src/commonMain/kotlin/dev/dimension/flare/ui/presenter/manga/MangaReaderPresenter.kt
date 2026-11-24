@@ -1770,7 +1770,7 @@ private class ChapterPagesSession(
                 jobToStart?.start()
             }
         } else if (!endReached && nextCursor != null) {
-            if (cursorAppendError == null && index != loadedCount) return
+            if (cursorAppendError == null || index != loadedCount) return
             Snapshot.withMutableSnapshot {
                 cursorAppendError = null
             }

@@ -137,6 +137,7 @@ private struct SessionChallengeHostModifier: ViewModifier {
                         activeChallenge = nil
                     }
                 )
+                .id(pending.id)
             }
             .alert(
                 FlareAppleUILocalization.string("session_challenge_relogin_title", fallback: "Login required"),
@@ -396,7 +397,7 @@ public final class SessionChallengeSessionController {
     @ObservationIgnored private var didSeedInitialCookies = false
     @ObservationIgnored private var isChecking = false
     @ObservationIgnored private var needsAnotherCheck = false
-    @ObservationIgnored private var evaluatingUserAgent = false
+    @ObservationIgnored private var userAgentTask: Task<String?, Never>?
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private weak var webView: WKWebView?
     @ObservationIgnored private var navigationDelegate: SessionChallengeNavigationDelegate?
@@ -421,6 +422,7 @@ public final class SessionChallengeSessionController {
 
     deinit {
         pollTask?.cancel()
+        userAgentTask?.cancel()
     }
 
     public func start() async {
@@ -508,6 +510,10 @@ public final class SessionChallengeSessionController {
 
     public func attachWebView(_ webView: WKWebView, route: WebViewProxyRoute) {
         guard !isClosed, route.isValid else { return }
+        if self.webView !== webView {
+            userAgentTask?.cancel()
+            userAgentTask = nil
+        }
         self.webView = webView
         startPollingIfNeeded(route: route)
         Task { @MainActor [weak self] in
@@ -631,14 +637,32 @@ public final class SessionChallengeSessionController {
         } while needsAnotherCheck && !isClosed && !Task.isCancelled && route.isValid
     }
 
-    private func refreshUserAgent() async {
-        guard userAgent == nil, !evaluatingUserAgent, !isClosed, let webView else { return }
-        evaluatingUserAgent = true
-        defer { evaluatingUserAgent = false }
-        guard let ua = try? await webView.evaluateJavaScript("navigator.userAgent") as? String else { return }
-        let trimmed = ua.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        userAgent = trimmed
+    func refreshUserAgent() async {
+        while userAgent == nil && !isClosed && !Task.isCancelled {
+            if let existingTask = userAgentTask {
+                _ = await existingTask.value
+                if !existingTask.isCancelled {
+                    return
+                }
+                continue
+            }
+            guard let webView else { return }
+            let task = Task<String?, Never> { @MainActor [weak self, weak webView] in
+                guard let self, !self.isClosed, !Task.isCancelled, let webView else { return nil }
+                guard let ua = try? await webView.evaluateJavaScript("navigator.userAgent") as? String else { return nil }
+                guard !self.isClosed, !Task.isCancelled else { return nil }
+                let trimmed = ua.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                self.userAgent = trimmed
+                return trimmed
+            }
+            userAgentTask = task
+            _ = await task.value
+            if userAgentTask == task {
+                userAgentTask = nil
+            }
+            return
+        }
     }
 
     private func finishWithCompletion() {
@@ -675,6 +699,8 @@ public final class SessionChallengeSessionController {
     private func teardownStoreAndProxy() {
         pollTask?.cancel()
         pollTask = nil
+        userAgentTask?.cancel()
+        userAgentTask = nil
         let store = proxy?.route?.dataStore
         proxy?.stop()
         proxy = nil
@@ -722,7 +748,10 @@ public final class SessionChallengeNavigationDelegate: NSObject, WKNavigationDel
         decidePolicyFor navigationAction: WKNavigationAction
     ) async -> WKNavigationActionPolicy {
         guard route.isValid else { return .cancel }
-        guard navigationAction.targetFrame?.isMainFrame != false else {
+        guard let targetFrame = navigationAction.targetFrame else {
+            return .cancel
+        }
+        guard targetFrame.isMainFrame else {
             return .allow
         }
         return evaluateMainFrameURL(navigationAction.request.url) ? .allow : .cancel

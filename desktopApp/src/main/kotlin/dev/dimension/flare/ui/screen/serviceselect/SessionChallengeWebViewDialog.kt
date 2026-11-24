@@ -21,6 +21,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -91,6 +92,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -328,6 +331,16 @@ internal fun SessionChallengeWebViewDialog(
             errorText = expiredErrorText
             return@LaunchedEffect
         }
+        val challengeOrigin = handle.challengeUrl.challengeHttpsOriginOrNull()
+        if (challengeOrigin == null) {
+            handle.cancel()
+            handle.close()
+            errorText = expiredErrorText
+            return@LaunchedEffect
+        }
+        if (currentOrigin.isEmpty()) {
+            currentOrigin = challengeOrigin
+        }
         sessionHandle = handle
     }
 
@@ -344,6 +357,7 @@ internal fun SessionChallengeWebViewDialog(
     LaunchedEffect(handle, policy?.blockedBySeedCookies) {
         val activeHandle = handle ?: return@LaunchedEffect
         if (policy?.blockedBySeedCookies != false) return@LaunchedEffect
+        snapshotFlow { snapshotProvider }.filterNotNull().first()
         coroutineScope {
             val ticker =
                 launch {
@@ -507,6 +521,14 @@ internal fun SessionChallengeWebViewDialog(
                         )
                     }
 
+                    handle.challengeUrl.challengeHttpsOriginOrNull() == null -> {
+                        ChallengeErrorView(
+                            message = expiredErrorText,
+                            onClose = cancelAndDismiss,
+                            modifier = Modifier.testTag("session_challenge_error_view"),
+                        )
+                    }
+
                     else -> {
                         if (webViewContent == null) {
                             DesktopChallengeWryWebView(
@@ -617,26 +639,30 @@ private fun DesktopChallengeWryWebView(
     LaunchedEffect(state.webView, challengeUrl) {
         cachedUserAgent = null
         val nativeWebView = state.webView?.nativeWebView ?: return@LaunchedEffect
-        while (!nativeWebView.isReady()) {
-            delay(50)
-        }
-        nativeWebView.clearAllCookies()
-        navigator.loadUrl(challengeUrl)
-        readDesktopChallengeUserAgent(nativeWebView)?.let { ua ->
-            cachedUserAgent = ua
-            latestOnUserAgentAvailable(ua)
-        }
-        latestOnSnapshotProviderReady {
-            val webView = state.webView?.nativeWebView ?: return@latestOnSnapshotProviderReady null
-            val cookies =
-                collectDesktopProbeCookies(latestProbesProvider()) { url ->
-                    webView.getCookiesForUrl(url)
+        prepareDesktopChallengeWebView(
+            challengeUrl = challengeUrl,
+            isReady = { nativeWebView.isReady() },
+            clearAllCookies = { nativeWebView.clearAllCookies() },
+            registerSnapshotProvider = {
+                latestOnSnapshotProviderReady {
+                    val webView = state.webView?.nativeWebView ?: return@latestOnSnapshotProviderReady null
+                    val cookies =
+                        collectDesktopProbeCookies(latestProbesProvider()) { url ->
+                            webView.getCookiesForUrl(url)
+                        }
+                    SessionChallengeCookieSnapshot(
+                        cookies = cookies,
+                        userAgent = cachedUserAgent,
+                    )
                 }
-            SessionChallengeCookieSnapshot(
-                cookies = cookies,
-                userAgent = cachedUserAgent,
-            )
-        }
+            },
+            loadUrl = { url -> navigator.loadUrl(url) },
+            readUserAgent = { readDesktopChallengeUserAgent(nativeWebView) },
+            onUserAgentAvailable = { ua ->
+                cachedUserAgent = ua
+                latestOnUserAgentAvailable(ua)
+            },
+        )
     }
 
     val disposeWebView: () -> Unit = {
@@ -669,4 +695,23 @@ private suspend fun readDesktopChallengeUserAgent(webView: WryWebViewPanel): Str
             }
         }
     return raw?.let(::parseDesktopJavaScriptString)
+}
+
+internal suspend fun prepareDesktopChallengeWebView(
+    challengeUrl: String,
+    isReady: () -> Boolean,
+    waitBeforeRetry: suspend () -> Unit = { delay(50) },
+    clearAllCookies: () -> Unit,
+    registerSnapshotProvider: () -> Unit,
+    loadUrl: (String) -> Unit,
+    readUserAgent: suspend () -> String?,
+    onUserAgentAvailable: (String) -> Unit,
+) {
+    while (!isReady()) {
+        waitBeforeRetry()
+    }
+    clearAllCookies()
+    registerSnapshotProvider()
+    loadUrl(challengeUrl)
+    readUserAgent()?.let(onUserAgentAvailable)
 }
