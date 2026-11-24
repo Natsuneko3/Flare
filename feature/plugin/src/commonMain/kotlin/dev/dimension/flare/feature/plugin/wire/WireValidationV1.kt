@@ -3,6 +3,7 @@ package dev.dimension.flare.feature.plugin.wire
 import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
 import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
+import dev.dimension.flare.feature.plugin.host.isCookieValueChar
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import io.ktor.http.parseUrl
@@ -26,6 +27,8 @@ public object WireLimitsV1 {
     public const val MAX_MEDIA_HEADER_VALUE_LENGTH: Int = 8_192
     public const val MAX_MEDIA_HEADER_BYTES: Int = 64 * 1_024
     public const val MAX_USER_AGENT_LENGTH: Int = 1_024
+    public const val MAX_CHALLENGE_SEED_COOKIES: Int = 32
+    public const val MAX_CHALLENGE_SEED_COOKIE_BYTES: Int = 64 * 1_024
 }
 
 public fun TimelinePageLoadRequestV2.requireValid() {
@@ -666,6 +669,62 @@ public fun CookieCheckRequestV1.requireValid() {
         "Login pending payload is too large"
     }
     require(userAgent == null || normalizeUserAgent(userAgent) == userAgent) { "Invalid userAgent" }
+}
+
+public fun SessionChallengeCompleteRequestV1.requireValid() {
+    require(challengeUrl.none(Char::isISOControl) && challengeUrl.none(Char::isWhitespace) && '#' !in challengeUrl) {
+        "Invalid challenge URL"
+    }
+    PluginUrlPolicy.requireHttpsUrl(challengeUrl)
+    cookies.requireValid()
+    require(cookies.userAgent == null) { "Nested challenge cookie snapshot cannot carry userAgent" }
+    require(pendingPayload == null || encodedJsonSize(pendingPayload) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+        "Challenge pending payload is too large"
+    }
+    require(userAgent == null || normalizeUserAgent(userAgent) == userAgent) { "Invalid userAgent" }
+}
+
+public fun SessionChallengeResultV1.requireValid() {
+    when (this) {
+        is SessionChallengeResultV1.Pending -> {
+            require(pendingPayload == null || encodedJsonSize(pendingPayload) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+                "Challenge pending payload is too large"
+            }
+        }
+
+        SessionChallengeResultV1.Completed -> {}
+    }
+}
+
+public fun PluginChallengeV1.requireValid() {
+    require(url.none(Char::isISOControl) && url.none(Char::isWhitespace) && '#' !in url) {
+        "Invalid challenge URL"
+    }
+    PluginUrlPolicy.requireHttpsUrl(url)
+    require(seedCookies.size <= WireLimitsV1.MAX_CHALLENGE_SEED_COOKIES) { "Too many challenge seed cookies" }
+    var totalBytes = 0
+    seedCookies.forEach { cookie ->
+        require(
+            COOKIE_NAME.matches(cookie.name) &&
+                cookie.value.length <= MAX_COOKIE_VALUE_LENGTH &&
+                cookie.value.all(::isCookieValueChar),
+        ) {
+            "Invalid challenge seed cookie"
+        }
+        totalBytes += cookie.name.encodeToByteArray().size + cookie.value.encodeToByteArray().size
+    }
+    require(totalBytes <= WireLimitsV1.MAX_CHALLENGE_SEED_COOKIE_BYTES) { "Challenge seed cookies are too large" }
+}
+
+public fun PluginErrorV1.requireValid() {
+    message.requireValid()
+    require(retryAfterSeconds == null || retryAfterSeconds in 0..604_800) { "Invalid retry delay" }
+    require(remoteCode == null || remoteCode.length <= 512) { "Remote error code is too long" }
+    if (code == PluginErrorCodeV1.ChallengeRequired) {
+        requireNotNull(challenge) { "ChallengeRequired error requires challenge metadata" }.requireValid()
+    } else {
+        require(challenge == null) { "Challenge metadata is only valid for ChallengeRequired errors" }
+    }
 }
 
 public fun normalizeUserAgent(raw: String?): String? {

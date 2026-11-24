@@ -100,6 +100,27 @@ public data class CookieCheckRequestV1(
 )
 
 @Serializable
+public data class SessionChallengeCompleteRequestV1(
+    val challengeUrl: String,
+    val cookies: CookieSnapshotV1,
+    val userAgent: String? = null,
+    val pendingPayload: JsonElement? = null,
+)
+
+@Serializable
+public sealed interface SessionChallengeResultV1 {
+    @Serializable
+    @SerialName("pending")
+    public data class Pending(
+        val pendingPayload: JsonElement? = null,
+    ) : SessionChallengeResultV1
+
+    @Serializable
+    @SerialName("completed")
+    public data object Completed : SessionChallengeResultV1
+}
+
+@Serializable
 public data class QrPollRequestV2(
     val methodId: String,
     val origin: String,

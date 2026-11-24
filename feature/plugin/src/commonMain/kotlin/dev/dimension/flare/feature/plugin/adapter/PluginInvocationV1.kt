@@ -6,11 +6,16 @@ import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.repository.RequireReLoginException
+import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.host.PluginAsset
 import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
+import dev.dimension.flare.feature.plugin.host.PluginCredentialAccess
 import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
+import dev.dimension.flare.feature.plugin.host.PluginInvocationScopeV1
+import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.runtime.PluginCallException
@@ -33,6 +38,9 @@ internal class PluginAccountInvokerV1(
     private val runtimePool: PluginRuntimePool,
     private val runtimeKey: PluginRuntimeKeyV1,
     private val accountKey: MicroBlogKey?,
+    private val sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
+    private val sessionChallengeEnabled: Boolean = false,
+    private val credentialAccess: PluginCredentialAccess? = null,
     private val context: suspend (locale: String, assets: Map<String, PluginAsset>) -> PluginInvocationContextV1,
 ) {
     suspend fun ensureActive() {
@@ -136,9 +144,43 @@ internal class PluginAccountInvokerV1(
                 if (error.error.code == PluginErrorCodeV1.AuthenticationRequired && accountKey != null) {
                     throw RequireReLoginException(accountKey, plugin.installed.manifest.socialPlatform.id)
                 }
+                if (error.error.code == PluginErrorCodeV1.ChallengeRequired) {
+                    createChallengeException(error, invocationContext)?.let { throw it }
+                }
                 throw error
             }
         }
+    }
+
+    private fun createChallengeException(
+        error: PluginCallException,
+        invocationContext: PluginInvocationContextV1,
+    ): SessionChallengeException? {
+        if (accountKey == null ||
+            runtimeKey.scope != PluginInvocationScopeV1.Account ||
+            !sessionChallengeEnabled ||
+            plugin.installed.manifest.apiVersion < 2 ||
+            sessionChallenge == null
+        ) {
+            return null
+        }
+        val access = credentialAccess ?: invocationContext.credential ?: return null
+        val challenge = requireNotNull(error.error.challenge) { "ChallengeRequired error requires challenge metadata" }
+        challenge.requireValid()
+        val approvedChallengeOrigins =
+            setOf(invocationContext.metadata.origin) + plugin.installed.manifest.permissions.authOrigins
+        PluginUrlPolicy.requireRequestUrl(challenge.url, approvedChallengeOrigins)
+        return sessionChallenge.createTicket(
+            plugin = plugin,
+            runtimeKey = runtimeKey,
+            accountKey = accountKey,
+            accountOrigin = invocationContext.metadata.origin,
+            accountEpoch = runtimeKey.accountEpoch,
+            credentialAccess = access,
+            challenge = challenge,
+            displayMessage = error.message ?: "Verification required",
+            contextProvider = { locale -> context(locale, emptyMap()) },
+        )
     }
 }
 

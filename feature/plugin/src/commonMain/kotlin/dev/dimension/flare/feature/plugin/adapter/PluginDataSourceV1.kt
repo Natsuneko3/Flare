@@ -52,6 +52,7 @@ import dev.dimension.flare.feature.plugin.host.accountHost
 import dev.dimension.flare.feature.plugin.host.platformUuid
 import dev.dimension.flare.feature.plugin.host.validateAuthenticationHeaders
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.manifest.ProfileTabManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
 import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
@@ -938,11 +939,14 @@ internal class PluginDataSourceV1 private constructor(
             timelineSpecs: Map<String, TimelineSpec<TimelineSpec.AccountResourceData>>,
             dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>?,
             coroutineScope: CoroutineScope,
+            sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
         ): PluginDataSourceV1 {
             val credentialAccess = PlatformDataSourceCredentialAccessV1(plugin, context)
             val account = credentialAccess.initial()
             val operations = account.effectiveCapabilities(plugin)
             val platform = plugin.installed.manifest.socialPlatform
+            val activeEpoch = account.sessionEpoch.takeIf { plugin.installed.manifest.apiVersion >= 2 }
+            sessionChallenge?.onAccountSession(context.accountKey, activeEpoch)
             val composeConfig =
                 try {
                     if ("publish" in operations[PluginAbiV1.Capabilities.COMPOSE_V3].orEmpty()) {
@@ -964,14 +968,24 @@ internal class PluginDataSourceV1 private constructor(
                     plugin.installed.packageHash,
                     account.snapshot.origin,
                     account.snapshot.accountId,
-                    epoch = account.sessionEpoch.takeIf { plugin.installed.manifest.apiVersion >= 2 },
+                    epoch = activeEpoch,
                 )
+            val sessionChallengeEnabled =
+                plugin.installed.manifest.apiVersion >= 2 &&
+                    PluginSessionCapabilitiesV1(
+                        platform.capabilities,
+                        operations,
+                        authenticated = true,
+                    ).canExpose(PluginAbiV1.Capabilities.SESSION_CHALLENGE)
             val invoker =
                 PluginAccountInvokerV1(
                     plugin = plugin,
                     runtimePool = runtimePool,
                     runtimeKey = runtimeKey,
                     accountKey = context.accountKey,
+                    sessionChallenge = sessionChallenge,
+                    sessionChallengeEnabled = sessionChallengeEnabled,
+                    credentialAccess = credentialAccess,
                     context = { locale, assets ->
                         plugin.accountInvocationContext(credentialAccess.current(), locale, credentialAccess, assets)
                     },

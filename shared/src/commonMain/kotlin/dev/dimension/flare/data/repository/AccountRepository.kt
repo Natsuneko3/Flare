@@ -282,6 +282,12 @@ internal class AccountRepository internal constructor(
                     block().also {
                         if (keys.isNotEmpty()) {
                             proxyRepository.restoreAccounts(keys)
+                            val challenges =
+                                org.koin.mp.KoinPlatformTools
+                                    .defaultContext()
+                                    .getOrNull()
+                                    ?.getOrNull<SessionChallengeCoordinator>()
+                            keys.forEach { key -> challenges?.invalidateAccountChallenges(key) }
                             retired = dataSourceCacheMutex.withLock { keys.mapNotNull { key -> removeDataSource(key, available) } }
                         }
                     }
@@ -447,6 +453,11 @@ internal class AccountRepository internal constructor(
             .getOrNull()
             ?.getOrNull<dev.dimension.flare.data.translation.image.ImageTranslationRepository>()
             ?.removeOwner(accountKey)
+        org.koin.mp.KoinPlatformTools
+            .defaultContext()
+            .getOrNull()
+            ?.getOrNull<SessionChallengeCoordinator>()
+            ?.invalidateAccountChallenges(accountKey)
         appDataStore.composeConfigData.updateData {
             it.copy(
                 lastAccounts = it.lastAccounts.filterNot { key -> key == accountKey },
@@ -739,6 +750,15 @@ public data class RequireReLoginException(
     val accountKey: MicroBlogKey,
     val platformId: String,
 ) : Exception("Login required.")
+
+@Immutable
+public data class SessionChallengeException(
+    val challengeId: String,
+    val accountKey: MicroBlogKey,
+    val platformId: String,
+    val challengeUrl: String,
+    val displayMessage: String,
+) : Exception(displayMessage)
 
 @Composable
 internal fun accountProvider(

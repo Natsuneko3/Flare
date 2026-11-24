@@ -85,6 +85,7 @@ public data class CapabilityManifestV1(
     val notificationFilters: Set<NotificationFilterKindV1> = emptySet(),
     val relationActions: Set<RelationActionKindV1> = emptySet(),
     val authOrigins: Set<String> = emptySet(),
+    val challengeProbes: List<CookieProbeManifestV1> = emptyList(),
 )
 
 @Serializable

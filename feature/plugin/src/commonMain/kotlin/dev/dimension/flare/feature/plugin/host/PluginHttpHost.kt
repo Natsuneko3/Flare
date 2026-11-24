@@ -541,7 +541,7 @@ private fun sanitizeFileName(value: String?): String =
         ?.ifBlank { "upload" }
         ?: "upload"
 
-private fun isCookieValueChar(character: Char): Boolean =
+internal fun isCookieValueChar(character: Char): Boolean =
     character.code == 0x21 || character.code in 0x23..0x2b || character.code in 0x2d..0x3a || character.code in 0x3c..0x7e
 
 private val ALLOWED_METHODS = setOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")

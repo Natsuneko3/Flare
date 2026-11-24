@@ -22,6 +22,7 @@ import dev.dimension.flare.feature.plugin.login.PlatformOAuthPluginPendingStoreV
 import dev.dimension.flare.feature.plugin.login.PluginFormLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingStoreV1
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.manifest.PluginManifestV1
 import dev.dimension.flare.feature.plugin.manifest.PluginPermissionsV1
@@ -172,6 +173,7 @@ public class PluginSubsystemV1 internal constructor(
                 ?.mediaNetwork == true,
         )
         mutableRunning.value = mutableRunning.value.copy(plugins = plugins)
+        sessionChallenge.invalidatePlugin(pluginId)
         mutableSourceIssues.update { issues -> issues.filterNot { it.pluginId == pluginId } }
         if (plugin == null || plugin.installed.manifest.timelineProcessor == null) {
             clearTimelineProcessor(pluginId)
@@ -201,6 +203,11 @@ public class PluginSubsystemV1 internal constructor(
         )
     public val form: PluginFormLoginCoordinatorV1 = PluginFormLoginCoordinatorV1(runtimePool)
     public val webCookie: PluginWebCookieLoginCoordinatorV1 = PluginWebCookieLoginCoordinatorV1(runtimePool)
+    public val sessionChallenge: PluginSessionChallengeCoordinatorV1 =
+        PluginSessionChallengeCoordinatorV1(
+            runtimePool = runtimePool,
+            runningPlugin = { pluginId -> running.value.plugins[pluginId] },
+        )
 
     public fun platformSource(scope: CoroutineScope): PlatformSpecSource =
         PluginPlatformSpecSourceV1(
@@ -211,6 +218,7 @@ public class PluginSubsystemV1 internal constructor(
             webCookie = webCookie,
             coroutineScope = scope,
             onIssue = { issue -> mutableSourceIssues.value = (mutableSourceIssues.value + issue).distinct() },
+            sessionChallenge = sessionChallenge,
         )
 
     public suspend fun onMemoryPressure() {

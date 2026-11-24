@@ -17,6 +17,7 @@ public object PluginAbiV1 {
     public object Capabilities {
         public const val ACCOUNT_CAPABILITIES: String = "flare.datasource.account-capabilities/v1"
         public const val ACCOUNT_HTTP: String = "flare.datasource.account-http/v1"
+        public const val SESSION_CHALLENGE: String = "flare.datasource.session-challenge/v1"
         public const val TIMELINE_PAGE: String = "flare.datasource.timeline-page/v1"
         public const val TIMELINE: String = "flare.datasource.timeline/v1"
         public const val SEARCH: String = "flare.datasource.search/v1"
@@ -40,6 +41,7 @@ public object PluginAbiV1 {
         mapOf(
             Capabilities.ACCOUNT_CAPABILITIES to setOf("negotiate"),
             Capabilities.ACCOUNT_HTTP to setOf("authenticate"),
+            Capabilities.SESSION_CHALLENGE to setOf("complete"),
             Capabilities.TIMELINE_PAGE to setOf("load"),
             Capabilities.TIMELINE to setOf("page"),
             Capabilities.SEARCH to
@@ -146,6 +148,7 @@ public object PluginAbiV1 {
             when (capabilityId) {
                 Capabilities.ACCOUNT_CAPABILITIES -> "accountCapabilities"
                 Capabilities.ACCOUNT_HTTP -> "accountHttp"
+                Capabilities.SESSION_CHALLENGE -> "sessionChallenge"
                 Capabilities.TIMELINE_PAGE -> "timelinePage"
                 Capabilities.TIMELINE -> "timeline"
                 Capabilities.SEARCH -> "search"

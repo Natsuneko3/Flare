@@ -622,6 +622,132 @@ class PluginManifestV1Test {
         )
     }
 
+    @Test
+    fun sessionChallengeRequiresApiV2ExclusiveProbesAndAuthOrigins() {
+        assertEquals("flare.datasource.session-challenge/v1", PluginAbiV1.Capabilities.SESSION_CHALLENGE)
+        assertEquals(
+            "capabilities.sessionChallenge.complete",
+            PluginAbiV1.capabilityMethod(PluginAbiV1.Capabilities.SESSION_CHALLENGE, "complete"),
+        )
+        assertFalse(
+            PluginAbiV1.isDisplayableCapability(
+                PluginAbiV1.Capabilities.SESSION_CHALLENGE,
+                setOf("complete"),
+            ),
+        )
+
+        val base = PluginJsonV1.decodeFromString<PluginManifestV1>(VALID_MANIFEST)
+        val validProbes =
+            listOf(
+                CookieProbeManifestV1(
+                    url = "${PluginAbiV1.ACCOUNT_ORIGIN}/gallery",
+                    cookies = listOf(CookieRequirementManifestV1("cf_clearance")),
+                ),
+                CookieProbeManifestV1(
+                    url = "https://auth.example/session",
+                    cookies =
+                        listOf(
+                            CookieRequirementManifestV1("igneous", required = true),
+                            CookieRequirementManifestV1("hint", required = false),
+                        ),
+                ),
+            )
+        val valid =
+            base.copy(
+                apiVersion = 2,
+                permissions = PluginPermissionsV1(authOrigins = setOf("https://auth.example")),
+                platform =
+                    base.socialPlatform.copy(
+                        capabilities =
+                            base.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                                            challengeProbes = validProbes,
+                                        )
+                                ),
+                    ),
+            )
+        val table =
+            validMethodTable().copy(
+                apiVersion = 2,
+                methods = validMethodTable().methods + "capabilities.sessionChallenge.complete",
+            )
+        assertTrue(valid.validate(table).isValid)
+
+        assertTrue(
+            valid
+                .copy(apiVersion = 1)
+                .validate()
+                .errors
+                .any { it.code == "capability.version" },
+        )
+
+        val emptyProbes =
+            valid.copy(
+                platform =
+                    valid.socialPlatform.copy(
+                        capabilities =
+                            valid.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                                            challengeProbes = emptyList(),
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(emptyProbes.validate().errors.any { it.code == "cookie.probes" })
+
+        val tooManyProbes =
+            valid.copy(
+                platform =
+                    valid.socialPlatform.copy(
+                        capabilities =
+                            valid.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.SESSION_CHALLENGE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("complete" to CapabilityOperationManifestV1()),
+                                            challengeProbes =
+                                                (1..17).map { index ->
+                                                    CookieProbeManifestV1(
+                                                        url = "${PluginAbiV1.ACCOUNT_ORIGIN}/p$index",
+                                                        cookies = listOf(CookieRequirementManifestV1("c$index")),
+                                                    )
+                                                },
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(tooManyProbes.validate().errors.any { it.code == "cookie.probes" })
+
+        val httpOriginOnly =
+            valid.copy(
+                permissions = PluginPermissionsV1(httpOrigins = setOf("https://auth.example")),
+            )
+        assertTrue(httpOriginOnly.validate().errors.any { it.code == "cookie.probe.origin" })
+
+        val probesOnTimeline =
+            valid.copy(
+                platform =
+                    valid.socialPlatform.copy(
+                        capabilities =
+                            valid.socialPlatform.capabilities +
+                                (
+                                    PluginAbiV1.Capabilities.TIMELINE to
+                                        CapabilityManifestV1(
+                                            operations = mapOf("page" to CapabilityOperationManifestV1()),
+                                            challengeProbes = listOf(validProbes.first()),
+                                        )
+                                ),
+                    ),
+            )
+        assertTrue(probesOnTimeline.validate().errors.any { it.code == "capability.config" })
+    }
+
     private fun validateManifest(
         apiVersion: Int,
         loginMethods: String = """[{"id":"oauth","interaction":"OAuth","title":"OAuth"}]""",

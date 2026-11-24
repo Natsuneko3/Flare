@@ -24,6 +24,7 @@ import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthStartV1
 import dev.dimension.flare.feature.plugin.login.PluginQrLoginV2
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieRequestV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieSessionV1
@@ -128,6 +129,7 @@ public class PluginPlatformSpecSourceV1(
     private val webCookie: PluginWebCookieLoginCoordinatorV1,
     private val coroutineScope: CoroutineScope,
     private val onIssue: (PluginStateIssueV1) -> Unit = {},
+    private val sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
 ) : PlatformSpecSource {
     override fun load(occupiedPlatformIds: Set<String>): List<PlatformSpec> {
         val occupied = occupiedPlatformIds.mapTo(mutableSetOf(), String::lowercase)
@@ -155,6 +157,7 @@ public class PluginPlatformSpecSourceV1(
                             form = form,
                             webCookie = webCookie,
                             coroutineScope = plugin.session.scope(coroutineScope),
+                            sessionChallenge = sessionChallenge,
                         )
                     }.getOrElse { error ->
                         onIssue(
@@ -180,6 +183,7 @@ private class PluginPlatformSpecV1(
     private val form: PluginFormLoginCoordinatorV1,
     private val webCookie: PluginWebCookieLoginCoordinatorV1,
     private val coroutineScope: CoroutineScope,
+    private val sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
 ) : PlatformSpec,
     LoginPlatformProvider {
     private val accountService: AccountService by koinInject()
@@ -274,7 +278,7 @@ private class PluginPlatformSpecV1(
 
     override fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource =
         PluginDataSourceV1
-            .authenticated(plugin, runtimePool, context, specs, dynamicTimelineSpec, coroutineScope)
+            .authenticated(plugin, runtimePool, context, specs, dynamicTimelineSpec, coroutineScope, sessionChallenge)
             .also { accountCapabilities.start(context) }
 
     override fun prepareCredential(credentialJson: String): String = plugin.prepareAccountCredential(credentialJson)

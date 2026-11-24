@@ -303,6 +303,12 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 path,
                 "Manga capability requires plugin API v2",
             )
+            check(
+                capabilityId != PluginAbiV1.Capabilities.SESSION_CHALLENGE || apiVersion >= 2,
+                "capability.version",
+                path,
+                "Session challenge requires plugin API v2",
+            )
             check(CAPABILITY_ID.matches(capabilityId), "capability.id", path, "Invalid capability ID")
             val knownOperations = PluginAbiV1.knownCapabilityOperations[capabilityId] ?: return@forEach
             check(declaration.operations.size <= 32, "capability.operations", path, "Too many operations")
@@ -329,6 +335,16 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                     "capability.config",
                     "$path.authOrigins",
                     "Authentication origins are only valid for account HTTP",
+                )
+            }
+            if (capabilityId == PluginAbiV1.Capabilities.SESSION_CHALLENGE) {
+                validateCookieProbes(declaration.challengeProbes, "$path.challengeProbes", permissions, errors)
+            } else {
+                check(
+                    declaration.challengeProbes.isEmpty(),
+                    "capability.config",
+                    "$path.challengeProbes",
+                    "Challenge probes are only valid for session challenge",
                 )
             }
             check(declaration.operations.isNotEmpty(), "capability.empty", path, "Capability has no operations")
@@ -654,15 +670,24 @@ private fun validateCookie(
         "$parentPath.cookie.startUrl",
         "Cookie start URL origin is not approved",
     )
+    validateCookieProbes(cookie.probes, "$parentPath.cookie.probes", permissions, errors)
+}
+
+private fun validateCookieProbes(
+    probes: List<CookieProbeManifestV1>,
+    probesPath: String,
+    permissions: PluginPermissionsV1,
+    errors: MutableList<ManifestIssueV1>,
+) {
     addErrorUnless(
-        cookie.probes.isNotEmpty() && cookie.probes.size <= 16,
+        probes.isNotEmpty() && probes.size <= 16,
         errors,
         "cookie.probes",
-        "$parentPath.cookie.probes",
+        probesPath,
         "Invalid Cookie probe count",
     )
-    cookie.probes.forEachIndexed { index, probe ->
-        val path = "$parentPath.cookie.probes[$index]"
+    probes.forEachIndexed { index, probe ->
+        val path = "$probesPath[$index]"
         addErrorUnless(probe.url.isHttpsUrl(), errors, "cookie.probe.url", "$path.url", "Cookie probe URL must use HTTPS")
         val origin = probe.url.approvedOriginOrNull()
         addErrorUnless(

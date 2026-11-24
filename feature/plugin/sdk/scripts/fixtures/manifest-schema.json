@@ -2793,6 +2793,152 @@
       },
       "schemaValid": false,
       "hostValid": false
+    },
+    {
+      "name": "API v2 session-challenge capability with valid challengeProbes",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": {
+          "authOrigins": [
+            "https://auth.example.org"
+          ]
+        },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "url": "https://auth.example.org/verify",
+                  "cookies": [
+                    {
+                      "name": "igneous",
+                      "required": false
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects session-challenge capability",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "session-challenge requires at least one challengeProbe",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": []
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "challengeProbes is rejected on non-session-challenge capabilities",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.timeline/v1": {
+              "operations": {
+                "page": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "HTTP origin does not grant session-challenge probes",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": {
+          "httpOrigins": [
+            "https://http-only.example.org"
+          ]
+        },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "https://http-only.example.org/verify",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": false
     }
   ]
 }
