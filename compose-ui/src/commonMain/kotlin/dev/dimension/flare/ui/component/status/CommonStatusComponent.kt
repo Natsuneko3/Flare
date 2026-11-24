@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,6 +50,7 @@ import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
@@ -156,11 +158,11 @@ import dev.dimension.flare.ui.component.platform.PlatformDropdownMenuDivider
 import dev.dimension.flare.ui.component.platform.PlatformDropdownMenuItem
 import dev.dimension.flare.ui.component.platform.PlatformDropdownMenuScope
 import dev.dimension.flare.ui.component.platform.PlatformFilledTonalButton
-import dev.dimension.flare.ui.component.platform.PlatformIconButton
 import dev.dimension.flare.ui.component.platform.PlatformRadioButton
 import dev.dimension.flare.ui.component.platform.PlatformText
 import dev.dimension.flare.ui.component.platform.PlatformTextButton
 import dev.dimension.flare.ui.component.platform.PlatformTextStyle
+import dev.dimension.flare.ui.component.platform.rippleIndication
 import dev.dimension.flare.ui.component.toImageVector
 import dev.dimension.flare.ui.model.ClickContext
 import dev.dimension.flare.ui.model.TranslationDisplayState
@@ -335,11 +337,9 @@ public fun CommonStatusComponent(
                 ) {
                     item.user?.let { user ->
                         val dateContent = @Composable {
-                            val iconSize =
-                                with(LocalDensity.current) {
-                                    PlatformTheme.typography.postBody.fontSize
-                                        .toDp()
-                                }
+                            val density = LocalDensity.current
+                            val postBody = PlatformTheme.typography.postBody
+                            val iconSize = with(density) { postBody.fontSize.toDp() }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -376,34 +376,49 @@ public fun CommonStatusComponent(
                                 if (!isDetail) {
                                     DateTimeText(
                                         item.createdAt,
-                                        style = PlatformTheme.typography.postBody,
+                                        style = postBody,
                                         color = StatusComponentDefaults.secondaryColor,
                                     )
                                 }
                                 if (appearanceSettings.aiConfig.agent) {
-                                    PlatformIconButton(
-                                        onClick = {
-                                            uriHandler.openUri(
-                                                DeeplinkRoute
-                                                    .Status
-                                                    .Insight(
-                                                        accountType = item.accountType,
-                                                        statusKey = item.statusKey,
-                                                    ).toUri(),
-                                            )
-                                        },
-                                        modifier =
-                                            Modifier
-                                                .size(maxOf(24.dp, iconSize + 4.dp)),
+                                    val insightHitSize = maxOf(24.dp, iconSize + 4.dp)
+                                    Box(
+                                        modifier = Modifier.size(iconSize),
+                                        contentAlignment = Alignment.Center,
                                     ) {
-                                        FAIcon(
-                                            imageVector = FontAwesomeIcons.Solid.Robot,
-                                            contentDescription = stringResource(Res.string.status_view_insight),
+                                        Box(
                                             modifier =
                                                 Modifier
-                                                    .size(iconSize),
-                                            tint = StatusComponentDefaults.secondaryColor,
-                                        )
+                                                    .requiredSize(insightHitSize)
+                                                    .pointerHoverIcon(PointerIcon.Hand)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication =
+                                                            rippleIndication(
+                                                                bounded = false,
+                                                                radius = insightHitSize / 2,
+                                                                color = Color.Unspecified,
+                                                            ),
+                                                        role = Role.Button,
+                                                    ) {
+                                                        uriHandler.openUri(
+                                                            DeeplinkRoute
+                                                                .Status
+                                                                .Insight(
+                                                                    accountType = item.accountType,
+                                                                    statusKey = item.statusKey,
+                                                                ).toUri(),
+                                                        )
+                                                    },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            FAIcon(
+                                                imageVector = FontAwesomeIcons.Solid.Robot,
+                                                contentDescription = stringResource(Res.string.status_view_insight),
+                                                modifier = Modifier.size(iconSize),
+                                                tint = StatusComponentDefaults.secondaryColor,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -924,8 +939,8 @@ internal fun TranslationDisplayBadge(
     state: TranslationDisplayState,
     modifier: Modifier = Modifier,
     iconSize: Dp? = null,
+    color: Color = if (iconSize == null) PlatformTheme.colorScheme.caption else StatusComponentDefaults.secondaryColor,
 ) {
-    val color = if (iconSize == null) PlatformTheme.colorScheme.caption else StatusComponentDefaults.secondaryColor
     val description =
         when (state) {
             TranslationDisplayState.Translating -> {

@@ -34,6 +34,160 @@ final class MacStatusActionAnimationTests: XCTestCase {
         XCTAssertEqual(runs[1].link, URL(string: link))
     }
 
+    func testTopEndIconsFitBodyPointSizeWithoutOverflow() throws {
+        _ = NSApplication.shared
+        let iconSize = NSFont.preferredFont(forTextStyle: .body).pointSize
+
+        func renderedInkSize<V: View>(_ view: V) throws -> CGSize {
+            let canvasSize: CGFloat = 60
+            let host = NSHostingView(rootView: ZStack { view }.frame(width: canvasSize, height: canvasSize))
+            host.frame = CGRect(x: 0, y: 0, width: canvasSize, height: canvasSize)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            var minX = bitmap.pixelsWide, maxX = -1, minY = bitmap.pixelsHigh, maxY = -1
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    if let color = bitmap.colorAt(x: x, y: y), color.alphaComponent > 0.05 {
+                        minX = min(minX, x); maxX = max(maxX, x)
+                        minY = min(minY, y); maxY = max(maxY, y)
+                    }
+                }
+            }
+            let scale = CGFloat(bitmap.pixelsHigh) / canvasSize
+            guard maxX >= minX, maxY >= minY else { return .zero }
+            return CGSize(width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale)
+        }
+
+        let channelVisibility = StatusVisibilityView(data: .channel, iconSize: iconSize)
+        XCTAssertEqual(NSHostingView(rootView: channelVisibility).fittingSize, CGSize(width: iconSize, height: iconSize))
+        let channelInk = try renderedInkSize(channelVisibility)
+        XCTAssertGreaterThan(channelInk.width, 0)
+        XCTAssertGreaterThan(channelInk.height, 0)
+        XCTAssertLessThanOrEqual(channelInk.width, iconSize + 0.5)
+        XCTAssertLessThanOrEqual(channelInk.height, iconSize + 0.5)
+
+        let translating = TranslateStatusComponent(data: .translating, iconSize: iconSize)
+        let translatingHost = NSHostingView(rootView: translating)
+        XCTAssertEqual(translatingHost.fittingSize.height, iconSize, accuracy: 0.1)
+        let translatingInk = try renderedInkSize(translating)
+        XCTAssertGreaterThan(translatingInk.height, 0)
+        XCTAssertGreaterThan(translatingInk.width, iconSize + 2, "Translating badge must render both language icon and progress indicator")
+        XCTAssertLessThanOrEqual(translatingInk.height, iconSize + 0.5)
+
+        let footnoteSize = NSFont.preferredFont(forTextStyle: .footnote).pointSize
+        let feedTranslating = TranslateStatusComponent(data: .translating, iconSize: footnoteSize)
+        XCTAssertEqual(NSHostingView(rootView: feedTranslating).fittingSize.height, footnoteSize, accuracy: 0.1)
+        let feedInk = try renderedInkSize(feedTranslating)
+        XCTAssertGreaterThan(feedInk.width, footnoteSize + 2)
+        XCTAssertLessThanOrEqual(feedInk.height, footnoteSize + 0.5)
+
+        let profileTranslating = TranslateStatusComponent(data: .translating).font(.caption)
+        let profileInk = try renderedInkSize(profileTranslating)
+        XCTAssertEqual(profileInk.height, 16, accuracy: 1)
+    }
+
+    func testMacOSStatusViewInsightButtonExpandsHitTargetWithoutInflatingHeight() async throws {
+        Self.servicesReady
+        _ = NSApplication.shared
+        let postURL = try XCTUnwrap(URL(string: "https://example.invalid/status/insight-hit"))
+        let post = previewPost("insight-hit", name: "Alex Rivera", text: "Post body text", isCalibration: true,
+                               clickEvent: ClickEventDeeplink(url: postURL.absoluteString))
+        let base = TimelineAppearance.companion.Default
+        func makeAppearance(agent: Bool) -> TimelineAppearance {
+            base.doCopy(
+                avatarShape: base.avatarShape,
+                showMedia: base.showMedia,
+                showSensitiveContent: base.showSensitiveContent,
+                expandContentWarning: base.expandContentWarning,
+                expandMediaSize: base.expandMediaSize,
+                limitSingleMediaHeight: base.limitSingleMediaHeight,
+                mediaLayout: base.mediaLayout,
+                limitMediaGridToNine: base.limitMediaGridToNine,
+                videoAutoplay: base.videoAutoplay,
+                showLinkPreview: base.showLinkPreview,
+                compatLinkPreview: base.compatLinkPreview,
+                showEmojiReactions: base.showEmojiReactions,
+                showNumbers: base.showNumbers,
+                postActionStyle: base.postActionStyle,
+                postActionLayout: base.postActionLayout,
+                postActionFixedWidth: base.postActionFixedWidth,
+                fullWidthPost: false,
+                absoluteTimestamp: false,
+                showPlatformLogo: true,
+                timelineDisplayMode: .plain,
+                aiConfig: TimelineAppearance.AiConfig(translation: true, tldr: false, agent: agent, showOriginalWithTranslation: false),
+                lineLimit: base.lineLimit,
+                showTranslateButton: true
+            )
+        }
+        let heightWithoutAgent = NSHostingView(
+            rootView: StatusView(data: post)
+                .frame(width: 380)
+                .environment(\.timelineAppearance, makeAppearance(agent: false))
+        ).fittingSize.height
+        let heightWithAgent = NSHostingView(
+            rootView: StatusView(data: post)
+                .frame(width: 380)
+                .environment(\.timelineAppearance, makeAppearance(agent: true))
+        ).fittingSize.height
+        XCTAssertEqual(heightWithAgent, heightWithoutAgent, accuracy: 0.5,
+                       "Enabling AI insight button must not inflate StatusView height")
+
+        var openedURLs: [URL] = []
+        let padding: CGFloat = 20
+        let content = StatusView(data: post)
+            .frame(width: 380)
+            .environment(\.timelineAppearance, makeAppearance(agent: true))
+            .environment(\.openURL, OpenURLAction { url in
+                openedURLs.append(url)
+                return .handled
+            })
+            .padding(padding)
+        let host = NSHostingView(rootView: content)
+        let size = host.fittingSize
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+
+        let iconSize = NSFont.preferredFont(forTextStyle: .body).pointSize
+        let buttonRightX = padding + 380
+        let buttonCenterX = buttonRightX - iconSize / 2
+        let topRowTopY = size.height - padding
+        let buttonCenterY = topRowTopY - 8
+        let outsetPoints = [
+            CGPoint(x: buttonCenterX, y: buttonCenterY),
+            CGPoint(x: buttonRightX + 2.5, y: buttonCenterY),
+            CGPoint(x: buttonCenterX, y: topRowTopY + 1.5),
+            CGPoint(x: buttonCenterX, y: buttonCenterY - iconSize / 2 - 2.5),
+        ]
+        let expectedInsightURL = try XCTUnwrap(URL(string: DeeplinkRoute.StatusInsight(
+            accountType: post.accountType,
+            statusKey: post.statusKey
+        ).toUri()))
+        let postBodyPoint = CGPoint(x: padding + 80, y: buttonCenterY - iconSize - 4)
+        for (pt, expectedURL) in outsetPoints.map({ ($0, expectedInsightURL) }) + [(postBodyPoint, postURL)] {
+            openedURLs.removeAll()
+            let down = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: pt, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
+            ))
+            let up = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseUp, location: pt, modifierFlags: [], timestamp: 0.01,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0
+            ))
+            window.sendEvent(down)
+            window.sendEvent(up)
+            try await Task.sleep(for: .milliseconds(50))
+            XCTAssertEqual(openedURLs, [expectedURL], "Click at \(pt) must open exactly one URL")
+        }
+    }
+
     func testTimelineAndDetailActionsShareTheirAppearance() async throws {
         let fixture = try Fixture(actions: actions())
         defer { fixture.close() }
@@ -460,7 +614,8 @@ final class MacStatusActionAnimationTests: XCTestCase {
     }
 
     private func previewPost(_ id: String, name: String, text: String, isCalibration: Bool = false, images: [UiMedia] = [],
-                             translationDisplayState: TranslationDisplayState = .hidden) -> UiTimelineV2.Post {
+                             translationDisplayState: TranslationDisplayState = .hidden,
+                             clickEvent: ClickEvent = ClickEventNoop.shared) -> UiTimelineV2.Post {
         func rich(_ value: String) -> UiRichText {
             let style = RenderTextStyle(link: nil, bold: false, italic: false, strikethrough: false,
                                         monospace: false, code: false, underline: false, small: false, time: false, imageLink: nil)
@@ -492,7 +647,7 @@ final class MacStatusActionAnimationTests: XCTestCase {
             statusKey: MicroBlogKey(id: id, host: host), card: nil,
             createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000) - (isCalibration ? 39_000 : 600_000)).toUi(),
             emojiReactions: [], sourceChannel: nil, visibility: isCalibration ? nil : .public, replyToHandle: nil,
-            references: [], clickEvent: ClickEventNoop.shared, mediaClickPolicy: .openStatusMedia,
+            references: [], clickEvent: clickEvent, mediaClickPolicy: .openStatusMedia,
             accountType: AccountType.Guest.shared, itemKey: id, pluginId: nil, authorSubtitleInternal: nil, communityNote: nil)
     }
 

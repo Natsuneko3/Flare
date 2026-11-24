@@ -2,7 +2,9 @@
 	import type { IconType } from '@flare/web-presenters/timeline.svelte';
 	import FaIcon from './FaIcon.svelte';
 
-	let { icon, size = 18 }: { icon: IconType; size?: number } = $props();
+	let { icon, size = 18 }: { icon: IconType; size?: number | string } = $props();
+	const numericSize = $derived(typeof size === 'number' ? size : undefined);
+	const imageStyle = $derived(typeof size === 'string' ? `width: ${size}; height: ${size};` : undefined);
 	const imageSource = $derived(
 		icon.type === 'Url'
 			? icon.url
@@ -13,7 +15,15 @@
 </script>
 
 {#if imageSource}
-	<img class="platform-icon-image" src={imageSource} alt="" width={size} height={size} loading="lazy" />
+	<img
+		class="platform-icon-image"
+		src={imageSource}
+		alt=""
+		width={numericSize}
+		height={numericSize}
+		style={imageStyle}
+		loading="lazy"
+	/>
 {:else}
 	<FaIcon
 		name={icon.type === 'Material' || icon.type === 'Mixed' ? icon.icon : 'Profile'}

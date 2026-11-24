@@ -421,7 +421,7 @@ final class StatusPostPresentationTests: XCTestCase {
             for state in [TranslationDisplayState.translated, .translating, .failed] {
                 let post = replyPost("icons", translationDisplayState: state, visibility: .public)
                 view.configure(post: post, showPlatformLogo: true, absoluteTimestamp: false, isDetail: false,
-                               showAgentInsight: false, onInsightTapped: nil, preferredContentSizeCategory: category)
+                               showAgentInsight: true, onInsightTapped: nil, preferredContentSizeCategory: category)
                 view.frame = CGRect(origin: .zero, size: view.intrinsicContentSize)
                 view.layoutIfNeeded()
                 for icon in view.subviews.compactMap({ $0 as? UIImageView }).filter({ !$0.isHidden }) {
@@ -433,11 +433,131 @@ final class StatusPostPresentationTests: XCTestCase {
                 if state == .translating {
                     let spinner = try XCTUnwrap(badge.subviews.compactMap { $0 as? UIActivityIndicatorView }.first)
                     XCTAssertEqual(spinner.frame.height, font.pointSize, accuracy: 0.01)
+                } else if state == .failed {
+                    let icons = badge.subviews.compactMap { $0 as? UIImageView }.filter { !$0.isHidden }
+                    XCTAssertEqual(icons.count, 2)
+                    XCTAssertTrue(icons.allSatisfy { abs($0.frame.height - font.pointSize) < 0.01 })
                 }
+                let insight = try XCTUnwrap(view.subviews.compactMap { $0 as? UIButton }.first)
+                insight.layoutIfNeeded()
+                XCTAssertEqual(insight.bounds.height, font.pointSize)
+                XCTAssertEqual(try XCTUnwrap(insight.imageView).frame.height, font.pointSize, accuracy: 0.5)
+                let expandedHitPoint = CGPoint(x: insight.frame.maxX + 1.5, y: insight.frame.maxY + 1.5)
+                XCTAssertTrue(view.hitTest(expandedHitPoint, with: nil) === insight)
+                let hitSize = max(24, font.pointSize + 4)
+                XCTAssertEqual(insight.accessibilityFrame.size, CGSize(width: hitSize, height: hitSize))
                 let timestamp = try XCTUnwrap(view.subviews.compactMap { $0 as? DateTimeUILabel }.first)
                 XCTAssertEqual(timestamp.font.pointSize, font.pointSize)
                 let textHeight = timestamp.sizeThatFits(CGSize(width: 1_000, height: 1_000)).height
                 XCTAssertLessThanOrEqual(view.bounds.height, ceil(textHeight))
+            }
+        }
+    }
+
+    func testInsightButtonOutsetRemainsTappableThroughTimelineCell() throws {
+        let row = try XCTUnwrap(makeTimelineTestRow(1, mediaCount: 0, textRepeatCount: 1) as? UiTimelineV2.TimelinePostItem)
+        let helper = TimelinePresentationAppearancePatchHelper.shared
+        let base = TimelineAppearance.companion.Default
+        for fullWidthPost in [false, true] {
+            let patched = helper.resolve(
+                base: base,
+                patch: helper.setFullWidthPost(patch: helper.empty, value: fullWidthPost)
+            )
+            let timeline = patched.doCopy(
+                avatarShape: patched.avatarShape,
+                showMedia: patched.showMedia,
+                showSensitiveContent: patched.showSensitiveContent,
+                expandContentWarning: patched.expandContentWarning,
+                expandMediaSize: patched.expandMediaSize,
+                limitSingleMediaHeight: patched.limitSingleMediaHeight,
+                mediaLayout: patched.mediaLayout,
+                limitMediaGridToNine: patched.limitMediaGridToNine,
+                videoAutoplay: patched.videoAutoplay,
+                showLinkPreview: patched.showLinkPreview,
+                compatLinkPreview: patched.compatLinkPreview,
+                showEmojiReactions: patched.showEmojiReactions,
+                showNumbers: patched.showNumbers,
+                postActionStyle: patched.postActionStyle,
+                postActionLayout: patched.postActionLayout,
+                postActionFixedWidth: patched.postActionFixedWidth,
+                fullWidthPost: fullWidthPost,
+                absoluteTimestamp: patched.absoluteTimestamp,
+                showPlatformLogo: true,
+                timelineDisplayMode: patched.timelineDisplayMode,
+                aiConfig: TimelineAppearance.AiConfig(translation: true, tldr: false, agent: true, showOriginalWithTranslation: false),
+                lineLimit: patched.lineLimit,
+                showTranslateButton: true
+            )
+            let cell = TimelineUIKitCollectionViewCell(frame: CGRect(x: 0, y: 0, width: 402, height: 400))
+            cell.configureTimeline(
+                data: row, index: 0, totalCount: 1,
+                appearance: TimelineUIKitAppearance(timeline: timeline),
+                detailStatusKey: nil, aiTldrEnabled: false, isMultipleColumn: false, openURL: nil
+            )
+            cell.layoutIfNeeded()
+            let topEnd = try XCTUnwrap(descendants(cell).compactMap { $0 as? StatusTopEndView }.first)
+            let insight = try XCTUnwrap(topEnd.subviews.compactMap { $0 as? UIButton }.first { !$0.isHidden })
+            let rectInCell = insight.convert(insight.bounds, to: cell)
+            let outsetPoints = [
+                CGPoint(x: rectInCell.midX, y: rectInCell.minY - 2.5),
+                CGPoint(x: rectInCell.midX, y: rectInCell.maxY + 2.5),
+                CGPoint(x: rectInCell.minX - 2.5, y: rectInCell.midY),
+                CGPoint(x: rectInCell.maxX + 2.5, y: rectInCell.midY),
+            ]
+            for point in outsetPoints {
+                XCTAssertTrue(
+                    cell.hitTest(point, with: nil) === insight,
+                    "Insight outset at \(point) must hit insightButton (fullWidthPost=\(fullWidthPost))"
+                )
+            }
+            insight.isHidden = true
+            XCTAssertFalse(cell.hitTest(outsetPoints[1], with: nil) === insight)
+            insight.isHidden = false
+        }
+    }
+
+    func testFeedTranslationIconMatchesFootnoteTimestampFontSize() throws {
+        let row = try XCTUnwrap(makeTimelineTestRow(1, mediaCount: 0, textRepeatCount: 0) as? UiTimelineV2.TimelinePostItem)
+        let view = FeedUIView(frame: CGRect(x: 0, y: 0, width: 360, height: 160))
+        for category in [UIContentSizeCategory.medium, .extraExtraExtraLarge] {
+            view.traitOverrides.preferredContentSizeCategory = category
+            view.updateTraitsIfNeeded()
+            for state in [TranslationDisplayState.translating, .failed] {
+                let feed = UiTimelineV2.Feed(
+                    title: "Feed title",
+                    description: "Feed description",
+                    descriptionHtml: nil,
+                    url: "https://example.invalid/feed",
+                    sourceLanguages: [],
+                    translationDisplayState: state,
+                    createdAt: row.post.createdAt,
+                    source: UiTimelineV2.FeedSource(name: "Blog", icon: nil, proxy: ProxyRef.Unbound.shared),
+                    media: nil,
+                    clickEvent: ClickEventNoop.shared,
+                    accountType: row.post.accountType,
+                    itemKey: "feed-1",
+                    pluginId: nil
+                )
+                view.configure(data: feed)
+                view.layoutIfNeeded()
+                let badge = try XCTUnwrap(view.subviews.compactMap { $0 as? TranslateStatusStateView }.first)
+                let date = try XCTUnwrap(view.subviews.compactMap { $0 as? DateTimeUILabel }.first)
+                badge.layoutIfNeeded()
+                let expected = UIFont.preferredFont(
+                    forTextStyle: .footnote,
+                    compatibleWith: UITraitCollection(preferredContentSizeCategory: category)
+                ).pointSize
+                XCTAssertEqual(date.font.pointSize, expected, accuracy: 0.01)
+                XCTAssertEqual(badge.bounds.height, expected, accuracy: 0.01)
+                XCTAssertEqual(badge.tintColor, .secondaryLabel)
+                if state == .translating {
+                    let spinner = try XCTUnwrap(badge.subviews.compactMap { $0 as? UIActivityIndicatorView }.first)
+                    XCTAssertEqual(spinner.frame.height, expected, accuracy: 0.01)
+                } else {
+                    let icons = badge.subviews.compactMap { $0 as? UIImageView }.filter { !$0.isHidden }
+                    XCTAssertEqual(icons.count, 2)
+                    XCTAssertTrue(icons.allSatisfy { abs($0.frame.height - expected) < 0.01 })
+                }
             }
         }
     }
