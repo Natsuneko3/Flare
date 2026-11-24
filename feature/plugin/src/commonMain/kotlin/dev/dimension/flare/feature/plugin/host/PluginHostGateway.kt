@@ -139,6 +139,14 @@ internal class PluginHostGateway(
                         JsonPrimitive(context.metadata.locale)
                     }
 
+                    "html.extract" -> {
+                        PluginHtmlExtractorV1.extract(argumentsJson, apiVersion)
+                    }
+
+                    "html.decodeEntities" -> {
+                        PluginHtmlExtractorV1.decodeEntities(argumentsJson, apiVersion)
+                    }
+
                     else -> {
                         throw PluginHostException("host.unsupported", "Unknown Host operation")
                     }

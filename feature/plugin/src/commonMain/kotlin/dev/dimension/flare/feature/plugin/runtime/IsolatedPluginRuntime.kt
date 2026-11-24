@@ -273,6 +273,7 @@ internal val RUNTIME_PRELUDE =
           const stringify = JSON.stringify.bind(JSON);
           const freeze = Object.freeze.bind(Object);
           const keys = Object.keys.bind(Object);
+          const isArray = Array.isArray.bind(Array);
           const owns = Function.call.bind(Object.prototype.hasOwnProperty);
           const then = Function.call.bind(Promise.prototype.then);
           const all = Promise.all.bind(Promise);
@@ -328,6 +329,28 @@ internal val RUNTIME_PRELUDE =
               uuid: () => hostCall("crypto.uuid"),
               sha256: value => hostCall("crypto.sha256", { value }),
               md5: value => hostCall("crypto.md5", { value }),
+            },
+            html: {
+              extract: request => hostCall("html.extract", request),
+              query: request => {
+                const payload =
+                  request && typeof request === "object" && !isArray(request)
+                    ? {
+                        html: request.html,
+                        baseUrl: request.baseUrl,
+                        spec: {
+                          items: {
+                            selector: request.selector,
+                            all: true,
+                            limit: request.limit,
+                            fields: request.fields,
+                          },
+                        },
+                      }
+                    : request;
+                return then(hostCall("html.extract", payload), res => res.items);
+              },
+              decodeEntities: value => hostCall("html.decodeEntities", { value }),
             },
             locale: { current: () => hostCall("locale.current") },
             error: value => {

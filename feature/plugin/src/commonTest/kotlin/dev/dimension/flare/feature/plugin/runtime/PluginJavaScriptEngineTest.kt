@@ -2,7 +2,20 @@ package dev.dimension.flare.feature.plugin.runtime
 
 import dev.dimension.flare.feature.plugin.abi.DISABLE_DYNAMIC_CODE_PRELUDE
 import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
+import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
+import dev.dimension.flare.feature.plugin.host.PluginHostGateway
+import dev.dimension.flare.feature.plugin.host.PluginHttpTransport
+import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
+import dev.dimension.flare.feature.plugin.host.PluginTransportRequestV1
+import dev.dimension.flare.feature.plugin.host.PluginTransportResponseV1
 import dev.dimension.flare.feature.plugin.installer.PluginRegistrationInspector
+import dev.dimension.flare.feature.plugin.lifecycle.InstalledPluginV1
+import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
+import dev.dimension.flare.feature.plugin.manifest.CapabilityManifestV1
+import dev.dimension.flare.feature.plugin.manifest.CapabilityOperationManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginPlatformManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginTextV1
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -10,9 +23,14 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okio.FileSystem
+import okio.SYSTEM
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -433,6 +451,216 @@ class PluginJavaScriptEngineTest {
                 assertFails(source) { inspector.inspect(source, 2) }
             }
         }
+
+    @Test
+    fun htmlFacadeExtractsQueriesDecodesAndKeepsRuntimeAliveOnCatchableErrors() =
+        runBlocking<Unit> {
+            val runtime =
+                htmlTestRuntime(
+                    apiVersion = 2,
+                    body =
+                        """
+                        if (request.mode === "second") {
+                          const items = await flare.html.query({
+                            html: "<ul><li><a href='/ch/2'>Ch 2</a></li></ul>",
+                            baseUrl: "https://manga.example/series/",
+                            selector: "ul li a",
+                            fields: {
+                              label: { extract: "text" },
+                              url: { extract: "attr", name: "href", absoluteUrl: true }
+                            }
+                          });
+                          return { items };
+                        }
+                        const extracted = await flare.html.extract({
+                          html: "<div class='box'><h1>Title</h1><a href='/g/1'>Read</a></div>",
+                          baseUrl: "https://gallery.example/",
+                          spec: {
+                            title: { selector: "h1", extract: "text" },
+                            link: { selector: "a", extract: "attr", name: "href", absoluteUrl: true }
+                          }
+                        });
+                        const queried = await flare.html.query({
+                          html: "<ul><li>One</li><li>Two</li><li>Three</li></ul>",
+                          selector: "li",
+                          limit: 2,
+                          fields: { label: { extract: "text" } }
+                        });
+                        const decoded = await flare.html.decodeEntities("&quot;ok&quot; &amp; &#x4E2D;");
+                        let invalidSelectorCode = null;
+                        try {
+                          await flare.html.extract({
+                            html: "<div>hi</div>",
+                            spec: { x: { selector: "[[[", extract: "text" } }
+                          });
+                        } catch (e) {
+                          invalidSelectorCode = e.code;
+                        }
+                        let invalidQueryCode = null;
+                        try {
+                          await flare.html.query({ html: "<div>hi</div>", selector: "div" });
+                        } catch (e) {
+                          invalidQueryCode = e.code;
+                        }
+                        let invalidDecodeCode = null;
+                        try {
+                          await flare.html.decodeEntities(null);
+                        } catch (e) {
+                          invalidDecodeCode = e.code;
+                        }
+                        return {
+                          extracted,
+                          queried,
+                          decoded,
+                          invalidSelectorCode,
+                          invalidQueryCode,
+                          invalidDecodeCode,
+                          frozen: Object.isFrozen(flare.html)
+                        };
+                        """.trimIndent(),
+                )
+            try {
+                val hash = "a".repeat(64)
+                val context = PluginInvocationContextV1.guest("dev.example.html", "html", hash, "https://gallery.example", "en")
+                val first =
+                    runtime
+                        .invoke(
+                            "capabilities.timeline.page",
+                            JsonObject(mapOf("mode" to JsonPrimitive("first"))),
+                            context,
+                            PluginCallTimeoutV1.Normal,
+                        ) {}
+                        .jsonObject
+                val extracted = first.getValue("extracted").jsonObject
+                assertEquals("Title", extracted.getValue("title").jsonPrimitive.content)
+                assertEquals("https://gallery.example/g/1", extracted.getValue("link").jsonPrimitive.content)
+                assertEquals(
+                    listOf("One", "Two"),
+                    first
+                        .getValue("queried")
+                        .jsonArray
+                        .map {
+                            it.jsonObject
+                                .getValue("label")
+                                .jsonPrimitive.content
+                        },
+                )
+                assertEquals("\"ok\" & 中", first.getValue("decoded").jsonPrimitive.content)
+                assertEquals("host.invalid-request", first.getValue("invalidSelectorCode").jsonPrimitive.content)
+                assertEquals("host.invalid-request", first.getValue("invalidQueryCode").jsonPrimitive.content)
+                assertEquals("host.invalid-request", first.getValue("invalidDecodeCode").jsonPrimitive.content)
+                assertTrue(first.getValue("frozen").jsonPrimitive.boolean)
+
+                // Same runtime instance remains active and reusable after catchable host.invalid-request errors.
+                val second =
+                    runtime
+                        .invoke(
+                            "capabilities.timeline.page",
+                            JsonObject(mapOf("mode" to JsonPrimitive("second"))),
+                            context,
+                            PluginCallTimeoutV1.Normal,
+                        ) {}
+                        .jsonObject
+                val secondItems = second.getValue("items").jsonArray
+                assertEquals(1, secondItems.size)
+                val secondItem = secondItems[0].jsonObject
+                assertEquals("Ch 2", secondItem.getValue("label").jsonPrimitive.content)
+                assertEquals("https://manga.example/ch/2", secondItem.getValue("url").jsonPrimitive.content)
+            } finally {
+                runtime.close()
+            }
+        }
+
+    @Test
+    fun htmlFacadeRequiresApiV2() =
+        runBlocking<Unit> {
+            val runtime =
+                htmlTestRuntime(
+                    apiVersion = 1,
+                    body =
+                        """
+                        const codes = [];
+                        for (const fn of [
+                          () => flare.html.extract({ html: "<p>a</p>", spec: { p: { selector: "p", extract: "text" } } }),
+                          () => flare.html.query({ html: "<p>a</p>", selector: "p", fields: { t: { extract: "text" } } }),
+                          () => flare.html.decodeEntities("&amp;")
+                        ]) {
+                          try { await fn(); codes.push("unexpected"); }
+                          catch (e) { codes.push(e.code); }
+                        }
+                        return { codes };
+                        """.trimIndent(),
+                )
+            try {
+                val hash = "a".repeat(64)
+                val context = PluginInvocationContextV1.guest("dev.example.html", "html", hash, "https://gallery.example", "en")
+                val result =
+                    runtime
+                        .invoke(
+                            "capabilities.timeline.page",
+                            JsonObject(emptyMap()),
+                            context,
+                            PluginCallTimeoutV1.Normal,
+                        ) {}
+                        .jsonObject
+                assertEquals(
+                    listOf("host.unsupported", "host.unsupported", "host.unsupported"),
+                    result.getValue("codes").jsonArray.map { it.jsonPrimitive.content },
+                )
+            } finally {
+                runtime.close()
+            }
+        }
+
+    private fun htmlTestRuntime(
+        apiVersion: Int,
+        body: String,
+    ): IsolatedPluginRuntime {
+        val pluginId = "dev.example.html"
+        val hash = "a".repeat(64)
+        val plugin =
+            RunningPluginV1(
+                installed =
+                    InstalledPluginV1(
+                        pluginId = pluginId,
+                        version = "1.0.0",
+                        packageHash = hash,
+                        packageSize = 0,
+                        iconSize = 0,
+                        manifest =
+                            PluginManifestV1(
+                                apiVersion = apiVersion,
+                                id = pluginId,
+                                version = "1.0.0",
+                                name = PluginTextV1.Literal("HTML test"),
+                                platform =
+                                    PluginPlatformManifestV1(
+                                        id = "html",
+                                        name = PluginTextV1.Literal("HTML test"),
+                                        capabilities =
+                                            mapOf(
+                                                "flare.datasource.timeline/v1" to
+                                                    CapabilityManifestV1(mapOf("page" to CapabilityOperationManifestV1())),
+                                            ),
+                                    ),
+                            ),
+                    ),
+                packagePath = "unused.fpp",
+                iconPath = "unused.png",
+                developmentSource = "defineFlareSocialPlugin({ capabilities: { timeline: { async page(request, context) { $body } } } });",
+            )
+        return IsolatedPluginRuntime(
+            plugin,
+            PluginPackageScriptLoader(FileSystem.SYSTEM),
+            PluginHostGateway(
+                object : PluginHttpTransport {
+                    override suspend fun execute(request: PluginTransportRequestV1): PluginTransportResponseV1 =
+                        error("Offline HTML facade must never call network transport")
+                },
+            ),
+            engineFactory = { createTestPluginJavaScriptEngine(it) },
+        )
+    }
 
     private fun withEngine(
         hostCall: PluginHostCall = { _, _, _ -> error("Unexpected Host call") },
