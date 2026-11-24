@@ -21,6 +21,7 @@ import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.host.PluginInvocationScopeV1
 import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.runtime.PluginCallException
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
@@ -309,7 +310,7 @@ public class PluginSessionChallengeCoordinatorV1(
                 val result =
                     try {
                         ticket.plugin.session.invoke("capabilities.sessionChallenge.complete") {
-                            val invocationContext = ticket.contextProvider(Locale.language)
+                            val invocationContext = ticket.contextProvider(normalizePluginInvocationLocale(Locale.language))
                             try {
                                 runtimePool
                                     .invoke(
