@@ -3,10 +3,12 @@ package dev.dimension.flare
 import dev.dimension.flare.common.FileItem
 import dev.dimension.flare.common.FileType
 import okio.FileSystem
+import okio.IOException
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.SYSTEM
 import platform.Foundation.NSTemporaryDirectory
+import platform.Foundation.NSThread
 import kotlin.uuid.Uuid
 
 internal actual fun createTestRootPath(): Path =
@@ -15,8 +17,15 @@ internal actual fun createTestRootPath(): Path =
     }
 
 internal actual fun deleteTestRootPath(path: Path) {
-    if (FileSystem.SYSTEM.exists(path)) {
-        FileSystem.SYSTEM.deleteRecursively(path)
+    repeat(5) { attempt ->
+        if (!FileSystem.SYSTEM.exists(path)) return
+        try {
+            FileSystem.SYSTEM.deleteRecursively(path)
+            return
+        } catch (_: IOException) {
+            if (attempt == 4) return
+            NSThread.sleepForTimeInterval(0.01)
+        }
     }
 }
 
