@@ -50,6 +50,7 @@ import dev.dimension.flare.feature.plugin.wire.DetectorMatchV1
 import dev.dimension.flare.feature.plugin.wire.DetectorRequestV1
 import dev.dimension.flare.feature.plugin.wire.DetectorResultV1
 import dev.dimension.flare.feature.plugin.wire.LoginSuccessV1
+import dev.dimension.flare.feature.plugin.wire.normalizeUserAgent
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.ComposeInitialTextContext
 import dev.dimension.flare.model.InitialText
@@ -898,6 +899,7 @@ internal class PluginLoginMethodHandlerV1(
                                         cookies
                                     }
                                 },
+                        userAgent = normalizeUserAgent(snapshot.userAgent),
                     ),
                 )
             if (result is PluginCookieCheckResultV1.Success) {

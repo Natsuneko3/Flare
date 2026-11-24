@@ -5,7 +5,8 @@ import SwiftUI
 public func loginCookieSnapshot(
     cookies: [HTTPCookie],
     probes: [LoginCookieProbe],
-    fallbackUrl: String
+    fallbackUrl: String,
+    userAgent: String? = nil
 ) -> LoginCookieSnapshot {
     let fallbackURL = URL(string: fallbackUrl)
     let rawHeader =
@@ -39,7 +40,11 @@ public func loginCookieSnapshot(
             return LoginCookieValue(sourceUrl: probe.url, name: cookie.name, value: cookie.value, attributes: attributes)
         }
     }
-    return LoginCookieSnapshot(values: values, rawHeader: rawHeader.isEmpty ? nil : rawHeader)
+    return LoginCookieSnapshot(
+        values: values,
+        rawHeader: rawHeader.isEmpty ? nil : rawHeader,
+        userAgent: userAgent
+    )
 }
 
 private extension HTTPCookie {

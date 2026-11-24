@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -31,8 +34,13 @@ import io.github.kdroidfilter.webview.web.WebContent
 import io.github.kdroidfilter.webview.web.WebView
 import io.github.kdroidfilter.webview.web.WebViewState
 import io.github.kdroidfilter.webview.web.rememberWebViewNavigator
+import io.github.kdroidfilter.webview.wry.WryWebViewPanel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
 import java.net.URI
+import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.seconds
 
 @Composable
@@ -65,18 +73,27 @@ internal fun WebViewLoginScreen(
     val navigator = rememberWebViewNavigator(requestInterceptor = interceptor)
     val disposeWebView: () -> Unit = { state.webView?.nativeWebView?.clearAllCookies() }
     val currentOrigin = state.lastLoadedUrl?.httpsOriginOrNull() ?: initialOrigin.orEmpty()
+    var cachedUserAgent by remember(request.url) { mutableStateOf<String?>(null) }
     LaunchedEffect(state.webView, request.url) {
+        cachedUserAgent = null
         val nativeWebView = state.webView?.nativeWebView ?: return@LaunchedEffect
         while (!nativeWebView.isReady()) {
             delay(50)
         }
         nativeWebView.clearAllCookies()
         navigator.loadUrl(request.url)
+        cachedUserAgent = readDesktopUserAgent(nativeWebView)
     }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(request) {
         while (true) {
             delay(2.seconds)
             val webView = state.webView?.nativeWebView ?: continue
+            val userAgent =
+                cachedUserAgent ?: if (webView.isReady()) {
+                    readDesktopUserAgent(webView)?.also { cachedUserAgent = it }
+                } else {
+                    null
+                }
             val rawHeader =
                 listOfNotNull(state.lastLoadedUrl, request.url)
                     .distinct()
@@ -110,7 +127,7 @@ internal fun WebViewLoginScreen(
                                 )
                             }
                     }
-            if (callback(LoginCookieSnapshot(values = values, rawHeader = rawHeader))) {
+            if (callback(LoginCookieSnapshot(values = values, rawHeader = rawHeader, userAgent = userAgent))) {
                 onBack.invoke()
                 break
             }
@@ -154,6 +171,39 @@ internal fun WebViewLoginScreen(
             onDispose = disposeWebView,
         )
     }
+}
+
+private suspend fun readDesktopUserAgent(webView: WryWebViewPanel): String? {
+    if (!webView.isReady()) return null
+    val raw =
+        withTimeoutOrNull(1.seconds) {
+            suspendCancellableCoroutine<String?> { continuation ->
+                try {
+                    webView.evaluateJavaScript("navigator.userAgent") { result ->
+                        if (continuation.isActive) {
+                            continuation.resume(result)
+                        }
+                    }
+                } catch (_: Throwable) {
+                    if (continuation.isActive) {
+                        continuation.resume(null)
+                    }
+                }
+            }
+        }
+    return raw?.let(::parseDesktopJavaScriptString)
+}
+
+internal fun parseDesktopJavaScriptString(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty() || trimmed == "null" || trimmed == "undefined") return null
+    val decoded =
+        if (trimmed.startsWith('"')) {
+            runCatching { Json.decodeFromString<String>(trimmed) }.getOrNull() ?: return null
+        } else {
+            trimmed
+        }
+    return decoded.takeIf { it.isNotBlank() }
 }
 
 private fun String.httpsOriginOrNull(): String? =

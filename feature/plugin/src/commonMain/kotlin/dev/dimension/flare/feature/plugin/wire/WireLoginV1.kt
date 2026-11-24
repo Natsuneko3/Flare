@@ -66,6 +66,7 @@ public data class LoginResumeRequestV1(
 @Serializable
 public data class CookieSnapshotV1(
     val cookies: List<CookieValueV1>,
+    val userAgent: String? = null,
 )
 
 @Serializable
@@ -95,6 +96,7 @@ public data class CookieCheckRequestV1(
     val flowId: String,
     val cookies: CookieSnapshotV1,
     val pendingPayload: JsonElement? = null,
+    val userAgent: String? = null,
 )
 
 @Serializable

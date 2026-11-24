@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LoginContextTest {
@@ -60,15 +61,17 @@ class LoginContextTest {
         runTest {
             val handler = RecordingCookieHandler()
 
-            assertFalse(handler.checkCookies(LoginCookieSnapshot()))
-            assertTrue(
-                handler.checkCookies(
-                    LoginCookieSnapshot(
-                        values = listOf(LoginCookieValue("https://example.com", "ignored", "value")),
-                        rawHeader = "session=valid; theme=dark",
-                    ),
-                ),
-            )
+            val empty = LoginCookieSnapshot()
+            assertNull(empty.userAgent)
+            assertFalse(handler.checkCookies(empty))
+            val populated =
+                LoginCookieSnapshot(
+                    values = listOf(LoginCookieValue("https://example.com", "ignored", "value")),
+                    rawHeader = "session=valid; theme=dark",
+                    userAgent = "Mozilla/5.0 (FlareTest)",
+                )
+            assertEquals("Mozilla/5.0 (FlareTest)", populated.userAgent)
+            assertTrue(handler.checkCookies(populated))
 
             assertEquals(listOf("session=valid; theme=dark"), handler.resumed)
         }

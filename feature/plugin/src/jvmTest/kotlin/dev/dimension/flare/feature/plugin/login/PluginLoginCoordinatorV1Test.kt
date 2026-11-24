@@ -46,6 +46,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -799,6 +800,164 @@ class PluginLoginCoordinatorV1Test {
                 assertNull(cookies[0].jsonObject.getValue("attributes").jsonObject["hostOnly"])
             } finally {
                 session.close()
+            }
+        }
+
+    @Test
+    fun v2CookieLoginForwardsNormalizedUserAgentAndV1OmitsIt() =
+        runBlocking {
+            val captureScript =
+                LOGIN_SCRIPT.replace(
+                    "return session?.value === \"valid\" ? success(request, { cookies: request.cookies.cookies }) : { type: \"pending\" };",
+                    """
+                    return session?.value === "valid"
+                      ? success(request, {
+                          cookies: request.cookies.cookies,
+                          hasUserAgent: Object.prototype.hasOwnProperty.call(request, "userAgent"),
+                          userAgent: request.userAgent ?? null,
+                          hasNestedUserAgent: Object.prototype.hasOwnProperty.call(request.cookies, "userAgent")
+                        })
+                      : { type: "pending" };
+                    """.trimIndent(),
+                )
+
+            plugin = install(captureScript, v2Manifest())
+            val v2Accounts = RecordingAccountService()
+            val v2Handler = cookieHandler(v2Accounts)
+            try {
+                v2Handler.perform("login")
+                assertTrue(
+                    v2Handler.checkCookies(
+                        LoginCookieSnapshot(
+                            values = listOf(LoginCookieValue("$ORIGIN/api/cookie", "session", "valid")),
+                            userAgent = "  Mozilla/5.0 (FlareTest)  ",
+                        ),
+                    ),
+                )
+                val credential = assertIs<PluginAccountCredentialV1>(v2Accounts.added.single().second).credential.jsonObject
+                assertTrue(credential.getValue("hasUserAgent").jsonPrimitive.boolean)
+                assertEquals("Mozilla/5.0 (FlareTest)", credential.getValue("userAgent").jsonPrimitive.content)
+                assertFalse(credential.getValue("hasNestedUserAgent").jsonPrimitive.boolean)
+            } finally {
+                v2Handler.close()
+            }
+
+            plugin = install(captureScript, LOGIN_MANIFEST)
+            val v1Accounts = RecordingAccountService()
+            val v1Handler = cookieHandler(v1Accounts)
+            try {
+                v1Handler.perform("login")
+                assertTrue(
+                    v1Handler.checkCookies(
+                        LoginCookieSnapshot(
+                            values = listOf(LoginCookieValue("$ORIGIN/api/cookie", "session", "valid")),
+                            userAgent = "Mozilla/5.0 (FlareTest)",
+                        ),
+                    ),
+                )
+                val credential = assertIs<PluginAccountCredentialV1>(v1Accounts.added.single().second).credential.jsonObject
+                assertFalse(credential.getValue("hasUserAgent").jsonPrimitive.boolean)
+                assertFalse(credential.getValue("hasNestedUserAgent").jsonPrimitive.boolean)
+            } finally {
+                v1Handler.close()
+            }
+        }
+
+    @Test
+    fun invalidUserAgentIsSafelyDiscardedWithoutFailingCookieLogin() =
+        runBlocking {
+            val captureScript =
+                LOGIN_SCRIPT.replace(
+                    "return session?.value === \"valid\" ? success(request, { cookies: request.cookies.cookies }) : { type: \"pending\" };",
+                    """
+                    return session?.value === "valid"
+                      ? success(request, {
+                          cookies: request.cookies.cookies,
+                          hasUserAgent: Object.prototype.hasOwnProperty.call(request, "userAgent"),
+                          userAgent: request.userAgent ?? null
+                        })
+                      : { type: "pending" };
+                    """.trimIndent(),
+                )
+            plugin = install(captureScript, v2Manifest())
+
+            val invalidUserAgents =
+                listOf(
+                    "",
+                    "   ",
+                    "a".repeat(1_025),
+                    "a".repeat(100_000),
+                    "Mozilla/5.0\r",
+                    "Mozilla/5.0\n",
+                    "Mozilla/5.0\r\nX-Test: 1",
+                    "Mozilla/5.0\u0000",
+                    "Mozilla/5.0\u007f",
+                )
+            for (badUa in invalidUserAgents) {
+                val session = PluginWebCookieLoginCoordinatorV1(pool, FixedEntropy).begin(plugin, "cookie", ORIGIN, "en")
+                try {
+                    val result =
+                        assertIs<PluginCookieCheckResultV1.Success>(
+                            session.check(
+                                CookieSnapshotV1(
+                                    cookies = listOf(CookieValueV1("$ORIGIN/api/cookie", "session", "valid")),
+                                    userAgent = badUa,
+                                ),
+                            ),
+                        )
+                    assertFalse(
+                        result.value.credential.jsonObject
+                            .getValue("hasUserAgent")
+                            .jsonPrimitive.boolean,
+                        "Expected bad UA to be omitted: $badUa",
+                    )
+                } finally {
+                    session.close()
+                }
+
+                val accounts = RecordingAccountService()
+                val handler = cookieHandler(accounts)
+                try {
+                    handler.perform("login")
+                    assertTrue(
+                        handler.checkCookies(
+                            LoginCookieSnapshot(
+                                values = listOf(LoginCookieValue("$ORIGIN/api/cookie", "session", "valid")),
+                                userAgent = badUa,
+                            ),
+                        ),
+                    )
+                    val saved = assertIs<PluginAccountCredentialV1>(accounts.added.single().second)
+                    assertFalse(
+                        saved.credential.jsonObject
+                            .getValue("hasUserAgent")
+                            .jsonPrimitive.boolean,
+                    )
+                } finally {
+                    handler.close()
+                }
+            }
+
+            val maxLenSession = PluginWebCookieLoginCoordinatorV1(pool, FixedEntropy).begin(plugin, "cookie", ORIGIN, "en")
+            try {
+                val maxUa = "u".repeat(1_024)
+                val result =
+                    assertIs<PluginCookieCheckResultV1.Success>(
+                        maxLenSession.check(
+                            CookieSnapshotV1(
+                                cookies = listOf(CookieValueV1("$ORIGIN/api/cookie", "session", "valid")),
+                                userAgent = maxUa,
+                            ),
+                        ),
+                    )
+                assertEquals(
+                    maxUa,
+                    result.value.credential.jsonObject
+                        .getValue("userAgent")
+                        .jsonPrimitive.content,
+                )
+            } finally {
+                maxLenSession.close()
             }
         }
 

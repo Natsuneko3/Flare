@@ -24,6 +24,7 @@ public object WireLimitsV1 {
     public const val MAX_MEDIA_HEADERS: Int = 32
     public const val MAX_MEDIA_HEADER_VALUE_LENGTH: Int = 8_192
     public const val MAX_MEDIA_HEADER_BYTES: Int = 64 * 1_024
+    public const val MAX_USER_AGENT_LENGTH: Int = 1_024
 }
 
 public fun TimelinePageLoadRequestV2.requireValid() {
@@ -593,9 +594,26 @@ public fun CookieSnapshotV1.requireValid() {
             require(attributes.sameSite == null || attributes.sameSite in setOf("strict", "lax", "none")) { "Invalid Cookie SameSite" }
         }
     }
-    require(encodedSize(this, CookieSnapshotV1.serializer()) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+    val normalized = copy(userAgent = normalizeUserAgent(userAgent))
+    require(encodedSize(normalized, CookieSnapshotV1.serializer()) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
         "Cookie snapshot is too large"
     }
+}
+
+public fun CookieCheckRequestV1.requireValid() {
+    require(methodId.isWireName()) { "Invalid login method ID" }
+    require(origin.isNotBlank() && origin.length <= 8_192) { "Invalid login origin" }
+    require(flowId.isNotBlank() && flowId.length <= WireLimitsV1.MAX_ID_LENGTH) { "Invalid login flow ID" }
+    cookies.requireValid()
+    require(pendingPayload == null || encodedJsonSize(pendingPayload) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+        "Login pending payload is too large"
+    }
+    require(userAgent == null || normalizeUserAgent(userAgent) == userAgent) { "Invalid userAgent" }
+}
+
+public fun normalizeUserAgent(raw: String?): String? {
+    if (raw.isNullOrBlank() || raw.any(Char::isISOControl)) return null
+    return raw.trim().takeIf { it.isNotEmpty() && it.length <= WireLimitsV1.MAX_USER_AGENT_LENGTH }
 }
 
 public fun LoginTransitionV1.requireValid() {
