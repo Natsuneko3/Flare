@@ -92,25 +92,45 @@ internal class PluginAccountInvokerV1(
         responseSerializer: KSerializer<Response>,
         timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
         assets: Map<String, PluginAsset> = emptyMap(),
+        workerLane: String? = null,
+        maxWorkers: Int = 1,
         validate: (Response) -> Unit = {},
-    ): Response =
-        plugin.session.invoke(requireNotNull(PluginAbiV1.capabilityMethod(capabilityId, operation))) {
+    ): Response {
+        val method = requireNotNull(PluginAbiV1.capabilityMethod(capabilityId, operation))
+        return plugin.session.invoke(method) {
             val invocationContext = context(normalizePluginInvocationLocale(Locale.language), assets)
             try {
-                runtimePool
-                    .invoke(
-                        plugin = plugin,
-                        key = runtimeKey,
-                        context = invocationContext,
-                        method = requireNotNull(PluginAbiV1.capabilityMethod(capabilityId, operation)),
-                        request = request,
-                        requestSerializer = requestSerializer,
-                        responseSerializer = responseSerializer,
-                        timeout = timeout,
-                        validate = validate,
-                    ).also {
-                        invocationContext.credential?.ensureActive()
+                val result =
+                    if (workerLane != null) {
+                        runtimePool.invokeOnWorkerLane(
+                            plugin = plugin,
+                            key = runtimeKey,
+                            context = invocationContext,
+                            method = method,
+                            request = request,
+                            requestSerializer = requestSerializer,
+                            responseSerializer = responseSerializer,
+                            lane = workerLane,
+                            maxWorkers = maxWorkers,
+                            timeout = timeout,
+                            validate = validate,
+                        )
+                    } else {
+                        runtimePool.invoke(
+                            plugin = plugin,
+                            key = runtimeKey,
+                            context = invocationContext,
+                            method = method,
+                            request = request,
+                            requestSerializer = requestSerializer,
+                            responseSerializer = responseSerializer,
+                            timeout = timeout,
+                            validate = validate,
+                        )
                     }
+                result.also {
+                    invocationContext.credential?.ensureActive()
+                }
             } catch (error: PluginCallException) {
                 invocationContext.credential?.ensureActive()
                 if (error.error.code == PluginErrorCodeV1.AuthenticationRequired && accountKey != null) {
@@ -119,6 +139,7 @@ internal class PluginAccountInvokerV1(
                 throw error
             }
         }
+    }
 }
 
 internal fun PagingRequest.toWire(

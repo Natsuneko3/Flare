@@ -14,6 +14,7 @@ import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
 import dev.dimension.flare.data.datasource.microblog.datasource.ListDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaPageImageResolveReason
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPagesChunk
 import dev.dimension.flare.data.datasource.microblog.datasource.NotificationDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabSection
@@ -814,7 +815,41 @@ internal class PluginExtraCapabilitiesV1(
         override suspend fun chapterPages(
             mangaKey: MicroBlogKey,
             chapterId: String,
-        ): ImmutableList<UiMangaPage> {
+        ): ImmutableList<UiMangaPage> =
+            invokePages(
+                mangaKey = mangaKey,
+                chapterId = chapterId,
+                offset = null,
+                limit = null,
+                cursor = null,
+            ).second.let(mapper::mangaPages)
+
+        override suspend fun chapterPagesChunk(
+            mangaKey: MicroBlogKey,
+            chapterId: String,
+            offset: Int,
+            limit: Int?,
+            cursor: String?,
+        ): MangaPagesChunk {
+            val requestOffset = offset.takeUnless { cursor != null && it == 0 }
+            val (request, response) =
+                invokePages(
+                    mangaKey = mangaKey,
+                    chapterId = chapterId,
+                    offset = requestOffset,
+                    limit = limit,
+                    cursor = cursor,
+                )
+            return mapper.mangaPagesChunk(response, request)
+        }
+
+        private suspend fun invokePages(
+            mangaKey: MicroBlogKey,
+            chapterId: String,
+            offset: Int?,
+            limit: Int?,
+            cursor: String?,
+        ): Pair<MangaPagesRequestV1, MangaPagesV1> {
             val mediaNetwork = plugin.installed.manifest.permissions.mediaNetwork
             require(mediaNetwork) { "Plugin has no media network permission" }
             val pageImageSupported = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
@@ -824,16 +859,20 @@ internal class PluginExtraCapabilitiesV1(
                     chapterId = chapterId,
                     entityToken = mangaTokens.get(mangaKey),
                     chapterToken = chapterTokens.get(MangaChapterKey(mangaKey, chapterId)),
+                    offset = offset,
+                    limit = limit,
+                    cursor = cursor,
                 ).also(MangaPagesRequestV1::requireValid)
-            return invoker
-                .invoke(
+            val response =
+                invoker.invoke(
                     capabilityId = PluginAbiV1.Capabilities.MANGA,
                     operation = "pages",
                     request = request,
                     requestSerializer = MangaPagesRequestV1.serializer(),
                     responseSerializer = MangaPagesV1.serializer(),
-                    validate = { it.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported) },
-                ).let(mapper::mangaPages)
+                    validate = { it.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported, request = request) },
+                )
+            return request to response
         }
 
         override suspend fun resolvePageMedia(
@@ -883,6 +922,8 @@ internal class PluginExtraCapabilitiesV1(
                     request = request,
                     requestSerializer = MangaPageImageRequestV1.serializer(),
                     responseSerializer = MediaV1.serializer(),
+                    workerLane = MANGA_PAGE_IMAGE_WORKER_LANE,
+                    maxWorkers = MANGA_PAGE_IMAGE_MAX_WORKERS,
                     validate = { it.requireValidMangaPageMedia(mediaNetwork) },
                 ).let(mapper::mangaPageMedia)
         }
@@ -1115,6 +1156,8 @@ private fun <Wire : Any, Ui : Any> PageV1<Wire>.toPagingResult(map: (Wire) -> Ui
 
 private const val MAX_MANGA_ENTITY_TOKENS = 128
 private const val MAX_MANGA_CHAPTER_TOKENS = 8_192
+private const val MANGA_PAGE_IMAGE_WORKER_LANE = "manga.pageImage"
+private const val MANGA_PAGE_IMAGE_MAX_WORKERS = 3
 
 private data class MangaChapterKey(
     val mangaKey: MicroBlogKey,

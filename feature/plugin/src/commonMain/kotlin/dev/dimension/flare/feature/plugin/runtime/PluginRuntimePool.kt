@@ -30,7 +30,22 @@ public data class PluginRuntimeKeyV1 private constructor(
     val scope: PluginInvocationScopeV1,
     val identity: String,
     val accountEpoch: String? = null,
+    val workerLane: String? = null,
+    val workerSlot: Int = 0,
 ) {
+    internal fun withWorker(
+        lane: String,
+        slot: Int,
+    ): PluginRuntimeKeyV1 {
+        require(lane.isNotBlank() && lane.length <= MAX_WORKER_LANE_LENGTH && lane.none(Char::isISOControl)) {
+            "Invalid worker lane"
+        }
+        require(slot >= 0) { "Invalid worker slot" }
+        return copy(workerLane = lane, workerSlot = slot)
+    }
+
+    internal fun baseAccountIdentity(): String = if (accountEpoch == null) identity else identity.removeSuffix("\u0000$accountEpoch")
+
     public companion object {
         public fun extension(
             pluginId: String,
@@ -129,11 +144,64 @@ public class PluginRuntimePool(
         responseSerializer: KSerializer<Response>,
         timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
         validate: (Response) -> Unit = {},
+    ): Response =
+        invokeTyped(
+            plugin = plugin,
+            key = key,
+            context = context,
+            method = method,
+            request = request,
+            requestSerializer = requestSerializer,
+            responseSerializer = responseSerializer,
+            timeout = timeout,
+            validate = validate,
+        )
+
+    /** Invokes [method] across up to [maxWorkers] isolated worker slots for [lane], reusing the lowest idle slot lazily. */
+    public suspend fun <Request, Response> invokeOnWorkerLane(
+        plugin: RunningPluginV1,
+        key: PluginRuntimeKeyV1,
+        context: PluginInvocationContextV1,
+        method: String,
+        request: Request,
+        requestSerializer: KSerializer<Request>,
+        responseSerializer: KSerializer<Response>,
+        lane: String = DEFAULT_WORKER_LANE,
+        maxWorkers: Int = DEFAULT_MAX_WORKERS,
+        timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
+        validate: (Response) -> Unit = {},
+    ): Response =
+        invokeTyped(
+            plugin = plugin,
+            key = key,
+            context = context,
+            method = method,
+            request = request,
+            requestSerializer = requestSerializer,
+            responseSerializer = responseSerializer,
+            lane = lane,
+            maxWorkers = maxWorkers,
+            timeout = timeout,
+            validate = validate,
+        )
+
+    private suspend fun <Request, Response> invokeTyped(
+        plugin: RunningPluginV1,
+        key: PluginRuntimeKeyV1,
+        context: PluginInvocationContextV1,
+        method: String,
+        request: Request,
+        requestSerializer: KSerializer<Request>,
+        responseSerializer: KSerializer<Response>,
+        lane: String? = null,
+        maxWorkers: Int = 1,
+        timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
+        validate: (Response) -> Unit = {},
     ): Response {
         var decoded: Any? = null
         var decodedSet = false
         val value = PluginJsonV1.encodeToJsonElement(requestSerializer, request)
-        invokeJson(plugin, key, context, method, value, timeout) { response ->
+        invokeSession(plugin, key, context, method, value, lane, maxWorkers, timeout) { response ->
             val result = PluginJsonV1.decodeFromJsonElement(responseSerializer, response)
             validate(result)
             decoded = result
@@ -153,11 +221,55 @@ public class PluginRuntimePool(
         timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
         validate: (JsonElement) -> Unit = {},
     ): JsonElement =
+        invokeSession(
+            plugin = plugin,
+            key = key,
+            context = context,
+            method = method,
+            request = request,
+            timeout = timeout,
+            validate = validate,
+        )
+
+    public suspend fun invokeJsonOnWorkerLane(
+        plugin: RunningPluginV1,
+        key: PluginRuntimeKeyV1,
+        context: PluginInvocationContextV1,
+        method: String,
+        request: JsonElement,
+        lane: String = DEFAULT_WORKER_LANE,
+        maxWorkers: Int = DEFAULT_MAX_WORKERS,
+        timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
+        validate: (JsonElement) -> Unit = {},
+    ): JsonElement =
+        invokeSession(
+            plugin = plugin,
+            key = key,
+            context = context,
+            method = method,
+            request = request,
+            lane = lane,
+            maxWorkers = maxWorkers,
+            timeout = timeout,
+            validate = validate,
+        )
+
+    private suspend fun invokeSession(
+        plugin: RunningPluginV1,
+        key: PluginRuntimeKeyV1,
+        context: PluginInvocationContextV1,
+        method: String,
+        request: JsonElement,
+        lane: String? = null,
+        maxWorkers: Int = 1,
+        timeout: PluginCallTimeoutV1 = PluginCallTimeoutV1.Normal,
+        validate: (JsonElement) -> Unit = {},
+    ): JsonElement =
         plugin.session.invoke(method) {
             // Record only method and outcome; arguments, responses and exception text may contain credentials.
             plugin.diagnostic?.invoke(plugin, "$method: started")
             try {
-                invokeCurrent(plugin, key, context, method, request, timeout, validate).also {
+                invokeCurrent(plugin, key, context, method, request, timeout, lane, maxWorkers, validate).also {
                     plugin.diagnostic?.invoke(plugin, "$method: completed")
                 }
             } catch (error: Throwable) {
@@ -176,25 +288,47 @@ public class PluginRuntimePool(
         method: String,
         request: JsonElement,
         timeout: PluginCallTimeoutV1,
+        lane: String? = null,
+        maxWorkers: Int = 1,
         validate: (JsonElement) -> Unit,
     ): JsonElement {
         validateInvocation(plugin, key, context)
+        if (lane != null) {
+            require(key.workerLane == null && key.workerSlot == 0) { "Base runtime key must not specify a worker lane" }
+            require(lane.isNotBlank() && lane.length <= MAX_WORKER_LANE_LENGTH && lane.none(Char::isISOControl)) {
+                "Invalid worker lane"
+            }
+            require(maxWorkers in 1..MAX_WORKERS_LIMIT) { "Invalid maxWorkers" }
+        }
         if (key.scope == PluginInvocationScopeV1.Detector || key.scope == PluginInvocationScopeV1.Extension ||
             method == "capabilities.accountCapabilities.negotiate"
         ) {
             return invokeTemporary(plugin, context, method, request, timeout, validate)
         }
-        val holder =
+        val (selectedKey, holder, staleToClose) =
             mutex.withLock {
                 check(!closed) { "Plugin Runtime pool is closed" }
                 plugin.session.ensureActive()
                 if (plugin.installed.pluginId in paused) throw PluginRuntimePausedException(plugin.installed.pluginId)
-                holders.getOrPut(key) { Holder(createRuntime(plugin)) }.also { it.activeCalls++ }
+                val stale = evictStaleAccountEpochsLocked(key)
+                val targetKey =
+                    if (lane != null) {
+                        selectWorkerSlotKeyLocked(key, lane, maxWorkers)
+                    } else {
+                        key
+                    }
+                val targetHolder = holders.getOrPut(targetKey) { Holder(createRuntime(plugin)) }.also { it.activeCalls++ }
+                Triple(targetKey, targetHolder, stale)
             }
         return try {
+            if (staleToClose.isNotEmpty()) {
+                withContext(NonCancellable) {
+                    staleToClose.forEach { it.runtime.close() }
+                }
+            }
             holder.runtime.invoke(method, request, context, timeout, validate)
         } catch (error: PluginRuntimeFatalException) {
-            withContext(NonCancellable) { handleFatal(plugin.installed.pluginId, key, holder, error) }
+            withContext(NonCancellable) { handleFatal(plugin.installed.pluginId, selectedKey, holder, error) }
             val cause = error.cause ?: error
             if (cause is CancellationException && !error.countsTowardPause) throw cause
             throw PluginRuntimeUnavailableException(plugin.installed.pluginId, cause)
@@ -202,6 +336,8 @@ public class PluginRuntimePool(
             withContext(NonCancellable) { release(holder) }
         }
     }
+
+    internal suspend fun holderKeys(): Set<PluginRuntimeKeyV1> = mutex.withLock { holders.keys.toSet() }
 
     public suspend fun close(key: PluginRuntimeKeyV1) {
         val holder = mutex.withLock { holders.remove(key) }
@@ -335,8 +471,55 @@ public class PluginRuntimePool(
         }
     }
 
+    private fun selectWorkerSlotKeyLocked(
+        baseKey: PluginRuntimeKeyV1,
+        lane: String,
+        maxWorkers: Int,
+    ): PluginRuntimeKeyV1 {
+        var bestSlot = 0
+        var bestCalls = Int.MAX_VALUE
+        for (slot in 0 until maxWorkers) {
+            val slotKey = baseKey.withWorker(lane, slot)
+            val calls = holders[slotKey]?.activeCalls ?: 0
+            if (calls < bestCalls) {
+                bestCalls = calls
+                bestSlot = slot
+                if (calls == 0) break
+            }
+        }
+        return baseKey.withWorker(lane, bestSlot)
+    }
+
+    private fun evictStaleAccountEpochsLocked(key: PluginRuntimeKeyV1): List<Holder> {
+        if (key.scope != PluginInvocationScopeV1.Account) return emptyList()
+        val baseIdentity = key.baseAccountIdentity()
+        val staleKeys =
+            holders.keys.filter { existing ->
+                existing.pluginId == key.pluginId &&
+                    existing.scope == PluginInvocationScopeV1.Account &&
+                    existing.baseAccountIdentity() == baseIdentity &&
+                    existing.accountEpoch != key.accountEpoch
+            }
+        if (staleKeys.isEmpty()) return emptyList()
+        val idleToClose = mutableListOf<Holder>()
+        for (staleKey in staleKeys) {
+            val staleHolder = holders.remove(staleKey) ?: continue
+            if (staleHolder.activeCalls == 0) {
+                idleToClose += staleHolder
+            } else {
+                staleHolder.retired = true
+            }
+        }
+        return idleToClose
+    }
+
     private suspend fun release(holder: Holder) {
-        mutex.withLock { holder.activeCalls-- }
+        val closeNow =
+            mutex.withLock {
+                holder.activeCalls--
+                holder.retired && holder.activeCalls == 0
+            }
+        if (closeNow) holder.runtime.close()
     }
 
     private fun validateInvocation(
@@ -351,6 +534,18 @@ public class PluginRuntimePool(
             "Invocation context does not match Runtime key"
         }
         require(context.metadata.scope == key.scope) { "Invocation scope does not match Runtime key" }
+        require(
+            (key.workerLane == null && key.workerSlot == 0) ||
+                (
+                    key.workerLane != null &&
+                        key.workerLane.isNotBlank() &&
+                        key.workerLane.length <= MAX_WORKER_LANE_LENGTH &&
+                        key.workerLane.none(Char::isISOControl) &&
+                        key.workerSlot >= 0
+                ),
+        ) {
+            "Invalid worker lane key"
+        }
         when (key.scope) {
             PluginInvocationScopeV1.Extension -> {
                 require(key.identity == context.metadata.accountId && context.accountHttp != null) { "Extension Runtime key mismatch" }
@@ -381,6 +576,7 @@ public class PluginRuntimePool(
     private class Holder(
         val runtime: IsolatedPluginRuntime,
         var activeCalls: Int = 0,
+        var retired: Boolean = false,
     )
 }
 
@@ -402,6 +598,10 @@ private fun monotonicMillis(): () -> Long {
 
 private const val FAILURE_LIMIT = 3
 private const val FAILURE_WINDOW_MILLIS = 60_000L
+private const val DEFAULT_WORKER_LANE = "manga.pageImage"
+private const val DEFAULT_MAX_WORKERS = 3
+private const val MAX_WORKER_LANE_LENGTH = 128
+private const val MAX_WORKERS_LIMIT = 64
 private val HASH = Regex("[0-9a-f]{64}")
 
 private fun accountIdentity(

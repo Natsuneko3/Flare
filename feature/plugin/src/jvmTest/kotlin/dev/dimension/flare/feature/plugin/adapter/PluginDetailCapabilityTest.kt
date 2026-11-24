@@ -13,6 +13,7 @@ import dev.dimension.flare.data.datasource.microblog.SearchOperation
 import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
 import dev.dimension.flare.data.datasource.microblog.datasource.MangaPageImageResolveReason
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPagesChunk
 import dev.dimension.flare.data.datasource.microblog.list.ListMetaData
 import dev.dimension.flare.data.datasource.microblog.loader.RelationActionType
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
@@ -54,12 +55,16 @@ import dev.dimension.flare.ui.model.postEventOrNull
 import dev.dimension.flare.ui.presenter.compose.ComposeStatus
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
@@ -84,6 +89,7 @@ import okio.Path.Companion.toOkioPath
 import okio.SYSTEM
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -1836,6 +1842,288 @@ class PluginDetailCapabilityTest {
             // Confirm invalid calls did not reach JS
             val finalCall = assertIs<UiMedia.Image>(manga.resolvePageMedia(mangaKey, "ch-1", "p-1", "ptok-1"))
             assertEquals("4", finalCall.customHeaders?.get("X-Total-Calls"))
+        }
+
+    @Test
+    fun mangaAdapterSupportsLegacyRangeAlignedAndCursorPaginationChunks(): Unit =
+        runBlocking {
+            val manifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.example.manga.paging",
+                  "version": "1.0.0",
+                  "name": "Manga Paging Test",
+                  "permissions": { "mediaNetwork": true },
+                  "platform": {
+                    "id": "MangaPagingTest",
+                    "name": "Manga Paging Test",
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": {
+                          "detail": {},
+                          "pages": {},
+                          "pageImage": {}
+                        }
+                      }
+                    }
+                  }
+                }
+                """.trimIndent()
+            val script =
+                """
+                function makePage(index) {
+                  return { id: "p-" + index, pageToken: "tok-" + index };
+                }
+                function makeRange(start, count) {
+                  const list = [];
+                  for (let i = 0; i < count; i++) list.push(makePage(start + i));
+                  return list;
+                }
+                defineFlareSocialPlugin({
+                  capabilities: {
+                    manga: {
+                      detail(request) {
+                        return {
+                          key: request.key,
+                          title: "Paged Manga",
+                          chapters: [
+                            { id: "ch-legacy", title: "Legacy" },
+                            { id: "ch-range", title: "Range" },
+                            { id: "ch-misaligned", title: "Misaligned" },
+                            { id: "ch-cursor", title: "Cursor" }
+                          ]
+                        };
+                      },
+                      pages(request) {
+                        if (request.chapterId === "ch-legacy") {
+                          return { pages: makeRange(0, 2) };
+                        }
+                        if (request.chapterId === "ch-range") {
+                          const offset = request.offset || 0;
+                          if (offset === 0) {
+                            return { pages: makeRange(0, 20), totalCount: 100 };
+                          }
+                          // Natural chunk alignment: snap down to 20-page boundaries
+                          const aligned = Math.floor(offset / 20) * 20;
+                          return { pages: makeRange(aligned, 20), offset: aligned, totalCount: 100 };
+                        }
+                        if (request.chapterId === "ch-misaligned") {
+                          return { pages: makeRange(20, 10), offset: 20, totalCount: 100 };
+                        }
+                        if (request.chapterId === "ch-cursor") {
+                          if ("offset" in request && request.cursor) {
+                            throw new Error("Cursor request must not carry offset: " + request.offset);
+                          }
+                          if (!request.cursor) {
+                            return { pages: makeRange(0, 2), nextCursor: "cur-2", endReached: false };
+                          }
+                          if (request.cursor === "cur-2") {
+                            return { pages: makeRange(2, 2), nextCursor: "cur-3", endReached: false };
+                          }
+                          if (request.cursor === "cur-3") {
+                            return { pages: makeRange(4, 1), offset: 4, endReached: true };
+                          }
+                        }
+                        throw new Error("Unexpected chapter: " + JSON.stringify(request));
+                      },
+                      pageImage(request) {
+                        return { id: "img-" + request.pageId, type: "image", url: "https://cdn.plugin.example/" + request.pageId + ".jpg" };
+                      }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val plugin = install(manifest, script)
+            val manga = requireNotNull(authenticated(plugin).capabilitySet.manga)
+            val mangaKey = MicroBlogKey("m-paging", "plugin.example")
+
+            // 1. Legacy full mode via chapterPagesChunk
+            val legacyChunk: MangaPagesChunk = manga.chapterPagesChunk(mangaKey, "ch-legacy")
+            assertEquals(listOf("p-0", "p-1"), legacyChunk.pages.map { it.id })
+            assertEquals(0, legacyChunk.offset)
+            assertNull(legacyChunk.totalCount)
+            assertNull(legacyChunk.nextCursor)
+            assertTrue(legacyChunk.endReached)
+
+            // 2. Random-access range mode with natural chunk alignment
+            val rangeFirst = manga.chapterPagesChunk(mangaKey, "ch-range")
+            assertEquals(0, rangeFirst.offset)
+            assertEquals(100, rangeFirst.totalCount)
+            assertEquals(20, rangeFirst.pages.size)
+            assertTrue(rangeFirst.endReached)
+
+            val rangeAligned = manga.chapterPagesChunk(mangaKey, "ch-range", offset = 47, limit = 20)
+            assertEquals(40, rangeAligned.offset)
+            assertEquals(100, rangeAligned.totalCount)
+            assertEquals(20, rangeAligned.pages.size)
+            assertEquals("p-40", rangeAligned.pages.first().id)
+            assertEquals("p-59", rangeAligned.pages.last().id)
+
+            // Misaligned range response is rejected
+            assertFailsWith<PluginRuntimeUnavailableException> {
+                manga.chapterPagesChunk(mangaKey, "ch-misaligned", offset = 47, limit = 10)
+            }
+
+            // 3. Sequential cursor mode preserves omitted null offset and explicit offset
+            val cursorFirst = manga.chapterPagesChunk(mangaKey, "ch-cursor")
+            assertEquals(0, cursorFirst.offset)
+            assertNull(cursorFirst.totalCount)
+            assertEquals("cur-2", cursorFirst.nextCursor)
+            assertFalse(cursorFirst.endReached)
+
+            val cursorSecond = manga.chapterPagesChunk(mangaKey, "ch-cursor", cursor = "cur-2")
+            assertNull(cursorSecond.offset)
+            assertNull(cursorSecond.totalCount)
+            assertEquals("cur-3", cursorSecond.nextCursor)
+            assertFalse(cursorSecond.endReached)
+            assertEquals(listOf("p-2", "p-3"), cursorSecond.pages.map { it.id })
+
+            val cursorFinal = manga.chapterPagesChunk(mangaKey, "ch-cursor", cursor = "cur-3")
+            assertEquals(4, cursorFinal.offset)
+            assertNull(cursorFinal.totalCount)
+            assertNull(cursorFinal.nextCursor)
+            assertTrue(cursorFinal.endReached)
+            assertEquals(listOf("p-4"), cursorFinal.pages.map { it.id })
+
+            // Mutual exclusion rejects non-zero offset with cursor before hitting JS
+            assertFailsWith<IllegalArgumentException> {
+                manga.chapterPagesChunk(mangaKey, "ch-cursor", offset = 10, cursor = "cur-2")
+            }
+
+            // Default MangaDataSource.chapterPagesChunk forwards to chapterPages
+            val fallbackSource =
+                object : dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource {
+                    override fun mangaDetail(mangaKey: MicroBlogKey) = manga.mangaDetail(mangaKey)
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ) = manga.chapterPages(mangaKey, chapterId)
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ) = manga.resolvePageMedia(mangaKey, chapterId, pageId, pageToken)
+                }
+            val fallbackChunk = fallbackSource.chapterPagesChunk(mangaKey, "ch-legacy", offset = 0, limit = 10)
+            assertEquals(listOf("p-0", "p-1"), fallbackChunk.pages.map { it.id })
+            assertEquals(0, fallbackChunk.offset)
+            assertNull(fallbackChunk.totalCount)
+            assertNull(fallbackChunk.nextCursor)
+            assertTrue(fallbackChunk.endReached)
+        }
+
+    @Test
+    fun mangaAdapterRoutesPageImageThroughConcurrentWorkerLaneWithoutBlockingPrimary(): Unit =
+        runBlocking {
+            val manifest =
+                """
+                {
+                  "schemaVersion": 1,
+                  "apiVersion": 2,
+                  "id": "dev.example.manga.workers",
+                  "version": "1.0.0",
+                  "name": "Manga Workers Test",
+                  "permissions": { "mediaNetwork": true, "httpOrigins": ["https://cdn.plugin.example"] },
+                  "platform": {
+                    "id": "MangaWorkersTest",
+                    "name": "Manga Workers Test",
+                    "capabilities": {
+                      "flare.datasource.manga/v1": {
+                        "operations": {
+                          "detail": {},
+                          "pages": {},
+                          "pageImage": {}
+                        }
+                      }
+                    }
+                  }
+                }
+                """.trimIndent()
+            val script =
+                """
+                defineFlareSocialPlugin({
+                  capabilities: {
+                    manga: {
+                      detail(request) {
+                        return { key: request.key, title: "Worker Manga", chapters: [{ id: "ch-1", title: "Ch 1" }] };
+                      },
+                      pages() {
+                        return { pages: [{ id: "p-1", pageToken: "tok-1" }] };
+                      },
+                      async pageImage(request) {
+                        await flare.http.request({ url: "https://cdn.plugin.example/resolve/" + request.pageId });
+                        return { id: "img-" + request.pageId, type: "image", url: "https://cdn.plugin.example/" + request.pageId + ".jpg" };
+                      }
+                    }
+                  }
+                });
+                """.trimIndent()
+            val workersStarted = AtomicInteger()
+            val threeWorkersArrived = CompletableDeferred<Unit>()
+            val releaseWorkers = CompletableDeferred<Unit>()
+            val concurrentWorkers = AtomicInteger()
+            val maxConcurrentWorkers = AtomicInteger()
+            val workerTransport =
+                object : PluginHttpTransport {
+                    override suspend fun execute(request: PluginTransportRequestV1): PluginTransportResponseV1 {
+                        val active = concurrentWorkers.incrementAndGet()
+                        maxConcurrentWorkers.updateAndGet { maxOf(it, active) }
+                        return try {
+                            if (workersStarted.incrementAndGet() == 3) {
+                                threeWorkersArrived.complete(Unit)
+                            }
+                            releaseWorkers.await()
+                            PluginTransportResponseV1(200, emptyMap(), "ok".encodeToByteArray())
+                        } finally {
+                            concurrentWorkers.decrementAndGet()
+                        }
+                    }
+                }
+            runtimePool.close()
+            runtimePool = PluginRuntimePool(fileSystem, workerTransport)
+            val plugin = install(manifest, script)
+            val manga = requireNotNull(authenticated(plugin).capabilitySet.manga)
+            val mangaKey = MicroBlogKey("m-workers", "plugin.example")
+
+            withTimeout(10_000) {
+                coroutineScope {
+                    val workerCalls =
+                        (1..3).map { idx ->
+                            async {
+                                manga.resolvePageMedia(mangaKey, "ch-1", "p-$idx", "tok-$idx")
+                            }
+                        }
+                    // Proves 3 resolvePageMedia calls enter JS + HTTP simultaneously
+                    threeWorkersArrived.await()
+                    assertEquals(3, maxConcurrentWorkers.get())
+
+                    // Primary runtime call (chapterPagesChunk) completes while all 3 pageImage workers are blocked!
+                    val primaryPages = manga.chapterPagesChunk(mangaKey, "ch-1")
+                    assertEquals(1, primaryPages.pages.size)
+
+                    releaseWorkers.complete(Unit)
+                    val resolved = workerCalls.awaitAll()
+                    assertEquals(
+                        listOf(
+                            "https://cdn.plugin.example/p-1.jpg",
+                            "https://cdn.plugin.example/p-2.jpg",
+                            "https://cdn.plugin.example/p-3.jpg",
+                        ),
+                        resolved.map { assertIs<UiMedia.Image>(it).url },
+                    )
+                }
+            }
+            val keys = runtimePool.holderKeys()
+            assertEquals(
+                setOf(0, 1, 2),
+                keys.filter { it.workerLane == "manga.pageImage" }.map { it.workerSlot }.toSet(),
+            )
+            assertTrue(keys.any { it.workerLane == null && it.workerSlot == 0 })
         }
 
     @Test

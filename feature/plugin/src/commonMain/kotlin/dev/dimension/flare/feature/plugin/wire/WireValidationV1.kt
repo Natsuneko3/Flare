@@ -401,6 +401,14 @@ public fun MangaPagesRequestV1.requireValid() {
     require(chapterToken == null || chapterToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
         "Manga chapter token is too large"
     }
+    require(offset == null || offset >= 0) { "Invalid manga pages offset" }
+    require(limit == null || limit in 1..2_000) { "Invalid manga pages limit" }
+    require(cursor == null || (cursor.isNotBlank() && cursor.length <= WireLimitsV1.MAX_CURSOR_LENGTH)) {
+        "Invalid manga pages cursor"
+    }
+    require(!(offset != null && cursor != null)) {
+        "Manga pages request cannot specify both offset and cursor"
+    }
 }
 
 public fun MangaPagesV1.requireValid(
@@ -408,10 +416,46 @@ public fun MangaPagesV1.requireValid(
     pageImageSupported: Boolean,
 ) {
     require(pages.size in 1..2_000) { "Invalid manga page count" }
+    require(offset == null || offset >= 0) { "Invalid manga pages offset" }
+    require(totalCount == null || totalCount in 1..50_000) { "Invalid manga pages totalCount" }
+    require(nextCursor == null || (nextCursor.isNotBlank() && nextCursor.length <= WireLimitsV1.MAX_CURSOR_LENGTH)) {
+        "Invalid manga pages nextCursor"
+    }
+    totalCount?.let { total ->
+        require((offset ?: 0).toLong() + pages.size.toLong() <= total.toLong()) {
+            "Manga pages exceed totalCount"
+        }
+    }
+    require(endReached || nextCursor != null) {
+        "Manga pages with endReached = false requires nextCursor"
+    }
     val pageIds = HashSet<String>(pages.size)
     pages.forEach { page ->
         require(pageIds.add(page.id)) { "Duplicate manga page ID" }
         page.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
+    }
+}
+
+public fun MangaPagesV1.requireValid(
+    mediaNetwork: Boolean,
+    pageImageSupported: Boolean,
+    request: MangaPagesRequestV1,
+) {
+    request.requireValid()
+    requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
+    if (request.cursor != null) {
+        require(totalCount == null) { "Cursor manga pages response cannot specify totalCount" }
+        return
+    }
+    val requestedOffset = request.offset
+    if (requestedOffset != null && requestedOffset > 0) {
+        require(totalCount != null) { "Range manga pages response requires totalCount" }
+        val returnedOffset = requireNotNull(offset) { "Range manga pages response requires offset" }
+        require(returnedOffset <= requestedOffset && requestedOffset.toLong() < returnedOffset.toLong() + pages.size.toLong()) {
+            "Manga pages response offset does not cover requested offset"
+        }
+    } else {
+        require(offset == null || offset == 0) { "Initial manga pages response offset must be 0" }
     }
 }
 

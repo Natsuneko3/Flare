@@ -7,6 +7,7 @@ import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.SemanticPostAction
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDetail
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryOrientation
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaPagesChunk
 import dev.dimension.flare.data.datasource.microblog.semanticPostActionMenu
 import dev.dimension.flare.data.model.IconType
 import dev.dimension.flare.data.model.ProxyRef
@@ -22,6 +23,8 @@ import dev.dimension.flare.feature.plugin.wire.GalleryOrientationV1
 import dev.dimension.flare.feature.plugin.wire.GalleryV1
 import dev.dimension.flare.feature.plugin.wire.HashtagV1
 import dev.dimension.flare.feature.plugin.wire.MangaChapterV1
+import dev.dimension.flare.feature.plugin.wire.MangaPageV1
+import dev.dimension.flare.feature.plugin.wire.MangaPagesRequestV1
 import dev.dimension.flare.feature.plugin.wire.MangaPagesV1
 import dev.dimension.flare.feature.plugin.wire.MangaReadingDirectionV1
 import dev.dimension.flare.feature.plugin.wire.MangaStatusV1
@@ -748,7 +751,38 @@ internal class PluginWireMapperV1(
     fun mangaPages(value: MangaPagesV1): ImmutableList<UiMangaPage> {
         val pageImageSupported = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
         value.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
-        return value.pages
+        return mapMangaPageItems(value.pages)
+    }
+
+    fun mangaPagesChunk(
+        value: MangaPagesV1,
+        request: MangaPagesRequestV1? = null,
+    ): MangaPagesChunk {
+        val pageImageSupported = capabilities.hasOperation(PluginAbiV1.Capabilities.MANGA, "pageImage")
+        if (request != null) {
+            value.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported, request = request)
+        } else {
+            value.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
+        }
+        val mappedOffset =
+            when {
+                request?.cursor != null -> value.offset
+                request != null -> value.offset ?: 0
+                value.offset != null -> value.offset
+                value.totalCount != null || (value.nextCursor == null && value.endReached) -> 0
+                else -> null
+            }
+        return MangaPagesChunk(
+            pages = mapMangaPageItems(value.pages),
+            offset = mappedOffset,
+            totalCount = value.totalCount,
+            nextCursor = value.nextCursor,
+            endReached = value.endReached,
+        )
+    }
+
+    private fun mapMangaPageItems(pages: List<MangaPageV1>): ImmutableList<UiMangaPage> =
+        pages
             .map { page ->
                 val media = page.media
                 if (media != null) {
@@ -769,7 +803,6 @@ internal class PluginWireMapperV1(
                     )
                 }
             }.toImmutableList()
-    }
 
     fun mangaPageMedia(value: MediaV1): UiMedia {
         value.requireValidMangaPageMedia(mediaNetwork)

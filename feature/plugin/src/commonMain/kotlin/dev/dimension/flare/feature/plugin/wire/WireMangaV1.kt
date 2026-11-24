@@ -101,6 +101,9 @@ public data class MangaPagesRequestV1(
     val chapterId: String,
     val entityToken: String? = null,
     val chapterToken: String? = null,
+    val offset: Int? = null,
+    val limit: Int? = null,
+    val cursor: String? = null,
 )
 
 @Serializable
@@ -117,6 +120,10 @@ public data class MangaPageV1(
 @Serializable
 public data class MangaPagesV1(
     val pages: List<MangaPageV1>,
+    val offset: Int? = null,
+    val totalCount: Int? = null,
+    val nextCursor: String? = null,
+    val endReached: Boolean = true,
 )
 
 @Serializable

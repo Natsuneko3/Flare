@@ -20,6 +20,7 @@ import dev.dimension.flare.feature.plugin.wire.GalleryV1
 import dev.dimension.flare.feature.plugin.wire.MangaChapterGroupV1
 import dev.dimension.flare.feature.plugin.wire.MangaChapterV1
 import dev.dimension.flare.feature.plugin.wire.MangaPageV1
+import dev.dimension.flare.feature.plugin.wire.MangaPagesRequestV1
 import dev.dimension.flare.feature.plugin.wire.MangaPagesV1
 import dev.dimension.flare.feature.plugin.wire.MangaReadingDirectionV1
 import dev.dimension.flare.feature.plugin.wire.MangaStatusV1
@@ -70,10 +71,12 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 class PluginWireMapperV1Test {
@@ -875,6 +878,52 @@ class PluginWireMapperV1Test {
                 MangaPagesV1(pages = listOf(MangaPageV1(id = "p-3", pageToken = "ptok-3"))),
             )
         }
+
+        // mangaPagesChunk mapping across legacy, range-aligned, and cursor modes
+        val baseReq = MangaPagesRequestV1(key = EntityKeyV1("m-1", "remote.example"), chapterId = "ch-1")
+        val legacyChunk =
+            mapper.mangaPagesChunk(
+                MangaPagesV1(
+                    pages = listOf(MangaPageV1(id = "p-1", pageToken = "ptok-1")),
+                ),
+                request = baseReq.copy(offset = 0),
+            )
+        assertEquals(0, legacyChunk.offset)
+        assertNull(legacyChunk.totalCount)
+        assertNull(legacyChunk.nextCursor)
+        assertTrue(legacyChunk.endReached)
+
+        val rangeChunk =
+            mapper.mangaPagesChunk(
+                MangaPagesV1(
+                    pages =
+                        listOf(
+                            MangaPageV1(id = "p-40", pageToken = "ptok-40"),
+                            MangaPageV1(id = "p-41", pageToken = "ptok-41"),
+                        ),
+                    offset = 40,
+                    totalCount = 100,
+                ),
+                request = baseReq.copy(offset = 41, limit = 2),
+            )
+        assertEquals(40, rangeChunk.offset)
+        assertEquals(100, rangeChunk.totalCount)
+        assertTrue(rangeChunk.endReached)
+
+        val cursorFollowUpChunk =
+            mapper.mangaPagesChunk(
+                MangaPagesV1(
+                    pages = listOf(MangaPageV1(id = "p-2", pageToken = "ptok-2")),
+                    offset = null,
+                    nextCursor = "cur-3",
+                    endReached = false,
+                ),
+                request = baseReq.copy(cursor = "cur-2"),
+            )
+        assertNull(cursorFollowUpChunk.offset)
+        assertNull(cursorFollowUpChunk.totalCount)
+        assertEquals("cur-3", cursorFollowUpChunk.nextCursor)
+        assertFalse(cursorFollowUpChunk.endReached)
     }
 
     @Test

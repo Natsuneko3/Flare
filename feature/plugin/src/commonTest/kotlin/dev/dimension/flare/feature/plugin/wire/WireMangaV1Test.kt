@@ -12,6 +12,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class WireMangaV1Test {
@@ -264,6 +265,142 @@ class WireMangaV1Test {
                         failedUrl = badUrl,
                     ).requireValid()
             }
+        }
+    }
+
+    @Test
+    fun validatesMangaPagesRequestPaginationAndMutualExclusion() {
+        val base = MangaPagesRequestV1(key = EntityKeyV1("m-1", "manga.example"), chapterId = "ch-1")
+        base.requireValid()
+
+        val rangeRequest = base.copy(offset = 0, limit = 40)
+        rangeRequest.requireValid()
+        val encodedRange = PluginJsonV1.encodeToString(rangeRequest)
+        assertContains(encodedRange, "\"offset\":0")
+        assertContains(encodedRange, "\"limit\":40")
+        assertFalse("\"cursor\"" in encodedRange)
+        assertEquals(rangeRequest, PluginJsonV1.decodeFromString<MangaPagesRequestV1>(encodedRange))
+
+        base.copy(offset = 642, limit = 2_000).requireValid()
+        base.copy(limit = 1).requireValid()
+
+        val cursorRequest = base.copy(cursor = "c".repeat(4_096))
+        cursorRequest.requireValid()
+        val encodedCursor = PluginJsonV1.encodeToString(cursorRequest)
+        assertFalse("\"offset\"" in encodedCursor)
+        assertContains(encodedCursor, "\"cursor\":\"")
+        assertEquals(cursorRequest, PluginJsonV1.decodeFromString<MangaPagesRequestV1>(encodedCursor))
+
+        // Invalid bounds and mutual exclusion
+        assertFailsWith<IllegalArgumentException> { base.copy(offset = -1).requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(limit = 0).requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(limit = 2_001).requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(cursor = "").requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(cursor = "   ").requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(cursor = "c".repeat(4_097)).requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(offset = 0, cursor = "next").requireValid() }
+        assertFailsWith<IllegalArgumentException> { base.copy(offset = 40, cursor = "next").requireValid() }
+    }
+
+    @Test
+    fun validatesMangaPagesResponsePaginationModesAndNaturalChunkAlignment() {
+        val baseRequest = MangaPagesRequestV1(key = EntityKeyV1("m-1", "manga.example"), chapterId = "ch-1")
+        val page1 = MangaPageV1(id = "p-1", media = validImageMedia())
+        val pages40 = (0 until 40).map { idx -> MangaPageV1(id = "p-$idx", pageToken = "tok-$idx") }
+
+        // Legacy full mode omits pagination fields and defaults endReached = true
+        val legacyDecoded =
+            PluginJsonV1.decodeFromString<MangaPagesV1>(
+                """{"pages":[{"id":"p-1","media":{"id":"m-1","type":"image","url":"https://cdn.manga.example/cover.jpg"}}]}""",
+            )
+        assertNull(legacyDecoded.offset)
+        assertNull(legacyDecoded.totalCount)
+        assertNull(legacyDecoded.nextCursor)
+        assertTrue(legacyDecoded.endReached)
+        legacyDecoded.requireValid(mediaNetwork = true, pageImageSupported = false)
+        legacyDecoded.requireValid(mediaNetwork = true, pageImageSupported = false, request = baseRequest)
+
+        // Response bounds
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), offset = -1).requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), totalCount = 0).requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), totalCount = 50_001).requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        MangaPagesV1(pages = listOf(page1), offset = 49_999, totalCount = 50_000)
+            .requireValid(mediaNetwork = true, pageImageSupported = false)
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1, page1.copy(id = "p-2")), offset = 9, totalCount = 10)
+                .requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), offset = Int.MAX_VALUE, totalCount = 50_000)
+                .requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), endReached = false, nextCursor = null)
+                .requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), endReached = false, nextCursor = "   ")
+                .requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), endReached = false, nextCursor = "c".repeat(4_097))
+                .requireValid(mediaNetwork = true, pageImageSupported = false)
+        }
+
+        // Range mode: initial request permits offset = null or 0, rejects > 0
+        val initialRangeReq = baseRequest.copy(offset = 0, limit = 40)
+        MangaPagesV1(pages = pages40, offset = null, totalCount = 840)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = initialRangeReq)
+        MangaPagesV1(pages = pages40, offset = 0, totalCount = 840)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = initialRangeReq)
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = pages40, offset = 1, totalCount = 840)
+                .requireValid(mediaNetwork = true, pageImageSupported = true, request = initialRangeReq)
+        }
+
+        // Range mode: subsequent offset > 0 requires non-null offset covering requestedOffset (natural chunk alignment)
+        val jumpRequest = baseRequest.copy(offset = 642, limit = 40)
+        MangaPagesV1(pages = pages40, offset = 640, totalCount = 840)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+        MangaPagesV1(pages = pages40, offset = 642, totalCount = 840)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+        MangaPagesV1(pages = pages40, offset = 603, totalCount = 840)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = pages40, offset = null, totalCount = 840)
+                .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = pages40, offset = 602, totalCount = 840)
+                .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = pages40, offset = 643, totalCount = 840)
+                .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = pages40, offset = 640, totalCount = null)
+                .requireValid(mediaNetwork = true, pageImageSupported = true, request = jumpRequest)
+        }
+
+        // Sequential cursor mode
+        MangaPagesV1(pages = listOf(page1), offset = null, nextCursor = "cur-2", endReached = false)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = initialRangeReq)
+        val cursorFollowUp = baseRequest.copy(cursor = "cur-2")
+        MangaPagesV1(pages = listOf(page1), offset = null, nextCursor = "cur-3", endReached = false)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = cursorFollowUp)
+        MangaPagesV1(pages = listOf(page1), offset = 40, nextCursor = null, endReached = true)
+            .requireValid(mediaNetwork = true, pageImageSupported = true, request = cursorFollowUp)
+        assertFailsWith<IllegalArgumentException> {
+            MangaPagesV1(pages = listOf(page1), offset = 40, totalCount = 100, nextCursor = null, endReached = true)
+                .requireValid(mediaNetwork = true, pageImageSupported = true, request = cursorFollowUp)
         }
     }
 

@@ -1,5 +1,6 @@
 package dev.dimension.flare.data.datasource.microblog.datasource
 
+import androidx.compose.runtime.Immutable
 import dev.dimension.flare.common.Cacheable
 import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
 import dev.dimension.flare.data.datasource.microblog.paging.notSupported
@@ -17,6 +18,15 @@ public enum class MangaPageImageResolveReason {
     ImageLoadFailed,
 }
 
+@Immutable
+public data class MangaPagesChunk(
+    val pages: ImmutableList<UiMangaPage>,
+    val offset: Int? = null,
+    val totalCount: Int? = null,
+    val nextCursor: String? = null,
+    val endReached: Boolean = true,
+)
+
 @HiddenFromObjC
 public interface MangaDataSource {
     public fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail>
@@ -25,6 +35,18 @@ public interface MangaDataSource {
         mangaKey: MicroBlogKey,
         chapterId: String,
     ): ImmutableList<UiMangaPage>
+
+    public suspend fun chapterPagesChunk(
+        mangaKey: MicroBlogKey,
+        chapterId: String,
+        offset: Int = 0,
+        limit: Int? = null,
+        cursor: String? = null,
+    ): MangaPagesChunk =
+        MangaPagesChunk(
+            pages = chapterPages(mangaKey, chapterId),
+            offset = 0,
+        )
 
     public suspend fun resolvePageMedia(
         mangaKey: MicroBlogKey,
