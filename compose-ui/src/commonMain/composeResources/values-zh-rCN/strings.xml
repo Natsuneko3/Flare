@@ -527,4 +527,6 @@
     <string name="manga_locked_chapter_message">%1$s 已锁定，是否在浏览器中打开原网站查看？</string>
     <string name="manga_open_in_browser">在浏览器中打开</string>
     <string name="manga_page_retry">重试本页</string>
+    <string name="session_challenge_complete_verification">完成验证</string>
+    <string name="session_challenge_required_message">需要完成验证才能继续。</string>
 </resources>

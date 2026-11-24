@@ -994,4 +994,11 @@
     <string name="manga_reader_sort_newest_first">Newest first</string>
     <string name="manga_reader_sort_oldest_first">Oldest first</string>
     <string name="manga_reader_page_number">Page %1$d</string>
+    <string name="session_challenge_title">Verification</string>
+    <string name="session_challenge_close">Close</string>
+    <string name="session_challenge_desktop_proxy_warning">Flare\'s custom proxy settings cannot be applied to the desktop verification WebView. This page is using your system proxy.</string>
+    <string name="session_challenge_desktop_seed_cookies_unsupported">Desktop WebView does not support host-only cookie isolation required for this seeded verification session. Please complete verification on iOS, macOS, or Android, or sign in again.</string>
+    <string name="session_challenge_expired">This verification session has expired or is no longer valid. Close this window and retry.</string>
+    <string name="session_challenge_relogin_title">Login required</string>
+    <string name="session_challenge_relogin_message">Your session is no longer valid. Please log in again to continue.</string>
 </resources>

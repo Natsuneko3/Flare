@@ -637,4 +637,6 @@
     <string name="manga_locked_chapter_message">%1$s is locked. Open in browser to view on the original site?</string>
     <string name="manga_open_in_browser">Open in browser</string>
     <string name="manga_page_retry">Retry page</string>
+    <string name="session_challenge_complete_verification">Complete Verification</string>
+    <string name="session_challenge_required_message">Verification is required to continue.</string>
 </resources>

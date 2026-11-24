@@ -29,6 +29,7 @@ import dev.dimension.flare.ui.component.PlatformTitleBar
 import dev.dimension.flare.ui.component.PlatformWindow
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
+import dev.dimension.flare.ui.screen.serviceselect.ProvideDesktopSessionChallengeHost
 import dev.dimension.flare.ui.theme.FlareTheme
 import dev.dimension.flare.ui.theme.ProvideComposeWindow
 import dev.dimension.flare.ui.theme.ProvideNucleusDecoratedWindowTheme
@@ -128,33 +129,13 @@ internal fun DesktopMangaReaderWindowsHost(coordinator: DesktopMangaReaderWindow
                         window.toFront()
                         window.requestFocus()
                     }
-                    val systemUriHandler = LocalUriHandler.current
-                    val readerUriHandler =
-                        remember(systemUriHandler) {
-                            object : UriHandler {
-                                override fun openUri(uri: String) {
-                                    val parsed = if (DeeplinkRoute.isDeeplink(uri)) DeeplinkRoute.parse(uri) else null
-                                    when (parsed) {
-                                        is DeeplinkRoute.OpenLinkDirectly -> systemUriHandler.openUri(parsed.url)
-                                        else -> systemUriHandler.openUri(uri)
-                                    }
-                                }
-                            }
-                        }
                     ProvidePluginTextResolverV1 {
                         FlareTheme(isDarkTheme = true) {
                             ProvideComposeWindow {
-                                CompositionLocalProvider(LocalUriHandler provides readerUriHandler) {
-                                    MangaReaderScreen(
-                                        mangaKey = session.mangaKey,
-                                        chapterId = session.chapterId,
-                                        initialPage = session.initialPage,
-                                        accountType = session.accountType,
-                                        requestNonce = session.requestNonce,
-                                        isStandaloneWindow = true,
-                                        onBack = { coordinator.close(session.key) },
-                                    )
-                                }
+                                DesktopMangaReaderWindowBody(
+                                    session = session,
+                                    coordinator = coordinator,
+                                )
                             }
                             PlatformTitleBar {
                             }
@@ -162,6 +143,42 @@ internal fun DesktopMangaReaderWindowsHost(coordinator: DesktopMangaReaderWindow
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun DesktopMangaReaderWindowBody(
+    session: DesktopMangaReaderWindowSession,
+    coordinator: DesktopMangaReaderWindowCoordinator,
+    content: @Composable () -> Unit = {
+        MangaReaderScreen(
+            mangaKey = session.mangaKey,
+            chapterId = session.chapterId,
+            initialPage = session.initialPage,
+            accountType = session.accountType,
+            requestNonce = session.requestNonce,
+            isStandaloneWindow = true,
+            onBack = { coordinator.close(session.key) },
+        )
+    },
+) {
+    val systemUriHandler = LocalUriHandler.current
+    val readerUriHandler =
+        remember(systemUriHandler) {
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    val parsed = if (DeeplinkRoute.isDeeplink(uri)) DeeplinkRoute.parse(uri) else null
+                    when (parsed) {
+                        is DeeplinkRoute.OpenLinkDirectly -> systemUriHandler.openUri(parsed.url)
+                        else -> systemUriHandler.openUri(uri)
+                    }
+                }
+            }
+        }
+    CompositionLocalProvider(LocalUriHandler provides readerUriHandler) {
+        ProvideDesktopSessionChallengeHost {
+            content()
         }
     }
 }

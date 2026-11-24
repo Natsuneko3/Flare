@@ -32,6 +32,7 @@ import dev.dimension.flare.ui.component.status.ProvideDesktopTimelineMediaAction
 import dev.dimension.flare.ui.screen.manga.DesktopMangaReaderWindowCoordinator
 import dev.dimension.flare.ui.screen.manga.DesktopMangaReaderWindowsHost
 import dev.dimension.flare.ui.screen.manga.LocalDesktopMangaReaderWindowCoordinator
+import dev.dimension.flare.ui.screen.serviceselect.ProvideDesktopSessionChallengeHost
 import dev.dimension.flare.ui.theme.FlareTheme
 import dev.dimension.flare.ui.theme.ProvideComposeWindow
 import dev.dimension.flare.ui.theme.ProvideThemeSettings
@@ -130,10 +131,12 @@ fun main(args: Array<String>) {
                     ProvidePluginTextResolverV1 {
                         FlareTheme {
                             ProvideComposeWindow {
-                                ProvideDesktopTimelineMediaActions {
-                                    FlareApp(
-                                        backButtonState = backButtonState,
-                                    )
+                                ProvideDesktopSessionChallengeHost {
+                                    ProvideDesktopTimelineMediaActions {
+                                        FlareApp(
+                                            backButtonState = backButtonState,
+                                        )
+                                    }
                                 }
                             }
                             PlatformTitleBar {

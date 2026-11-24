@@ -2892,6 +2892,7 @@ private final class IOSMangaStateSnapshot: NSObject, MangaReaderPresenterState {
     func retryChapter() { backing.retryChapter() }
     func retryPage(pageId: String) { backing.retryPage(pageId: pageId) }
     func retryPage(pageId: String, failedUrl: String?) { backing.retryPage(pageId: pageId, failedUrl: failedUrl) }
+    func retryChallengeFailures() { backing.retryChallengeFailures() }
     func setDirection(direction: MangaReadingDirection) { backing.setDirection(direction: direction) }
     func setDoublePageSpread(enabled: Bool) { backing.setDoublePageSpread(enabled: enabled) }
     func setSpreadCoverSinglePage(enabled: Bool) { backing.setSpreadCoverSinglePage(enabled: enabled) }
@@ -3091,6 +3092,8 @@ private final class FakeMangaReaderState: NSObject, MangaReaderPresenterState {
         retriedPages.append((pageId, failedUrl))
         onStateMutated?()
     }
+
+    func retryChallengeFailures() {}
 
     func setDirection(direction: MangaReadingDirection) {
         self.direction = direction

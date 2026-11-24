@@ -102,10 +102,13 @@ import dev.dimension.flare.compose.ui.manga_locked_chapter_message
 import dev.dimension.flare.compose.ui.manga_locked_chapter_title
 import dev.dimension.flare.compose.ui.manga_open_in_browser
 import dev.dimension.flare.compose.ui.manga_page_retry
+import dev.dimension.flare.compose.ui.session_challenge_complete_verification
 import dev.dimension.flare.data.network.ProxyNetwork
+import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.LocalNetworkImageAllowHardware
+import dev.dimension.flare.ui.component.LocalSessionChallengeLauncher
 import dev.dimension.flare.ui.component.accessibleDescription
 import dev.dimension.flare.ui.component.applyAllowHardware
 import dev.dimension.flare.ui.component.media
@@ -441,7 +444,12 @@ public fun MangaReaderCanvas(
                 } else {
                     ErrorContent(
                         error = loadState.throwable,
-                        onRetry = state::retryChapter,
+                        onRetry =
+                            if (loadState.throwable is SessionChallengeException) {
+                                state::retryChallengeFailures
+                            } else {
+                                state::retryChapter
+                            },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -1509,6 +1517,11 @@ private fun ReaderPageCell(
                         retryNonce++
                         state.retryPage(page.id, status.original.url)
                     },
+                    onChallengeCompleted = {
+                        loadError = null
+                        retryNonce++
+                        state.retryChallengeFailures()
+                    },
                     modifier = modifier,
                 )
             } else {
@@ -1578,6 +1591,7 @@ private fun ReaderPageCell(
                 error = status.error,
                 pageId = page.id,
                 onRetry = { state.retryPage(page.id) },
+                onChallengeCompleted = { state.retryChallengeFailures() },
                 modifier = modifier,
             )
         }
@@ -1590,7 +1604,10 @@ private fun ReaderPageErrorContent(
     pageId: String,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    onChallengeCompleted: () -> Unit = onRetry,
 ) {
+    val challengeLauncher = LocalSessionChallengeLauncher.current
+    val challengeError = error as? SessionChallengeException
     Box(
         modifier = modifier.padding(16.dp),
         contentAlignment = Alignment.Center,
@@ -1600,22 +1617,34 @@ private fun ReaderPageErrorContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PlatformText(
-                text = error.message?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.manga_page_retry),
+                text =
+                    challengeError?.displayMessage?.takeIf { it.isNotBlank() }
+                        ?: error.message?.takeIf { it.isNotBlank() }
+                        ?: stringResource(Res.string.manga_page_retry),
                 style = PlatformTheme.typography.body,
                 color = Color.White.copy(alpha = 0.85f),
                 textAlign = TextAlign.Center,
             )
-            PlatformFilledTonalButton(
-                onClick = onRetry,
-                modifier = Modifier.testTag("manga_page_retry_$pageId"),
-            ) {
-                FAIcon(
-                    imageVector = FontAwesomeIcons.Solid.RotateRight,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.size(6.dp))
-                PlatformText(text = stringResource(Res.string.manga_page_retry))
+            if (challengeError != null && challengeLauncher != null) {
+                PlatformFilledTonalButton(
+                    onClick = { challengeLauncher(challengeError, onChallengeCompleted) },
+                    modifier = Modifier.testTag("manga_page_verify_$pageId"),
+                ) {
+                    PlatformText(text = stringResource(Res.string.session_challenge_complete_verification))
+                }
+            } else {
+                PlatformFilledTonalButton(
+                    onClick = onRetry,
+                    modifier = Modifier.testTag("manga_page_retry_$pageId"),
+                ) {
+                    FAIcon(
+                        imageVector = FontAwesomeIcons.Solid.RotateRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    PlatformText(text = stringResource(Res.string.manga_page_retry))
+                }
             }
         }
     }

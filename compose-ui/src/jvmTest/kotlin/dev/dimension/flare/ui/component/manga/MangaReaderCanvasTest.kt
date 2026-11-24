@@ -46,7 +46,10 @@ import coil3.request.Options
 import coil3.size.Size
 import coil3.size.SizeResolver
 import dev.dimension.flare.data.model.ProxyRef
+import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.component.ErrorContent
+import dev.dimension.flare.ui.component.LocalSessionChallengeLauncher
 import dev.dimension.flare.ui.model.MangaReadingDirection
 import dev.dimension.flare.ui.model.UiMangaChapter
 import dev.dimension.flare.ui.model.UiMedia
@@ -1451,6 +1454,123 @@ class MangaReaderCanvasTest {
             )
         }
     }
+
+    @Test
+    fun errorContentAndReaderErrorsTriggerSessionChallengeLauncherAndTargetedCallbacks() {
+        val accountKey = MicroBlogKey("me", "manga.test")
+        val generalChallenge =
+            SessionChallengeException(
+                challengeId = "ch-general",
+                accountKey = accountKey,
+                platformId = "MangaPlat",
+                challengeUrl = "https://manga.test/challenge/general",
+                displayMessage = "Verify to load list",
+            )
+        val chapterChallenge =
+            SessionChallengeException(
+                challengeId = "ch-chapter",
+                accountKey = accountKey,
+                platformId = "MangaPlat",
+                challengeUrl = "https://manga.test/challenge/chapter",
+                displayMessage = "Verify to load chapter",
+            )
+        val pageChallenge =
+            SessionChallengeException(
+                challengeId = "ch-page",
+                accountKey = accountKey,
+                platformId = "MangaPlat",
+                challengeUrl = "https://manga.test/challenge/page",
+                displayMessage = "Verify to load page",
+            )
+
+        val launchedChallenges = mutableListOf<Pair<SessionChallengeException, () -> Unit>>()
+        var generalRetryCount = 0
+        var mode by mutableStateOf("general")
+
+        val fakeState =
+            FakeMangaReaderState(
+                initialDirection = MangaReadingDirection.Ltr,
+                initialPages =
+                    persistentListOf(
+                        ReaderPageState(
+                            id = "p-0",
+                            index = 0,
+                            status = PageMediaStatus.Failed(pageChallenge),
+                            aspectRatio = null,
+                        ),
+                    ),
+                initialSlots = persistentListOf(ReaderSlot.Single(0)),
+            )
+
+        composeRule.setContent {
+            FluentTheme {
+                CompositionLocalProvider(
+                    LocalSessionChallengeLauncher provides { exception, onComplete ->
+                        launchedChallenges += exception to onComplete
+                    },
+                ) {
+                    Box(Modifier.size(400.dp, 600.dp)) {
+                        when (mode) {
+                            "general" -> {
+                                ErrorContent(
+                                    error = generalChallenge,
+                                    onRetry = { generalRetryCount++ },
+                                )
+                            }
+
+                            else -> {
+                                MangaReaderCanvas(
+                                    state = fakeState,
+                                    hudVisible = false,
+                                    onToggleHud = {},
+                                    modifier = Modifier.testTag("reader_canvas"),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1. General ErrorContent displays Complete Verification and runs onRetry on completion.
+        composeRule.onNodeWithText("Verify to load list").assertExists()
+        composeRule.onNodeWithText("Complete Verification").performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, launchedChallenges.size)
+            assertEquals("ch-general", launchedChallenges.last().first.challengeId)
+            launchedChallenges.last().second.invoke()
+            assertEquals(1, generalRetryCount)
+        }
+
+        // 2. Reader chapter-level SessionChallengeException triggers state.retryChallengeFailures() on completion.
+        composeRule.runOnIdle {
+            fakeState.loadState = UiState.Error(chapterChallenge)
+            mode = "reader"
+        }
+        composeRule.onNodeWithText("Verify to load chapter").assertExists()
+        composeRule.onNodeWithText("Complete Verification").performClick()
+        composeRule.runOnIdle {
+            assertEquals(2, launchedChallenges.size)
+            assertEquals("ch-chapter", launchedChallenges.last().first.challengeId)
+            launchedChallenges.last().second.invoke()
+            assertEquals(1, fakeState.retryChallengeFailuresCount)
+            assertEquals(0, fakeState.retryChapterCount)
+        }
+
+        // 3. Reader page-level SessionChallengeException triggers state.retryChallengeFailures() on completion.
+        composeRule.runOnIdle {
+            fakeState.loadState = UiState.Success(Unit)
+        }
+        composeRule.onNodeWithText("Verify to load page").assertExists()
+        composeRule.onNodeWithText("Complete Verification").performClick()
+        composeRule.runOnIdle {
+            assertEquals(3, launchedChallenges.size)
+            assertEquals("ch-page", launchedChallenges.last().first.challengeId)
+            launchedChallenges.last().second.invoke()
+            assertEquals(2, fakeState.retryChallengeFailuresCount)
+            assertTrue(fakeState.retriedPageIds.isEmpty())
+        }
+    }
 }
 
 private fun samplePages(count: Int): ImmutableList<ReaderPageState> =
@@ -1486,7 +1606,7 @@ private class FakeMangaReaderState(
     override val mangaTitle: String = "Test Manga"
     override val chapterTitle: String = "Chapter 1"
     override val chapterUrl: String = "https://manga.test/ch/1"
-    override val loadState: UiState<Unit> = UiState.Success(Unit)
+    override var loadState: UiState<Unit> by mutableStateOf(UiState.Success(Unit))
     override var pages: ImmutableList<ReaderPageState> by mutableStateOf(initialPages)
     override var slots: ImmutableList<ReaderSlot> by mutableStateOf(initialSlots)
     override var currentPageIndex: Int by mutableIntStateOf(0)
@@ -1506,6 +1626,8 @@ private class FakeMangaReaderState(
     var stepForwardCount: Int = 0
     var stepBackwardCount: Int = 0
     var openedBoundaryChapterId: String? = null
+    var retryChapterCount: Int = 0
+    var retryChallengeFailuresCount: Int = 0
     val retriedPageIds = mutableListOf<String>()
     val retriedPages = mutableListOf<Pair<String, String?>>()
     val loadedDimensions = mutableMapOf<String, Pair<Float, Float>>()
@@ -1556,7 +1678,13 @@ private class FakeMangaReaderState(
         openedBoundaryChapterId = boundary.chapter.id
     }
 
-    override fun retryChapter() {}
+    override fun retryChapter() {
+        retryChapterCount++
+    }
+
+    override fun retryChallengeFailures() {
+        retryChallengeFailuresCount++
+    }
 
     override fun retryPage(pageId: String) {
         retryPage(pageId = pageId, failedUrl = null)

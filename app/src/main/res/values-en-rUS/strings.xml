@@ -1113,4 +1113,10 @@
     <string name="manga_reader_constrain_webtoon_width">Constrain webtoon width</string>
     <string name="manga_reader_volume_keys">Use volume keys to turn pages</string>
     <string name="manga_reader_page_number">Page %1$d</string>
+    <string name="session_challenge_title">Verification</string>
+    <string name="session_challenge_close">Close</string>
+    <string name="session_challenge_account_proxy_mismatch">This account uses a custom proxy that differs from the global proxy. Because Android WebView only supports a process-wide proxy, verification cannot be opened safely here. Set the global proxy to match this account and try again.</string>
+    <string name="session_challenge_expired">This verification session has expired or is no longer valid. Close this window and retry.</string>
+    <string name="session_challenge_relogin_title">Login required</string>
+    <string name="session_challenge_relogin_message">Your session is no longer valid. Please log in again to continue.</string>
 </resources>

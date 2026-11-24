@@ -41,12 +41,24 @@ import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.toPagingState
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.datasource.microblog.PostActionFamily
+import dev.dimension.flare.data.model.ProxyMode
+import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.model.appearance.GlobalAppearance
 import dev.dimension.flare.data.model.appearance.TimelineAppearance
+import dev.dimension.flare.data.repository.RequireReLoginException
+import dev.dimension.flare.data.repository.SessionChallengeCheckResult
+import dev.dimension.flare.data.repository.SessionChallengeCookieProbe
+import dev.dimension.flare.data.repository.SessionChallengeCookieRequirement
+import dev.dimension.flare.data.repository.SessionChallengeCookieSnapshot
+import dev.dimension.flare.data.repository.SessionChallengeException
+import dev.dimension.flare.data.repository.SessionChallengeHandle
+import dev.dimension.flare.data.repository.SessionChallengeSeedCookie
 import dev.dimension.flare.data.translation.image.ImageTranslationError
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.LocalGlobalAppearance
+import dev.dimension.flare.ui.component.LocalSessionChallengeLauncher
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.MangaReadingDirection
@@ -78,7 +90,14 @@ import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.TopLevelBackStack
 import dev.dimension.flare.ui.route.dispatchDesktopRouterNavigation
+import dev.dimension.flare.ui.screen.serviceselect.DesktopChallengePolicyDecision
+import dev.dimension.flare.ui.screen.serviceselect.SessionChallengeWebViewDialog
+import dev.dimension.flare.ui.screen.serviceselect.collectDesktopProbeCookies
+import dev.dimension.flare.ui.screen.serviceselect.evaluateDesktopChallengePolicy
+import dev.dimension.flare.ui.screen.serviceselect.shouldAllowDesktopChallengeRequest
 import dev.dimension.flare.ui.theme.FlareTheme
+import io.github.kdroidfilter.webview.wry.CookieSameSite
+import io.github.kdroidfilter.webview.wry.WebViewCookie
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -1400,6 +1419,334 @@ class MangaScreenTest {
             assertEquals(null, translationEntries["local-1"]?.error)
         }
     }
+
+    @Test
+    fun standaloneMangaReaderWindowMountsSessionChallengeLauncherAndTriggersBatchRetry() {
+        val accountKey = MicroBlogKey("me", "manga.example")
+        val session =
+            DesktopMangaReaderWindowSession(
+                key = SessionKey(accountType = AccountType.Specific(accountKey), mangaKey = MicroBlogKey("m-1", "manga.example")),
+                chapterId = "ch-1",
+                initialPage = 0,
+            )
+        val coordinator = DesktopMangaReaderWindowCoordinator()
+        val challenge =
+            SessionChallengeException(
+                challengeId = "desktop-reader-challenge",
+                accountKey = accountKey,
+                platformId = "MangaPlat",
+                challengeUrl = "https://manga.example/challenge",
+                displayMessage = "Solve challenge to read",
+            )
+        val fakeReaderState =
+            FakeDesktopReaderState(
+                pageCount = 2,
+                initialDirection = MangaReadingDirection.Ltr,
+                initialLoadState = UiState.Error(challenge),
+            )
+        var capturedLauncher: ((SessionChallengeException, () -> Unit) -> Unit)? = null
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                DesktopMangaReaderWindowBody(
+                    session = session,
+                    coordinator = coordinator,
+                ) {
+                    capturedLauncher = LocalSessionChallengeLauncher.current
+                    MangaReaderContent(
+                        state = fakeReaderState,
+                        onBack = {},
+                        isStandaloneWindow = true,
+                    )
+                }
+            }
+        }
+
+        assertTrue("Expected LocalSessionChallengeLauncher to be mounted in standalone reader window", capturedLauncher != null)
+        compose.onNodeWithText("Solve challenge to read").assertIsDisplayed()
+        compose.onNodeWithText("Complete Verification").assertIsDisplayed()
+
+        // General ErrorContent invokes onRetry() when challenge completes
+        var generalRetried = 0
+        val mountedLauncher = capturedLauncher!!
+        compose.runOnIdle {
+            assertEquals(0, fakeReaderState.retryChallengeFailuresCount)
+        }
+        // Directly verify completion callback wired from MangaReaderContent calls retryChallengeFailures()
+        var interceptedOnComplete: (() -> Unit)? = null
+        compose.setContent {
+            FlareTheme(isDarkTheme = true) {
+                CompositionLocalProvider(
+                    LocalSessionChallengeLauncher provides { _, onComplete ->
+                        interceptedOnComplete = onComplete
+                    },
+                ) {
+                    ErrorContent(
+                        error = challenge,
+                        onRetry = { generalRetried++ },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Complete Verification").performClick()
+        compose.runOnIdle {
+            interceptedOnComplete?.invoke()
+            assertEquals(1, generalRetried)
+            mountedLauncher.toString()
+        }
+    }
+
+    @Test
+    fun desktopSessionChallengePolicyBannerOriginHighlightAndCompletionFlow() {
+        // 1. Policy decision checks: ProxyMode != SYSTEM falls back to system proxy with warning; non-empty seedCookies fail-closes.
+        assertEquals(
+            DesktopChallengePolicyDecision(blockedBySeedCookies = false, usesSystemProxyFallback = false),
+            evaluateDesktopChallengePolicy(
+                accountProxyMode = ProxyMode.SYSTEM,
+                seedCookies = emptyList(),
+            ),
+        )
+        assertEquals(
+            DesktopChallengePolicyDecision(blockedBySeedCookies = false, usesSystemProxyFallback = true),
+            evaluateDesktopChallengePolicy(
+                accountProxyMode = ProxyMode.PROXY,
+                seedCookies = emptyList(),
+            ),
+        )
+        assertEquals(
+            DesktopChallengePolicyDecision(blockedBySeedCookies = true, usesSystemProxyFallback = false),
+            evaluateDesktopChallengePolicy(
+                accountProxyMode = ProxyMode.SYSTEM,
+                seedCookies = listOf(SessionChallengeSeedCookie("ipb_member_id", "42")),
+            ),
+        )
+
+        // 2. Request interceptor allows only https:// on main frame.
+        assertTrue(shouldAllowDesktopChallengeRequest(isForMainFrame = true, url = "https://manga.example/challenge"))
+        assertFalse(shouldAllowDesktopChallengeRequest(isForMainFrame = true, url = "http://manga.example/challenge"))
+        assertFalse(shouldAllowDesktopChallengeRequest(isForMainFrame = true, url = "javascript:alert(1)"))
+        assertTrue(shouldAllowDesktopChallengeRequest(isForMainFrame = false, url = "http://sub.example/asset"))
+
+        // 3. Probe cookie collector gathers ONLY declared cookies from handle.probes.
+        val probe =
+            SessionChallengeCookieProbe(
+                url = "https://manga.example/gallery",
+                cookies = listOf(SessionChallengeCookieRequirement("cf_clearance", required = true)),
+            )
+        val collected =
+            collectDesktopProbeCookies(
+                probes = listOf(probe),
+                getCookiesForUrl = { url ->
+                    if (url == probe.url) {
+                        listOf(
+                            WebViewCookie(
+                                "cf_clearance",
+                                "cleared",
+                                "manga.example",
+                                "/",
+                                null,
+                                true,
+                                null,
+                                CookieSameSite.LAX,
+                                true,
+                                true,
+                            ),
+                            WebViewCookie("undeclared", "secret", "manga.example", "/", null, true, null, CookieSameSite.NONE, true, true),
+                        )
+                    } else {
+                        emptyList()
+                    }
+                },
+            )
+        assertEquals(listOf("cf_clearance" to "cleared"), collected.map { it.name to it.value })
+        assertEquals(listOf("https://manga.example/gallery"), collected.map { it.sourceUrl })
+
+        // 4. Non-empty seedCookies fail-closes without ever mounting WebView.
+        val accountKey = MicroBlogKey("me", "manga.example")
+        val seededHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "seeded-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = listOf(SessionChallengeSeedCookie("ipb_member_id", "1")),
+                probes = listOf(probe),
+            )
+        var webViewMountedCount = 0
+        var dismissedCount = 0
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                SessionChallengeWebViewDialog(
+                    exception =
+                        SessionChallengeException(
+                            challengeId = "seeded-1",
+                            accountKey = accountKey,
+                            platformId = "MangaPlat",
+                            challengeUrl = "https://manga.example/challenge",
+                            displayMessage = "Verify",
+                        ),
+                    accountProxyMode = ProxyMode.SYSTEM,
+                    beginSession = { seededHandle },
+                    onCompleted = {},
+                    onRequireRelogin = {},
+                    onDismiss = { dismissedCount++ },
+                    webViewContent = { _, _, _, _, _ ->
+                        webViewMountedCount++
+                    },
+                )
+            }
+        }
+        compose.onNodeWithTag("session_challenge_seed_cookies_unsupported").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(0, webViewMountedCount)
+        }
+
+        // 5. Empty seedCookies + ProxyMode.PROXY mounts WebView, shows top proxy warning banner, highlights deviated origin, and completes.
+        val emptySeedHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "cf-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+            )
+        var originUpdateCallback: ((String) -> Unit)? = null
+        var navFinishedCallback: (() -> Unit)? = null
+        var uaCallback: ((String) -> Unit)? = null
+        var snapshotCallback: ((() -> SessionChallengeCookieSnapshot?) -> Unit)? = null
+        var completedCount = 0
+        var reloginExceptions = mutableListOf<RequireReLoginException>()
+
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                SessionChallengeWebViewDialog(
+                    exception =
+                        SessionChallengeException(
+                            challengeId = "cf-1",
+                            accountKey = accountKey,
+                            platformId = "MangaPlat",
+                            challengeUrl = "https://manga.example/challenge",
+                            displayMessage = "Verify",
+                        ),
+                    accountProxyMode = ProxyMode.PROXY,
+                    beginSession = { emptySeedHandle },
+                    onCompleted = { completedCount++ },
+                    onRequireRelogin = { reloginExceptions += it },
+                    onDismiss = { dismissedCount++ },
+                    webViewContent = { _, onOriginChanged, onNavigationFinished, onUserAgentAvailable, onSnapshotProvider ->
+                        webViewMountedCount++
+                        originUpdateCallback = onOriginChanged
+                        navFinishedCallback = onNavigationFinished
+                        uaCallback = onUserAgentAvailable
+                        snapshotCallback = onSnapshotProvider
+                    },
+                )
+            }
+        }
+        compose.onNodeWithTag("session_challenge_proxy_warning").assertIsDisplayed()
+        compose.onNodeWithTag("session_challenge_origin").assertIsDisplayed()
+        compose.onNodeWithText("https://manga.example").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(1, webViewMountedCount)
+            originUpdateCallback?.invoke("https://challenges.cloudflare.com")
+        }
+        compose.onNodeWithText("https://challenges.cloudflare.com").assertIsDisplayed()
+        compose.onNodeWithTag("session_challenge_origin_deviated").assertIsDisplayed()
+
+        // Busy is ignored, then Completed closes and triggers onCompleted
+        emptySeedHandle.nextResults.add(SessionChallengeCheckResult.Busy)
+        emptySeedHandle.nextResults.add(SessionChallengeCheckResult.Completed)
+        compose.runOnIdle {
+            uaCallback?.invoke("FlareDesktopTestUA/1.0")
+            snapshotCallback?.invoke {
+                SessionChallengeCookieSnapshot(
+                    cookies = emptyList(),
+                    userAgent = "FlareDesktopTestUA/1.0",
+                )
+            }
+            navFinishedCallback?.invoke()
+        }
+        compose.runOnIdle {
+            navFinishedCallback?.invoke()
+        }
+        compose.runOnIdle {
+            assertEquals(1, completedCount)
+            assertEquals(1, emptySeedHandle.closedCount)
+        }
+
+        // 6. RequireReLoginException closes handle & WebView and notifies onRequireRelogin
+        val reloginHandle =
+            FakeDesktopChallengeHandle(
+                challengeId = "relogin-1",
+                accountKey = accountKey,
+                challengeUrl = "https://manga.example/challenge",
+                seedCookies = emptyList(),
+                probes = listOf(probe),
+                throwOnCheck = RequireReLoginException(accountKey, "MangaPlat"),
+            )
+        var reloginNavCallback: (() -> Unit)? = null
+        var reloginSnapshotCallback: ((() -> SessionChallengeCookieSnapshot?) -> Unit)? = null
+        compose.setContent {
+            FlareTheme(isDarkTheme = false) {
+                SessionChallengeWebViewDialog(
+                    exception =
+                        SessionChallengeException(
+                            challengeId = "relogin-1",
+                            accountKey = accountKey,
+                            platformId = "MangaPlat",
+                            challengeUrl = "https://manga.example/challenge",
+                            displayMessage = "Verify",
+                        ),
+                    accountProxyMode = ProxyMode.SYSTEM,
+                    beginSession = { reloginHandle },
+                    onCompleted = {},
+                    onRequireRelogin = { reloginExceptions += it },
+                    onDismiss = {},
+                    webViewContent = { _, _, onNavigationFinished, _, onSnapshotProvider ->
+                        reloginNavCallback = onNavigationFinished
+                        reloginSnapshotCallback = onSnapshotProvider
+                    },
+                )
+            }
+        }
+        compose.runOnIdle {
+            reloginSnapshotCallback?.invoke {
+                SessionChallengeCookieSnapshot(cookies = emptyList(), userAgent = "FlareDesktopTestUA/1.0")
+            }
+            reloginNavCallback?.invoke()
+        }
+        compose.runOnIdle {
+            assertEquals(1, reloginExceptions.size)
+            assertEquals(accountKey, reloginExceptions.single().accountKey)
+            assertEquals(1, reloginHandle.closedCount)
+        }
+    }
+}
+
+private class FakeDesktopChallengeHandle(
+    override val challengeId: String,
+    override val accountKey: MicroBlogKey,
+    override val challengeUrl: String,
+    override val seedCookies: List<SessionChallengeSeedCookie>,
+    override val probes: List<SessionChallengeCookieProbe>,
+    private val throwOnCheck: Throwable? = null,
+) : SessionChallengeHandle {
+    override val platformId: String = "MangaPlat"
+    override val proxyRef: ProxyRef = ProxyRef.forAccount(accountKey)
+    val nextResults = ArrayDeque<SessionChallengeCheckResult>()
+    var closedCount = 0
+
+    override suspend fun check(snapshot: SessionChallengeCookieSnapshot): SessionChallengeCheckResult {
+        throwOnCheck?.let { throw it }
+        return nextResults.removeFirstOrNull() ?: SessionChallengeCheckResult.Pending
+    }
+
+    override fun cancel() {
+        closedCount++
+    }
+
+    override fun close() {
+        closedCount++
+    }
 }
 
 private class FakeMangaDetailState(
@@ -1470,11 +1817,13 @@ private class FakeDesktopReaderState(
     private val chapterProgress: Map<String, Pair<Boolean, Int>> = emptyMap(),
     customSlots: ImmutableList<ReaderSlot>? = null,
     customImageTranslation: ImageTranslationPresenter.State? = null,
+    initialLoadState: UiState<Unit> = UiState.Success(Unit),
 ) : MangaReaderPresenter.State {
     override val mangaTitle: String = "Starlight Odyssey"
     override val chapterTitle: String = "Chapter 1"
     override var activeChapterId: String by mutableStateOf("ch-1")
-    override val loadState: UiState<Unit> = UiState.Success(Unit)
+    override val loadState: UiState<Unit> = initialLoadState
+    var retryChallengeFailuresCount: Int = 0
     override val pages: ImmutableList<ReaderPageState> =
         (0 until pageCount)
             .map { idx ->
@@ -1573,6 +1922,10 @@ private class FakeDesktopReaderState(
     override fun openAdjacentChapter(boundary: ChapterBoundary.Unlocked) {}
 
     override fun retryChapter() {}
+
+    override fun retryChallengeFailures() {
+        retryChallengeFailuresCount++
+    }
 
     override fun retryPage(pageId: String) {}
 

@@ -26,6 +26,8 @@ import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.data.repository.MangaProgressRepository
 import dev.dimension.flare.data.repository.MangaProgressSnapshot
+import dev.dimension.flare.data.repository.SessionChallengeCoordinator
+import dev.dimension.flare.data.repository.SessionChallengeException
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
@@ -269,6 +271,8 @@ public class MangaReaderPresenter(
         ) {
             retryPage(pageId)
         }
+
+        public fun retryChallengeFailures() {}
 
         public fun setDirection(direction: MangaReadingDirection)
 
@@ -1021,6 +1025,46 @@ public class MangaReaderPresenter(
                 )
             }
 
+            override fun retryChallengeFailures() {
+                val currentSession = activeSessionHolder.session
+                val exceptions =
+                    buildList {
+                        ((detailState as? UiState.Error)?.throwable as? SessionChallengeException)?.let(::add)
+                        ((currentSession?.pagesLoadState as? UiState.Error)?.throwable as? SessionChallengeException)?.let(::add)
+                        currentSession?.failedChunkRegions?.mapNotNullTo(this) { it.error as? SessionChallengeException }
+                        (currentSession?.cursorAppendError as? SessionChallengeException)?.let(::add)
+                        currentSession?.failedPages?.values?.mapNotNullTo(this) { it as? SessionChallengeException }
+                    }
+                val coordinator =
+                    org.koin.mp.KoinPlatformTools
+                        .defaultContext()
+                        .getOrNull()
+                        ?.getOrNull<SessionChallengeCoordinator>()
+                if (coordinator != null) {
+                    val accountKeys =
+                        buildSet {
+                            (accountType as? AccountType.Specific)?.accountKey?.let(::add)
+                            exceptions.forEach { add(it.accountKey) }
+                        }
+                    exceptions.forEach { coordinator.invalidateTicket(it.challengeId) }
+                    accountKeys.forEach { coordinator.invalidateAccountChallenges(it) }
+                }
+                when {
+                    (detailState as? UiState.Error)?.throwable is SessionChallengeException -> {
+                        retryChapter()
+                    }
+
+                    (currentSession?.pagesLoadState as? UiState.Error)?.throwable is SessionChallengeException -> {
+                        retryChapter()
+                    }
+
+                    currentSession?.pagesLoadState is UiState.Success -> {
+                        val source = currentDataSource ?: return
+                        currentSession.retryChallengeFailures(dataSource = source)
+                    }
+                }
+            }
+
             override fun setDirection(direction: MangaReadingDirection) {
                 val targetMangaKey = latestEffectiveMangaKey
                 optimisticDirectionOverride = direction
@@ -1733,6 +1777,32 @@ private class ChapterPagesSession(
             scope.launch {
                 launchCursorAppend(dataSource = dataSource)
             }
+        }
+    }
+
+    fun retryChallengeFailures(dataSource: MangaDataSource) {
+        if (!job.isActive) return
+        val hasChallengeChunkFailures = failedChunkRegions.any { it.error is SessionChallengeException }
+        val hasChallengeCursorFailure = cursorAppendError is SessionChallengeException
+        val challengePageIds =
+            failedPages.entries
+                .mapNotNull { (pageId, error) -> pageId.takeIf { error is SessionChallengeException } }
+                .toSet()
+        if (!hasChallengeChunkFailures && !hasChallengeCursorFailure && challengePageIds.isEmpty()) return
+        Snapshot.withMutableSnapshot {
+            if (hasChallengeChunkFailures) {
+                failedChunkRegions = failedChunkRegions.filterNot { it.error is SessionChallengeException }
+            }
+            if (hasChallengeCursorFailure) {
+                cursorAppendError = null
+            }
+            if (challengePageIds.isNotEmpty()) {
+                failedPages = failedPages - challengePageIds
+            }
+        }
+        scope.launch {
+            syncChunkWindow(currentPageIndex = currentPageIndex, dataSource = dataSource)
+            syncResolutionWindow(currentPageIndex = currentPageIndex, dataSource = dataSource)
         }
     }
 

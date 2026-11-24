@@ -1058,4 +1058,10 @@
     <string name="manga_reader_constrain_webtoon_width">限制條漫寬度</string>
     <string name="manga_reader_volume_keys">使用音量鍵翻頁</string>
     <string name="manga_reader_page_number">第 %1$d 頁</string>
+    <string name="session_challenge_title">安全驗證</string>
+    <string name="session_challenge_close">關閉</string>
+    <string name="session_challenge_account_proxy_mismatch">目前帳號的代理設定與全域代理不一致。由於 Android WebView 僅支援程序級全域代理，為確保網路邊界安全，無法在此開啟驗證頁面。請將全域代理調整為與該帳號一致後重試。</string>
+    <string name="session_challenge_expired">目前驗證工作階段已過期或失效，請關閉後重試。</string>
+    <string name="session_challenge_relogin_title">需要重新登入</string>
+    <string name="session_challenge_relogin_message">目前登入狀態已失效，請重新登入以繼續使用。</string>
 </resources>

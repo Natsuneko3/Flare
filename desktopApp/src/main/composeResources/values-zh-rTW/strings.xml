@@ -938,4 +938,11 @@
     <string name="manga_reader_sort_newest_first">最新優先</string>
     <string name="manga_reader_sort_oldest_first">最早優先</string>
     <string name="manga_reader_page_number">第 %1$d 頁</string>
+    <string name="session_challenge_title">安全驗證</string>
+    <string name="session_challenge_close">關閉</string>
+    <string name="session_challenge_desktop_proxy_warning">Flare 的自訂代理設定無法套用至桌面端驗證 WebView，目前頁面將透過系統代理載入。</string>
+    <string name="session_challenge_desktop_seed_cookies_unsupported">桌面端 WebView 不支援此驗證所需的僅限來源主機 Cookie 隔離機制。請在 iOS、macOS 或 Android 端完成驗證，或重新登入帳號。</string>
+    <string name="session_challenge_expired">目前驗證工作階段已過期或失效，請關閉後重試。</string>
+    <string name="session_challenge_relogin_title">需要重新登入</string>
+    <string name="session_challenge_relogin_message">目前登入狀態已失效，請重新登入以繼續使用。</string>
 </resources>

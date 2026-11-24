@@ -25,6 +25,9 @@ import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.repository.AccountMicroblogDataSource
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.data.repository.MangaProgressRepository
+import dev.dimension.flare.data.repository.SessionChallengeCoordinator
+import dev.dimension.flare.data.repository.SessionChallengeException
+import dev.dimension.flare.data.repository.SessionChallengeHandle
 import dev.dimension.flare.data.translation.image.ImageTranslationRepository
 import dev.dimension.flare.deleteTestRootPath
 import dev.dimension.flare.di.startKoin
@@ -3261,6 +3264,374 @@ class MangaReaderPresenterTest {
                 presenterSeq.awaitPendingWrites()
                 presenterCap.awaitPendingWrites()
                 presenterCancel.awaitPendingWrites()
+                mockClient.close()
+                stopKoin()
+                cacheDatabase.close()
+                deleteTestRootPath(root)
+                tempDir.toFile().deleteRecursively()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun sessionChallengePrefetchDoesNotAutoOpenAndRetryChallengeFailuresInvalidatesSiblingsAndRequeuesAll() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val tempDir = Files.createTempDirectory("manga-reader-challenge-test")
+            val root = createTestRootPath()
+            val fileStorage = OkioFileStorage(createTestFileSystem(), root)
+            val realStorage = OkioFileStorage(FileSystem.SYSTEM, tempDir.toString().toPath(), cacheRoot = tempDir.toString().toPath())
+            val appDataStore = AppDataStore(fileStorage)
+            val cacheDatabase =
+                Room
+                    .databaseBuilder<CacheDatabase>(name = tempDir.resolve("cache.db").toAbsolutePath().toString())
+                    .setDriver(createDatabaseDriver())
+                    .setQueryCoroutineContext(PlatformDispatchers.IO)
+                    .build()
+            val progressRepository = MangaProgressRepository(cacheDatabase) { 1_000L }
+            val mockClient = HttpClient(MockEngine { respond(ByteArray(0)) })
+            val imageTranslationRepository =
+                ImageTranslationRepository(
+                    storage = realStorage,
+                    client = mockClient,
+                    adapters = emptyList(),
+                    sourceClient = { mockClient },
+                    imageCompressor = JvmImageCompressor(),
+                )
+
+            val otherAccountKey = MicroBlogKey("other", "manga.example")
+            val activeTickets = ConcurrentHashMap<String, MicroBlogKey>()
+            val invalidatedTickets = CopyOnWriteArrayList<String>()
+            val invalidatedAccounts = CopyOnWriteArrayList<MicroBlogKey>()
+            val coordinator =
+                object : SessionChallengeCoordinator {
+                    override suspend fun beginSession(challengeId: String): SessionChallengeHandle? = null
+
+                    override fun invalidateTicket(challengeId: String) {
+                        invalidatedTickets += challengeId
+                        activeTickets.remove(challengeId)
+                    }
+
+                    override fun invalidateAccountChallenges(accountKey: MicroBlogKey) {
+                        invalidatedAccounts += accountKey
+                        activeTickets.entries.removeIf { it.value == accountKey }
+                    }
+
+                    override fun invalidateSiblingTickets(
+                        accountKey: MicroBlogKey,
+                        excludeChallengeId: String,
+                    ) {
+                        activeTickets.entries.removeIf { it.value == accountKey && it.key != excludeChallengeId }
+                    }
+                }
+            activeTickets["other-account-ticket"] = otherAccountKey
+
+            fun deferredPages(
+                prefix: String,
+                range: IntRange,
+            ): ImmutableList<UiMangaPage> =
+                range
+                    .map { idx ->
+                        UiMangaPage.Deferred(
+                            id = "$prefix-$idx",
+                            pageToken = "token-$prefix-$idx",
+                            previewUrl = null,
+                            width = 800f,
+                            height = 1200f,
+                            customHeaders = null,
+                            proxy = ProxyRef.Unbound,
+                        )
+                    }.toImmutableList()
+
+            val detail =
+                readerDetail(
+                    chapterGroups =
+                        persistentListOf(
+                            UiMangaChapterGroup(
+                                id = "main",
+                                title = UiText.Raw("Main"),
+                                chapters =
+                                    persistentListOf(
+                                        UiMangaChapter("ch-range", "Range", null, null, locked = false, url = null),
+                                        UiMangaChapter("ch-init", "Init", null, null, locked = false, url = null),
+                                        UiMangaChapter("ch-cursor", "Cursor", null, null, locked = false, url = null),
+                                    ),
+                            ),
+                        ),
+                )
+            val detailCache = MutableStateFlow<UiMangaDetail?>(null)
+            var blockWithChallenge = true
+            var blockInitialWithChallenge = true
+            var blockCursorWithChallenge = true
+            val chunkRequests = CopyOnWriteArrayList<String>()
+            val resolveRequests = CopyOnWriteArrayList<String>()
+
+            fun issueChallenge(id: String): SessionChallengeException {
+                activeTickets[id] = accountKey
+                return SessionChallengeException(
+                    challengeId = id,
+                    accountKey = accountKey,
+                    platformId = "ExampleManga",
+                    challengeUrl = "https://manga.example/challenge/$id",
+                    displayMessage = "Verify $id",
+                )
+            }
+
+            val mangaDataSource =
+                object : MangaDataSource {
+                    override fun mangaDetail(mangaKey: MicroBlogKey): Cacheable<UiMangaDetail> =
+                        Cacheable(
+                            fetchSource = { detailCache.value = detail },
+                            cacheSource = { detailCache.filterNotNull() },
+                        )
+
+                    override suspend fun chapterPages(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                    ): ImmutableList<UiMangaPage> = error("chapterPagesChunk must be used")
+
+                    override suspend fun chapterPagesChunk(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        offset: Int,
+                        limit: Int?,
+                        cursor: String?,
+                    ): MangaPagesChunk {
+                        chunkRequests += "$chapterId:$offset:$cursor"
+                        return when (chapterId) {
+                            "ch-range" -> {
+                                if (offset == 0) {
+                                    MangaPagesChunk(
+                                        pages = deferredPages("r", 0..19),
+                                        offset = 0,
+                                        totalCount = 40,
+                                        nextCursor = null,
+                                        endReached = true,
+                                    )
+                                } else {
+                                    if (blockWithChallenge) {
+                                        throw issueChallenge("ticket-chunk-$offset")
+                                    }
+                                    MangaPagesChunk(
+                                        pages = deferredPages("r", 20..39),
+                                        offset = 20,
+                                        totalCount = 40,
+                                        nextCursor = null,
+                                        endReached = true,
+                                    )
+                                }
+                            }
+
+                            "ch-init" -> {
+                                if (blockInitialWithChallenge) {
+                                    throw issueChallenge("ticket-init")
+                                }
+                                MangaPagesChunk(
+                                    pages = readyPages(3, "init"),
+                                    offset = 0,
+                                    totalCount = 3,
+                                    nextCursor = null,
+                                    endReached = true,
+                                )
+                            }
+
+                            "ch-cursor" -> {
+                                if (cursor == null) {
+                                    MangaPagesChunk(
+                                        pages = readyPages(15, "cur0"),
+                                        offset = 0,
+                                        totalCount = null,
+                                        nextCursor = "cur-1",
+                                        endReached = false,
+                                    )
+                                } else {
+                                    if (blockCursorWithChallenge) {
+                                        throw issueChallenge("ticket-cursor")
+                                    }
+                                    MangaPagesChunk(
+                                        pages = readyPages(5, "cur1"),
+                                        offset = 15,
+                                        totalCount = null,
+                                        nextCursor = null,
+                                        endReached = true,
+                                    )
+                                }
+                            }
+
+                            else -> {
+                                error("Unexpected $chapterId")
+                            }
+                        }
+                    }
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                    ): UiMedia =
+                        resolvePageMedia(
+                            mangaKey = mangaKey,
+                            chapterId = chapterId,
+                            pageId = pageId,
+                            pageToken = pageToken,
+                            attempt = 0,
+                            reason = MangaPageImageResolveReason.Initial,
+                            failedUrl = null,
+                        )
+
+                    override suspend fun resolvePageMedia(
+                        mangaKey: MicroBlogKey,
+                        chapterId: String,
+                        pageId: String,
+                        pageToken: String,
+                        attempt: Int,
+                        reason: MangaPageImageResolveReason,
+                        failedUrl: String?,
+                    ): UiMedia {
+                        resolveRequests += pageId
+                        if (pageId == "r-14") {
+                            throw IOException("Network failure")
+                        }
+                        if (blockWithChallenge) {
+                            throw issueChallenge("ticket-page-$pageId")
+                        }
+                        return UiMedia.Image(
+                            url = "https://manga.example/$pageId.jpg",
+                            previewUrl = "https://manga.example/$pageId-preview.jpg",
+                            description = null,
+                            height = 1200f,
+                            width = 800f,
+                            sensitive = false,
+                        )
+                    }
+                }
+
+            val accountService = FakeReaderAccountService(accountKey, mangaDataSource)
+            startKoin {
+                modules(
+                    module {
+                        testSingle<AccountService> { accountService }
+                        testSingle { appDataStore }
+                        testSingle { cacheDatabase }
+                        testSingle { progressRepository }
+                        testSingle { imageTranslationRepository }
+                        testSingle<SessionChallengeCoordinator> { coordinator }
+                    },
+                )
+            }
+
+            val job = SupervisorJob()
+            val scope = CoroutineScope(dispatcher + job)
+            val presenter = MangaReaderPresenter(accountType, mangaKey, initialChapterId = "ch-range", initialPage = 10)
+            try {
+                val states = MutableStateFlow<MangaReaderPresenter.State?>(null)
+                scope.launch {
+                    moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { states.value = it }
+                }
+
+                // 1. Concurrent -1..+3 resolution around page 10 (pages 9..13) AND range chunk 20..39 fail with SessionChallengeException.
+                //    Background prefetch must NOT auto-open any challenge; non-challenge page failures stay unaffected.
+                val blocked =
+                    awaitReaderState(states) { state ->
+                        state.activeChapterId == "ch-range" &&
+                            state.loadState is UiState.Success &&
+                            state.pages.size == 40 &&
+                            (9..13).all { idx ->
+                                (state.pages[idx].status as? PageMediaStatus.Failed)?.error is SessionChallengeException
+                            } &&
+                            (state.pages[20].status as? PageMediaStatus.Failed)?.error is SessionChallengeException
+                    }
+                assertTrue(activeTickets.containsKey("ticket-page-r-10"))
+                assertTrue(activeTickets.containsKey("ticket-page-r-11"))
+                assertTrue(activeTickets.containsKey("ticket-chunk-20"))
+
+                // Also mark page 14 with a non-challenge IOException to confirm retryChallengeFailures preserves non-challenge errors.
+                blocked.goToPage(13)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val withNonChallengeError =
+                    awaitReaderState(states) { state ->
+                        (state.pages[14].status as? PageMediaStatus.Failed)?.error is IOException
+                    }
+
+                // Navigate back to page 10, clear challenge block, and invoke retryChallengeFailures().
+                withNonChallengeError.goToPage(10)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                blockWithChallenge = false
+                resolveRequests.clear()
+                chunkRequests.clear()
+                states.value!!.retryChallengeFailures()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+
+                val recovered =
+                    awaitReaderState(states) { state ->
+                        (9..13).all { idx -> state.pages[idx].status is PageMediaStatus.Ready } &&
+                            state.pages[20].id == "r-20"
+                    }
+                assertTrue(
+                    invalidatedTickets.containsAll(
+                        listOf(
+                            "ticket-page-r-9",
+                            "ticket-page-r-10",
+                            "ticket-page-r-11",
+                            "ticket-page-r-12",
+                            "ticket-page-r-13",
+                            "ticket-chunk-20",
+                        ),
+                    ),
+                )
+                assertTrue(accountKey in invalidatedAccounts)
+                assertFalse(activeTickets.values.contains(accountKey))
+                assertTrue(activeTickets.containsKey("other-account-ticket"), "Unrelated account tickets must remain intact")
+                assertIs<IOException>(assertIs<PageMediaStatus.Failed>(recovered.pages[14].status).error)
+
+                // 2. Chapter initial load failing with SessionChallengeException recovers via retryChallengeFailures().
+                recovered.openChapter("ch-init", initialPage = 0)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val initBlocked =
+                    awaitReaderState(states) { state ->
+                        state.activeChapterId == "ch-init" &&
+                            (state.loadState as? UiState.Error)?.throwable is SessionChallengeException
+                    }
+                blockInitialWithChallenge = false
+                initBlocked.retryChallengeFailures()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val initRecovered =
+                    awaitReaderState(states) { state ->
+                        state.activeChapterId == "ch-init" &&
+                            state.loadState is UiState.Success &&
+                            state.pages.size == 3
+                    }
+
+                // 3. Cursor append failing with SessionChallengeException recovers via retryChallengeFailures().
+                initRecovered.openChapter("ch-cursor", initialPage = 14)
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                val cursorBlocked =
+                    awaitReaderState(states) { state ->
+                        state.activeChapterId == "ch-cursor" &&
+                            state.loadState is UiState.Success &&
+                            state.pages.size == 16 &&
+                            (state.pages[15].status as? PageMediaStatus.Failed)?.error is SessionChallengeException
+                    }
+                blockCursorWithChallenge = false
+                cursorBlocked.retryChallengeFailures()
+                Snapshot.sendApplyNotifications()
+                runCurrent()
+                awaitReaderState(states) { state ->
+                    state.activeChapterId == "ch-cursor" &&
+                        state.loadState is UiState.Success &&
+                        state.pages.size == 20
+                }
+            } finally {
+                job.cancelAndJoin()
+                presenter.awaitPendingWrites()
                 mockClient.close()
                 stopKoin()
                 cacheDatabase.close()
