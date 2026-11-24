@@ -4,11 +4,13 @@ import FlareAppleCore
 import Foundation
 import ImageIO
 import Kingfisher
-import KotlinSharedUI
+@preconcurrency import KotlinSharedUI
+@preconcurrency import Network
 import Observation
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 import XCTest
 
 @MainActor
@@ -2039,6 +2041,613 @@ final class MangaScreenTests: XCTestCase {
         )
     }
 
+    func testSessionChallengeSeedCookiesAreHostOnlyAndSnapshotFiltersToProbes() throws {
+        let challengeURL = try XCTUnwrap(URL(string: "https://sub.challenge.example/verify?step=1"))
+        let seeds = [
+            SessionChallengeSeedCookie(name: "ipb_member_id", value: "42"),
+            SessionChallengeSeedCookie(name: "ipb_pass_hash", value: "secret"),
+        ]
+        let cookies = sessionChallengeSeedCookies(seeds, challengeURL: challengeURL)
+        XCTAssertEqual(cookies.map(\.name), ["ipb_member_id", "ipb_pass_hash"])
+        XCTAssertEqual(cookies.map(\.value), ["42", "secret"])
+        for cookie in cookies {
+            XCTAssertEqual(cookie.domain, "sub.challenge.example")
+            XCTAssertFalse(cookie.domain.hasPrefix("."), "Seed cookies must be strict host-only without leading dot")
+            XCTAssertEqual(cookie.path, "/")
+            XCTAssertTrue(cookie.isSecure)
+            XCTAssertTrue(cookie.isSessionOnly)
+            XCTAssertNil(cookie.expiresDate)
+        }
+
+        let storage = HTTPCookieStorage.shared
+        storage.removeCookies(since: .distantPast)
+        defer { storage.removeCookies(since: .distantPast) }
+        cookies.forEach { storage.setCookie($0) }
+
+        let matchingSameHost = storage.cookies(for: URL(string: "https://sub.challenge.example/gallery/1")!) ?? []
+        XCTAssertEqual(Set(matchingSameHost.map(\.name)), ["ipb_member_id", "ipb_pass_hash"])
+        XCTAssertTrue((storage.cookies(for: URL(string: "http://sub.challenge.example/gallery/1")!) ?? []).isEmpty)
+        XCTAssertTrue((storage.cookies(for: URL(string: "https://a.sub.challenge.example/gallery/1")!) ?? []).isEmpty)
+        XCTAssertTrue((storage.cookies(for: URL(string: "https://other.challenge.example/gallery/1")!) ?? []).isEmpty)
+        XCTAssertTrue((storage.cookies(for: URL(string: "https://challenge.example/gallery/1")!) ?? []).isEmpty)
+
+        // Probe snapshot filtering excludes undeclared cookies, wrong hosts, and insecure URLs, while forwarding userAgent.
+        let extraDomainCookie = try XCTUnwrap(HTTPCookie(properties: [
+            .domain: ".challenge.example",
+            .path: "/",
+            .name: "cf_clearance",
+            .value: "clearance-token",
+            .secure: "TRUE",
+        ]))
+        let undeclaredCookie = try XCTUnwrap(HTTPCookie(properties: [
+            .originURL: challengeURL,
+            .path: "/",
+            .name: "undeclared",
+            .value: "leak",
+            .secure: "TRUE",
+        ]))
+        let offHostCookie = try XCTUnwrap(HTTPCookie(properties: [
+            .originURL: URL(string: "https://evil.example/")!,
+            .path: "/",
+            .name: "cf_clearance",
+            .value: "evil-val",
+            .secure: "TRUE",
+        ]))
+        let probes = [
+            SessionChallengeCookieProbe(
+                url: "https://sub.challenge.example/verify",
+                cookies: [
+                    SessionChallengeCookieRequirement(name: "cf_clearance", required: true),
+                    SessionChallengeCookieRequirement(name: "ipb_member_id", required: false),
+                ]
+            ),
+        ]
+        let snapshot = sessionChallengeCookieSnapshot(
+            cookies: cookies + [extraDomainCookie, undeclaredCookie, offHostCookie],
+            probes: probes,
+            userAgent: "Mozilla/5.0 (Macintosh; ARM64 Mac OS X 15_0) AppleWebKit/605.1.15"
+        )
+        XCTAssertEqual(snapshot.userAgent, "Mozilla/5.0 (Macintosh; ARM64 Mac OS X 15_0) AppleWebKit/605.1.15")
+        XCTAssertEqual(Set(snapshot.cookies.map(\.name)), ["cf_clearance", "ipb_member_id"])
+        XCTAssertEqual(snapshot.cookies.first(where: { $0.name == "cf_clearance" })?.value, "clearance-token")
+        XCTAssertTrue(snapshot.cookies.allSatisfy { $0.sourceUrl == "https://sub.challenge.example/verify" })
+
+        // Invalid / non-HTTPS URL produces zero seed cookies
+        XCTAssertTrue(sessionChallengeSeedCookies(seeds, challengeURL: URL(string: "http://sub.challenge.example/verify")!).isEmpty)
+        XCTAssertTrue(sessionChallengeSeedCookies(seeds, challengeURL: URL(string: "https://user:pass@sub.challenge.example/verify")!).isEmpty)
+    }
+
+    func testMacWebViewProxyUsesTargetAccountProxyRefAndTracksAccountChanges() async throws {
+        let presenter = KotlinPresenter(presenter: ProxySettingsPresenter())
+        let editor = KotlinPresenter(presenter: ProxyEditorPresenter())
+        try await eventuallyCondition { presenter.state.settings is UiStateSuccess<ProxySettings> }
+        let originalGlobal = (presenter.state.settings as! UiStateSuccess<ProxySettings>).data.global
+        let account = MicroBlogKey(id: "mac-proxy-\(UUID().uuidString)", host: "challenge.example")
+        let accountRef = ProxyRef.companion.forAccount(accountKey: account)
+
+        let firstSocks = try await MacTestSocksProxyServer()
+        let secondSocks = try await MacTestSocksProxyServer()
+        var createdProfileIds: [String] = []
+        let accountProxy = WebViewProxy(proxyRef: accountRef)
+        let globalProxy = WebViewProxy()
+
+        defer {
+            accountProxy.stop()
+            globalProxy.stop()
+            firstSocks.stop()
+            secondSocks.stop()
+            presenter.state.select(accountKey: account, policy: ProxyPolicy(mode: .inherit, proxyId: nil))
+            presenter.state.select(accountKey: nil, policy: originalGlobal)
+            for id in createdProfileIds {
+                presenter.state.remove(id: id)
+            }
+        }
+
+        func createProfile(port: UInt16) async throws -> String {
+            let id = UUID().uuidString
+            let profile = ProxyProfile(id: id, name: "Mac Test \(id)", protocol: .socks5, host: "127.0.0.1", port: Int32(port))
+            createdProfileIds.append(id)
+            editor.state.save(profile: profile)
+            try await eventuallyCondition {
+                (presenter.state.settings as? UiStateSuccess<ProxySettings>)?.data.profiles.contains(where: { $0.id == id }) == true
+            }
+            return id
+        }
+
+        let firstProfileId = try await createProfile(port: firstSocks.port)
+        let secondProfileId = try await createProfile(port: secondSocks.port)
+
+        presenter.state.select(accountKey: nil, policy: ProxyPolicy(mode: .direct, proxyId: nil))
+        try await eventuallyCondition {
+            (presenter.state.settings as? UiStateSuccess<ProxySettings>)?.data.global.mode == .direct
+        }
+        presenter.state.select(accountKey: account, policy: ProxyPolicy(mode: .proxy, proxyId: firstProfileId))
+        try await eventuallyCondition {
+            (presenter.state.settings as? UiStateSuccess<ProxySettings>)?.data.policy(accountKey: account).proxyId == firstProfileId
+        }
+
+        globalProxy.start()
+        accountProxy.start()
+        try await eventuallyCondition {
+            globalProxy.route?.isValid == true && accountProxy.route?.isValid == true
+        }
+        let initialAccountRoute = try XCTUnwrap(accountProxy.route)
+        let initialGlobalRoute = try XCTUnwrap(globalProxy.route)
+        XCTAssertNotEqual(initialAccountRoute.key, initialGlobalRoute.key)
+
+        // Verify WKWebView configured with accountProxy.route uses account's SOCKS5 proxy, not global direct.
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 320, height: 240),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let webConfig = WKWebViewConfiguration()
+        webConfig.websiteDataStore = initialAccountRoute.dataStore
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 240), configuration: webConfig)
+        initialAccountRoute.bind(webView)
+        window.contentView = webView
+        webView.load(URLRequest(url: URL(string: "http://account-proxy.local/ping")!))
+        try await eventuallyCondition { firstSocks.requestedHosts.contains("account-proxy.local") }
+
+        // Changing global proxy must NOT disturb overridden accountProxy.route
+        presenter.state.select(accountKey: nil, policy: ProxyPolicy(mode: .system, proxyId: nil))
+        try await eventuallyCondition {
+            globalProxy.route != nil && globalProxy.route !== initialGlobalRoute
+        }
+        XCTAssertTrue(accountProxy.route === initialAccountRoute)
+        XCTAssertTrue(initialAccountRoute.isValid)
+
+        // Changing target account's proxy MUST reload accountProxy.route and route to secondSocks
+        presenter.state.select(accountKey: account, policy: ProxyPolicy(mode: .proxy, proxyId: secondProfileId))
+        try await eventuallyCondition {
+            accountProxy.route != nil && accountProxy.route !== initialAccountRoute
+        }
+        let updatedAccountRoute = try XCTUnwrap(accountProxy.route)
+        XCTAssertFalse(initialAccountRoute.isValid)
+        let updatedConfig = WKWebViewConfiguration()
+        updatedConfig.websiteDataStore = updatedAccountRoute.dataStore
+        let updatedWebView = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 240), configuration: updatedConfig)
+        updatedAccountRoute.bind(updatedWebView)
+        window.contentView = updatedWebView
+        updatedWebView.load(URLRequest(url: URL(string: "http://account-proxy-2.local/ping")!))
+        try await eventuallyCondition { secondSocks.requestedHosts.contains("account-proxy-2.local") }
+    }
+
+    func testMacListErrorViewAndReaderCanvasTriggerSessionChallengeAndBatchRetry() async throws {
+        _ = NSApplication.shared
+        let accountKey = MicroBlogKey(id: "user-1", host: "manga.example")
+        let chapterChallenge = SessionChallengeException(
+            challengeId: "ch-ticket-1",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: "https://manga.example/challenge",
+            displayMessage: "Chapter challenge required"
+        )
+        let pageChallenge = SessionChallengeException(
+            challengeId: "pg-ticket-1",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: "https://manga.example/challenge",
+            displayMessage: "Page challenge required"
+        )
+
+        var launched: [(SessionChallengeException, () -> Void)] = []
+        let launcher: (SessionChallengeException, @escaping () -> Void) -> Void = { error, onComplete in
+            launched.append((error, onComplete))
+        }
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 900, height: 640),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+
+        // 1. Standalone ListErrorView launches SessionChallenge and calls onRetry on completion
+        var standaloneRetryCount = 0
+        let listErrorHost = NSHostingView(
+            rootView: ListErrorView(error: chapterChallenge) {
+                standaloneRetryCount += 1
+            }
+            .environment(\.launchSessionChallenge, launcher)
+            .frame(width: 400, height: 300)
+        )
+        listErrorHost.sizingOptions = []
+        window.contentView = listErrorHost
+        window.makeKeyAndOrderFront(nil)
+        try await eventually(window: window) {
+            self.findMacAccessibilityButton(identifier: "list_error_challenge_verify", in: listErrorHost) != nil ||
+                !self.findMacKeyViewProxies(in: listErrorHost).isEmpty
+        }
+        if let listButton = findMacAccessibilityButton(identifier: "list_error_challenge_verify", in: listErrorHost) {
+            XCTAssertTrue(pressMacAccessibilityButton(listButton))
+        } else {
+            let proxy = try XCTUnwrap(findMacKeyViewProxies(in: listErrorHost).first)
+            try clickMacViewCenter(proxy, in: window)
+        }
+        XCTAssertEqual(launched.count, 1)
+        XCTAssertEqual(launched[0].0.challengeId, "ch-ticket-1")
+        XCTAssertEqual(standaloneRetryCount, 0)
+        launched[0].1()
+        XCTAssertEqual(standaloneRetryCount, 1)
+
+        // 2. MangaReaderCanvas chapter-level SessionChallengeException triggers state.retryChallengeFailures() (not retryChapter())
+        launched.removeAll()
+        let fakeState = FakeMacMangaReaderState(
+            direction: .ltr,
+            pages: [],
+            slots: []
+        )
+        fakeState.loadState = UiStateError(throwable: chapterChallenge)
+        let controller = MangaReaderInteractionController()
+        let hostModel = MacReaderTestHostModel(state: fakeState, controller: controller)
+        hostModel.hudVisible = false
+        let canvasWindow = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 900, height: 640),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        canvasWindow.isReleasedWhenClosed = false
+        canvasWindow.appearance = NSAppearance(named: .darkAqua)
+        defer { canvasWindow.close() }
+        let canvasHost = NSHostingView(
+            rootView: MacReaderTestHostView(model: hostModel)
+                .environment(\.launchSessionChallenge, launcher)
+        )
+        canvasHost.sizingOptions = []
+        canvasWindow.contentView = canvasHost
+        canvasWindow.makeKeyAndOrderFront(nil)
+        try await eventually(window: canvasWindow) {
+            hostModel.challengeButtonFrame != nil
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        canvasHost.layoutSubtreeIfNeeded()
+        if let chapterVerifyButton = findMacAccessibilityButton(identifier: "list_error_challenge_verify", in: canvasHost) {
+            XCTAssertTrue(pressMacAccessibilityButton(chapterVerifyButton))
+        } else if let proxy = findMacKeyViewProxies(in: canvasHost).first {
+            try clickMacViewCenter(proxy, in: canvasWindow)
+        } else {
+            let buttonFrame = try XCTUnwrap(hostModel.challengeButtonFrame)
+            let targetY = canvasHost.isFlipped ? buttonFrame.midY : canvasHost.bounds.height - buttonFrame.midY
+            let targetLocal = CGPoint(x: buttonFrame.midX, y: targetY)
+            try await clickMacLocalPointAsync(targetLocal, in: canvasHost, window: canvasWindow)
+        }
+        if launched.isEmpty {
+            XCTFail(
+                "Expected click in canvasWindow (raw buttonFrame=\(String(describing: hostModel.challengeButtonFrame)), canvasBounds=\(canvasHost.bounds), proxies=\(findMacKeyViewProxies(in: canvasHost).count)) to launch session challenge"
+            )
+        } else {
+            XCTAssertEqual(launched.count, 1)
+            XCTAssertEqual(launched[0].0.challengeId, "ch-ticket-1")
+            launched[0].1()
+            XCTAssertEqual(fakeState.retryChallengeFailuresCount, 1)
+            XCTAssertEqual(fakeState.retryChapterCount, 0)
+        }
+
+        // 3. MangaReaderCanvas page-level & chunk placeholder SessionChallengeException trigger retryChallengeFailures()
+        launched.removeAll()
+        let chunkErrorState = FakeMacMangaReaderState(
+            direction: .ltr,
+            pages: [
+                ReaderPageState(
+                    id: "__chunk_placeholder_0",
+                    index: 0,
+                    status: PageMediaStatusFailed(error: pageChallenge),
+                    aspectRatio: nil
+                ),
+            ],
+            slots: [ReaderSlotSingle(pageIndex: 0)]
+        )
+        hostModel.setState(chunkErrorState)
+        try await eventually(window: canvasWindow) {
+            hostModel.retryPageIds.contains("__chunk_placeholder_0") &&
+                controller.pageRetryHandlers["__chunk_placeholder_0"] != nil
+        }
+        XCTAssertTrue(controller.triggerPageRetryForTesting(pageId: "__chunk_placeholder_0"))
+        XCTAssertEqual(launched.count, 1)
+        XCTAssertEqual(launched[0].0.challengeId, "pg-ticket-1")
+        launched[0].1()
+        XCTAssertEqual(chunkErrorState.retryChallengeFailuresCount, 1)
+        XCTAssertTrue(chunkErrorState.retriedPages.isEmpty)
+    }
+
+    func testMacStandaloneMangaReaderWindowMountsSessionChallengeHost() async throws {
+        _ = NSApplication.shared
+        let coordinator = MacMangaReaderWindowCoordinator()
+        let account = AccountType.Specific(accountKey: MicroBlogKey(id: "user-1", host: "manga.example"))
+        let mangaKey = MicroBlogKey(id: "manga-1", host: "manga.example")
+        let value = coordinator.open(
+            accountType: account,
+            mangaKey: mangaKey,
+            chapterId: "ch-1",
+            initialPage: 0
+        )
+
+        var capturedLauncher: ((SessionChallengeException, @escaping () -> Void) -> Void)?
+        @MainActor
+        struct EnvironmentProbeView: View {
+            @Environment(\.launchSessionChallenge) private var launchSessionChallenge
+            let onCapture: (((SessionChallengeException, @escaping () -> Void) -> Void)?) -> Void
+
+            var body: some View {
+                Color.clear
+                    .onAppear { onCapture(launchSessionChallenge) }
+            }
+        }
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 720, height: 560),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let rootView = MacMangaReaderWindowRoot(
+            value: value,
+            coordinator: coordinator,
+            readerContent: { _, _, _ in
+                AnyView(
+                    EnvironmentProbeView { launcher in
+                        capturedLauncher = launcher
+                    }
+                )
+            }
+        )
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        try await eventually(window: window) {
+            capturedLauncher != nil
+        }
+        XCTAssertNotNil(capturedLauncher, "Standalone macOS reader window must inject launchSessionChallenge environment")
+    }
+
+    func testMacSessionChallengeHostLifecycleOriginPolicyBusyReloginAndCancel() async throws {
+        _ = NSApplication.shared
+        let accountKey = MicroBlogKey(id: "user-1", host: "challenge.example")
+        let challengeURL = "https://challenge.example/gate"
+        let handle = FakeMacSessionChallengeHandle(
+            challengeId: "ticket-mac-1",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: challengeURL,
+            seedCookies: [SessionChallengeSeedCookie(name: "seed_a", value: "val_a")],
+            probes: [
+                SessionChallengeCookieProbe(
+                    url: "https://challenge.example/gate",
+                    cookies: [SessionChallengeCookieRequirement(name: "cf_clearance", required: true)]
+                ),
+            ]
+        )
+
+        // Origin helper policy checks
+        XCTAssertEqual(sessionChallengeHTTPSOrigin(URL(string: "https://Challenge.Example:443/path")), "https://challenge.example")
+        XCTAssertEqual(sessionChallengeHTTPSOrigin(URL(string: "https://Challenge.Example:8443/path")), "https://challenge.example:8443")
+        XCTAssertNil(sessionChallengeHTTPSOrigin(URL(string: "http://challenge.example/path")))
+        XCTAssertNil(sessionChallengeHTTPSOrigin(URL(string: "https://user@challenge.example/path")))
+
+        // 1. Busy -> Pending -> Completed lifecycle via SessionChallengeSessionController
+        let localChallengeURL = "https://challenge.example/gate"
+        let localHandle = FakeMacSessionChallengeHandle(
+            challengeId: "ticket-mac-live",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: localChallengeURL,
+            seedCookies: [SessionChallengeSeedCookie(name: "seed_a", value: "val_a")],
+            probes: [
+                SessionChallengeCookieProbe(
+                    url: localChallengeURL,
+                    cookies: [SessionChallengeCookieRequirement(name: "cf_clearance", required: true)]
+                ),
+            ]
+        )
+        localHandle.nextResults = [
+            SessionChallengeCheckResultBusy.shared,
+            SessionChallengeCheckResultPending.shared,
+            SessionChallengeCheckResultCompleted.shared,
+        ]
+        var completedCount = 0
+        var reloginTargets: [RequireReLoginException] = []
+        var dismissedCount = 0
+        let service = SessionChallengeService(
+            beginSession: { _ in localHandle },
+            check: { target, snapshot in
+                try await (target as! FakeMacSessionChallengeHandle).performCheck(snapshot)
+            },
+            cancel: { $0.cancel() },
+            close: { $0.close() }
+        )
+        let exception = SessionChallengeException(
+            challengeId: "ticket-mac-live",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: localChallengeURL,
+            displayMessage: "Verify"
+        )
+        let controller = SessionChallengeSessionController(
+            exception: exception,
+            service: service,
+            onCompleted: { completedCount += 1 },
+            onRequireRelogin: { reloginTargets.append($0) },
+            onDismiss: { dismissedCount += 1 }
+        )
+
+        await controller.start()
+        try await eventuallyCondition { controller.proxy?.route?.isValid == true }
+        let route = try XCTUnwrap(controller.proxy?.route)
+        await controller.prepareRouteIfNeeded(route)
+        XCTAssertNotNil(controller.seededRouteKey)
+
+        let seededCookies = await route.dataStore.httpCookieStore.allCookies()
+        XCTAssertTrue(seededCookies.contains(where: { $0.name == "seed_a" && $0.value == "val_a" && !$0.domain.hasPrefix(".") }))
+
+        let clearedCookie = try XCTUnwrap(HTTPCookie(properties: [
+            .originURL: URL(string: localChallengeURL)!,
+            .path: "/",
+            .name: "cf_clearance",
+            .value: "cleared-1",
+            .secure: "TRUE",
+        ]))
+        await route.dataStore.httpCookieStore.setCookie(clearedCookie)
+
+        let webConfig = WKWebViewConfiguration()
+        webConfig.websiteDataStore = route.dataStore
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 400, height: 400), configuration: webConfig)
+        let navDelegate = SessionChallengeNavigationDelegate(route: route) { origin in
+            controller.updateCurrentOrigin(origin)
+        } onNavigationFinished: { finishedURL in
+            controller.handleNavigationFinished(url: finishedURL, route: route)
+        }
+        webView.navigationDelegate = navDelegate
+        route.bind(webView)
+        controller.attachWebView(webView, route: route)
+        webView.loadHTMLString("<html><body>ok</body></html>", baseURL: URL(string: localChallengeURL)!)
+
+        // Origin policy checks via WKNavigationDelegate: http:// blocked, https:// allowed & deviation highlighted
+        let httpDecision = navDelegate.allowsMainFrameURLForTesting(URL(string: "http://challenge.example/gate")!)
+        XCTAssertFalse(httpDecision)
+        let deviatedDecision = navDelegate.allowsMainFrameURLForTesting(URL(string: "https://auth.other.example/login")!)
+        XCTAssertTrue(deviatedDecision)
+        XCTAssertEqual(controller.currentOrigin, "https://auth.other.example")
+        XCTAssertTrue(controller.isOriginDeviated)
+
+        // Wait for didFinish check (Busy), then drive Pending -> Completed
+        try await eventuallyCondition { localHandle.recordedSnapshots.count >= 1 }
+        controller.requestCheck(route: route)
+        try await eventuallyCondition { localHandle.recordedSnapshots.count >= 2 }
+        controller.requestCheck(route: route)
+        try await eventuallyCondition { completedCount == 1 }
+
+        XCTAssertEqual(localHandle.closeCount, 1)
+        XCTAssertFalse(route.isValid)
+        XCTAssertTrue(localHandle.recordedSnapshots.contains { snapshot in
+            snapshot.cookies.contains { $0.name == "cf_clearance" && $0.value == "cleared-1" } &&
+                (snapshot.userAgent?.contains("AppleWebKit") == true)
+        })
+
+        // 2. RequireReLoginException closes handle, tears down store, and triggers onRequireRelogin
+        let reloginHandle = FakeMacSessionChallengeHandle(
+            challengeId: "ticket-relogin",
+            accountKey: accountKey,
+            platformId: "manga-plat",
+            challengeUrl: challengeURL,
+            seedCookies: [],
+            probes: []
+        )
+        reloginHandle.errorToThrow = NSError(
+            domain: "KotlinException",
+            code: 0,
+            userInfo: [
+                "KotlinException": RequireReLoginException(accountKey: accountKey, platformId: "manga-plat"),
+            ]
+        )
+        let reloginController = SessionChallengeSessionController(
+            exception: SessionChallengeException(
+                challengeId: "ticket-relogin",
+                accountKey: accountKey,
+                platformId: "manga-plat",
+                challengeUrl: challengeURL,
+                displayMessage: "Verify"
+            ),
+            service: SessionChallengeService(
+                beginSession: { _ in reloginHandle },
+                check: { target, snapshot in
+                    try await (target as! FakeMacSessionChallengeHandle).performCheck(snapshot)
+                },
+                cancel: { $0.cancel() },
+                close: { $0.close() }
+            ),
+            onCompleted: {},
+            onRequireRelogin: { reloginTargets.append($0) },
+            onDismiss: {}
+        )
+        await reloginController.start()
+        try await eventuallyCondition { reloginController.proxy?.route?.isValid == true }
+        let reloginRoute = try XCTUnwrap(reloginController.proxy?.route)
+        await reloginController.prepareRouteIfNeeded(reloginRoute)
+        reloginController.requestCheck(route: reloginRoute)
+        try await eventuallyCondition { reloginTargets.count == 1 }
+        XCTAssertEqual(reloginHandle.closeCount, 1)
+        XCTAssertFalse(reloginRoute.isValid)
+
+        // 3. Cancel & expired ticket call cancel()/close() and tear down proxy without touching credentials
+        let cancelController = SessionChallengeSessionController(
+            exception: SessionChallengeException(
+                challengeId: "ticket-cancel",
+                accountKey: accountKey,
+                platformId: "manga-plat",
+                challengeUrl: challengeURL,
+                displayMessage: "Verify"
+            ),
+            service: SessionChallengeService(
+                beginSession: { _ in handle },
+                check: { target, snapshot in
+                    try await (target as! FakeMacSessionChallengeHandle).performCheck(snapshot)
+                },
+                cancel: { $0.cancel() },
+                close: { $0.close() }
+            ),
+            onCompleted: {},
+            onRequireRelogin: { _ in },
+            onDismiss: { dismissedCount += 1 }
+        )
+        await cancelController.start()
+        try await eventuallyCondition { cancelController.proxy?.route?.isValid == true }
+        let cancelRoute = try XCTUnwrap(cancelController.proxy?.route)
+        cancelController.cancelAndDismiss()
+        XCTAssertEqual(handle.cancelCount, 1)
+        XCTAssertEqual(handle.closeCount, 1)
+        XCTAssertFalse(cancelRoute.isValid)
+        XCTAssertEqual(dismissedCount, 1)
+
+        let expiredController = SessionChallengeSessionController(
+            exception: SessionChallengeException(
+                challengeId: "missing-ticket",
+                accountKey: accountKey,
+                platformId: "manga-plat",
+                challengeUrl: challengeURL,
+                displayMessage: "Verify"
+            ),
+            service: SessionChallengeService(
+                beginSession: { _ in nil },
+                check: { target, snapshot in
+                    try await (target as! FakeMacSessionChallengeHandle).performCheck(snapshot)
+                },
+                cancel: { $0.cancel() },
+                close: { $0.close() }
+            ),
+            onCompleted: {},
+            onRequireRelogin: { _ in },
+            onDismiss: {}
+        )
+        await expiredController.start()
+        XCTAssertNotNil(expiredController.errorMessage)
+        XCTAssertTrue(expiredController.isClosed)
+    }
+
+    private func eventuallyCondition(
+        timeout: TimeInterval = 15,
+        _ condition: @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(15))
+        }
+        XCTAssertTrue(condition(), file: file, line: line)
+    }
+
     private func makeMacRichSynopsis(_ paragraphs: [String]) -> UiRichText {
         let style = RenderTextStyle(
             link: nil,
@@ -2066,6 +2675,103 @@ final class MangaScreenTests: XCTestCase {
     private func findMacSubviews<T: NSView>(ofType type: T.Type, in root: NSView) -> [T] {
         let own = (root as? T).map { [$0] } ?? []
         return own + root.subviews.flatMap { findMacSubviews(ofType: type, in: $0) }
+    }
+
+    private func findMacAccessibilityButton(identifier: String, in root: NSView) -> AnyObject? {
+        var queue: [AnyObject] = [root]
+        var visited = Set<ObjectIdentifier>()
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            guard visited.insert(ObjectIdentifier(current)).inserted else { continue }
+            if let button = current as? NSButton,
+               button.accessibilityIdentifier() == identifier || button.identifier?.rawValue == identifier {
+                return button
+            }
+            if let ax = current as? NSAccessibilityProtocol {
+                if ax.accessibilityRole() == .button,
+                   ax.accessibilityIdentifier() == identifier {
+                    return current
+                }
+                if let children = ax.accessibilityChildren() {
+                    queue.append(contentsOf: children.map { $0 as AnyObject })
+                }
+            }
+            if let view = current as? NSView {
+                queue.append(contentsOf: view.subviews)
+            }
+        }
+        return nil
+    }
+
+    private func pressMacAccessibilityButton(_ button: AnyObject) -> Bool {
+        if let nsButton = button as? NSButton {
+            nsButton.performClick(nil)
+            return true
+        }
+        if let ax = button as? NSAccessibilityProtocol {
+            return ax.accessibilityPerformPress()
+        }
+        return false
+    }
+
+    private func findMacKeyViewProxies(in root: NSView) -> [NSView] {
+        var result: [NSView] = []
+        var stack: [NSView] = [root]
+        while let view = stack.popLast() {
+            if String(describing: type(of: view)).contains("KeyViewProxy"),
+               view.bounds.width > 0,
+               view.bounds.height > 0 {
+                result.append(view)
+            }
+            stack.append(contentsOf: view.subviews)
+        }
+        return result
+    }
+
+    private func clickMacViewCenter(_ view: NSView, in window: NSWindow) throws {
+        view.layoutSubtreeIfNeeded()
+        try clickMacGlobalPoint(CGPoint(x: view.bounds.midX, y: view.bounds.midY), in: view, window: window)
+    }
+
+    private func clickMacGlobalPoint(_ localPoint: CGPoint, in view: NSView, window: NSWindow) throws {
+        let point = view.convert(localPoint, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let click = try XCTUnwrap(
+                NSEvent.mouseEvent(
+                    with: type,
+                    location: point,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    eventNumber: 1,
+                    clickCount: 1,
+                    pressure: type == .leftMouseDown ? 1 : 0
+                )
+            )
+            window.sendEvent(click)
+        }
+    }
+
+    private func clickMacLocalPointAsync(_ localPoint: CGPoint, in view: NSView, window: NSWindow) async throws {
+        let point = view.convert(localPoint, to: nil)
+        for type in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(
+                NSEvent.mouseEvent(
+                    with: type,
+                    location: point,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    eventNumber: 1,
+                    clickCount: type == .mouseMoved ? 0 : 1,
+                    pressure: type == .leftMouseDown ? 1 : 0
+                )
+            )
+            window.sendEvent(event)
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func renderPDFText<V: View>(_ view: V, width: CGFloat, height: CGFloat) throws -> String {
@@ -2134,6 +2840,7 @@ private final class MacReaderTestHostModel {
     var retryPageIds: Set<String> = []
     var scrubberLeadingLabelFrame: CGRect?
     var scrubberTrailingLabelFrame: CGRect?
+    var challengeButtonFrame: CGRect?
     var onBack: (() -> Void)?
     private var stateGeneration = 0
 
@@ -2277,6 +2984,9 @@ private struct MacReaderTestHostView: View {
             model.scrubberLeadingLabelFrame = frames.currentLabel
             model.scrubberTrailingLabelFrame = frames.totalLabel
         }
+        .onPreferenceChange(ListErrorChallengeButtonFramePreferenceKey.self) { frame in
+            model.challengeButtonFrame = frame
+        }
     }
 }
 
@@ -2352,6 +3062,8 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
     var openedChapterRequests: [(String, Int32?)] = []
     var retriedPageIds: [String] = []
     var retriedPages: [(String, String?)] = []
+    var retryChapterCount = 0
+    var retryChallengeFailuresCount = 0
 
     init(
         direction: MangaReadingDirection,
@@ -2431,7 +3143,10 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
         onStateMutated?()
     }
 
-    func retryChapter() {}
+    func retryChapter() {
+        retryChapterCount += 1
+        onStateMutated?()
+    }
 
     func retryPage(pageId: String) {
         retryPage(pageId: pageId, failedUrl: nil)
@@ -2443,7 +3158,10 @@ private final class FakeMacMangaReaderState: NSObject, MangaReaderPresenterState
         onStateMutated?()
     }
 
-    func retryChallengeFailures() {}
+    func retryChallengeFailures() {
+        retryChallengeFailuresCount += 1
+        onStateMutated?()
+    }
 
     func setDirection(direction: MangaReadingDirection) {
         self.direction = direction
@@ -2597,4 +3315,183 @@ private final class SilentMacNotification: NSObject, InAppNotification {
     nonisolated func onError(message: Message, throwable: KotlinThrowable) {}
     nonisolated func onProgress(message: Message, progress: Int32, total: Int32) {}
     nonisolated func onSuccess(message: Message) {}
+}
+
+private final class FakeMacSessionChallengeHandle: NSObject, SessionChallengeHandle, @unchecked Sendable {
+    let challengeId: String
+    let accountKey: MicroBlogKey
+    let platformId: String
+    let proxyRef: ProxyRef
+    let challengeUrl: String
+    let seedCookies: [SessionChallengeSeedCookie]
+    let probes: [SessionChallengeCookieProbe]
+
+    private let lock = NSLock()
+    var nextResults: [any SessionChallengeCheckResult] = [SessionChallengeCheckResultCompleted.shared]
+    var errorToThrow: Error?
+    var recordedSnapshots: [SessionChallengeCookieSnapshot] = []
+    var cancelCount = 0
+    var closeCount = 0
+
+    init(
+        challengeId: String,
+        accountKey: MicroBlogKey,
+        platformId: String,
+        challengeUrl: String,
+        seedCookies: [SessionChallengeSeedCookie],
+        probes: [SessionChallengeCookieProbe]
+    ) {
+        self.challengeId = challengeId
+        self.accountKey = accountKey
+        self.platformId = platformId
+        self.proxyRef = ProxyRef.companion.forAccount(accountKey: accountKey)
+        self.challengeUrl = challengeUrl
+        self.seedCookies = seedCookies
+        self.probes = probes
+    }
+
+    func performCheck(_ snapshot: SessionChallengeCookieSnapshot) async throws -> any SessionChallengeCheckResult {
+        enum Outcome {
+            case result(any SessionChallengeCheckResult)
+            case failure(Error)
+        }
+        let outcome: Outcome = lock.withLock {
+            recordedSnapshots.append(snapshot)
+            if let errorToThrow {
+                return .failure(errorToThrow)
+            }
+            if nextResults.isEmpty {
+                return .result(SessionChallengeCheckResultPending.shared)
+            }
+            return .result(nextResults.removeFirst())
+        }
+        switch outcome {
+        case .result(let result):
+            return result
+        case .failure(let error):
+            throw error
+        }
+    }
+
+    @objc(checkSnapshot:completionHandler:)
+    func __check(
+        snapshot: SessionChallengeCookieSnapshot,
+        completionHandler: @escaping @Sendable ((any SessionChallengeCheckResult)?, (any Error)?) -> Void
+    ) {
+        enum Outcome {
+            case result(any SessionChallengeCheckResult)
+            case failure(Error)
+        }
+        let outcome: Outcome = lock.withLock {
+            recordedSnapshots.append(snapshot)
+            if let errorToThrow {
+                return .failure(errorToThrow)
+            }
+            if nextResults.isEmpty {
+                return .result(SessionChallengeCheckResultPending.shared)
+            }
+            return .result(nextResults.removeFirst())
+        }
+        switch outcome {
+        case .result(let result):
+            completionHandler(result, nil)
+        case .failure(let error):
+            completionHandler(nil, error)
+        }
+    }
+
+    func cancel() {
+        lock.withLock { cancelCount += 1 }
+    }
+
+    func close() {
+        lock.withLock { closeCount += 1 }
+    }
+}
+
+@MainActor
+private final class MacTestSocksProxyServer {
+    let listener: NWListener
+    var port: UInt16 { listener.port?.rawValue ?? 0 }
+    var requestedHosts: [String] = []
+    private var connections: [NWConnection] = []
+
+    init() async throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task { @MainActor in
+                guard let self else { connection.cancel(); return }
+                self.connections.append(connection)
+                connection.start(queue: .main)
+                self.negotiate(connection)
+            }
+        }
+        listener.start(queue: .main)
+        let deadline = Date().addingTimeInterval(5)
+        while port == 0 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func negotiate(_ connection: NWConnection) {
+        read(2, from: connection) { prefix in
+            self.read(Int(prefix[1]), from: connection) { _ in
+                connection.send(content: Data([5, 0]), completion: .contentProcessed { _ in })
+                self.read(4, from: connection) { request in
+                    if request[3] == 3 {
+                        self.read(1, from: connection) { length in
+                            self.readAddress(connection, length: Int(length[0]), domain: true)
+                        }
+                    } else {
+                        self.readAddress(connection, length: request[3] == 1 ? 4 : 16, domain: false)
+                    }
+                }
+            }
+        }
+    }
+
+    private func readAddress(_ connection: NWConnection, length: Int, domain: Bool) {
+        read(length, from: connection) { address in
+            if domain {
+                self.requestedHosts.append(String(decoding: address, as: UTF8.self))
+            }
+            self.read(2, from: connection) { _ in
+                connection.send(content: Data([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]), completion: .contentProcessed { _ in })
+                self.readHTTPAndRespond(connection)
+            }
+        }
+    }
+
+    private func readHTTPAndRespond(_ connection: NWConnection, buffered: Data = Data()) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { bytes, _, _, error in
+            Task { @MainActor in
+                guard error == nil, let bytes else { connection.cancel(); return }
+                let data = buffered + bytes
+                let text = String(decoding: data, as: UTF8.self)
+                guard text.contains("\r\n\r\n") else {
+                    self.readHTTPAndRespond(connection, buffered: data)
+                    return
+                }
+                let body = "<html><body>ok</body></html>"
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                connection.send(content: Data(response.utf8), isComplete: true, completion: .contentProcessed { _ in })
+            }
+        }
+    }
+
+    private func read(_ count: Int, from connection: NWConnection, then: @escaping @MainActor @Sendable (Data) -> Void) {
+        connection.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, _ in
+            Task { @MainActor in
+                guard let data, data.count == count else { connection.cancel(); return }
+                then(data)
+            }
+        }
+    }
+
+    func stop() {
+        listener.cancel()
+        connections.forEach { $0.cancel() }
+    }
 }

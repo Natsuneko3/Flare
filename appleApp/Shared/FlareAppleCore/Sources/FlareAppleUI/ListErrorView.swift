@@ -2,9 +2,39 @@ import SwiftUI
 import KotlinSharedUI
 import SwiftUIBackports
 
+struct ListErrorChallengeButtonFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect? { nil }
+
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
+    }
+}
+
+@MainActor
+final class ListErrorChallengeActionBox: Sendable {
+    let register: @MainActor ((@MainActor () -> Void)?) -> Void
+
+    init(register: @escaping @MainActor ((@MainActor () -> Void)?) -> Void) {
+        self.register = register
+    }
+}
+
+private struct ListErrorChallengeActionBoxKey: EnvironmentKey {
+    static let defaultValue: ListErrorChallengeActionBox? = nil
+}
+
+extension EnvironmentValues {
+    var listErrorChallengeActionBox: ListErrorChallengeActionBox? {
+        get { self[ListErrorChallengeActionBoxKey.self] }
+        set { self[ListErrorChallengeActionBoxKey.self] = newValue }
+    }
+}
+
 public struct ListErrorView: View {
     private let error: KotlinThrowable
     @Environment(\.openURL) private var openURL
+    @Environment(\.launchSessionChallenge) private var launchSessionChallenge
+    @Environment(\.listErrorChallengeActionBox) private var challengeActionBox
     private let onRetry: () -> Void
 
     public init(error: KotlinThrowable, onRetry: @escaping () -> Void) {
@@ -57,7 +87,58 @@ public struct ListErrorView: View {
                 }
                 .backport
                 .glassProminentButtonStyle()
-            } else  {
+            } else if let challengeError = error as? SessionChallengeException {
+                Image(systemName: "exclamationmark.shield")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
+                let trimmedMessage = challengeError.displayMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedMessage.isEmpty {
+                    Text(verbatim: trimmedMessage)
+                        .flarePrimaryText()
+                        .multilineTextAlignment(.center)
+                        .font(.headline)
+                } else {
+                    Text("session_challenge_required_message", bundle: FlareAppleUILocalization.bundle)
+                        .flarePrimaryText()
+                        .multilineTextAlignment(.center)
+                        .font(.headline)
+                }
+                let primaryAction: @MainActor () -> Void = {
+                    if let launchSessionChallenge {
+                        launchSessionChallenge(challengeError, onRetry)
+                    } else {
+                        onRetry()
+                    }
+                }
+                Button(action: primaryAction) {
+                    if launchSessionChallenge != nil {
+                        Text("session_challenge_complete_verification", bundle: FlareAppleUILocalization.bundle)
+                    } else {
+                        Text("action_retry", bundle: FlareAppleUILocalization.bundle)
+                    }
+                }
+                .backport
+                .glassProminentButtonStyle()
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: ListErrorChallengeButtonFramePreferenceKey.self,
+                            value: proxy.frame(in: .global)
+                        )
+                    }
+                }
+                .onAppear {
+                    challengeActionBox?.register(primaryAction)
+                }
+                .onChange(of: challengeError.challengeId) { _, _ in
+                    challengeActionBox?.register(primaryAction)
+                }
+                .onDisappear {
+                    challengeActionBox?.register(nil)
+                }
+                .accessibilityIdentifier("list_error_challenge_verify")
+            } else {
                 Image(systemName: "exclamationmark.triangle.text.page")
                     .resizable()
                     .scaledToFit()

@@ -228822,6 +228822,62 @@
       "zh-Hans": { "stringUnit": { "state": "translated", "value": "第 %lld 页" } },
       "zh-Hant": { "stringUnit": { "state": "translated", "value": "第 %lld 頁" } }
     }
+  },
+  "session_challenge_complete_verification": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Complete Verification" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "完成验证" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "完成驗證" } }
+    }
+  },
+  "session_challenge_required_message": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Verification is required to continue." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "需要完成验证才能继续。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "需要完成驗證才能繼續。" } }
+    }
+  },
+  "session_challenge_title": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Verification" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "安全验证" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "安全驗證" } }
+    }
+  },
+  "session_challenge_close": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Close" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "关闭" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "關閉" } }
+    }
+  },
+  "session_challenge_expired": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "This verification session has expired or is no longer valid. Close this window and retry." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "当前验证会话已过期或失效，请关闭后重试。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "目前驗證工作階段已過期或失效，請關閉後重試。" } }
+    }
+  },
+  "session_challenge_proxy_error": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "The webpage could not be loaded with this account's proxy settings. Check the proxy and try again." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法使用该账号的代理设置加载网页。请检查代理后重试。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法使用此帳號的代理設定載入網頁。請檢查代理後重試。" } }
+    }
+  },
+  "session_challenge_relogin_title": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Login required" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "需要重新登录" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "需要重新登入" } }
+    }
+  },
+  "session_challenge_relogin_message": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Your session is no longer valid. Please log in again to continue." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "当前登录状态已失效，请重新登录以继续使用。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "目前登入狀態已失效，請重新登入以繼續使用。" } }
+    }
   }
 
   },

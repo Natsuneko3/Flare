@@ -79,13 +79,16 @@ public final class WebViewProxyRoute {
 @MainActor
 @Observable
 public final class WebViewProxy {
+    public let proxyRef: ProxyRef
     public private(set) var route: WebViewProxyRoute?
     public private(set) var failed = false
     @ObservationIgnored private var observation: AnyCancellable?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var previousStore: WKWebsiteDataStore?
 
-    public init() {}
+    public init(proxyRef: ProxyRef = ProxyRef.Global.shared) {
+        self.proxyRef = proxyRef
+    }
 
     public func start() {
         guard observation == nil else { return }
@@ -101,7 +104,7 @@ public final class WebViewProxy {
             guard let self else { return }
             var prepared: WebViewProxyRoute?
             do {
-                let snapshot = try await ProxyNetwork.shared.snapshot(ref: ProxyRef.Global.shared)
+                let snapshot = try await ProxyNetwork.shared.snapshot(ref: proxyRef)
                 try Task.checkCancellation()
                 if route?.key == snapshot.key, route?.isValid == true, route?.failed == false { return }
                 if let route { previousStore = route.dataStore; route.close() }

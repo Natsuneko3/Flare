@@ -469,7 +469,11 @@ public struct MangaReaderCanvas: View {
                             }
                     } else {
                         ListErrorView(error: errorState.throwable) {
-                            state.retryChapter()
+                            if errorState.throwable is SessionChallengeException {
+                                state.retryChallengeFailures()
+                            } else {
+                                state.retryChapter()
+                            }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .preferredColorScheme(.dark)
@@ -2976,6 +2980,7 @@ private struct ReaderPageCell: View {
                 let translating = state.imageTranslation.item(media: ready.original).loading
                 if failedOriginalURL == ready.displayed.url && ready.displayed.url == ready.original.url {
                     ReaderPageErrorView(
+                        error: nil,
                         message: nil,
                         pageId: page.id,
                         onRetry: {
@@ -3019,10 +3024,14 @@ private struct ReaderPageCell: View {
 
             case .failed(let failed):
                 ReaderPageErrorView(
+                    error: failed.error,
                     message: failed.error.message,
                     pageId: page.id,
                     onRetry: {
                         state.retryPage(pageId: page.id)
+                    },
+                    onChallengeCompleted: {
+                        state.retryChallengeFailures()
                     }
                 )
             }
@@ -3106,41 +3115,101 @@ private struct MangaPageFrameReporterView: View {
 }
 
 private struct ReaderPageErrorView: View {
+    let error: KotlinThrowable?
     let message: String?
     let pageId: String
     let onRetry: @MainActor () -> Void
+    var onChallengeCompleted: (@MainActor () -> Void)? = nil
     @Environment(\.mangaReaderRegisterPageRetry) private var registerPageRetry
+    @Environment(\.launchSessionChallenge) private var launchSessionChallenge
     @State private var retryRegistrationToken = UUID()
+
+    private var challengeError: SessionChallengeException? {
+        error as? SessionChallengeException
+    }
 
     private var retryLabel: String {
         FlareAppleUILocalization.string("manga_page_retry", fallback: "Retry page")
     }
 
+    private var verifyLabel: String {
+        FlareAppleUILocalization.string(
+            "session_challenge_complete_verification",
+            fallback: "Complete Verification"
+        )
+    }
+
+    private var displayText: String {
+        if let challengeError {
+            let trimmed = challengeError.displayMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+            return FlareAppleUILocalization.string(
+                "session_challenge_required_message",
+                fallback: "Verification is required to continue."
+            )
+        }
+        if let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            return trimmed
+        }
+        return retryLabel
+    }
+
+    private var isChallengeActionActive: Bool {
+        challengeError != nil && launchSessionChallenge != nil
+    }
+
+    private var primaryAction: @MainActor () -> Void {
+        if let challengeError, let launchSessionChallenge {
+            let completed = onChallengeCompleted ?? onRetry
+            return {
+                launchSessionChallenge(challengeError) {
+                    completed()
+                }
+            }
+        }
+        if challengeError != nil, let onChallengeCompleted {
+            return onChallengeCompleted
+        }
+        return onRetry
+    }
+
     var body: some View {
         VStack(spacing: 12) {
-            Text(verbatim: message?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? (message ?? retryLabel) : retryLabel)
+            Text(verbatim: displayText)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
                 .multilineTextAlignment(.center)
 
-            Button(action: onRetry) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.clockwise")
-                    Text(verbatim: retryLabel)
+            Button(action: primaryAction) {
+                if isChallengeActionActive {
+                    Text(verbatim: verifyLabel)
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text(verbatim: retryLabel)
+                    }
                 }
             }
             .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("manga_page_retry_\(pageId)")
+            .accessibilityIdentifier(isChallengeActionActive ? "manga_page_verify_\(pageId)" : "manga_page_retry_\(pageId)")
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preference(key: MangaReaderRetryPageIdsPreferenceKey.self, value: [pageId])
         .onAppear {
-            registerPageRetry?.register(pageId, retryRegistrationToken, onRetry)
+            registerPageRetry?.register(pageId, retryRegistrationToken, primaryAction)
         }
         .onChange(of: pageId) { oldPageId, newPageId in
             registerPageRetry?.register(oldPageId, retryRegistrationToken, nil)
-            registerPageRetry?.register(newPageId, retryRegistrationToken, onRetry)
+            registerPageRetry?.register(newPageId, retryRegistrationToken, primaryAction)
+        }
+        .onChange(of: challengeError?.challengeId) { _, _ in
+            registerPageRetry?.register(pageId, retryRegistrationToken, primaryAction)
+        }
+        .onChange(of: launchSessionChallenge != nil) { _, _ in
+            registerPageRetry?.register(pageId, retryRegistrationToken, primaryAction)
         }
         .onDisappear {
             registerPageRetry?.register(pageId, retryRegistrationToken, nil)

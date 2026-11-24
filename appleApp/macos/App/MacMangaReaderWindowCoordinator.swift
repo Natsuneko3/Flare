@@ -103,14 +103,17 @@ struct MacMangaReaderWindowRoot: View {
 
     let value: MacMangaReaderWindowValue?
     let coordinator: MacMangaReaderWindowCoordinator
+    private let readerContent: ((MacMangaReaderWindowRequest, @escaping (Route) -> Void, @escaping () -> Void) -> AnyView)?
     @State private var revisionBox = MacMangaReaderRevisionBox()
 
     init(
         value: MacMangaReaderWindowValue?,
-        coordinator: MacMangaReaderWindowCoordinator = .shared
+        coordinator: MacMangaReaderWindowCoordinator = .shared,
+        readerContent: ((MacMangaReaderWindowRequest, @escaping (Route) -> Void, @escaping () -> Void) -> AnyView)? = nil
     ) {
         self.value = value
         self.coordinator = coordinator
+        self.readerContent = readerContent
     }
 
     var body: some View {
@@ -118,23 +121,32 @@ struct MacMangaReaderWindowRoot: View {
             let activeValue = request.value
             let _ = { revisionBox.latestRevision = request.revision }()
             NavigationStack {
-                MangaReaderScreen(
-                    accountType: request.accountType,
-                    mangaKey: request.mangaKey,
-                    chapterId: request.chapterId,
-                    initialPage: request.initialPage,
-                    requestRevision: request.revision,
-                    usesWindowToolbar: true,
-                    onNavigate: { route in
-                        handleNavigate(route)
-                    },
-                    goBack: {
+                if let readerContent {
+                    readerContent(request, handleNavigate) {
                         dismiss()
                     }
-                )
+                } else {
+                    MangaReaderScreen(
+                        accountType: request.accountType,
+                        mangaKey: request.mangaKey,
+                        chapterId: request.chapterId,
+                        initialPage: request.initialPage,
+                        requestRevision: request.revision,
+                        usesWindowToolbar: true,
+                        onNavigate: { route in
+                            handleNavigate(route)
+                        },
+                        goBack: {
+                            dismiss()
+                        }
+                    )
+                }
             }
             .frame(minWidth: 560, idealWidth: 960, minHeight: 520, idealHeight: 820)
             .background(MangaReaderWindowConfigurator(revision: request.revision))
+            .flareSessionChallengeHost { relogin in
+                handleNavigate(.relogin(relogin.accountKey, relogin.platformId))
+            }
             .onDisappear {
                 coordinator.close(value: activeValue, matchingRevision: revisionBox.latestRevision)
             }

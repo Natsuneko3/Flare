@@ -47,63 +47,76 @@ struct FlareRoot: View {
     var body: some View {
         StateView(state: homeTabsPresenter.state.tabs) { tabs in
             let items = tabs.cast(HomeTabsPresenterStateHomeTabs.self)
-            TabView(selection: $selectedTab) {
-                ForEach(items, id: \.name) { tab in
-                    Tab(value: homeTabKey(tab), role: homeTabRoute(tab) == .discover ? .some(.search) : .none) {
-                        propagateThemeEnvironment(
-                            Router { onNavigate in
-                                homeTabRoute(tab).view(onNavigate: onNavigate, goBack: {})
+            FlareRootSessionChallengeScope { launchSessionChallenge in
+                TabView(selection: $selectedTab) {
+                    ForEach(items, id: \.name) { tab in
+                        Tab(value: homeTabKey(tab), role: homeTabRoute(tab) == .discover ? .some(.search) : .none) {
+                            propagateThemeEnvironment(
+                                Router { onNavigate in
+                                    homeTabRoute(tab).view(onNavigate: onNavigate, goBack: {})
+                                },
+                                launchSessionChallenge: launchSessionChallenge
+                            )
+                        } label: {
+                            Label {
+                                Text(homeTabTitle(tab))
+                            } icon: {
+                                Image(fontAwesome: homeTabIcon(tab))
                             }
-                        )
-                    } label: {
-                        Label {
-                            Text(homeTabTitle(tab))
-                        } icon: {
-                            Image(fontAwesome: homeTabIcon(tab))
+                            .adaptiveLabelStyle(globalAppearance.showBottomBarLabels || horizontalSizeClass == .regular)
                         }
-                        .adaptiveLabelStyle(globalAppearance.showBottomBarLabels || horizontalSizeClass == .regular)
+                        .badge(homeTabRoute(tab) == .notification ? Int(notificationBadgePresenter.state.count) : 0)
                     }
-                    .badge(homeTabRoute(tab) == .notification ? Int(notificationBadgePresenter.state.count) : 0)
-                }
-                // iPhone Duo also has a regular width when unfolded; these shortcuts are iPad-only.
-                if UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular {
-                    if case .success(let data) = onEnum(of: secondaryTabsPresenter.state.items) {
-                        let items = data.data.cast(SecondaryTabsPresenter.Item.self)
-                        ForEach(items, id: \.accountKey) { item in
-                            let tabs = item.tabs.compactMap { tab in
-                                route(for: tab).map { (tab: tab, route: $0) }
-                            }
-                            TabSection {
-                                ForEach(tabs, id: \.tab) { destination in
-                                    secondarySidebarShortcut(destination.tab, route: destination.route)
+                    // iPhone Duo also has a regular width when unfolded; these shortcuts are iPad-only.
+                    if UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular {
+                        if case .success(let data) = onEnum(of: secondaryTabsPresenter.state.items) {
+                            let items = data.data.cast(SecondaryTabsPresenter.Item.self)
+                            ForEach(items, id: \.accountKey) { item in
+                                let tabs = item.tabs.compactMap { tab in
+                                    route(for: tab).map { (tab: tab, route: $0) }
                                 }
-                            } header: {
-                                StateView(state: item.user) { user in
-                                    UserOnelineView(data: user)
-                                } errorContent: { _ in
-                                    Text("account_management_title")
-                                } loadingContent: {
-                                    Text("account_management_title")
+                                TabSection {
+                                    ForEach(tabs, id: \.tab) { destination in
+                                        secondarySidebarShortcut(
+                                            destination.tab,
+                                            route: destination.route,
+                                            launchSessionChallenge: launchSessionChallenge
+                                        )
+                                    }
+                                } header: {
+                                    StateView(state: item.user) { user in
+                                        UserOnelineView(data: user)
+                                    } errorContent: { _ in
+                                        Text("account_management_title")
+                                    } loadingContent: {
+                                        Text("account_management_title")
+                                    }
                                 }
+                                .tabPlacement(.sidebarOnly)
                             }
-                            .tabPlacement(.sidebarOnly)
+                        }
+                        ForEach(SecondarySidebarStaticRoute.allCases.filter { route in
+                            route != .agentHistory || aiAgentEnabledPresenter.state.enabled
+                        }, id: \.self) { route in
+                            secondarySidebarStaticRoute(
+                                route,
+                                launchSessionChallenge: launchSessionChallenge
+                            )
                         }
                     }
-                    ForEach(SecondarySidebarStaticRoute.allCases.filter { route in
-                        route != .agentHistory || aiAgentEnabledPresenter.state.enabled
-                    }, id: \.self) { route in
-                        secondarySidebarStaticRoute(route)
-                    }
                 }
+                .modifier(IPadCompactTabBarModifier(primaryTabIDs: items.map(\.name)))
+                .modifier(TabBarTapModifier(onDoubleTap: {
+                    NotificationCenter.default.post(name: .tabDoubleTapped, object: selectedTab)
+                }))
+                .tabViewStyle(.sidebarAdaptable)
+                .backport
+                .tabBarMinimizeBehavior(.onScrollDown)
+                .background(Color(.systemGroupedBackground))
             }
-            .modifier(IPadCompactTabBarModifier(primaryTabIDs: items.map(\.name)))
-            .modifier(TabBarTapModifier(onDoubleTap: {
-                NotificationCenter.default.post(name: .tabDoubleTapped, object: selectedTab)
-            }))
-            .tabViewStyle(.sidebarAdaptable)
-            .backport
-            .tabBarMinimizeBehavior(.onScrollDown)
-            .background(Color(.systemGroupedBackground))
+            .flareSessionChallengeHost { relogin in
+                reloginRoute = .relogin(relogin.accountKey, relogin.platformId)
+            }
             .sheet(item: $reloginRoute) { route in
                 NavigationStack {
                     route.view(
@@ -124,19 +137,30 @@ struct FlareRoot: View {
 
     // iOS 18's TabView { Tab(...) } does not reliably propagate updates to custom
     // @Environment values injected above TabView into already-mounted Tab contents.
-    private func propagateThemeEnvironment<Content: View>(_ content: Content) -> some View {
+    private func propagateThemeEnvironment<Content: View>(
+        _ content: Content,
+        launchSessionChallenge: ((SessionChallengeException, @escaping () -> Void) -> Void)?
+    ) -> some View {
         content
             .environment(\.aiConfig, aiConfig)
             .environment(\.translateConfig, translateConfig)
             .environment(\.appSettings, appSettings)
             .environment(\.globalAppearance, globalAppearance)
             .environment(\.timelineAppearance, timelineAppearance)
+            .environment(\.launchSessionChallenge, launchSessionChallenge)
     }
 
     @TabContentBuilder<String?>
-    private func secondarySidebarShortcut(_ tab: SecondaryTabsPresenter.Tab, route: Route) -> some TabContent<String?> {
+    private func secondarySidebarShortcut(
+        _ tab: SecondaryTabsPresenter.Tab,
+        route: Route,
+        launchSessionChallenge: ((SessionChallengeException, @escaping () -> Void) -> Void)?
+    ) -> some TabContent<String?> {
         Tab(value: "secondary:\(tab.hashValue)") {
-            propagateThemeEnvironment(SidebarRouteScreen(route: route))
+            propagateThemeEnvironment(
+                SidebarRouteScreen(route: route),
+                launchSessionChallenge: launchSessionChallenge
+            )
         } label: {
             Label {
                 Text(tab.title.text)
@@ -148,9 +172,15 @@ struct FlareRoot: View {
     }
 
     @TabContentBuilder<String?>
-    private func secondarySidebarStaticRoute(_ route: SecondarySidebarStaticRoute) -> some TabContent<String?> {
+    private func secondarySidebarStaticRoute(
+        _ route: SecondarySidebarStaticRoute,
+        launchSessionChallenge: ((SessionChallengeException, @escaping () -> Void) -> Void)?
+    ) -> some TabContent<String?> {
         Tab(value: route.selectionValue) {
-            propagateThemeEnvironment(SidebarRouteScreen(route: route.route))
+            propagateThemeEnvironment(
+                SidebarRouteScreen(route: route.route),
+                launchSessionChallenge: launchSessionChallenge
+            )
         } label: {
             Label {
                 Text(route.title)
@@ -159,6 +189,15 @@ struct FlareRoot: View {
             }
         }
         .tabPlacement(.sidebarOnly)
+    }
+}
+
+private struct FlareRootSessionChallengeScope<Content: View>: View {
+    @Environment(\.launchSessionChallenge) private var launchSessionChallenge
+    @ViewBuilder let content: (((SessionChallengeException, @escaping () -> Void) -> Void)?) -> Content
+
+    var body: some View {
+        content(launchSessionChallenge)
     }
 }
 private extension View {
@@ -209,6 +248,9 @@ struct BackportFlareRoot: View {
                 onDoubleTap: { tabBarNotifications.post(name: .tabDoubleTapped, object: activeTab) }
             ))
             .background(Color(.systemGroupedBackground))
+            .flareSessionChallengeHost { relogin in
+                reloginRoute = .relogin(relogin.accountKey, relogin.platformId)
+            }
             .sheet(item: $reloginRoute) { route in
                 NavigationStack {
                     route.view(

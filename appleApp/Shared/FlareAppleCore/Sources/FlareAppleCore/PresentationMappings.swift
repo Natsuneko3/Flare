@@ -11,21 +11,16 @@ public func loginCookieSnapshot(
     let fallbackURL = URL(string: fallbackUrl)
     let rawHeader =
         cookies
-            .filter { $0.matchesLogin(url: fallbackURL) }
+            .filter { $0.matchesRequest(url: fallbackURL) }
             .map { "\($0.name)=\($0.value)" }
             .joined(separator: "; ")
-    let preferredCookies = cookies.sorted {
-        if $0.path.count != $1.path.count { return $0.path.count > $1.path.count }
-        let domains = [$0.domain, $1.domain].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
-        if domains[0].count != domains[1].count { return domains[0].count > domains[1].count }
-        return !$0.domain.hasPrefix(".") && $1.domain.hasPrefix(".")
-    }
+    let preferredCookies = cookies.sortedByRequestSpecificity()
     var seen = Set<[String]>()
     let values = probes.flatMap { probe -> [LoginCookieValue] in
         let url = URL(string: probe.url)
         let names = Set(probe.names)
         return preferredCookies.compactMap { cookie in
-            guard cookie.matchesLogin(url: url), names.contains(cookie.name),
+            guard cookie.matchesRequest(url: url), names.contains(cookie.name),
                 seen.insert([probe.url, cookie.name, cookie.domain, cookie.path]).inserted else { return nil }
             let attributes = LoginCookieAttributes(
                 domain: cookie.domain,
@@ -47,8 +42,102 @@ public func loginCookieSnapshot(
     )
 }
 
+/// Builds strict host-only HTTPS session cookies scoped solely to `challengeURL`.
+public func sessionChallengeSeedCookies(
+    _ seedCookies: [SessionChallengeSeedCookie],
+    challengeURL: URL
+) -> [HTTPCookie] {
+    guard challengeURL.scheme?.lowercased() == "https",
+          let host = challengeURL.host,
+          !host.isEmpty,
+          challengeURL.user == nil,
+          challengeURL.password == nil
+    else {
+        return []
+    }
+    return seedCookies.compactMap { seed in
+        guard !seed.name.isEmpty else { return nil }
+        return HTTPCookie(properties: [
+            .originURL: challengeURL,
+            .path: "/",
+            .name: seed.name,
+            .value: seed.value,
+            .secure: "TRUE",
+        ])
+    }
+}
+
+/// Collects cookies matching the declared challenge probe URLs and cookie names.
+public func sessionChallengeCookieSnapshot(
+    cookies: [HTTPCookie],
+    probes: [SessionChallengeCookieProbe],
+    userAgent: String? = nil
+) -> SessionChallengeCookieSnapshot {
+    let preferredCookies = cookies.sortedByRequestSpecificity()
+    var seen = Set<[String]>()
+    let values = probes.flatMap { probe -> [SessionChallengeCookieValue] in
+        let url = URL(string: probe.url)
+        let names = Set(probe.cookies.map(\.name))
+        return preferredCookies.compactMap { cookie in
+            guard cookie.matchesRequest(url: url),
+                  names.contains(cookie.name),
+                  seen.insert([probe.url, cookie.name, cookie.domain, cookie.path]).inserted
+            else {
+                return nil
+            }
+            let validDomain = cookie.domain.count <= 253 && !cookie.domain.containsISOControl
+                ? cookie.domain
+                : nil
+            let validPath = cookie.path.hasPrefix("/") && cookie.path.count <= 8_192 && !cookie.path.containsISOControl
+                ? cookie.path
+                : nil
+            let rawSameSite = cookie.sameSitePolicy?.rawValue.lowercased()
+            let sameSite = (rawSameSite == "strict" || rawSameSite == "lax" || rawSameSite == "none")
+                ? rawSameSite
+                : nil
+            let attributes = SessionChallengeCookieAttributes(
+                domain: validDomain,
+                hostOnly: nil,
+                path: validPath,
+                expiresAt: cookie.expiresDate.map { KotlinLong(longLong: Int64($0.timeIntervalSince1970 * 1000)) },
+                session: KotlinBoolean(bool: cookie.isSessionOnly),
+                secure: KotlinBoolean(bool: cookie.isSecure),
+                httpOnly: KotlinBoolean(bool: cookie.isHTTPOnly),
+                sameSite: sameSite
+            )
+            return SessionChallengeCookieValue(
+                sourceUrl: probe.url,
+                name: cookie.name,
+                value: cookie.value,
+                attributes: attributes
+            )
+        }
+    }
+    return SessionChallengeCookieSnapshot(
+        cookies: values,
+        userAgent: userAgent
+    )
+}
+
+private extension String {
+    var containsISOControl: Bool {
+        unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
+private extension Array where Element == HTTPCookie {
+    func sortedByRequestSpecificity() -> [HTTPCookie] {
+        sorted {
+            if $0.path.count != $1.path.count { return $0.path.count > $1.path.count }
+            let domains = [$0.domain, $1.domain].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+            if domains[0].count != domains[1].count { return domains[0].count > domains[1].count }
+            return !$0.domain.hasPrefix(".") && $1.domain.hasPrefix(".")
+        }
+    }
+}
+
 private extension HTTPCookie {
-    func matchesLogin(url: URL?) -> Bool {
+    func matchesRequest(url: URL?) -> Bool {
         guard let url, let host = url.host?.lowercased() else { return false }
         if isSecure && url.scheme?.lowercased() != "https" { return false }
 
