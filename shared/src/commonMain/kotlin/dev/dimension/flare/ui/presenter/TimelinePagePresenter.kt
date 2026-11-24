@@ -29,6 +29,7 @@ import dev.dimension.flare.ui.presenter.home.TimelinePresenter
 import dev.dimension.flare.ui.presenter.home.TimelinePresenterOptions
 import dev.dimension.flare.ui.presenter.home.TimelineState
 import dev.dimension.flare.ui.route.DeeplinkRoute
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -65,7 +66,7 @@ public class TimelinePagePresenter(
             }.distinctUntilChanged()
     }
     private val timeline by lazy {
-        TimelinePresenter(
+        object : TimelinePresenter(
             loader =
                 sources.map { source ->
                     source?.timelinePage(page.pageId, page.parameters) ?: object : RemoteLoader<UiTimelineV2> {
@@ -76,7 +77,17 @@ public class TimelinePagePresenter(
                     }
                 },
             options = TimelinePresenterOptions(allowLongTextTranslationDisplay = { true }),
-        )
+        ) {
+            override fun keepContextAnchor(item: UiTimelineV2): Boolean = item.statusKey == page.detailStatusKey
+
+            override suspend fun transform(data: UiTimelineV2): UiTimelineV2 =
+                if (keepContextAnchor(data) && data is UiTimelineV2.TimelinePostItem && data.presentation.quotes.isNotEmpty()) {
+                    // The focused comment's replies are displayed as their own rows on this page.
+                    data.copy(presentation = data.presentation.copy(quotes = persistentListOf()))
+                } else {
+                    data
+                }
+        }
     }
 
     public companion object {

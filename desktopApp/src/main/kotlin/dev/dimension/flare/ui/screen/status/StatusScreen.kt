@@ -20,8 +20,12 @@ import dev.dimension.flare.RegisterTabCallback
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.FlareScrollBar
+import dev.dimension.flare.ui.component.adaptive.AdaptiveSplitLayout
+import dev.dimension.flare.ui.component.adaptive.PrimaryWidthStrategy
 import dev.dimension.flare.ui.component.status.LazyStatusVerticalStaggeredGrid
 import dev.dimension.flare.ui.component.status.statusDetail
+import dev.dimension.flare.ui.component.status.statusDetailBodyItems
+import dev.dimension.flare.ui.component.status.statusDetailHeaderItems
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.status.StatusContextPresenter
 import io.github.composefluent.component.ProgressBar
@@ -37,24 +41,67 @@ internal fun StatusScreen(
         statusPresenter(accountType = accountType, statusKey = statusKey)
     }
 
-    val listState = rememberLazyStaggeredGridState()
-    RegisterTabCallback(listState, onRefresh = state::refresh)
+    val replyListState = rememberLazyStaggeredGridState()
+    val primaryListState = rememberLazyStaggeredGridState()
     Box(
-        modifier =
-            Modifier
-                .fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter,
     ) {
-        FlareScrollBar(listState) {
-            LazyStatusVerticalStaggeredGrid(
-                modifier = Modifier.widthIn(max = 480.dp),
-                columns = StaggeredGridCells.Fixed(1),
-                contentPadding = LocalWindowPadding.current,
-                state = listState,
-            ) {
-                statusDetail(state.state, statusKey)
-            }
-        }
+        AdaptiveSplitLayout(
+            primaryWidthStrategy = PrimaryWidthStrategy.PostDetailDefault,
+            unfoldedGap = 8.dp,
+            contentPadding = LocalWindowPadding.current,
+            compactContent = { padding ->
+                RegisterTabCallback(replyListState, onRefresh = state::refresh)
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    FlareScrollBar(replyListState) {
+                        LazyStatusVerticalStaggeredGrid(
+                            modifier = Modifier.widthIn(max = 480.dp),
+                            columns = StaggeredGridCells.Fixed(1),
+                            contentPadding = padding,
+                            state = replyListState,
+                        ) {
+                            statusDetail(state.state, statusKey)
+                        }
+                    }
+                }
+            },
+            primaryPane = { _, padding ->
+                FlareScrollBar(primaryListState) {
+                    LazyStatusVerticalStaggeredGrid(
+                        modifier = Modifier.fillMaxSize(),
+                        columns = StaggeredGridCells.Fixed(1),
+                        contentPadding = padding,
+                        state = primaryListState,
+                    ) {
+                        statusDetailHeaderItems(
+                            state = state.state,
+                            statusKey = statusKey,
+                            splitFallback = true,
+                        )
+                    }
+                }
+            },
+            secondaryPane = { _, padding ->
+                RegisterTabCallback(replyListState, onRefresh = state::refresh)
+                FlareScrollBar(replyListState) {
+                    LazyStatusVerticalStaggeredGrid(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = padding,
+                        state = replyListState,
+                    ) {
+                        statusDetailBodyItems(
+                            state = state.state,
+                            statusKey = statusKey,
+                            suppressMirroredHeaderError = true,
+                        )
+                    }
+                }
+            },
+        )
         if (state.isRefreshing) {
             ProgressBar(
                 modifier =

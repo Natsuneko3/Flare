@@ -5,6 +5,7 @@ import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.ClickEvent
+import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTranslatableText
 import dev.dimension.flare.ui.render.toUi
@@ -14,6 +15,7 @@ import kotlinx.collections.immutable.toPersistentList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -152,6 +154,116 @@ class StatusContextPresenterTest {
             listOf(olderParent.statusKey, detail.statusKey, newerParent.statusKey),
             post.presentation.inlineParents.map { it.statusKey },
         )
+    }
+
+    @Test
+    fun untabbedContextSplitsParentsAndFocalPostIntoHeaderAndKeepsOnlyRepliesInChildren() {
+        val parent = createPost("parent", "2024-01-01T00:00:00Z")
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val reply = createPost("reply", "2024-01-01T00:02:00Z")
+        val paging = PagingState.Success.ImmutableSuccess<UiTimelineV2>(persistentListOf(parent, focal, reply))
+
+        val resolved =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = paging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Loading(),
+                onRefresh = {},
+            )
+
+        assertEquals<UiState<UiTimelineV2>>(UiState.Success(focal), resolved.current)
+        assertEquals<List<UiTimelineV2>>(listOf(parent, focal), resolved.header)
+        val children = assertIs<PagingState.Success<UiTimelineV2>>(resolved.listState)
+        assertEquals(1, children.itemCount)
+        assertEquals(reply, children[0])
+
+        val singlePostOnly = PagingState.Success.ImmutableSuccess<UiTimelineV2>(persistentListOf(focal))
+        val resolvedSingle =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = singlePostOnly,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Success(focal),
+                onRefresh = {},
+            )
+        assertEquals<List<UiTimelineV2>>(listOf(focal), resolvedSingle.header)
+        assertIs<PagingState.Empty<UiTimelineV2>>(resolvedSingle.listState)
+    }
+
+    @Test
+    fun untabbedRepliesOnlyContextRetainsItsPagingWhenDetailSuppliesThePost() {
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val reply = createPost("reply", "2024-01-01T00:02:00Z")
+        for (finished in listOf(false, true)) {
+            val replies =
+                PagingState.Success.ImmutableSuccess<UiTimelineV2>(
+                    persistentListOf(reply),
+                    appendState = LoadState.NotLoading(endOfPaginationReached = finished),
+                )
+            val resolved = resolveUntabbedContextDetail(detailKey, replies, null, UiState.Success(focal)) {}
+
+            assertEquals<List<UiTimelineV2>>(listOf(focal), resolved.header)
+            assertSame(replies, resolved.listState)
+        }
+    }
+
+    @Test
+    fun untabbedContextCanHaveNoRepliesWhenDetailSuppliesThePost() {
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val empty = PagingState.Empty<UiTimelineV2> {}
+        val waitingForDetail = resolveUntabbedContextDetail(detailKey, empty, null, UiState.Loading()) {}
+        val resolved = resolveUntabbedContextDetail(detailKey, empty, null, UiState.Success(focal)) {}
+
+        assertIs<UiState.Loading<UiTimelineV2>>(waitingForDetail.current)
+        assertIs<PagingState.Loading<UiTimelineV2>>(waitingForDetail.listState)
+        assertEquals<List<UiTimelineV2>>(listOf(focal), resolved.header)
+        assertIs<PagingState.Empty<UiTimelineV2>>(resolved.listState)
+    }
+
+    @Test
+    fun detailOnlySourceWithoutContextPagingUsesFallbackPostWithoutSyntheticContextError() {
+        val focal = createPost(detailKey.id, "2024-01-01T00:01:00Z")
+        val emptyPaging = PagingState.Empty<UiTimelineV2> {}
+
+        val loading =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = emptyPaging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Loading(),
+                supportsContextPaging = false,
+                onRefresh = {},
+            )
+        assertIs<UiState.Loading<UiTimelineV2>>(loading.current)
+        assertTrue(loading.header.isEmpty())
+        assertIs<PagingState.Loading<UiTimelineV2>>(loading.listState)
+
+        val loaded =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = emptyPaging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Success(focal),
+                supportsContextPaging = false,
+                onRefresh = {},
+            )
+        assertEquals<UiState<UiTimelineV2>>(UiState.Success(focal), loaded.current)
+        assertEquals<List<UiTimelineV2>>(listOf(focal), loaded.header)
+        assertIs<PagingState.Empty<UiTimelineV2>>(loaded.listState)
+
+        val failure = IllegalStateException("Detail failed")
+        val errored =
+            resolveUntabbedContextDetail(
+                statusKey = detailKey,
+                timelineListState = emptyPaging,
+                cachedPost = null,
+                fallbackCurrentPost = UiState.Error(failure),
+                supportsContextPaging = false,
+                onRefresh = {},
+            )
+        assertEquals(failure, assertIs<UiState.Error<UiTimelineV2>>(errored.current).throwable)
+        assertEquals(failure, assertIs<PagingState.Error<UiTimelineV2>>(errored.listState).error)
     }
 
     private fun createPost(

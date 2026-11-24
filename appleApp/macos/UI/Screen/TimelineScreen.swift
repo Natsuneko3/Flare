@@ -127,7 +127,7 @@ struct TimelinePageScreen: View {
     var body: some View {
         TimelinePagingView(
             data: presenter.state.listState,
-            detailStatusKey: nil,
+            detailStatusKey: page.detailStatusKey,
             key: presenter.key
         )
         .environment(\.timelineAppearance, TimelinePagePresenter.companion.appearance(base: timelineAppearance))

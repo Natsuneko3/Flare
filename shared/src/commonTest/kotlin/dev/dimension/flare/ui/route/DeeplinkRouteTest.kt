@@ -1,12 +1,23 @@
 package dev.dimension.flare.ui.route
 
+import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.capabilities
+import dev.dimension.flare.data.datasource.microblog.datasource.TimelinePageDataSource
+import dev.dimension.flare.data.datasource.microblog.paging.RemoteLoader
+import dev.dimension.flare.data.datasource.microblog.paging.notSupported
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.UiText
+import dev.dimension.flare.ui.model.UiTimelineV2
 import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class DeeplinkRouteTest {
     @Test
@@ -22,6 +33,38 @@ class DeeplinkRouteTest {
                 parameters = mapOf("parentId" to "comment:123", "sort" to "oldest"),
             )
         assertEquals(route, DeeplinkRoute.parse(route.toUri()))
+    }
+
+    @Test
+    fun temporaryTimelinePagePreservesDetailStatusKeyAndLegacyCapability() {
+        val account = MicroBlogKey("23", "m.weibo.cn")
+        val detailKey = MicroBlogKey("comment-1", "m.weibo.cn")
+        val route =
+            DeeplinkRoute.Timeline.Page(
+                accountType = AccountType.Specific(account),
+                pluginId = "VVo",
+                platformId = "VVo",
+                packageHash = "",
+                pageId = "comment_replies",
+                title = UiText.Raw("Comments"),
+                parameters = mapOf("commentId" to "comment-1"),
+                detailStatusKey = detailKey,
+            )
+        val parsed = assertIs<DeeplinkRoute.Timeline.Page>(DeeplinkRoute.parse(route.toUri()))
+        assertEquals(detailKey, parsed.detailStatusKey)
+
+        val source =
+            object : MicroblogDataSource by UnavailableMicroblogDataSource, TimelinePageDataSource {
+                override val pluginId: String = "VVo"
+                override val packageHash: String = ""
+                override val revision: StateFlow<Long> = MutableStateFlow(0L)
+
+                override fun timelinePage(
+                    pageId: String,
+                    parameters: Map<String, String>,
+                ): RemoteLoader<UiTimelineV2> = notSupported()
+            }
+        assertSame(source, source.capabilities.timelinePage)
     }
 
     @Test
@@ -72,34 +115,21 @@ class DeeplinkRouteTest {
     }
 
     @Test
+    fun weiboStatusUsesGenericDetailWebPathAndBumpsCacheVersionAfterLegacyRouteRemoval() {
+        val route =
+            DeeplinkRoute.Status.Detail(
+                statusKey = MicroBlogKey("5357831171867297", "m.weibo.cn"),
+                accountType = AccountType.Specific(MicroBlogKey("23", "m.weibo.cn")),
+            )
+        assertEquals("/23@m.weibo.cn/status/5357831171867297@m.weibo.cn", route.toWebPath())
+        assertEquals(56, dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION)
+    }
+
+    @Test
     fun testGalleryDetail() {
         val route =
             DeeplinkRoute.Gallery.Detail(
                 statusKey = MicroBlogKey("status123", "example.com"),
-                accountType = activeAccountType,
-            )
-        val uri = route.toUri()
-        val parsed = DeeplinkRoute.parse(uri)
-        assertEquals(route, parsed)
-    }
-
-    @Test
-    fun testStatusVVOComment() {
-        val route =
-            DeeplinkRoute.Status.VVOComment(
-                commentKey = MicroBlogKey("comment123", "example.com"),
-                accountType = AccountType.Guest,
-            )
-        val uri = route.toUri()
-        val parsed = DeeplinkRoute.parse(uri)
-        assertEquals(route, parsed)
-    }
-
-    @Test
-    fun testStatusVVOStatus() {
-        val route =
-            DeeplinkRoute.Status.VVOStatus(
-                statusKey = MicroBlogKey("status456", "example.com"),
                 accountType = activeAccountType,
             )
         val uri = route.toUri()

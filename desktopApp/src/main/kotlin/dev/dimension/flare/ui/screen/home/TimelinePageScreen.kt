@@ -57,7 +57,7 @@ internal fun TimelinePageScreen(page: DeeplinkRoute.Timeline.Page) {
                 LazyStatusVerticalStaggeredGrid(
                     columns = StaggeredGridCells.Fixed(1),
                     state = list,
-                ) { status(state.listState) }
+                ) { status(state.listState, detailStatusKey = page.detailStatusKey) }
             }
         }
     }

@@ -5,13 +5,10 @@ import androidx.room3.ConstructedBy
 import androidx.room3.Database
 import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
-import androidx.room3.migration.Migration
 import androidx.room3.withWriteTransaction
-import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.async.executeSQL
 
-// Added DbPluginPostWidget cache table for plugin timeline post widget persistence.
-internal const val CACHE_DATABASE_VERSION = 55
+// Removed legacy VVOStatus and VVOComment DeeplinkRoute variants from cached status payloads.
+internal const val CACHE_DATABASE_VERSION = 56
 
 @Database(
     entities = [
@@ -69,45 +66,6 @@ internal abstract class CacheDatabase : RoomDatabase() {
     abstract fun translationDao(): dev.dimension.flare.data.database.cache.dao.TranslationDao
 
     abstract fun pluginPostWidgetDao(): dev.dimension.flare.data.database.cache.dao.PluginPostWidgetDao
-
-    companion object {
-        val MIGRATION_53_54 =
-            object : Migration(53, 54) {
-                override suspend fun migrate(connection: SQLiteConnection) {
-                    connection.executeSQL(
-                        "CREATE TABLE DbProfileTabs (accountType TEXT NOT NULL, userKey TEXT NOT NULL, " +
-                            "tabsJson TEXT NOT NULL, PRIMARY KEY(accountType, userKey))",
-                    )
-                    connection.executeSQL(
-                        "CREATE UNIQUE INDEX index_DbProfileTabs_accountType_userKey ON DbProfileTabs(accountType, userKey)",
-                    )
-                }
-            }
-
-        val MIGRATION_54_55 =
-            object : Migration(54, 55) {
-                override suspend fun migrate(connection: SQLiteConnection) {
-                    connection.executeSQL(
-                        "CREATE TABLE IF NOT EXISTS DbPluginPostWidget (" +
-                            "postEntityKey TEXT NOT NULL, " +
-                            "pluginId TEXT NOT NULL, " +
-                            "pluginCacheKey TEXT NOT NULL, " +
-                            "sourceHash TEXT NOT NULL, " +
-                            "cardsJson TEXT NOT NULL, " +
-                            "createdAtMillis INTEGER NOT NULL, " +
-                            "expiresAtMillis INTEGER, " +
-                            "PRIMARY KEY(postEntityKey, pluginId)" +
-                            ")",
-                    )
-                    connection.executeSQL(
-                        "CREATE INDEX IF NOT EXISTS index_DbPluginPostWidget_pluginId ON DbPluginPostWidget(pluginId)",
-                    )
-                    connection.executeSQL(
-                        "CREATE INDEX IF NOT EXISTS index_DbPluginPostWidget_expiresAtMillis ON DbPluginPostWidget(expiresAtMillis)",
-                    )
-                }
-            }
-    }
 }
 
 internal suspend fun CacheDatabase.clearHomeTimelinesForAccount(accountKey: dev.dimension.flare.model.MicroBlogKey) {

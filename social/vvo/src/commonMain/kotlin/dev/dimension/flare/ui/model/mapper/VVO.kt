@@ -22,12 +22,14 @@ import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiNumber
 import dev.dimension.flare.ui.model.UiProfile
+import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.UiTimelineV2.Message
 import dev.dimension.flare.ui.model.UiTimelineV2.Post
 import dev.dimension.flare.ui.model.UiTimelineV2.TimelinePostItem
 import dev.dimension.flare.ui.model.UiTimelineV2.UserList
 import dev.dimension.flare.ui.model.UiTranslatableText
+import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.asType
 import dev.dimension.flare.ui.model.bindMediaProxy
 import dev.dimension.flare.ui.model.contentPostOrNull
@@ -49,12 +51,49 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlin.time.Clock
 
+internal const val VVO_COMMENT_REPLIES_PAGE_ID: String = "comment_replies"
+internal const val VVO_COMMENT_ID_PARAM: String = "commentId"
+internal const val VVO_ROOT_STATUS_ID_PARAM: String = "rootStatusId"
+
 internal fun Status.render(accountKey: MicroBlogKey): UiTimelineV2 = renderStatusV2(accountKey)
 
 internal fun Comment.render(
     accountKey: MicroBlogKey,
     rootStatusId: String? = null,
-): UiTimelineV2 = renderStatusV2(accountKey, rootStatusId)
+    parentCommentKey: MicroBlogKey? = null,
+    cachedClickEvent: ClickEvent? = null,
+): UiTimelineV2 = renderStatusV2(accountKey, rootStatusId, parentCommentKey, cachedClickEvent)
+
+internal fun Comment.extractStatusMid(rootStatusId: String? = null): String? =
+    rootStatusId ?: status?.mid ?: analysis_extra
+        ?.split('|')
+        ?.mapNotNull {
+            val pair = it.split(':')
+            if (pair.size == 2) pair[0] to pair[1] else null
+        }?.toMap()
+        ?.get("mid")
+
+private fun vvoCommentRepliesRoute(
+    accountKey: MicroBlogKey,
+    commentKey: MicroBlogKey,
+    rootStatusId: String?,
+): DeeplinkRoute.Timeline.Page =
+    DeeplinkRoute.Timeline.Page(
+        accountType = AccountType.Specific(accountKey),
+        pluginId = VVO_PLATFORM_ID,
+        platformId = VVO_PLATFORM_ID,
+        packageHash = "",
+        pageId = VVO_COMMENT_REPLIES_PAGE_ID,
+        title = UiStrings.Comments.asText(),
+        parameters =
+            buildMap {
+                put(VVO_COMMENT_ID_PARAM, commentKey.id)
+                if (!rootStatusId.isNullOrBlank()) {
+                    put(VVO_ROOT_STATUS_ID_PARAM, rootStatusId)
+                }
+            },
+        detailStatusKey = commentKey,
+    )
 
 internal fun UiTimelineV2.withVvoExtendedText(originalContent: UiRichText): UiTimelineV2 =
     when (this) {
@@ -216,7 +255,7 @@ private fun Status.renderStatusV2(accountKey: MicroBlogKey): UiTimelineV2 {
                 createdAt = createdAt?.toUi() ?: Clock.System.now().toUi(),
                 clickEvent =
                     ClickEvent.Deeplink(
-                        DeeplinkRoute.Status.VVOStatus(
+                        DeeplinkRoute.Status.Detail(
                             statusKey = statusKey,
                             accountType = AccountType.Specific(accountKey),
                         ),
@@ -344,7 +383,7 @@ private fun Status.renderStatusV2(accountKey: MicroBlogKey): UiTimelineV2 {
             createdAt = createdAt?.toUi() ?: Clock.System.now().toUi(),
             clickEvent =
                 ClickEvent.Deeplink(
-                    DeeplinkRoute.Status.VVOStatus(
+                    DeeplinkRoute.Status.Detail(
                         statusKey = statusKey,
                         accountType = AccountType.Specific(accountKey),
                     ),
@@ -368,16 +407,11 @@ private fun Status.renderStatusV2(accountKey: MicroBlogKey): UiTimelineV2 {
 private fun Comment.renderStatusV2(
     accountKey: MicroBlogKey,
     rootStatusId: String? = null,
+    parentCommentKey: MicroBlogKey? = null,
+    cachedClickEvent: ClickEvent? = null,
 ): UiTimelineV2 {
     val statusKey = MicroBlogKey(id = id, host = accountKey.host)
-    val statusMid =
-        rootStatusId ?: status?.mid ?: analysis_extra
-            ?.split('|')
-            ?.mapNotNull {
-                val pair = it.split(':')
-                if (pair.size == 2) pair[0] to pair[1] else null
-            }?.toMap()
-            ?.get("mid")
+    val statusMid = extractStatusMid(rootStatusId)
     val user = this.user?.render(accountKey)
     val isFromMe = user?.key == accountKey
     val url =
@@ -408,18 +442,9 @@ private fun Comment.renderStatusV2(
 
     val quote =
         commentList
-            ?.map {
-                it.renderStatusV2(accountKey, rootStatusId).contentPostOrNull()?.copy(
-                    clickEvent =
-                        ClickEvent.Deeplink(
-                            DeeplinkRoute.Status.VVOComment(
-                                commentKey = statusKey,
-                                accountType = AccountType.Specific(accountKey),
-                            ),
-                        ),
-                )
-            }?.filterNotNull()
-            ?.toImmutableList()
+            ?.mapNotNull {
+                it.renderStatusV2(accountKey, statusMid, parentCommentKey = statusKey).contentPostOrNull()
+            }?.toImmutableList()
             ?: listOfNotNull(status?.renderStatusV2(accountKey)?.contentPostOrNull()).toImmutableList()
 
     val post =
@@ -513,16 +538,17 @@ private fun Comment.renderStatusV2(
             card = null,
             createdAt = createdAt?.toUi() ?: Clock.System.now().toUi(),
             clickEvent =
-                ClickEvent.Deeplink(
-                    if (status != null) {
-                        DeeplinkRoute.Status.VVOStatus(
-                            statusKey = status.renderStatusV2(accountKey).statusKey,
+                cachedClickEvent ?: ClickEvent.Deeplink(
+                    if (parentCommentKey == null && status != null) {
+                        DeeplinkRoute.Status.Detail(
+                            statusKey = MicroBlogKey(status.id, accountKey.host),
                             accountType = AccountType.Specific(accountKey),
                         )
                     } else {
-                        DeeplinkRoute.Status.VVOComment(
-                            commentKey = statusKey,
-                            accountType = AccountType.Specific(accountKey),
+                        vvoCommentRepliesRoute(
+                            accountKey = accountKey,
+                            commentKey = parentCommentKey ?: statusKey,
+                            rootStatusId = statusMid,
                         )
                     },
                 ),
@@ -641,7 +667,7 @@ private fun replaceMentionAndHashtag(
                 node.attributes().put(
                     "href",
                     DeeplinkRoute.Status
-                        .VVOStatus(
+                        .Detail(
                             statusKey = MicroBlogKey(statusId, accountKey.host),
                             accountType = AccountType.Specific(accountKey),
                         ).toUri(),
@@ -676,7 +702,7 @@ private fun replaceMentionAndHashtag(
                 node.attributes().put(
                     "href",
                     DeeplinkRoute.Status
-                        .VVOStatus(
+                        .Detail(
                             statusKey = MicroBlogKey(href.removePrefix("/status/"), accountKey.host),
                             accountType = AccountType.Specific(accountKey),
                         ).toUri(),

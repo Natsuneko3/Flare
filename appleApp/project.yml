@@ -251,6 +251,7 @@ targets:
       - path: ios/UI/Component/Status/StatusMediaCarouselLayout.swift
       - path: ios/UI/Component/TimelineLayoutPolicy.swift
       - path: ios/UI/Component/TimelineHostedAccessoryView.swift
+      - path: Shared/FlareAppleCore/Sources/FlareAppleUI/AdaptiveSplitLayout.swift
       - path: Shared/FlareAppleCore/Sources/FlareAppleUI/TimelineAutoplayPolicy.swift
       - path: Shared/FlareAppleCore/Sources/FlareAppleUI/TimelinePlaybackCoordinator.swift
       - path: Shared/FlareAppleCore/Sources/FlareAppleUI/VideoPlaybackArbiter.swift

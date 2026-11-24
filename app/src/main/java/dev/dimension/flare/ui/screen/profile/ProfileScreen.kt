@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -60,12 +62,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.Images
@@ -90,8 +91,12 @@ import dev.dimension.flare.ui.component.ProfileTabsLoadingPlaceholder
 import dev.dimension.flare.ui.component.RefreshContainer
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabRowIndicator
+import dev.dimension.flare.ui.component.adaptive.AdaptiveSplitLayout
+import dev.dimension.flare.ui.component.adaptive.SplitPaneMode
+import dev.dimension.flare.ui.component.adaptive.calculateProfileTitleAlpha
+import dev.dimension.flare.ui.component.adaptive.rememberProfilePrimaryWidthStrategy
+import dev.dimension.flare.ui.component.adaptive.rememberSplitPaneState
 import dev.dimension.flare.ui.component.placeholder
-import dev.dimension.flare.ui.component.platform.adaptiveSideContentSize
 import dev.dimension.flare.ui.component.platform.isBigScreen
 import dev.dimension.flare.ui.component.status.AdaptiveCard
 import dev.dimension.flare.ui.component.status.LazyStatusVerticalStaggeredGrid
@@ -128,7 +133,6 @@ import kotlinx.coroutines.launch
 import moe.tlaster.nestedscrollview.VerticalNestedScrollView
 import moe.tlaster.nestedscrollview.rememberNestedScrollViewState
 import moe.tlaster.precompose.molecule.producePresenter
-import kotlin.math.max
 
 @Composable
 internal fun ProfileWithUserNameAndHostDeeplinkRoute(
@@ -290,14 +294,10 @@ internal fun ProfileScreen(
             showBlockedProfileContent = false
         }
     }
-    val windowSize =
-        with(LocalDensity.current) {
-            LocalWindowInfo.current.containerSize
-                .toSize()
-                .toDpSize()
-        }
-    val bigScreen = isBigScreen()
-    val plainProfile = !bigScreen
+    val splitState = rememberSplitPaneState(initialIsSplit = isBigScreen())
+    val isSplit = splitState.mode.isSplit
+    val profilePrimaryWidthStrategy = rememberProfilePrimaryWidthStrategy(horizontalPadding = 32.dp)
+    val plainProfile = !isSplit
     val headerBackground = profileHeaderBackground(plainProfile)
     val tabSpacing = if (plainProfile) 0.dp else 8.dp
     val profileTabHeight =
@@ -308,7 +308,7 @@ internal fun ProfileScreen(
             if (plainProfile) height.coerceAtLeast(48.dp) else height
         }
     val scrollBehavior =
-        if (bigScreen) {
+        if (isSplit) {
             TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
         } else {
             TopAppBarDefaults.pinnedScrollBehavior()
@@ -321,22 +321,17 @@ internal fun ProfileScreen(
                 .contentWindowInsets
                 .exclude(WindowInsets.statusBars),
         topBar = {
-            val titleAlpha by remember {
+            val titleAlpha by remember(nestedScrollState, splitState) {
                 derivedStateOf {
-                    if (nestedScrollState.offset == nestedScrollState.maxOffset ||
-                        bigScreen
-                    ) {
-                        1f
-                    } else {
-                        max(
-                            0f,
-                            nestedScrollState.offset / nestedScrollState.maxOffset,
-                        )
-                    }
+                    calculateProfileTitleAlpha(
+                        offset = nestedScrollState.offset,
+                        maxOffset = nestedScrollState.maxOffset,
+                        isSplit = splitState.mode.isSplit,
+                    )
                 }
             }
             Box {
-                if (!bigScreen) {
+                if (!isSplit) {
                     Column(
                         modifier =
                             Modifier
@@ -379,11 +374,6 @@ internal fun ProfileScreen(
                             scrolledContainerColor = Color.Transparent,
                             actionIconContentColor = MaterialTheme.colorScheme.onSurface,
                         ),
-//                    windowInsets = if (bigScreen) {
-//                        TopAppBarDefaults.windowInsets
-//                    } else {
-//                        WindowInsets()
-//                    },
                     scrollBehavior = scrollBehavior,
                     navigationIcon = {
                         if (showBackButton) {
@@ -400,7 +390,7 @@ internal fun ProfileScreen(
                                     ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (!bigScreen) {
+                            if (!isSplit) {
                                 ProfileInsightAction(
                                     profileState = state.state,
                                     onClick = onProfileInsightClick,
@@ -415,17 +405,206 @@ internal fun ProfileScreen(
                 )
             }
         },
-    ) {
-        Row {
-            if (bigScreen) {
-                val width by adaptiveSideContentSize()
+    ) { scaffoldPadding ->
+        val onRefreshProfile: () -> Unit = {
+            scope.launch {
+                isRefreshing = true
+                try {
+                    activeTabRefresh()
+                } finally {
+                    isRefreshing = false
+                }
+            }
+        }
+        val tabAndPagerContent: @Composable (Dp) -> Unit = { bottomInset ->
+            if (isBlockedProfile && !showBlockedProfileContent) {
+                BlockedProfileGate(
+                    onShow = {
+                        showBlockedProfileContent = true
+                    },
+                )
+            } else {
+                state.tabs.onLoading {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(tabSpacing),
+                    ) {
+                        ProfileTabsLoadingPlaceholder(
+                            modifier = Modifier.background(headerBackground),
+                            tabHeight = profileTabHeight,
+                            verticalPadding = 0.dp,
+                        )
+                        LazyStatusVerticalStaggeredGrid(
+                            contentPadding =
+                                PaddingValues(
+                                    top = 8.dp,
+                                    bottom = 8.dp + bottomInset,
+                                ),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            statusLoadingPlaceholders()
+                        }
+                    }
+                }
+                state.tabs.onError { error ->
+                    ErrorContent(
+                        error = error,
+                        onRetry = state.state::retryTabs,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                state.pagerState.onSuccess { pagerState ->
+                    state.tabs.onSuccess { tabs ->
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(tabSpacing),
+                        ) {
+                            ProfileTabRow(
+                                titles = tabs.map { it.name },
+                                currentPage = pagerState.currentPage,
+                                plainProfile = plainProfile,
+                                tabHeight = profileTabHeight,
+                                headerBackground = headerBackground,
+                                onTabSelected = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+                            )
+                            HorizontalPager(
+                                state = pagerState,
+                                key = { index ->
+                                    tabs.getOrNull(index)?.id ?: "profile_tab_$index"
+                                },
+                            ) { index ->
+                                val tab = tabs[index]
+                                when (tab) {
+                                    is ProfileTabItem.Media -> {
+                                        val tabState = rememberProfileMediaTabState(tab)
+                                        val data = tabState.mediaState
+                                        val latestData = rememberUpdatedState(data)
+                                        if (index == pagerState.currentPage) {
+                                            LaunchedEffect(tab.id, index) {
+                                                activeTabRefresh = {
+                                                    latestData.value.refreshSuspend()
+                                                }
+                                            }
+                                        }
+                                        val gridState = rememberLazyStaggeredGridState()
+                                        ProfileMediaTab(
+                                            mediaState = data,
+                                            state = gridState,
+                                            onItemClicked = { statusKey, mediaIndex, preview ->
+                                                onMediaClick(statusKey, mediaIndex, preview)
+                                            },
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+
+                                    is ProfileTabItem.Timeline -> {
+                                        val tabState = rememberProfileTimelineTabState(tab)
+                                        val data = tabState.listState
+                                        val latestData = rememberUpdatedState(data)
+                                        if (index == pagerState.currentPage) {
+                                            LaunchedEffect(tab.id, index) {
+                                                activeTabRefresh = {
+                                                    latestData.value.refreshSuspend()
+                                                }
+                                            }
+                                        }
+                                        val listState = rememberLazyStaggeredGridState()
+                                        if (index == pagerState.currentPage) {
+                                            RegisterTabCallback(
+                                                lazyListState = listState,
+                                                onRefresh = {
+                                                    scope.launch {
+                                                        activeTabRefresh()
+                                                    }
+                                                },
+                                            )
+                                        }
+                                        LazyStatusVerticalStaggeredGrid(
+                                            state = listState,
+                                            contentPadding =
+                                                PaddingValues(
+                                                    top = 8.dp,
+                                                    bottom = 8.dp + bottomInset,
+                                                ),
+                                            modifier = Modifier.fillMaxSize(),
+                                        ) {
+                                            status(data)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        AdaptiveSplitLayout(
+            primaryWidthStrategy = profilePrimaryWidthStrategy,
+            state = splitState,
+            contentPadding = scaffoldPadding,
+            divider = { mode ->
+                if (mode is SplitPaneMode.VerticalSplit && mode.gapHeight == 0.dp) {
+                    HorizontalDivider()
+                }
+            },
+            compactContent = { padding ->
+                RefreshContainer(
+                    modifier = Modifier.fillMaxSize(),
+                    onRefresh = onRefreshProfile,
+                    isRefreshing = isRefreshing,
+                    indicatorPadding = padding,
+                    content = {
+                        VerticalNestedScrollView(
+                            state = nestedScrollState,
+                            contentTopPadding = padding.calculateTopPadding(),
+                            header = {
+                                Column(modifier = Modifier.background(headerBackground)) {
+                                    ProfileHeader(
+                                        state = state.state,
+                                        menu = {
+                                            Spacer(modifier = Modifier.width(screenHorizontalPadding))
+                                        },
+                                        onAvatarClick = {
+                                            state.state.userState.onSuccess {
+//                                                onMediaClick(it.avatar)
+                                            }
+                                        },
+                                        onBannerClick = {
+                                            state.state.userState.onSuccess {
+//                                                it.banner?.let { it1 -> onMediaClick(it1) }
+                                            }
+                                        },
+                                        isBigScreen = false,
+                                        useCard = false,
+                                        onFollowListClick = onFollowListClick,
+                                        onFansListClick = onFansListClick,
+                                    )
+                                    if (!isBlockedProfile || showBlockedProfileContent) {
+                                        state.state.tabs.onSuccess { tabs ->
+                                            if (tabs.size == 1) {
+                                                HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            content = {
+                                tabAndPagerContent(padding.calculateBottomPadding())
+                            },
+                        )
+                    },
+                )
+            },
+            primaryPane = { mode, padding ->
                 Column(
                     modifier =
                         Modifier
+                            .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .width(width)
-                            .padding(horizontal = 16.dp)
-                            .padding(it),
+                            .padding(padding)
+                            .padding(
+                                horizontal = 16.dp,
+                                vertical = if (mode is SplitPaneMode.VerticalSplit) 4.dp else 0.dp,
+                            ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     AdaptiveCard {
@@ -460,197 +639,31 @@ internal fun ProfileScreen(
                         )
                     }
                 }
-            }
-            RefreshContainer(
-                modifier = Modifier.fillMaxSize(),
-                onRefresh = {
-                    scope.launch {
-                        isRefreshing = true
-                        try {
-                            activeTabRefresh()
-                        } finally {
-                            isRefreshing = false
-                        }
-                    }
-                },
-                isRefreshing = isRefreshing,
-                indicatorPadding = it,
-                content = {
-                    val content = @Composable {
-                        if (isBlockedProfile && !showBlockedProfileContent) {
-                            BlockedProfileGate(
-                                onShow = {
-                                    showBlockedProfileContent = true
-                                },
-                            )
-                        } else {
-                            state.tabs.onLoading {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(tabSpacing),
-                                ) {
-                                    ProfileTabsLoadingPlaceholder(
-                                        modifier = Modifier.background(headerBackground),
-                                        tabHeight = profileTabHeight,
-                                        verticalPadding = 0.dp,
-                                    )
-                                    LazyStatusVerticalStaggeredGrid(
-                                        contentPadding =
-                                            PaddingValues(
-                                                top = 8.dp,
-                                                bottom = 8.dp + it.calculateBottomPadding(),
-                                            ),
-                                        modifier = Modifier.fillMaxSize(),
-                                    ) {
-                                        statusLoadingPlaceholders()
-                                    }
-                                }
-                            }
-                            state.tabs.onError { error ->
-                                ErrorContent(
-                                    error = error,
-                                    onRetry = state.state::retryTabs,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                            state.pagerState.onSuccess { pagerState ->
-                                state.tabs.onSuccess { tabs ->
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(tabSpacing),
-                                    ) {
-                                        ProfileTabRow(
-                                            titles = tabs.map { it.name },
-                                            currentPage = pagerState.currentPage,
-                                            plainProfile = plainProfile,
-                                            tabHeight = profileTabHeight,
-                                            headerBackground = headerBackground,
-                                            onTabSelected = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
-                                        )
-                                        HorizontalPager(
-                                            state = pagerState,
-                                            key = { index ->
-                                                tabs.getOrNull(index)?.id ?: "profile_tab_$index"
-                                            },
-                                        ) { index ->
-                                            val tab = tabs[index]
-                                            when (tab) {
-                                                is ProfileTabItem.Media -> {
-                                                    val tabState = rememberProfileMediaTabState(tab)
-                                                    val data = tabState.mediaState
-                                                    val latestData = rememberUpdatedState(data)
-                                                    if (index == pagerState.currentPage) {
-                                                        LaunchedEffect(tab.id, index) {
-                                                            activeTabRefresh = {
-                                                                latestData.value.refreshSuspend()
-                                                            }
-                                                        }
-                                                    }
-                                                    val gridState = rememberLazyStaggeredGridState()
-                                                    ProfileMediaTab(
-                                                        mediaState = data,
-                                                        state = gridState,
-                                                        onItemClicked = { statusKey, index, preview ->
-                                                            onMediaClick(statusKey, index, preview)
-                                                        },
-                                                        modifier = Modifier.fillMaxSize(),
-                                                    )
-                                                }
-
-                                                is ProfileTabItem.Timeline -> {
-                                                    val tabState = rememberProfileTimelineTabState(tab)
-                                                    val data = tabState.listState
-                                                    val latestData = rememberUpdatedState(data)
-                                                    if (index == pagerState.currentPage) {
-                                                        LaunchedEffect(tab.id, index) {
-                                                            activeTabRefresh = {
-                                                                latestData.value.refreshSuspend()
-                                                            }
-                                                        }
-                                                    }
-                                                    val listState = rememberLazyStaggeredGridState()
-                                                    if (index == pagerState.currentPage) {
-                                                        RegisterTabCallback(
-                                                            lazyListState = listState,
-                                                            onRefresh = {
-                                                                scope.launch {
-                                                                    activeTabRefresh()
-                                                                }
-                                                            },
-                                                        )
-                                                    }
-                                                    LazyStatusVerticalStaggeredGrid(
-                                                        state = listState,
-                                                        contentPadding =
-                                                            PaddingValues(
-                                                                top = 8.dp,
-                                                                bottom = 8.dp + it.calculateBottomPadding(),
-                                                            ),
-                                                        modifier = Modifier.fillMaxSize(),
-                                                    ) {
-                                                        status(data)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (bigScreen) {
+            },
+            secondaryPane = { _, padding ->
+                val layoutDirection = LocalLayoutDirection.current
+                RefreshContainer(
+                    modifier = Modifier.fillMaxSize(),
+                    onRefresh = onRefreshProfile,
+                    isRefreshing = isRefreshing,
+                    indicatorPadding = padding,
+                    content = {
                         Box(
                             modifier =
                                 Modifier
                                     .fillMaxSize()
                                     .padding(
-                                        top = it.calculateTopPadding(),
+                                        start = padding.calculateStartPadding(layoutDirection),
+                                        top = padding.calculateTopPadding(),
+                                        end = padding.calculateEndPadding(layoutDirection),
                                     ),
                         ) {
-                            content.invoke()
+                            tabAndPagerContent(padding.calculateBottomPadding())
                         }
-                    } else {
-                        VerticalNestedScrollView(
-                            state = nestedScrollState,
-                            contentTopPadding = it.calculateTopPadding(),
-                            header = {
-                                Column(modifier = Modifier.background(headerBackground)) {
-                                    ProfileHeader(
-                                        state = state.state,
-                                        menu = {
-                                            Spacer(modifier = Modifier.width(screenHorizontalPadding))
-                                        },
-                                        onAvatarClick = {
-                                            state.state.userState.onSuccess {
-//                                                    onMediaClick(it.avatar)
-                                            }
-                                        },
-                                        onBannerClick = {
-                                            state.state.userState.onSuccess {
-//                                                    it.banner?.let { it1 -> onMediaClick(it1) }
-                                            }
-                                        },
-                                        isBigScreen = false,
-                                        useCard = false,
-                                        onFollowListClick = onFollowListClick,
-                                        onFansListClick = onFansListClick,
-                                    )
-                                    if (!isBlockedProfile || showBlockedProfileContent) {
-                                        state.state.tabs.onSuccess { tabs ->
-                                            if (tabs.size == 1) {
-                                                HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            content = {
-                                content.invoke()
-                            },
-                        )
-                    }
-                },
-            )
-        }
+                    },
+                )
+            },
+        )
     }
 }
 

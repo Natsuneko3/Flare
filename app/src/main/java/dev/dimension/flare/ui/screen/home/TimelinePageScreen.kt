@@ -63,7 +63,7 @@ internal fun TimelinePageScreen(
                         columns = StaggeredGridCells.Fixed(1),
                         contentPadding = padding,
                         modifier = Modifier.fillMaxSize(),
-                    ) { status(state.listState) }
+                    ) { status(state.listState, detailStatusKey = page.detailStatusKey) }
                 },
             )
         }

@@ -1,6 +1,10 @@
 import SwiftUI
 import KotlinSharedUI
 
+public extension EnvironmentValues {
+    @Entry var tracksTimelineReadingFrames = false
+}
+
 public struct TimelineReadingFrames: PreferenceKey {
     public static var defaultValue: [String: CGRect] { [:] }
     public static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
@@ -16,11 +20,12 @@ public extension View {
 
 private struct TimelineReadingItemModifier: ViewModifier {
     @Environment(\.timelineReading) private var reading
+    @Environment(\.tracksTimelineReadingFrames) private var tracksTimelineReadingFrames
     let item: UiTimelineV2?
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if reading != nil, let item {
+        if (reading != nil || tracksTimelineReadingFrames), let item {
             content.id(item.stableItemKey).background {
                 GeometryReader { geometry in
                     Color.clear.preference(key: TimelineReadingFrames.self,
