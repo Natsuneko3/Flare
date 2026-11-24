@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
@@ -62,9 +63,16 @@ internal fun FeedComponent(
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
             )
+            val captionIconSize =
+                with(LocalDensity.current) {
+                    PlatformTheme.typography.caption.fontSize
+                        .toDp()
+                }
             AnimatedVisibility(data.translationDisplayState != TranslationDisplayState.Hidden) {
                 TranslationDisplayBadge(
                     state = data.translationDisplayState,
+                    iconSize = captionIconSize,
+                    color = PlatformTheme.colorScheme.caption,
                 )
             }
             data.actualCreatedAt?.let {

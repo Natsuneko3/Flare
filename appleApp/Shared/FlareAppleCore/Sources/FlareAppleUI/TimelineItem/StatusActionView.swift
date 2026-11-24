@@ -811,6 +811,8 @@ public struct MacStatusShareSheet: View {
     private let purpose: MacStatusSharePurpose
     private let onCrossPost: ((Data, String) -> Void)?
 
+    @Environment(\.timelineAppearance) private var timelineAppearance
+    @Environment(\.translateConfig) private var translateConfig
     @State private var presenter: KotlinPresenter<StatusSharePresenterState>
 
     private var previewRevisionKey: String {
@@ -870,6 +872,8 @@ public struct MacStatusShareSheet: View {
             set: { if !$0 { presenter.state.cancelSelection() } }
         )) {
             StatusShareReplyPicker(state: presenter.state)
+                .environment(\.timelineAppearance, timelineAppearance)
+                .environment(\.translateConfig, translateConfig)
         }
     }
 }

@@ -79,9 +79,10 @@
 		title,
 	}: {
 		name: string | null | undefined;
-		size?: number;
+		size?: number | string;
 		title?: string;
 	} = $props();
+	const iconSize = $derived(typeof size === 'number' ? `${size}px` : size);
 
 	const brands = brandIcons as unknown as Record<string, IconDefinition | undefined>;
 	const icons: Record<string, IconDefinition> = {
@@ -189,7 +190,7 @@
 
 <span
 	class="fa-icon"
-	style={`--fa-icon-size: ${size}px;`}
+	style={`--fa-icon-size: ${iconSize};`}
 	title={title}
 	aria-hidden={title ? undefined : 'true'}
 >

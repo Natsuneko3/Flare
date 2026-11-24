@@ -75,22 +75,22 @@
 		<div class="post-meta">
 			{#if post.visibility}
 				<span class="meta-icon" title={visibilityLabel(post.visibility)}>
-					<FaIcon name={visibilityIcon(post.visibility)} size={14} />
+					<FaIcon name={visibilityIcon(post.visibility)} size="1em" />
 				</span>
 			{/if}
 			{#if appearance.showTranslateButton && post.translationDisplayState !== 'Hidden'}
-					<span class="meta-icon translation-meta" title={translationLabel(post.translationDisplayState)}>
-						<FaIcon name="Translate" size={16} />
-						{#if post.translationDisplayState === 'Translating'}
-							<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-						{:else if post.translationDisplayState === 'Failed'}
-							<FaIcon name="CircleExclamation" size={12} />
-						{/if}
+				<span class="meta-icon translation-meta" title={translationLabel(post.translationDisplayState)}>
+					<FaIcon name="Translate" size="1em" />
+					{#if post.translationDisplayState === 'Translating'}
+						<span class="loading loading-spinner meta-spinner" aria-hidden="true"></span>
+					{:else if post.translationDisplayState === 'Failed'}
+						<FaIcon name="CircleExclamation" size="1em" />
+					{/if}
 				</span>
 			{/if}
 			{#if appearance.showPlatformLogo}
 				<span class="meta-icon" title={post.platformId}>
-					<PlatformIcon icon={post.platformIcon} size={14} />
+					<PlatformIcon icon={post.platformIcon} size="1em" />
 				</span>
 			{/if}
 			{#if !detailHeader}
@@ -222,6 +222,12 @@
 		align-items: center;
 		gap: 0.25rem;
 		line-height: 1;
+	}
+
+	.meta-spinner {
+		width: 1em;
+		height: 1em;
+		flex: 0 0 auto;
 	}
 
 	@media (max-width: 520px) {

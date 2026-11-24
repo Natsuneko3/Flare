@@ -108,7 +108,6 @@ import dev.dimension.flare.ui.screen.settings.PostActionLayoutScreen
 import dev.dimension.flare.ui.screen.settings.SettingsScreen
 import dev.dimension.flare.ui.screen.share.crossPostInitialText
 import dev.dimension.flare.ui.screen.status.StatusScreen
-import dev.dimension.flare.ui.screen.status.VVOCommentScreen
 import dev.dimension.flare.ui.screen.status.action.AddReactionSheet
 import dev.dimension.flare.ui.screen.status.action.BlueskyReportStatusDialog
 import dev.dimension.flare.ui.screen.status.action.DeleteStatusConfirmDialog
@@ -880,20 +879,6 @@ internal fun Router(
 
                 entry<Route.Gallery.Comments> { args ->
                     GalleryCommentsScreen(
-                        statusKey = args.statusKey,
-                        accountType = args.accountType,
-                    )
-                }
-
-                entry<Route.VVO.CommentDetail> { args ->
-                    VVOCommentScreen(
-                        commentKey = args.statusKey,
-                        accountType = args.accountType,
-                    )
-                }
-
-                entry<Route.VVO.StatusDetail> { args ->
-                    StatusScreen(
                         statusKey = args.statusKey,
                         accountType = args.accountType,
                     )

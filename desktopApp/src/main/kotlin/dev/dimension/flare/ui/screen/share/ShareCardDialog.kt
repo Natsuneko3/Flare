@@ -104,11 +104,9 @@ internal enum class SharePreviewStyle {
     Content,
 }
 
-internal fun normalizeShareUrl(shareUrl: String?): String? =
-    shareUrl?.trim()?.takeIf { it.isNotEmpty() }
+internal fun normalizeShareUrl(shareUrl: String?): String? = shareUrl?.trim()?.takeIf { it.isNotEmpty() }
 
-internal fun crossPostInitialText(shareUrl: String?): String =
-    normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
+internal fun crossPostInitialText(shareUrl: String?): String = normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
 
 @Composable
 internal fun ShareCardPreviewFrame(

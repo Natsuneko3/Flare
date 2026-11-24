@@ -2,15 +2,10 @@ package dev.dimension.flare.data.database.cache.dao
 
 import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.execSQL
-import dev.dimension.flare.data.database.buildCacheDatabase
-import dev.dimension.flare.data.database.cache.CACHE_DATABASE_VERSION
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.TimelineRevisionCallback
-import dev.dimension.flare.data.database.cache.model.DbEmojiHistory
 import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbPluginPostWidget
-import dev.dimension.flare.data.database.cache.model.DbProfileTabs
 import dev.dimension.flare.data.database.cache.model.DbStatus
 import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datasource.microblog.paging.TimelineDbPageCache
@@ -168,70 +163,6 @@ class PluginPostWidgetDaoTest {
 
                 dao.trimOldestKeeping(0)
                 assertTrue(dao.getByPostKeys(items.map { it.postEntityKey }).isEmpty())
-            }
-        }
-
-    @Test
-    fun migration54To55CreatesTableAndIndicesWhilePreservingVersion54Data() =
-        runTest {
-            assertEquals(55, CACHE_DATABASE_VERSION)
-            val databasePath = Files.createTempFile("flare-cache-v54", ".db")
-            val path = databasePath.toAbsolutePath().toString()
-            val owner = AccountType.Specific(MicroBlogKey("me", "example.social"))
-            val profile = MicroBlogKey("alice", "example.social")
-            val emoji = DbEmojiHistory(owner, "rocket", 789L)
-            val tabs = DbProfileTabs(owner, profile, "[\"posts\"]")
-            try {
-                buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path)).let { database ->
-                    try {
-                        database.emojiDao().insertHistory(emoji)
-                        database.userDao().insertProfileTabs(tabs)
-                    } finally {
-                        database.close()
-                    }
-                }
-
-                // Downgrade schema to match v54 (before DbPluginPostWidget existed).
-                BundledSQLiteDriver().open(path).use { connection ->
-                    connection.execSQL("DROP TABLE DbPluginPostWidget")
-                    connection.execSQL("PRAGMA user_version = 54")
-                }
-
-                buildCacheDatabase(Room.databaseBuilder<CacheDatabase>(name = path)).let { migrated ->
-                    try {
-                        assertEquals(listOf(emoji), migrated.emojiDao().getHistory(owner))
-                        assertEquals(tabs, migrated.userDao().getProfileTabsSync(owner, profile))
-                        val widget =
-                            DbPluginPostWidget(
-                                postEntityKey = "acc_migrated",
-                                pluginId = "p.migrated",
-                                pluginCacheKey = "k1",
-                                sourceHash = "h1",
-                                cardsJson = "[]",
-                                createdAtMillis = 42L,
-                                expiresAtMillis = 99L,
-                            )
-                        migrated.pluginPostWidgetDao().upsertAll(listOf(widget))
-                        assertEquals(listOf(widget), migrated.pluginPostWidgetDao().getByPostKeys(listOf("acc_migrated")))
-                    } finally {
-                        migrated.close()
-                    }
-                }
-
-                BundledSQLiteDriver().open(path).use { connection ->
-                    val indexNames = mutableSetOf<String>()
-                    connection
-                        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'DbPluginPostWidget'")
-                        .use { statement ->
-                            while (statement.step()) {
-                                indexNames += statement.getText(0)
-                            }
-                        }
-                    assertTrue("index_DbPluginPostWidget_pluginId" in indexNames, "Missing pluginId index: $indexNames")
-                    assertTrue("index_DbPluginPostWidget_expiresAtMillis" in indexNames, "Missing expiresAtMillis index: $indexNames")
-                }
-            } finally {
-                deleteDatabaseFiles(databasePath)
             }
         }
 

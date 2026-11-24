@@ -9,6 +9,7 @@ import dev.dimension.flare.feature.plugin.host.PluginCallTimeoutV1
 import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.lifecycle.derivedPluginState
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
 import kotlinx.coroutines.CancellationException
@@ -63,7 +64,7 @@ internal class PluginTranslationServiceV1(
                         pluginId,
                         plugin.installed.packageHash,
                         manifest.permissions.httpOrigins,
-                        Locale.language,
+                        normalizePluginInvocationLocale(Locale.language),
                         manifest.platform?.id.orEmpty(),
                     ),
                 method = if (batch) "translation.translateBatchDocumentJson" else "translation.translateDocumentJson",

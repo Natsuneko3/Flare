@@ -40,6 +40,7 @@ public sealed class DeeplinkRoute {
             val pageId: String,
             val title: UiText,
             val parameters: Map<String, String> = emptyMap(),
+            val detailStatusKey: MicroBlogKey? = null,
         ) : Timeline()
 
         @Serializable
@@ -57,18 +58,6 @@ public sealed class DeeplinkRoute {
     public sealed class Status : DeeplinkRoute() {
         @Serializable
         public data class Detail(
-            val statusKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status()
-
-        @Serializable
-        public data class VVOComment(
-            val commentKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status()
-
-        @Serializable
-        public data class VVOStatus(
             val statusKey: MicroBlogKey,
             val accountType: AccountType,
         ) : Status()

@@ -31,6 +31,8 @@ public struct StatusShareContent: View {
 
 public struct StatusShareReplyPicker: View {
     let state: StatusSharePresenterState
+    @Environment(\.timelineAppearance) private var timelineAppearance
+    @Environment(\.translateConfig) private var translateConfig
 
     public init(state: StatusSharePresenterState) { self.state = state }
 
@@ -90,7 +92,11 @@ public struct StatusShareReplyPicker: View {
                     .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(reply.searchText ?? "")
+                .accessibilityLabel(Text(verbatim: StatusSharePresenterKt.shareReplyAccessibilityLabel(
+                    reply: reply,
+                    showOriginalWithTranslation: translateConfig.showOriginalWithTranslation,
+                    expandContentWarning: timelineAppearance.expandContentWarning
+                )))
                 .accessibilityAddTraits(state.isSelected(key: reply.statusKey) ? .isSelected : [])
                 if state.expandableReplies.contains(reply.statusKey) {
                     Button { state.loadReplyChildren(key: reply.statusKey) } label: {
@@ -120,6 +126,7 @@ public struct StatusShareReplyPicker: View {
         .flareTextBackground(.flareSystemBackground)
         .listStyle(.plain)
         .timelineMediaViewport()
+        .environment(\.timelineAppearance, timelineAppearance.withoutAgent())
     }
 
     private var selectionCount: some View {
@@ -159,6 +166,39 @@ public struct StatusShareReplyPicker: View {
 }
 
 private extension TimelineAppearance {
+    func withoutAgent() -> TimelineAppearance {
+        doCopy(
+            avatarShape: avatarShape,
+            showMedia: showMedia,
+            showSensitiveContent: showSensitiveContent,
+            expandContentWarning: expandContentWarning,
+            expandMediaSize: expandMediaSize,
+            limitSingleMediaHeight: limitSingleMediaHeight,
+            mediaLayout: mediaLayout,
+            limitMediaGridToNine: limitMediaGridToNine,
+            videoAutoplay: videoAutoplay,
+            showLinkPreview: showLinkPreview,
+            compatLinkPreview: compatLinkPreview,
+            showEmojiReactions: showEmojiReactions,
+            showNumbers: showNumbers,
+            postActionStyle: postActionStyle,
+            postActionLayout: postActionLayout,
+            postActionFixedWidth: postActionFixedWidth,
+            fullWidthPost: fullWidthPost,
+            absoluteTimestamp: absoluteTimestamp,
+            showPlatformLogo: showPlatformLogo,
+            timelineDisplayMode: timelineDisplayMode,
+            aiConfig: TimelineAppearance.AiConfig(
+                translation: aiConfig.translation,
+                tldr: aiConfig.tldr,
+                agent: false,
+                showOriginalWithTranslation: aiConfig.showOriginalWithTranslation
+            ),
+            lineLimit: lineLimit,
+            showTranslateButton: showTranslateButton
+        )
+    }
+
     func withSharePreviewDefaults(lineLimit: Int32) -> TimelineAppearance {
         doCopy(
             avatarShape: avatarShape,
@@ -181,9 +221,14 @@ private extension TimelineAppearance {
             absoluteTimestamp: absoluteTimestamp,
             showPlatformLogo: showPlatformLogo,
             timelineDisplayMode: timelineDisplayMode,
-            aiConfig: aiConfig,
+            aiConfig: TimelineAppearance.AiConfig(
+                translation: aiConfig.translation,
+                tldr: aiConfig.tldr,
+                agent: false,
+                showOriginalWithTranslation: aiConfig.showOriginalWithTranslation
+            ),
             lineLimit: lineLimit,
-            showTranslateButton: showTranslateButton
+            showTranslateButton: false
         )
     }
 }

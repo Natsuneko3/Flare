@@ -17,7 +17,6 @@ import dev.dimension.flare.ui.route.Route.Compose.New
 import dev.dimension.flare.ui.route.Route.Compose.Quote
 import dev.dimension.flare.ui.route.Route.Compose.Reply
 import dev.dimension.flare.ui.route.Route.Compose.VVOReplyComment
-import dev.dimension.flare.ui.route.Route.VVO.CommentDetail
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.serialization.Serializable
@@ -98,18 +97,6 @@ internal sealed interface Route : NavKey {
         val accountType: AccountType,
         val statusKey: MicroBlogKey,
     ) : ScreenRoute
-
-    data object VVO {
-        data class StatusDetail(
-            val accountType: AccountType,
-            val statusKey: MicroBlogKey,
-        ) : ScreenRoute
-
-        data class CommentDetail(
-            val accountType: AccountType,
-            val statusKey: MicroBlogKey,
-        ) : ScreenRoute
-    }
 
     data class AddReaction(
         val accountType: AccountType,
@@ -558,20 +545,6 @@ internal sealed interface Route : NavKey {
                         shareUrl = deeplinkRoute.shareUrl,
                         fxShareUrl = deeplinkRoute.fxShareUrl,
                         fixvxShareUrl = deeplinkRoute.fixvxShareUrl,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOComment -> {
-                    CommentDetail(
-                        accountType = deeplinkRoute.accountType,
-                        statusKey = deeplinkRoute.commentKey,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOStatus -> {
-                    VVO.StatusDetail(
-                        accountType = deeplinkRoute.accountType,
-                        statusKey = deeplinkRoute.statusKey,
                     )
                 }
 

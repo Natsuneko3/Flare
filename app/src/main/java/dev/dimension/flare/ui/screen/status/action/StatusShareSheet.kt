@@ -13,7 +13,6 @@ import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionContext
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -28,11 +27,9 @@ import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.AngleRight
 import dev.dimension.flare.R
-import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.FAIcon
-import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.status.StatusShareContent
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.invoke
@@ -118,16 +115,7 @@ internal fun StatusShareSheet(
         },
         modifier = modifier,
     ) {
-        CompositionLocalProvider(
-            LocalTimelineAppearance provides
-                LocalTimelineAppearance.current.copy(
-                    expandContentWarning = true,
-                    showTranslateButton = false,
-                    videoAutoplay = VideoAutoplay.NEVER,
-                ),
-        ) {
-            StatusShareContent(status = status, statusKey = statusKey, replies = state.selectedReplies)
-        }
+        StatusShareContent(status = status, statusKey = statusKey, replies = state.selectedReplies)
     }
 }
 

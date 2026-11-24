@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
@@ -20,17 +21,25 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +75,8 @@ import dev.dimension.flare.ui.model.createSampleUser
 import dev.dimension.flare.ui.model.toUiImage
 import dev.dimension.flare.ui.render.toUi
 import dev.dimension.flare.ui.render.toUiPlainText
+import dev.dimension.flare.ui.route.DeeplinkRoute
+import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.PlatformContentColor
 import dev.dimension.flare.ui.theme.PlatformTheme
 import io.github.composefluent.FluentTheme
@@ -787,6 +798,139 @@ class StatusHeaderSpacingTest {
         val lightBodyColor = layout(body).layoutInput.style.color
         assertEquals(themeText, lightBodyColor)
         assertEquals(themeCaption, layout("@kzwolf123").layoutInput.style.color)
+    }
+
+    @Test
+    fun topRightIconsAndInsightButtonFitHeaderTextWithoutInflatingRow() {
+        val postUri = "https://example.invalid/status/header-alignment"
+        val basePost =
+            samplePost().copy(
+                platformId = "X",
+                platformIcon = IconType.Material(UiIcon.X),
+                visibility = UiTimelineV2.Post.Visibility.Public,
+                clickEvent = ClickEvent.Deeplink(postUri),
+            )
+        val baseFeed =
+            UiTimelineV2.Feed(
+                title = "Feed title",
+                description = "Feed body",
+                url = "https://example.invalid/post",
+                translationDisplayState = TranslationDisplayState.Translating,
+                createdAt = basePost.createdAt,
+                source = UiTimelineV2.Feed.Source(name = "Blog", icon = null),
+                accountType = basePost.accountType,
+            )
+        var fontScale by mutableStateOf(1f)
+        var translationState by mutableStateOf(TranslationDisplayState.Translated)
+        val openedUris = mutableListOf<String>()
+        lateinit var postBodyStyle: TextStyle
+        lateinit var captionStyle: TextStyle
+        compose.setContent {
+            FluentTheme(colors = darkColors()) {
+                postBodyStyle = PlatformTheme.typography.postBody
+                captionStyle = PlatformTheme.typography.caption
+                CompositionLocalProvider(
+                    LocalTimelineAppearance provides
+                        TimelineAppearance(
+                            fullWidthPost = false,
+                            showPlatformLogo = true,
+                            aiConfig = TimelineAppearance.AiConfig(agent = true),
+                        ),
+                    LocalStatusBackgroundColor provides Color.Black,
+                    LocalDensity provides Density(density = 1f, fontScale = fontScale),
+                    LocalUriHandler provides
+                        object : UriHandler {
+                            override fun openUri(uri: String) {
+                                openedUris += uri
+                            }
+                        },
+                ) {
+                    Column(Modifier.width(402.dp).padding(12.dp).testTag("header-alignment-root")) {
+                        CommonStatusComponent(
+                            basePost.copy(translationDisplayState = translationState),
+                            isClickable = true,
+                        )
+                        FeedComponent(baseFeed.copy(translationDisplayState = translationState))
+                    }
+                }
+            }
+        }
+
+        for (scale in listOf(1f, 1.5f)) {
+            compose.runOnIdle { fontScale = scale }
+            for ((state, label) in listOf(
+                TranslationDisplayState.Translated to "Translated",
+                TranslationDisplayState.Translating to "Translating…",
+                TranslationDisplayState.Failed to "Translation failed",
+            )) {
+                compose.runOnIdle { translationState = state }
+                val expectedPostIcon = postBodyStyle.fontSize.value * scale
+                val expectedFeedIcon = captionStyle.fontSize.value * scale
+                val timestamps = compose.onAllNodesWithText("5m", useUnmergedTree = true).fetchSemanticsNodes()
+                val postTimestamp = timestamps.first().boundsInRoot
+                for (description in listOf("Public", "Platform: X", "View post insight")) {
+                    val icon = compose.onNodeWithContentDescription(description, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                    assertEquals(expectedPostIcon, icon.height, 0.5f, "$description at fontScale=$scale")
+                }
+                val badges = compose.onAllNodesWithContentDescription(label, useUnmergedTree = true).fetchSemanticsNodes()
+                assertEquals(2, badges.size, "Expected post and feed translation badges for $label")
+                assertEquals(expectedPostIcon, badges[0].boundsInRoot.height, 0.5f, "Post $label at fontScale=$scale")
+                assertEquals(expectedFeedIcon, badges[1].boundsInRoot.height, 0.5f, "Feed $label at fontScale=$scale")
+
+                var headerCoordinates =
+                    compose
+                        .onNodeWithText("Reader", useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .layoutInfo.coordinates
+                while (!headerCoordinates.boundsInRoot().contains(postTimestamp.center)) {
+                    headerCoordinates = checkNotNull(headerCoordinates.parentLayoutCoordinates)
+                }
+                val headerRow = headerCoordinates.boundsInRoot()
+                assertTrue(
+                    headerRow.height <= postTimestamp.height + 0.5f,
+                    "Header row (${headerRow.height}) should not exceed timestamp height (${postTimestamp.height}) at fontScale=$scale",
+                )
+            }
+        }
+
+        compose.runOnIdle {
+            fontScale = 1f
+            translationState = TranslationDisplayState.Translated
+        }
+        val insightIcon = compose.onNodeWithContentDescription("View post insight", useUnmergedTree = true).fetchSemanticsNode()
+        val insightButton = checkNotNull(insightIcon.parent)
+        assertEquals(Role.Button, insightButton.config[SemanticsProperties.Role])
+        val iconBounds = insightIcon.boundsInRoot
+        val rootBounds = compose.onNodeWithTag("header-alignment-root").fetchSemanticsNode().boundsInRoot
+        val outsetPoints =
+            listOf(
+                Offset(iconBounds.center.x, iconBounds.top - 3f),
+                Offset(iconBounds.center.x, iconBounds.bottom + 3f),
+                Offset(iconBounds.left - 3f, iconBounds.center.y),
+                Offset(iconBounds.right + 3f, iconBounds.center.y),
+            )
+        val expectedInsightUri =
+            DeeplinkRoute
+                .Status
+                .Insight(
+                    accountType = basePost.accountType,
+                    statusKey = basePost.statusKey,
+                ).toUri()
+        for (point in outsetPoints) {
+            compose.runOnIdle { openedUris.clear() }
+            compose.onNodeWithTag("header-alignment-root").performTouchInput {
+                click(Offset(point.x - rootBounds.left, point.y - rootBounds.top))
+            }
+            compose.runOnIdle {
+                assertEquals(listOf(expectedInsightUri), openedUris, "Outset tap at $point must open only Insight")
+            }
+        }
+
+        compose.runOnIdle { openedUris.clear() }
+        compose.onNodeWithText("Body", useUnmergedTree = true).performMouseInput { click() }
+        compose.runOnIdle {
+            assertEquals(listOf(postUri), openedUris, "Body tap must open only the post")
+        }
     }
 
     private fun assertBodyAndReplySpacing(

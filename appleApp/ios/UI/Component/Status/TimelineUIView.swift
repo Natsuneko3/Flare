@@ -97,7 +97,7 @@ final class TimelineUIView: UIView, ManualLayoutMeasurable, TimelineHeightProvid
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
         if let status = managedChildren.last as? StatusUIKitView,
-           let control = status.hitTestActions(at: convert(point, to: status), with: event) {
+           let control = status.hitTestOutsetControls(at: convert(point, to: status), with: event) {
             return control
         }
         return super.hitTest(point, with: event)

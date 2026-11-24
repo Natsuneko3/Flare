@@ -7,6 +7,7 @@ import dev.dimension.flare.feature.plugin.host.PluginHostException
 import dev.dimension.flare.feature.plugin.host.accountHost
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.login.requireLoginSuccess
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.runtime.PluginCallException
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
@@ -131,7 +132,7 @@ internal class PluginAccountCapabilitiesV1(
                                 account.snapshot.accountId,
                                 epoch = account.sessionEpoch.takeIf { plugin.installed.manifest.apiVersion >= 2 },
                             ),
-                        context = plugin.accountInvocationContext(account, Locale.language, access),
+                        context = plugin.accountInvocationContext(account, normalizePluginInvocationLocale(Locale.language), access),
                         method = "capabilities.accountCapabilities.negotiate",
                         request =
                             AccountCapabilitiesRequestV1(

@@ -123,24 +123,13 @@ public struct StatusView: View {
         let carouselLeadingPadding = carouselEdgePadding + (usesSideAvatar && user != nil ? 56 : 0)
         let replyToHandle = withLeadingPadding || (showParents && !parents.isEmpty) ? nil : data.replyToHandle
         let translationDisplayed = data.translationDisplayState == .translated
-        let contentWarnings: [UiRichText] = if let warning = data.contentWarning {
-            if translationDisplayed, let translation = warning.translation {
-                translateConfig.showOriginalWithTranslation ? [warning.original, translation] : [translation]
-            } else {
-                [warning.original]
-            }
-        } else {
-            []
-        }
+        let showOriginal = translateConfig.showOriginalWithTranslation
+        let contentWarnings = data.contentWarning?.visiblePostText(translated: translationDisplayed, showOriginal: showOriginal) ?? []
         let contentWarningIsEmpty = contentWarnings.allSatisfy(\.isEmpty)
         let readingContent = StatusReadingContent(data)
         let contentWarningExpanded = revealedWarning == readingContent
         let showsBody = contentWarningExpanded || expandContentWarning || contentWarningIsEmpty
-        let contents: [UiRichText] = if translationDisplayed, let translation = data.content.translation {
-            translateConfig.showOriginalWithTranslation ? [data.content.original, translation] : [translation]
-        } else {
-            [data.content.original]
-        }
+        let contents = data.content.visiblePostText(translated: translationDisplayed, showOriginal: showOriginal)
         let poll = data.poll
         let images = Array(data.images)
         let hasImages = !images.isEmpty
@@ -560,7 +549,7 @@ public struct StatusView: View {
         .font(.body)
         .lineSpacing(1)
         .environment(\.isPostContent, true)
-        .contentShape(.rect)
+        .background { Color.clear.contentShape(.rect) }
         .if(isClickable) { view in
             view.onTapGesture {
                 data.onClicked(ClickContext(launcher: AppleUriLauncher(openUrl: openURL)))
@@ -636,21 +625,15 @@ public struct StatusView: View {
     ) -> some View {
         HStack(spacing: 4) {
             if let visibility {
-                StatusVisibilityView(data: visibility)
-                    .font(.system(size: 20))
-                    .frame(width: 20, height: 20)
-                    .scaleEffect(topEndIconSize / 20)
-                    .frame(width: topEndIconSize, height: topEndIconSize)
+                StatusVisibilityView(data: visibility, iconSize: topEndIconSize)
                     .flareSecondaryText()
             }
             if translationDisplayState != .hidden {
                 TranslateStatusComponent(data: translationDisplayState, iconSize: topEndIconSize)
-                    .font(.system(size: topEndIconSize))
                     .flareSecondaryText()
             }
             if showPlatformLogo {
                 TabIcon(icon: platformIcon, size: topEndIconSize)
-                    .font(.system(size: topEndIconSize))
                     .flareSecondaryText()
                     .accessibilityLabel(
                         Text(
@@ -669,6 +652,8 @@ public struct StatusView: View {
                     .flareSecondaryText()
             }
             if agentEnabled, !isQuote {
+                let insightHitSize = max(24, topEndIconSize + 4)
+                let insightHitInset = (insightHitSize - topEndIconSize) / 2
                 Button {
                     let route = DeeplinkRoute.StatusInsight(
                         accountType: accountType,
@@ -682,10 +667,12 @@ public struct StatusView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: topEndIconSize, height: topEndIconSize)
-                        .frame(width: max(24, topEndIconSize + 4), height: max(24, topEndIconSize + 4))
+                        .frame(width: insightHitSize, height: insightHitSize)
+                        .contentShape(Rectangle())
                         .flareSecondaryText()
                 }
                 .buttonStyle(.plain)
+                .padding(-insightHitInset)
                 .accessibilityLabel(Text("status_insight_title", bundle: FlareAppleUILocalization.bundle))
             }
         }

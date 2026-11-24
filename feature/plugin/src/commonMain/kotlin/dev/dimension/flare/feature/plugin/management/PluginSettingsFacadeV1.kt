@@ -10,6 +10,7 @@ import dev.dimension.flare.feature.plugin.host.PluginInvocationContextV1
 import dev.dimension.flare.feature.plugin.host.createKtorPluginHttpTransport
 import dev.dimension.flare.feature.plugin.host.platformUuid
 import dev.dimension.flare.feature.plugin.manifest.isPluginSettingsPath
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.runtime.PluginPackageScriptLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,7 +87,7 @@ public class PluginSettingsFacadeV1 internal constructor(
             pluginId,
             plugin.installed.packageHash,
             plugin.installed.manifest.permissions.httpOrigins,
-            Locale.language,
+            normalizePluginInvocationLocale(Locale.language),
             plugin.installed.manifest.platform
                 ?.id
                 .orEmpty(),

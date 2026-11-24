@@ -132,11 +132,9 @@ private val ShareCardShadowRadius = 16.dp
 private val ShareCaptureWidth = ShareCardWidth + ShareCardPadding * 2
 private const val SHARE_LONG_CAPTURE_HEIGHT_THRESHOLD_PX = 4096
 
-internal fun normalizeShareUrl(shareUrl: String?): String? =
-    shareUrl?.trim()?.takeIf { it.isNotEmpty() }
+internal fun normalizeShareUrl(shareUrl: String?): String? = shareUrl?.trim()?.takeIf { it.isNotEmpty() }
 
-internal fun crossPostInitialText(shareUrl: String?): String =
-    normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
+internal fun crossPostInitialText(shareUrl: String?): String = normalizeShareUrl(shareUrl)?.let { "\n\n$it" }.orEmpty()
 
 internal fun buildCrossPostIntent(
     context: Context,

@@ -197,8 +197,6 @@ enum Route: Hashable, Identifiable {
                     )
                 }
             )
-        case .statusVVOStatus(let accountType, let statusKey):
-            StatusDetailScreen(accountType: accountType, statusKey: statusKey)
         case .statusShareSheet(let accountType, let statusKey, let shareUrl, let fxShareUrl, let fixvxShareUrl):
             StatusShareSheet(
                 statusKey: statusKey,
@@ -210,8 +208,6 @@ enum Route: Hashable, Identifiable {
                     onNavigate(.composeCrossPost(prefill))
                 }
             )
-        case .statusVVOComment(let accountType, let statusKey):
-            VVOCommentScreen(accountType: accountType, statusKey: statusKey)
         case .statusBlueskyReport(let accountType, let statusKey):
             BlueskyReportSheet(accountType: accountType, statusKey: statusKey)
         case .statusMisskeyReport(let accountType, let userKey, let statusKey):
@@ -336,8 +332,6 @@ enum Route: Hashable, Identifiable {
     case statusInsight(AccountType, MicroBlogKey)
     case statusMastodonReport(AccountType, MicroBlogKey, MicroBlogKey?)
     case statusMisskeyReport(AccountType, MicroBlogKey, MicroBlogKey?)
-    case statusVVOComment(AccountType, MicroBlogKey)
-    case statusVVOStatus(AccountType, MicroBlogKey)
     case statusShareSheet(AccountType, MicroBlogKey, String, String?, String?)
     case serviceSelect
     case relogin(MicroBlogKey, String)
@@ -460,10 +454,6 @@ enum Route: Hashable, Identifiable {
             return Route.statusMastodonReport(data.accountType, data.userKey, data.statusKey)
         case .misskeyReport(let data):
             return Route.statusMisskeyReport(data.accountType, data.userKey, data.statusKey)
-        case .vVOComment(let data):
-            return Route.statusVVOComment(data.accountType, data.commentKey)
-        case .vVOStatus(let data):
-            return Route.statusVVOStatus(data.accountType, data.statusKey)
         case .shareSheet(let data):
             return Route.statusShareSheet(data.accountType, data.statusKey, data.shareUrl, data.fxShareUrl, data.fixvxShareUrl)
         }

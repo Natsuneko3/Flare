@@ -57,6 +57,28 @@ internal object TimelinePagingMapper {
         }
     }
 
+    fun toDbStatus(data: UiTimelineV2): DbStatusWithReference =
+        toDbStatus(
+            root = data.rootTimelineForDatabase(),
+            presentation = (data as? UiTimelineV2.TimelinePostItem)?.presentation,
+            context = MappingContext(),
+        )
+
+    private fun toDbStatus(
+        root: UiTimelineV2,
+        presentation: UiTimelineV2.PostPresentation?,
+        context: MappingContext,
+    ): DbStatusWithReference {
+        val status = context.status(root)
+        val references =
+            when (root) {
+                is UiTimelineV2.Post -> collectPostReferences(root, presentation, status.data.id, context)
+                is UiTimelineV2.UserList -> collectUserListReferences(root, status.data.id, context)
+                else -> emptyList()
+            }
+        return DbStatusWithReference(status = status, references = references)
+    }
+
     private suspend fun toDb(
         data: UiTimelineV2,
         root: UiTimelineV2,
@@ -66,20 +88,15 @@ internal object TimelinePagingMapper {
     ): DbPagingTimelineWithStatus {
         val timelineItem = data.asTimelinePostItem()
         val presentation = timelineItem?.presentation
-        val rootStatus = context.status(root)
+        val status = toDbStatus(root, presentation, context)
+        val rootStatus = status.status.data
         val timelineId =
             DbPagingTimeline.createId(
                 pagingKey,
                 presentation?.notificationKey?.let {
                     "notification:${DbStatus.createId(root.accountType as DbAccountType, it)}"
-                } ?: rootStatus.data.id,
+                } ?: rootStatus.id,
             )
-        val semanticReferences =
-            when (root) {
-                is UiTimelineV2.Post -> collectPostReferences(root, presentation, rootStatus.data.id, context)
-                is UiTimelineV2.UserList -> collectUserListReferences(root, rootStatus.data.id, context)
-                else -> emptyList()
-            }
         val presentationReferences =
             if (root is UiTimelineV2.Post && presentation != null) {
                 collectPresentationReferences(
@@ -95,7 +112,7 @@ internal object TimelinePagingMapper {
             timeline =
                 DbPagingTimeline(
                     pagingKey = pagingKey,
-                    statusId = rootStatus.data.id,
+                    statusId = rootStatus.id,
                     sortId = sortId ?: SnowflakeIdGenerator.nextId(),
                     isGap = data is UiTimelineV2.Gap,
                     message = presentation?.message,
@@ -103,17 +120,13 @@ internal object TimelinePagingMapper {
                     _id = timelineId,
                     semanticReferenceSignature =
                         semanticReferenceSignature(
-                            semanticReferences.map { it.reference } +
+                            status.references.map { it.reference } +
                                 presentationReferences.flatMap { it.status?.references.orEmpty() }.map { it.reference },
                         ),
                     presentationReferenceSignature =
                         presentationReferenceSignature(presentationReferences.map { it.reference }),
                 ),
-            status =
-                DbStatusWithReference(
-                    status = rootStatus,
-                    references = semanticReferences,
-                ),
+            status = status,
             presentationReferences = presentationReferences,
         )
     }

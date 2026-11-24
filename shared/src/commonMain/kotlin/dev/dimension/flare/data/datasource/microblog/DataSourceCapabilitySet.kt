@@ -182,6 +182,7 @@ private fun MicroblogDataSource.legacyCapabilitySet(): DataSourceCapabilitySet {
             } else {
                 null
             },
+        timelinePage = this as? TimelinePageDataSource,
         accountHttp = this as? AccountHttpCapability,
     )
 }

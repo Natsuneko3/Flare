@@ -33,10 +33,7 @@ internal fun providePluginPostWidgetDao(cacheDatabase: CacheDatabase): PluginPos
 
 internal fun buildCacheDatabase(builder: RoomDatabase.Builder<CacheDatabase>): CacheDatabase =
     builder
-        .addMigrations(
-            CacheDatabase.MIGRATION_53_54,
-            CacheDatabase.MIGRATION_54_55,
-        ).fallbackToDestructiveMigration(dropAllTables = true)
+        .fallbackToDestructiveMigration(dropAllTables = true)
         .addCallback(TimelineRevisionCallback)
         .setDriver(createDatabaseDriver())
         .setQueryCoroutineContext(PlatformDispatchers.IO)

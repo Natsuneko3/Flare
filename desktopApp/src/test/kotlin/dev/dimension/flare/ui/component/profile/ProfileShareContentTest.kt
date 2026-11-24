@@ -277,6 +277,7 @@ class ProfileShareContentTest {
 
         val bitmap = compose.onNodeWithTag("screenshot").captureToImage().toAwtImage()
         val paddingPx = 64
+
         fun isRedPixel(
             x: Int,
             y: Int,

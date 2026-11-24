@@ -199,12 +199,34 @@ final class TranslateStatusStateView: UIView, ManualLayoutMeasurable, TimelineHe
     private let langIcon = UIImageView(image: UIImage(fontAwesome: .language))
     private let stateIcon = UIImageView()
     private let spinner = UIActivityIndicatorView(style: .medium)
-    var iconSize: CGFloat = 16
-    var iconSpacing: CGFloat = 4
+    var iconSize: CGFloat = 16 {
+        didSet {
+            guard iconSize != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    var iconSpacing: CGFloat = 4 {
+        didSet {
+            guard iconSpacing != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    var stateIconMatchesIconSize = false {
+        didSet {
+            guard stateIconMatchesIconSize != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
     var isPostContent = false {
         didSet {
             tintColor = isPostContent ? .flarePostSecondaryLabel : .secondaryLabel
             spinner.color = isPostContent ? .flarePostSecondaryLabel : nil
+            guard isPostContent != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
         }
     }
 
@@ -260,17 +282,21 @@ final class TranslateStatusStateView: UIView, ManualLayoutMeasurable, TimelineHe
         setNeedsLayout()
     }
 
+    private var resolvedStateSize: CGFloat {
+        (isPostContent || stateIconMatchesIconSize) ? iconSize : 12
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let size = preferredSize()
         let y = max((bounds.height - size.height) / 2, 0)
         langIcon.frame = CGRect(x: 0, y: y, width: iconSize, height: iconSize)
-        let stateSize: CGFloat = isPostContent ? iconSize : 12
+        let stateSize = resolvedStateSize
         let stateFrame = CGRect(x: iconSize + iconSpacing, y: y + (iconSize - stateSize) / 2,
                                 width: stateSize, height: stateSize)
         stateIcon.frame = stateIcon.isHidden ? .zero : stateFrame
         spinner.transform = .identity
-        if isPostContent, !spinner.isHidden {
+        if isPostContent || stateIconMatchesIconSize, !spinner.isHidden {
             let nativeSize = spinner.intrinsicContentSize
             spinner.bounds = CGRect(origin: .zero, size: nativeSize)
             spinner.center = CGPoint(x: stateFrame.midX, y: stateFrame.midY)
@@ -302,8 +328,7 @@ final class TranslateStatusStateView: UIView, ManualLayoutMeasurable, TimelineHe
 
     private func preferredSize() -> CGSize {
         let hasState = !stateIcon.isHidden || !spinner.isHidden
-        let stateSize: CGFloat = isPostContent ? iconSize : 12
-        return CGSize(width: iconSize + (hasState ? iconSpacing + stateSize : 0), height: iconSize)
+        return CGSize(width: iconSize + (hasState ? iconSpacing + resolvedStateSize : 0), height: iconSize)
     }
 }
 
@@ -582,6 +607,25 @@ final class UserCompatUIView: UIStackView {
     @objc private func onTapFired() { onTapped?() }
 }
 
+private final class StatusTopEndIconButton: UIButton {
+    var minimumHitSize: CGFloat = 24
+
+    private var hitBounds: CGRect {
+        let dx = max(0, (minimumHitSize - bounds.width) / 2)
+        let dy = max(0, (minimumHitSize - bounds.height) / 2)
+        return bounds.insetBy(dx: -dx, dy: -dy)
+    }
+
+    override var accessibilityFrame: CGRect {
+        get { UIAccessibility.convertToScreenCoordinates(hitBounds, in: self) }
+        set { super.accessibilityFrame = newValue }
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        hitBounds.contains(point)
+    }
+}
+
 // MARK: - StatusTopEndView
 // Mirrors `topEndContent` in StatusView.swift — visibility + translation state
 // + optional platform logo + timestamp in an HStack.
@@ -591,10 +635,10 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
     private let platformLogo = UIImageView()
     private var platformIcon: IconType?
     private let time = DateTimeUILabel()
-    private let insightButton = UIButton(type: .system)
+    private let insightButton = StatusTopEndIconButton(type: .system)
     private var onInsightTapped: (() -> Void)?
     private var iconSize: CGFloat = 16
-    private var insightButtonSize: CGFloat { max(24, iconSize + 4) }
+    private var insightHitSize: CGFloat { max(24, iconSize + 4) }
 
     private func setPlatformIcon(_ icon: IconType?) {
         guard platformIcon != icon else { return }
@@ -636,7 +680,8 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
         insightButton.tintColor = .flarePostSecondaryLabel
         insightButton.setImage(UIImage(fontAwesome: .robot), for: .normal)
         insightButton.imageView?.contentMode = .scaleAspectFit
-        insightButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        insightButton.contentHorizontalAlignment = .fill
+        insightButton.contentVerticalAlignment = .fill
         insightButton.accessibilityLabel = String(localized: "status_insight_title")
         insightButton.addAction(
             UIAction { [weak self] _ in
@@ -653,6 +698,12 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
         addSubview(insightButton)
     }
     required init(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) { return true }
+        guard !insightButton.isHidden, insightButton.isUserInteractionEnabled else { return false }
+        return insightButton.point(inside: convert(point, to: insightButton), with: event)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -689,7 +740,7 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
             height = max(height, time.font?.lineHeight ?? 0)
         }
         if !insightButton.isHidden {
-            height = max(height, insightButtonSize)
+            height = max(height, iconSize)
         }
         return ceil(height)
     }
@@ -721,8 +772,7 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
             compatibleWith: UITraitCollection(preferredContentSizeCategory: preferredContentSizeCategory)).pointSize
         if iconSize != previousIconSize { setPlatformIcon(nil) }
         translation.iconSize = iconSize
-        let insightInset = (insightButtonSize - iconSize) / 2
-        insightButton.contentEdgeInsets = UIEdgeInsets(top: insightInset, left: insightInset, bottom: insightInset, right: insightInset)
+        insightButton.minimumHitSize = insightHitSize
         if let v = post.visibility {
             visibility.isHidden = false
             visibility.set(visibility: v)
@@ -808,7 +858,7 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
             items.append((time, CGSize(width: ceil(size.width), height: ceil(size.height))))
         }
         if !insightButton.isHidden {
-            items.append((insightButton, CGSize(width: insightButtonSize, height: insightButtonSize)))
+            items.append((insightButton, CGSize(width: iconSize, height: iconSize)))
         }
         return items
     }

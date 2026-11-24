@@ -54,6 +54,7 @@ import dev.dimension.flare.feature.plugin.host.validateAuthenticationHeaders
 import dev.dimension.flare.feature.plugin.lifecycle.RunningPluginV1
 import dev.dimension.flare.feature.plugin.manifest.ProfileTabManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
@@ -1017,7 +1018,7 @@ internal class PluginDataSourceV1 private constructor(
                             platformId = plugin.installed.manifest.socialPlatform.id,
                             packageHash = plugin.installed.packageHash,
                             origin = canonicalOrigin,
-                            locale = invocationLocale.ifBlank { locale },
+                            locale = normalizePluginInvocationLocale(invocationLocale.ifBlank { locale }),
                             httpOrigins = plugin.installed.manifest.permissions.httpOrigins,
                         )
                     },

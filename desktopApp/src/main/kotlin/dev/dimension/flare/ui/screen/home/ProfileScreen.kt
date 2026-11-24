@@ -18,9 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridScope
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.rememberScrollState
@@ -71,6 +71,9 @@ import dev.dimension.flare.ui.component.ProfileHeaderLoading
 import dev.dimension.flare.ui.component.ProfileMenu
 import dev.dimension.flare.ui.component.ProfileTabsLoadingPlaceholder
 import dev.dimension.flare.ui.component.UnderlinedTabs
+import dev.dimension.flare.ui.component.adaptive.AdaptiveSplitLayout
+import dev.dimension.flare.ui.component.adaptive.PrimaryWidthStrategy
+import dev.dimension.flare.ui.component.adaptive.rememberSplitPaneState
 import dev.dimension.flare.ui.component.placeholder
 import dev.dimension.flare.ui.component.platform.isBigScreen
 import dev.dimension.flare.ui.component.status.LazyStatusVerticalStaggeredGrid
@@ -230,8 +233,9 @@ internal fun ProfileScreen(
     val listState = rememberLazyStaggeredGridState()
     val profileHeaderScrollState = rememberScrollState()
     RegisterTabCallback(listState, state::refresh)
-    val isBigScreen = isBigScreen()
-    val headerBackground = profileHeaderBackground(isBigScreen)
+    val splitState = rememberSplitPaneState(initialIsSplit = isBigScreen())
+    val isSplit = splitState.mode.isSplit
+    val headerBackground = profileHeaderBackground(isSplit)
     var showBlockedProfileContent by remember(accountType, userKey) { mutableStateOf(false) }
     val isBlockedProfile =
         state.state
@@ -244,79 +248,145 @@ internal fun ProfileScreen(
         }
     }
     val shouldGateBlockedProfile = isBlockedProfile && !showBlockedProfileContent
-    Box {
-        Row {
-            if (isBigScreen) {
-                FlareScrollBar(profileHeaderScrollState) {
-                    Column(
+    val populateTabItems: LazyStaggeredGridScope.(Boolean) -> Unit = { splitMode ->
+        if (shouldGateBlockedProfile) {
+            if (splitMode) {
+                item(
+                    span = StaggeredGridItemSpan.FullLine,
+                ) {
+                    BlockedProfileGate(
+                        onShow = {
+                            showBlockedProfileContent = true
+                        },
                         modifier =
-                            Modifier
-                                .padding(LocalWindowPadding.current)
-                                .padding(
-                                    vertical = 16.dp,
-                                ).padding(
-                                    start = 16.dp,
-                                ).width(332.dp)
-                                .verticalScroll(profileHeaderScrollState),
+                            Modifier.padding(
+                                horizontal = screenHorizontalPadding,
+                                vertical = 24.dp,
+                            ),
+                    )
+                }
+            }
+        } else {
+            state.state.tabs.onLoading {
+                if (splitMode) {
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        ProfileTabsLoadingPlaceholder()
+                    }
+                }
+                repeat(5) {
+                    item {
+                        StatusPlaceholder(
+                            modifier =
+                                Modifier.padding(
+                                    horizontal = StatusComponentDefaults.horizontalPadding,
+                                ),
+                        )
+                    }
+                }
+            }
+            state.state.tabs.onError { error ->
+                item(
+                    span = StaggeredGridItemSpan.FullLine,
+                ) {
+                    ErrorContent(
+                        error = error,
+                        onRetry = state.state::retryTabs,
+                    )
+                }
+            }
+            state.state.tabs.onSuccess { tabs ->
+                if (tabs.size > 1 && splitMode) {
+                    item(
+                        span = StaggeredGridItemSpan.FullLine,
                     ) {
-                        Card(
-                            modifier = Modifier,
-                        ) {
-                            ProfileHeader(
-                                state = state.state,
-                                menu = {
-                                    ProfileInsightAction(
-                                        profileState = state.state,
-                                        onClick = onProfileInsightClick,
+                        LiteFilter {
+                            repeat(tabs.size) { index ->
+                                val tab = tabs.get(index)
+                                PillButton(
+                                    selected = state.selectedTabIndex == index,
+                                    onSelectedChanged = {
+                                        state.setSelectedTab(tab.id)
+                                    },
+                                ) {
+                                    dev.dimension.flare.ui.component.Text(
+                                        text = tab.name,
                                     )
-                                    ProfileShareAction(
-                                        profileState = state.state,
-                                        onClick = onProfileShareClick,
-                                    )
-                                    ProfileMenu(
-                                        profileState = state.state,
-                                        modifier = Modifier.padding(horizontal = 8.dp),
-                                    )
-                                },
-                                onAvatarClick = {
-                                    state.state.userState.onSuccess {
-                                        it.avatar?.let { avatar ->
-                                            onRawMediaClick(avatar)
-                                        }
-                                    }
-                                },
-                                onBannerClick = {
-                                    state.state.userState.onSuccess {
-                                        it.banner?.let { banner -> onRawMediaClick(banner) }
-                                    }
-                                },
-                                isBigScreen = true,
-                                onFollowListClick = onFollowListClick,
-                                onFansListClick = onFansListClick,
-                            )
+                                }
+                            }
                         }
                     }
                 }
             }
-            FlareScrollBar(listState) {
-                LazyStatusVerticalStaggeredGrid(
-                    contentPadding =
-                        PaddingValues(
-                            vertical =
-                                if (isBigScreen) {
-                                    16.dp
-                                } else {
-                                    0.dp
-                                },
-                        ) +
-                            if (isBigScreen) {
-                                LocalWindowPadding.current
-                            } else {
-                                PaddingValues()
+            state.selectedTabItem?.let { tab ->
+                when (tab) {
+                    is ProfileTabItem.Media -> {
+                        items(
+                            tab.data,
+                            loadingContent = {
+                                Card(
+                                    modifier = Modifier,
+                                ) {
+                                    Box(modifier = Modifier.size(120.dp).placeholder(true))
+                                }
                             },
-                    state = listState,
-                ) {
-                    if (!isBigScreen) {
+                        ) { item ->
+                            CompositionLocalProvider(
+                                LocalTimelineAppearance provides
+                                    LocalTimelineAppearance.current.copy(
+                                        videoAutoplay = VideoAutoplay.NEVER,
+                                    ),
+                            ) {
+                                val media = item.media
+                                BoxWithConstraints {
+                                    MediaItem(
+                                        media = media,
+                                        showCountdown = false,
+                                        modifier =
+                                            Modifier
+                                                .clip(FluentTheme.shapes.control)
+                                                .padding(
+                                                    vertical = 4.dp,
+                                                ).heightIn(max = maxWidth * 21 / 9)
+                                                .clipToBounds()
+                                                .clickable {
+                                                    if (item.status.contentPostOrNull() != null) {
+                                                        onMediaClick(
+                                                            item.statusKey,
+                                                            item.index,
+                                                            when (media) {
+                                                                is UiMedia.Image -> media.previewUrl
+                                                                is UiMedia.Video -> media.thumbnailUrl
+                                                                is UiMedia.Gif -> media.previewUrl
+                                                                is UiMedia.Ugoira -> media.previewUrl
+                                                                else -> null
+                                                            },
+                                                        )
+                                                    }
+                                                },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    is ProfileTabItem.Timeline -> {
+                        status(tab.data)
+                    }
+                }
+            }
+        }
+    }
+    Box {
+        AdaptiveSplitLayout(
+            primaryWidthStrategy = PrimaryWidthStrategy.Fixed(348.dp),
+            state = splitState,
+            contentPadding = LocalWindowPadding.current,
+            compactContent = { _ ->
+                FlareScrollBar(listState) {
+                    LazyStatusVerticalStaggeredGrid(
+                        contentPadding = PaddingValues(),
+                        state = listState,
+                    ) {
                         item(
                             span = StaggeredGridItemSpan.FullLine,
                         ) {
@@ -395,136 +465,71 @@ internal fun ProfileScreen(
                                 }
                             }
                         }
+                        populateTabItems(false)
                     }
-                    if (shouldGateBlockedProfile) {
-                        if (isBigScreen) {
-                            item(
-                                span = StaggeredGridItemSpan.FullLine,
-                            ) {
-                                BlockedProfileGate(
-                                    onShow = {
-                                        showBlockedProfileContent = true
-                                    },
-                                    modifier =
-                                        Modifier.padding(
-                                            horizontal = screenHorizontalPadding,
-                                            vertical = 24.dp,
-                                        ),
-                                )
-                            }
-                        }
-                    } else {
-                        state.state.tabs.onLoading {
-                            if (isBigScreen) {
-                                item(span = StaggeredGridItemSpan.FullLine) {
-                                    ProfileTabsLoadingPlaceholder()
-                                }
-                            }
-                            repeat(5) {
-                                item {
-                                    StatusPlaceholder(
-                                        modifier =
-                                            Modifier.padding(
-                                                horizontal = StatusComponentDefaults.horizontalPadding,
-                                            ),
+                }
+            },
+            primaryPane = { _, padding ->
+                FlareScrollBar(profileHeaderScrollState) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .padding(padding)
+                                .padding(vertical = 16.dp)
+                                .padding(start = 16.dp)
+                                .fillMaxWidth()
+                                .verticalScroll(profileHeaderScrollState),
+                    ) {
+                        Card(
+                            modifier = Modifier,
+                        ) {
+                            ProfileHeader(
+                                state = state.state,
+                                menu = {
+                                    ProfileInsightAction(
+                                        profileState = state.state,
+                                        onClick = onProfileInsightClick,
                                     )
-                                }
-                            }
-                        }
-                        state.state.tabs.onError { error ->
-                            item(
-                                span = StaggeredGridItemSpan.FullLine,
-                            ) {
-                                ErrorContent(
-                                    error = error,
-                                    onRetry = state.state::retryTabs,
-                                )
-                            }
-                        }
-                        state.state.tabs.onSuccess { tabs ->
-                            if (tabs.size > 1 && isBigScreen) {
-                                item(
-                                    span = StaggeredGridItemSpan.FullLine,
-                                ) {
-                                    LiteFilter {
-                                        repeat(tabs.size) { index ->
-                                            val tab = tabs.get(index)
-                                            PillButton(
-                                                selected = state.selectedTabIndex == index,
-                                                onSelectedChanged = {
-                                                    state.setSelectedTab(tab.id)
-                                                },
-                                            ) {
-                                                dev.dimension.flare.ui.component.Text(
-                                                    text = tab.name,
-                                                )
-                                            }
+                                    ProfileShareAction(
+                                        profileState = state.state,
+                                        onClick = onProfileShareClick,
+                                    )
+                                    ProfileMenu(
+                                        profileState = state.state,
+                                        modifier = Modifier.padding(horizontal = 8.dp),
+                                    )
+                                },
+                                onAvatarClick = {
+                                    state.state.userState.onSuccess {
+                                        it.avatar?.let { avatar ->
+                                            onRawMediaClick(avatar)
                                         }
                                     }
-                                }
-                            }
-                        }
-                        state.selectedTabItem?.let { tab ->
-                            when (tab) {
-                                is ProfileTabItem.Media -> {
-                                    items(
-                                        tab.data,
-                                        loadingContent = {
-                                            Card(
-                                                modifier = Modifier,
-                                            ) {
-                                                Box(modifier = Modifier.size(120.dp).placeholder(true))
-                                            }
-                                        },
-                                    ) { item ->
-                                        CompositionLocalProvider(
-                                            LocalTimelineAppearance provides
-                                                LocalTimelineAppearance.current.copy(
-                                                    videoAutoplay = VideoAutoplay.NEVER,
-                                                ),
-                                        ) {
-                                            val media = item.media
-                                            BoxWithConstraints {
-                                                MediaItem(
-                                                    media = media,
-                                                    showCountdown = false,
-                                                    modifier =
-                                                        Modifier
-                                                            .clip(FluentTheme.shapes.control)
-                                                            .padding(
-                                                                vertical = 4.dp,
-                                                            ).heightIn(max = maxWidth * 21 / 9)
-                                                            .clipToBounds()
-                                                            .clickable {
-                                                                if (item.status.contentPostOrNull() != null) {
-                                                                    onMediaClick(
-                                                                        item.statusKey,
-                                                                        item.index,
-                                                                        when (media) {
-                                                                            is UiMedia.Image -> media.previewUrl
-                                                                            is UiMedia.Video -> media.thumbnailUrl
-                                                                            is UiMedia.Gif -> media.previewUrl
-                                                                            is UiMedia.Ugoira -> media.previewUrl
-                                                                            else -> null
-                                                                        },
-                                                                    )
-                                                                }
-                                                            },
-                                                )
-                                            }
-                                        }
+                                },
+                                onBannerClick = {
+                                    state.state.userState.onSuccess {
+                                        it.banner?.let { banner -> onRawMediaClick(banner) }
                                     }
-                                }
-
-                                is ProfileTabItem.Timeline -> {
-                                    status(tab.data)
-                                }
-                            }
+                                },
+                                isBigScreen = true,
+                                onFollowListClick = onFollowListClick,
+                                onFansListClick = onFansListClick,
+                            )
                         }
                     }
                 }
-            }
-        }
+            },
+            secondaryPane = { _, padding ->
+                FlareScrollBar(listState) {
+                    LazyStatusVerticalStaggeredGrid(
+                        contentPadding = PaddingValues(vertical = 16.dp) + padding,
+                        state = listState,
+                    ) {
+                        populateTabItems(true)
+                    }
+                }
+            },
+        )
 
         if (!shouldGateBlockedProfile) {
             state.selectedTabItem?.let {

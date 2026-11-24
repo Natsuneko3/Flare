@@ -18,6 +18,7 @@ struct TimelineReadingScrollView<Content: View>: View {
                 content().background(TimelineScrollViewProbe { viewport.bind($0) })
             }
             .coordinateSpace(name: "timeline-reading")
+            .environment(\.tracksTimelineReadingFrames, true)
             .environment(\.timelineGapWillLoad) { message in viewport.willLoadGap(message, itemKeys: itemKeys) }
             .environment(\.timelineGapDidLoad) { message, keys in viewport.didLoadGap(message, insertedKeys: keys) }
             .onPreferenceChange(TimelineReadingFrames.self) { frames in
@@ -51,7 +52,7 @@ struct TimelineReadingScrollView<Content: View>: View {
 
 @MainActor
 private final class TimelineReadingViewport {
-    private struct Anchor { let itemKey: String; let offset: Double }
+    private struct Anchor: Equatable { let itemKey: String; let offset: Double }
     private var itemKeys: [String] = []
     private weak var scrollView: NSScrollView?
     private var reading: TimelineReadingState?
@@ -207,9 +208,17 @@ private final class TimelineReadingViewport {
             let offset = restoringBookmark ? max(pending.offset, 1 - frame.height) : pending.offset
             let delta = frame.minY - offset
             if abs(delta) > 0.5 {
-                let maxY = max(0, (scrollView.documentView?.bounds.height ?? 0) - clip.bounds.height)
-                clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, clip.bounds.minY + delta), maxY)))
-                scrollView.reflectScrolledClipView(clip)
+                let origin = previousY + delta
+                if reading == nil {
+                    // SwiftUI can still reposition the clip view while moving the detail header between panes.
+                    DispatchQueue.main.async { [weak self, weak scrollView] in
+                        guard let self, let scrollView, self.scrollView === scrollView,
+                              self.pending == pending, !self.userScrolling else { return }
+                        self.scroll(scrollView, to: origin)
+                    }
+                    return
+                }
+                scroll(scrollView, to: origin)
             }
             // Keep the target through SwiftUI's deferred scrollTo layout passes.
             let moved = abs(clip.bounds.minY - previousY) > 0.5
@@ -232,6 +241,13 @@ private final class TimelineReadingViewport {
                 reading?.viewportChanged(index: Int32(index), offset: first.value.minY, itemKey: first.key)
             }
         }
+    }
+
+    private func scroll(_ view: NSScrollView, to origin: CGFloat) {
+        let clip = view.contentView
+        let maxY = max(0, (view.documentView?.bounds.height ?? 0) - clip.bounds.height)
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, origin), maxY)))
+        view.reflectScrolledClipView(clip)
     }
 
     func save() {

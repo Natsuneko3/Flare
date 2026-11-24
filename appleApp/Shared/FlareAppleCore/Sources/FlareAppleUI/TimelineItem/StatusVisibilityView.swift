@@ -4,34 +4,65 @@ import FlareAppleCore
 
 public struct StatusVisibilityView: View {
     private let data: UiTimelineV2.PostVisibility
+    private let iconSize: CGFloat?
 
-    public init(data: UiTimelineV2.PostVisibility) {
+    public init(data: UiTimelineV2.PostVisibility, iconSize: CGFloat? = nil) {
         self.data = data
+        self.iconSize = iconSize
     }
 
     public var body: some View {
+        icon(fontAwesomeIcon)
+            .accessibilityLabel(Text(accessibilityLabelKey, bundle: FlareAppleUILocalization.bundle))
+    }
+
+    @ViewBuilder
+    private func icon(_ value: FontAwesomeIcon) -> some View {
+        if let iconSize {
+            Image(fontAwesome: value)
+                .resizable()
+                .scaledToFit()
+                .frame(width: iconSize, height: iconSize)
+        } else {
+            Image(fontAwesome: value)
+        }
+    }
+
+    private var fontAwesomeIcon: FontAwesomeIcon {
         switch data {
         case .public:
-            Image(fontAwesome: .globe)
-                .accessibilityLabel(Text("status_visibility_public", bundle: FlareAppleUILocalization.bundle))
+            .globe
         case .home:
-            Image(fontAwesome: .lockOpen)
-                .accessibilityLabel(Text("status_visibility_unlisted", bundle: FlareAppleUILocalization.bundle))
+            .lockOpen
         case .followers:
-            Image(fontAwesome: .lock)
-                .accessibilityLabel(Text("matrix_followers", bundle: FlareAppleUILocalization.bundle))
+            .lock
         case .specified:
-            Image(fontAwesome: .at)
-                .accessibilityLabel(Text("status_visibility_specified", bundle: FlareAppleUILocalization.bundle))
+            .at
         case .channel:
-            Image(fontAwesome: .tv)
-                .accessibilityLabel(Text("channel_title", bundle: FlareAppleUILocalization.bundle))
+            .tv
         case .friends:
-            Image(fontAwesome: .heart)
-                .accessibilityLabel(Text("visibility_friends", bundle: FlareAppleUILocalization.bundle))
+            .heart
         case .selfOnly:
-            Image(fontAwesome: .lock)
-                .accessibilityLabel(Text("visibility_self", bundle: FlareAppleUILocalization.bundle))
+            .lock
+        }
+    }
+
+    private var accessibilityLabelKey: LocalizedStringKey {
+        switch data {
+        case .public:
+            "status_visibility_public"
+        case .home:
+            "status_visibility_unlisted"
+        case .followers:
+            "matrix_followers"
+        case .specified:
+            "status_visibility_specified"
+        case .channel:
+            "channel_title"
+        case .friends:
+            "visibility_friends"
+        case .selfOnly:
+            "visibility_self"
         }
     }
 }

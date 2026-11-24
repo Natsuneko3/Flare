@@ -52,4 +52,20 @@ for (const [icon, expected] of [
 		assert.match(body, /height="24"/);
 		assert.match(body, /alt=""/);
 	});
+
+	test(`${icon.type} platform icons support relative CSS sizes`, () => {
+		const { body } = render(PlatformIcon, { props: { icon, size: '1em' } });
+		assert.ok(body.includes(`src="${expected}"`));
+		assert.match(body, /style="width: 1em; height: 1em;"/);
+		assert.doesNotMatch(body, /\bwidth="/);
+		assert.doesNotMatch(body, /\bheight="/);
+	});
 }
+
+test('Material platform icons forward relative CSS sizes to FaIcon', () => {
+	const { body } = render(PlatformIcon, {
+		props: { icon: { type: 'Material', icon: 'X' }, size: '1em' },
+	});
+	assert.match(body, /data-icon="X"/);
+	assert.match(body, /data-size="1em"/);
+});

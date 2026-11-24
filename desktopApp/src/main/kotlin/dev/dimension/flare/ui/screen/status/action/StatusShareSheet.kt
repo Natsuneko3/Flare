@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -12,7 +11,6 @@ import androidx.compose.ui.Modifier
 import dev.dimension.flare.Res
 import dev.dimension.flare.common.MediaFileNamePolicy
 import dev.dimension.flare.copied_to_clipboard
-import dev.dimension.flare.data.model.VideoAutoplay
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.share_replies_count
@@ -20,7 +18,6 @@ import dev.dimension.flare.share_replies_title
 import dev.dimension.flare.status_share_via_fixvx
 import dev.dimension.flare.status_share_via_fxembed
 import dev.dimension.flare.ui.component.ComposeInAppNotification
-import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.status.StatusShareContent
 import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.presenter.invoke
@@ -96,19 +93,10 @@ internal fun StatusShareSheet(
         },
         modifier = modifier,
     ) {
-        CompositionLocalProvider(
-            LocalTimelineAppearance provides
-                LocalTimelineAppearance.current.copy(
-                    expandContentWarning = true,
-                    showTranslateButton = false,
-                    videoAutoplay = VideoAutoplay.NEVER,
-                ),
-        ) {
-            StatusShareContent(
-                status = status,
-                statusKey = statusKey,
-                replies = state.selectedReplies,
-            )
-        }
+        StatusShareContent(
+            status = status,
+            statusKey = statusKey,
+            replies = state.selectedReplies,
+        )
     }
 }

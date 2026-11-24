@@ -33,18 +33,6 @@ internal sealed interface Route : NavKey {
         ) : Status
 
         @Serializable
-        data class VVOComment(
-            val commentKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status
-
-        @Serializable
-        data class VVOStatus(
-            val statusKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status
-
-        @Serializable
         data class AddReaction(
             val statusKey: MicroBlogKey,
             val accountType: AccountType,
@@ -790,20 +778,6 @@ internal sealed interface Route : NavKey {
                         shareUrl = deeplinkRoute.shareUrl,
                         fxShareUrl = deeplinkRoute.fxShareUrl,
                         fixvxShareUrl = deeplinkRoute.fixvxShareUrl,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOComment -> {
-                    Status.VVOComment(
-                        commentKey = deeplinkRoute.commentKey,
-                        accountType = deeplinkRoute.accountType,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOStatus -> {
-                    Status.VVOStatus(
-                        statusKey = deeplinkRoute.statusKey,
-                        accountType = deeplinkRoute.accountType,
                     )
                 }
 

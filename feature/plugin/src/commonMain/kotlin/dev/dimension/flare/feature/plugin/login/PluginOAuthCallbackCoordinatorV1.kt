@@ -2,6 +2,7 @@ package dev.dimension.flare.feature.plugin.login
 
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.feature.plugin.adapter.addPluginAccount
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.wire.LoginSuccessV1
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -28,7 +29,7 @@ public class PluginOAuthCallbackCoordinatorV1(
             if (callback.flowId in completed) return@withLock true
             val listener = listeners[callback.flowId]
             try {
-                val result = oauth.resumeResult(url, locale)
+                val result = oauth.resumeResult(url, normalizePluginInvocationLocale(locale))
                 if (listener != null) {
                     listener(result.success)
                     listeners.remove(callback.flowId)
