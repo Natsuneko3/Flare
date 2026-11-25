@@ -36,7 +36,6 @@ import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.brands.Discord
 import compose.icons.fontawesomeicons.brands.Github
 import compose.icons.fontawesomeicons.brands.Telegram
-import compose.icons.fontawesomeicons.solid.Language
 import compose.icons.fontawesomeicons.solid.Lock
 import dev.dimension.flare.BuildConfig
 import dev.dimension.flare.R
@@ -122,7 +121,7 @@ internal fun AboutScreen(onBack: () -> Unit) {
                     onClick = {
                         uriHandler.openUri("https://github.com/flaresocialapp/Flare")
                     },
-                    shapes = ListItemDefaults.segmentedShapes2(0, 5),
+                    shapes = ListItemDefaults.segmentedShapes2(0, 4),
                     leadingContent = {
                         Icon(
                             imageVector = FontAwesomeIcons.Brands.Github,
@@ -143,7 +142,7 @@ internal fun AboutScreen(onBack: () -> Unit) {
                     onClick = {
                         uriHandler.openUri(ilink)
                     },
-                    shapes = ListItemDefaults.segmentedShapes2(1, 5),
+                    shapes = ListItemDefaults.segmentedShapes2(1, 4),
                     leadingContent = {
                         Icon(
                             imageVector = FontAwesomeIcons.Brands.Telegram,
@@ -164,32 +163,11 @@ internal fun AboutScreen(onBack: () -> Unit) {
                     onClick = {
                         uriHandler.openUri("https://discord.gg/De9NhXBryT")
                     },
-                    shapes = ListItemDefaults.segmentedShapes2(2, 5),
+                    shapes = ListItemDefaults.segmentedShapes2(2, 4),
                     leadingContent = {
                         Icon(
                             imageVector = FontAwesomeIcons.Brands.Discord,
                             contentDescription = stringResource(id = R.string.settings_about_discord),
-                            modifier = Modifier.size(24.dp),
-                        )
-                    },
-                )
-                SegmentedListItem(
-                    content = {
-                        Text(text = stringResource(id = R.string.settings_about_localization))
-                    },
-                    supportingContent = {
-                        Text(
-                            text = stringResource(id = R.string.settings_about_localization_description),
-                        )
-                    },
-                    onClick = {
-                        uriHandler.openUri("https://crowdin.com/project/flareapp")
-                    },
-                    shapes = ListItemDefaults.segmentedShapes2(3, 5),
-                    leadingContent = {
-                        Icon(
-                            imageVector = FontAwesomeIcons.Solid.Language,
-                            contentDescription = stringResource(id = R.string.settings_about_localization),
                             modifier = Modifier.size(24.dp),
                         )
                     },
@@ -206,7 +184,7 @@ internal fun AboutScreen(onBack: () -> Unit) {
                     onClick = {
                         uriHandler.openUri("https://legal.mask.io/maskbook/")
                     },
-                    shapes = ListItemDefaults.segmentedShapes2(4, 5),
+                    shapes = ListItemDefaults.segmentedShapes2(3, 4),
                     leadingContent = {
                         Icon(
                             imageVector = FontAwesomeIcons.Solid.Lock,

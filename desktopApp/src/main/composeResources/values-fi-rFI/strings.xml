@@ -362,8 +362,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Liity Telegram-ryhmäämme</string>
     <string name="settings_about_discord_description">Liity Discord-palvelimellemme</string>
-    <string name="settings_about_localization">Crowdiini</string>
-    <string name="settings_about_localization_description">Auta meitä kääntämään Flare</string>
     <string name="settings_privacy_policy">Tietosuojaseloste</string>
     <string name="users">Käyttäjät</string>
     <string name="hashtags">Aihetunnisteet</string>

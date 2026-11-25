@@ -38,12 +38,6 @@
 			href: 'https://discord.gg/De9NhXBryT',
 		},
 		{
-			title: m.settingsAboutLocalization(),
-			subtitle: m.settingsAboutLocalizationDescription(),
-			icon: 'Translate',
-			href: 'https://crowdin.com/project/flareapp',
-		},
-		{
 			title: m.settingsPrivacyPolicy(),
 			subtitle: 'https://legal.mask.io/maskbook',
 			icon: 'Lock',

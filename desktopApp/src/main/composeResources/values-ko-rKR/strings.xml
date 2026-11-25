@@ -308,8 +308,6 @@
     <string name="settings_about_telegram">텔레그램</string>
     <string name="settings_about_telegram_description">우리의 텔레그램 그룹에 참여하세요</string>
     <string name="settings_about_discord_description">저희 Discord 서버에 참여하세요</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Flare 번역에 도움을 주세요</string>
     <string name="settings_privacy_policy">개인정보 처리방침</string>
     <string name="users">사용자</string>
     <string name="hashtags">해시태그</string>

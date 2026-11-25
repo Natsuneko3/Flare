@@ -513,8 +513,6 @@
   "settingsAboutTelegramDescription": "Telegramグループに参加する",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "Discordサーバーに参加する",
-  "settingsAboutLocalization": "Crowdin",
-  "settingsAboutLocalizationDescription": "Flareの翻訳に協力する",
   "settingsPrivacyPolicy": "プライバシーポリシー",
   "settingsSectionLocalData": "ローカルデータ",
   "settingsSectionIntelligence": "インテリジェンス",

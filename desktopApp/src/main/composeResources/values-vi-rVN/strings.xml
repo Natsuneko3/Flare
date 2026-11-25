@@ -306,8 +306,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Tham gia nhóm Telegram của chúng tôi</string>
     <string name="settings_about_discord_description">Tham gia máy chủ Discord của chúng tôi</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Giúp chúng tôi dịch Flare</string>
     <string name="settings_privacy_policy">Chính sách bảo mật</string>
     <string name="users">Người dùng</string>
     <string name="hashtags">Hashtag</string>

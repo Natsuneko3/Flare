@@ -74,8 +74,6 @@
     <string name="settings_about_telegram_description">הצטרף לקבוצת הטלגרם שלנו</string>
     <string name="settings_about_discord_description">הצטרפו לשרת ה-Discord שלנו</string>
     <string name="settings_about_line_description">הצטרפו לקבוצת ה-Line שלנו</string>
-    <string name="settings_about_localization">קרואדין</string>
-    <string name="settings_about_localization_description">עזור לנו לתרגם את Flare</string>
     <string name="settings_privacy_policy">מדיניות פרטיות</string>
     <string name="settings_side_panel">התאמת פאנל צד</string>
     <string name="settings_side_panel_description">התאם אישית את פאנל הצד</string>

@@ -513,8 +513,6 @@
   "settingsAboutTelegramDescription": "Csatlakozz a Telegram csoportunkhoz",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "Csatlakozz a Discord szerverünkhöz",
-  "settingsAboutLocalization": "Crowdin",
-  "settingsAboutLocalizationDescription": "Segíts lefordítani a Flare-t",
   "settingsPrivacyPolicy": "Adatvédelmi nyilatkozat",
   "settingsSectionLocalData": "Local data",
   "settingsSectionIntelligence": "Intelligence",

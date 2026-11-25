@@ -509,8 +509,6 @@
   "settingsAboutTelegramDescription": "加入社区聊天",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "和其他用户讨论 Flare",
-  "settingsAboutLocalization": "本地化",
-  "settingsAboutLocalizationDescription": "在 Crowdin 帮助翻译 Flare",
   "settingsPrivacyPolicy": "隐私政策",
   "settingsSectionLocalData": "本地数据",
   "settingsSectionIntelligence": "智能",

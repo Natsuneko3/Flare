@@ -648,8 +648,6 @@
     <string name="settings_about_discord_description">Join our Discord server</string>
     <string name="settings_about_line" translatable="false">Line</string>
     <string name="settings_about_line_description">Join our Line group</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Help us translate Flare</string>
     <string name="settings_privacy_policy">Privacy Policy</string>
     <string name="settings_ai_config_enable_agent">Enable AI Agent</string>
     <string name="settings_ai_config_agent_description">Show AI Agent entry points in relevant places when an OpenAI-compatible model is configured.</string>

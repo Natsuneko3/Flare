@@ -72,8 +72,6 @@
     <string name="settings_about_telegram_description">Telegram grubumuza katılın</string>
     <string name="settings_about_discord_description">Discord sunucumuza katılın</string>
     <string name="settings_about_line_description">Line grubumuza katılın</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Flare\'i çevirmemize yardımcı olun</string>
     <string name="settings_privacy_policy">Gizlilik Politikası</string>
     <string name="settings_side_panel">Yan Panel özelleştirme</string>
     <string name="settings_side_panel_description">Yan paneli özelleştir</string>

@@ -369,8 +369,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Treten Sie unserer Telegram-Gruppe bei</string>
     <string name="settings_about_discord_description">Treten Sie unserem Discord-Server bei</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Helfen Sie uns bei der Übersetzung von Flare</string>
     <string name="settings_privacy_policy">Datenschutzerklärung</string>
     <string name="users">Benutzer</string>
     <string name="hashtags">Hashtags</string>

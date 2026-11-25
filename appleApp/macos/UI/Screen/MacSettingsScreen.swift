@@ -1364,13 +1364,6 @@ private struct MacAboutLink: Identifiable {
             url: URL(string: "https://discord.gg/De9NhXBryT")!
         ),
         MacAboutLink(
-            id: "localization",
-            titleKey: "settings_about_localization",
-            subtitle: String(localized: "settings_about_localization_description"),
-            icon: .language,
-            url: URL(string: "https://crowdin.com/project/flareapp")!
-        ),
-        MacAboutLink(
             id: "privacy-policy",
             titleKey: "settings_privacy_policy",
             subtitle: "https://legal.mask.io/maskbook",

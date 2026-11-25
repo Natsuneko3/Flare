@@ -310,8 +310,6 @@
     <string name="settings_about_telegram">טלגרם</string>
     <string name="settings_about_telegram_description">הצטרפו לקבוצת הטלגרם שלנו</string>
     <string name="settings_about_discord_description">הצטרפו לשרת הדיסקורד שלנו</string>
-    <string name="settings_about_localization">קרואדין</string>
-    <string name="settings_about_localization_description">עזרו לנו לתרגם את Flare</string>
     <string name="settings_privacy_policy">מדיניות פרטיות</string>
     <string name="users">משתמשים</string>
     <string name="hashtags">תגיות (Hashtags)</string>

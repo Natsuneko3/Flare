@@ -373,8 +373,6 @@
     <string name="settings_about_telegram">تيليجرام</string>
     <string name="settings_about_telegram_description">انضم إلى مجموعتنا على تيليجرام</string>
     <string name="settings_about_discord_description">انضم إلى خادمنا على ديسكورد</string>
-    <string name="settings_about_localization">كرودن</string>
-    <string name="settings_about_localization_description">ساعدنا في ترجمة Flare</string>
     <string name="settings_privacy_policy">سياسة الخصوصية</string>
     <string name="users">المستخدمين</string>
     <string name="hashtags">الوسوم</string>

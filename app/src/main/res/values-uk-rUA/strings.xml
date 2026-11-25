@@ -108,8 +108,6 @@
     <string name="settings_about_telegram_description">Приєднуйтесь до нашої групи в Telegram</string>
     <string name="settings_about_discord_description">Приєднуйтесь до нашого сервера в Discord</string>
     <string name="settings_about_line_description">Приєднуйтесь до нашої групи в Line</string>
-    <string name="settings_about_localization">Кравдін</string>
-    <string name="settings_about_localization_description">Допоможіть нам перекласти Flare</string>
     <string name="settings_privacy_policy">Політика конфіденційності</string>
     <string name="settings_side_panel">Налаштування бічної панелі</string>
     <string name="settings_side_panel_description">Налаштуйте бічну панель</string>

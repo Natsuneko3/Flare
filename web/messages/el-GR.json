@@ -513,8 +513,6 @@
   "settingsAboutTelegramDescription": "Γίνετε μέλος στην ομάδα μας στο Telegram",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "Γίνετε μέλος στον διακομιστή μας στο Discord",
-  "settingsAboutLocalization": "Crowdin",
-  "settingsAboutLocalizationDescription": "Βοηθήστε μας να μεταφράσουμε το Flare",
   "settingsPrivacyPolicy": "Πολιτική Απορρήτου",
   "settingsSectionLocalData": "Local data",
   "settingsSectionIntelligence": "Intelligence",

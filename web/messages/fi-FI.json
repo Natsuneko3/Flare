@@ -513,8 +513,6 @@
   "settingsAboutTelegramDescription": "Liity Telegram-ryhmäämme",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "Liity Discord-palvelimellemme",
-  "settingsAboutLocalization": "Crowdin",
-  "settingsAboutLocalizationDescription": "Auta meitä kääntämään Flare",
   "settingsPrivacyPolicy": "Tietosuojakäytäntö",
   "settingsSectionLocalData": "Paikalliset tiedot",
   "settingsSectionIntelligence": "Äly",
