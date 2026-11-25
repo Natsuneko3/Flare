@@ -1350,6 +1350,9 @@ private data class InFlightChunkJob(
     val isExplicitRetry: Boolean,
 )
 
+private val Job.isInFlight: Boolean
+    get() = !isCompleted && !isCancelled
+
 private sealed interface CursorChaseGoal {
     data object End : CursorChaseGoal
 
@@ -1531,7 +1534,7 @@ private class ChapterPagesSession(
         if (isRangeMode) {
             syncRangeChunkWindow(currentPageIndex = currentPageIndex, dataSource = dataSource)
         } else {
-            syncCursorAppend(currentPageIndex = currentPageIndex, dataSource = dataSource)
+            launchCursorAppend(pageIndex = currentPageIndex, dataSource = dataSource)
         }
     }
 
@@ -1554,19 +1557,22 @@ private class ChapterPagesSession(
                 if (!entry.isExplicitRetry && entry.targetIndex !in windowStart..windowEnd) {
                     jobsToCancel += entry.job
                     iterator.remove()
-                } else if (!entry.job.isActive) {
+                } else if (!entry.job.isInFlight) {
                     iterator.remove()
                 }
             }
+
+            val loadedPages = loadedPagesByIndex
+            val failedRegions = failedChunkRegions
 
             fun isCovered(
                 index: Int,
                 plannedRanges: List<IntRange>,
             ): Boolean {
-                if (index in loadedPagesByIndex) return true
-                if (failedChunkRegions.any { index in it.range }) return true
+                if (index in loadedPages) return true
+                if (failedRegions.any { index in it.range }) return true
                 if (inFlightChunkJobs.values.any { entry ->
-                        entry.job.isActive && index in entry.targetIndex until (entry.targetIndex + chunkSizeHint)
+                        entry.job.isInFlight && index in entry.targetIndex until (entry.targetIndex + chunkSizeHint)
                     }
                 ) {
                     return true
@@ -1585,10 +1591,10 @@ private class ChapterPagesSession(
             }
 
             val currentIsLoadingOrFailed =
-                (clampedCurrent !in loadedPagesByIndex) &&
+                (clampedCurrent !in loadedPages) &&
                     (
-                        failedChunkRegions.any { clampedCurrent in it.range } ||
-                            inFlightChunkJobs.values.any { it.job.isActive && it.targetIndex == clampedCurrent } ||
+                        failedRegions.any { clampedCurrent in it.range } ||
+                            inFlightChunkJobs.values.any { it.job.isInFlight && it.targetIndex == clampedCurrent } ||
                             clampedCurrent in plannedTargets
                     )
             if (!currentIsLoadingOrFailed) {
@@ -1628,7 +1634,7 @@ private class ChapterPagesSession(
         isExplicitRetry: Boolean,
     ): Job? {
         if (!job.isActive) return null
-        if (inFlightChunkJobs[targetIndex]?.job?.isActive == true) return null
+        if (inFlightChunkJobs[targetIndex]?.job?.isInFlight == true) return null
         val hint = chunkSizeHint
         val chunkJob =
             scope.launch(start = CoroutineStart.LAZY) {
@@ -1644,24 +1650,12 @@ private class ChapterPagesSession(
                                 limit = hint,
                             )
                         }
-                    currentCoroutineContext().ensureActive()
-                    chunkJobsMutex.withLock {
-                        if (inFlightChunkJobs[targetIndex]?.job === selfJob) {
-                            inFlightChunkJobs.remove(targetIndex)
-                        }
-                    }
-                    chunkCommitMutex.withLock {
+                    publishRangeChunkResult(targetIndex, selfJob) {
                         applyRangeChunkLocked(requestedOffset = targetIndex, chunk = chunk)
                     }
                 } catch (e: Throwable) {
                     if (e is CancellationException) throw e
-                    currentCoroutineContext().ensureActive()
-                    chunkJobsMutex.withLock {
-                        if (inFlightChunkJobs[targetIndex]?.job === selfJob) {
-                            inFlightChunkJobs.remove(targetIndex)
-                        }
-                    }
-                    chunkCommitMutex.withLock {
+                    publishRangeChunkResult(targetIndex, selfJob) {
                         val total = totalCount ?: 0
                         if (total > 0 && targetIndex in 0 until total) {
                             val regionEnd = (targetIndex + hint - 1).coerceAtMost(total - 1)
@@ -1685,24 +1679,39 @@ private class ChapterPagesSession(
         return chunkJob
     }
 
-    private suspend fun syncCursorAppend(
-        currentPageIndex: Int,
-        dataSource: MangaDataSource,
+    private suspend fun publishRangeChunkResult(
+        targetIndex: Int,
+        completedJob: Job?,
+        publish: () -> Unit,
     ) {
-        if (isRangeMode || endReached) return
-        if (suppressCursorAppendUntilNavigation) return
-        if (cursorAppendError != null) return
-        if (nextCursor == null || loadedCount <= 0) return
-        val loadedMaxIndex = loadedCount - 1
-        if (currentPageIndex < loadedMaxIndex - CURSOR_APPEND_PREFETCH_THRESHOLD) return
-        launchCursorAppend(dataSource = dataSource)
+        // Window planning must see the published result when the request leaves the in-flight set.
+        chunkJobsMutex.withLock {
+            chunkCommitMutex.withLock {
+                currentCoroutineContext().ensureActive()
+                publish()
+            }
+            if (inFlightChunkJobs[targetIndex]?.job === completedJob) {
+                inFlightChunkJobs.remove(targetIndex)
+            }
+        }
     }
 
-    private suspend fun launchCursorAppend(dataSource: MangaDataSource) {
-        if (!job.isActive) return
+    private suspend fun launchCursorAppend(
+        pageIndex: Int,
+        dataSource: MangaDataSource,
+        isRetry: Boolean = false,
+    ) {
         val jobToStart =
             chunkJobsMutex.withLock {
-                if (!job.isActive || cursorAppendJob?.isActive == true) return@withLock null
+                if (!job.isActive || cursorAppendJob?.isInFlight == true) return@withLock null
+                if (isRangeMode || endReached || nextCursor == null || loadedCount <= 0) return@withLock null
+                if (isRetry) {
+                    if (cursorAppendError == null || pageIndex != loadedCount) return@withLock null
+                    Snapshot.withMutableSnapshot { cursorAppendError = null }
+                } else {
+                    if (suppressCursorAppendUntilNavigation || cursorAppendError != null) return@withLock null
+                    if (pageIndex < loadedCount - 1 - CURSOR_APPEND_PREFETCH_THRESHOLD) return@withLock null
+                }
                 val launchedJob =
                     scope.launch(start = CoroutineStart.LAZY) {
                         val selfJob = currentCoroutineContext()[Job]
@@ -1717,26 +1726,24 @@ private class ChapterPagesSession(
                                         chapterId = chapterId,
                                         cursor = cursor,
                                     )
-                                currentCoroutineContext().ensureActive()
                                 chunkJobsMutex.withLock {
+                                    chunkCommitMutex.withLock {
+                                        currentCoroutineContext().ensureActive()
+                                        applyCursorChunkLocked(chunk)
+                                    }
                                     if (cursorAppendJob === selfJob) {
                                         cursorAppendJob = null
                                     }
                                 }
-                                chunkCommitMutex.withLock {
-                                    applyCursorChunkLocked(chunk)
-                                }
                             }
                         } catch (e: Throwable) {
                             if (e is CancellationException) throw e
-                            currentCoroutineContext().ensureActive()
                             chunkJobsMutex.withLock {
+                                currentCoroutineContext().ensureActive()
+                                Snapshot.withMutableSnapshot { cursorAppendError = e }
                                 if (cursorAppendJob === selfJob) {
                                     cursorAppendJob = null
                                 }
-                            }
-                            Snapshot.withMutableSnapshot {
-                                cursorAppendError = e
                             }
                         } finally {
                             withContext(NonCancellable) {
@@ -1762,14 +1769,13 @@ private class ChapterPagesSession(
         if (isRangeMode) {
             val total = totalCount ?: return
             if (index !in 0 until total) return
-            Snapshot.withMutableSnapshot {
-                failedChunkRegions = failedChunkRegions.filterNot { index in it.range }
-            }
-            if (index in loadedPagesByIndex) return
             scope.launch {
                 val jobToStart =
                     chunkJobsMutex.withLock {
                         if (index in loadedPagesByIndex) return@withLock null
+                        Snapshot.withMutableSnapshot {
+                            failedChunkRegions = failedChunkRegions.filterNot { index in it.range }
+                        }
                         createRangeChunkJobLocked(
                             targetIndex = index,
                             dataSource = dataSource,
@@ -1780,11 +1786,8 @@ private class ChapterPagesSession(
             }
         } else if (!endReached && nextCursor != null) {
             if (cursorAppendError == null || index != loadedCount) return
-            Snapshot.withMutableSnapshot {
-                cursorAppendError = null
-            }
             scope.launch {
-                launchCursorAppend(dataSource = dataSource)
+                launchCursorAppend(pageIndex = index, dataSource = dataSource, isRetry = true)
             }
         }
     }
