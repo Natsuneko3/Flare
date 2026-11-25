@@ -310,8 +310,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Csatlakozz Telegram csoportunkhoz</string>
     <string name="settings_about_discord_description">Csatlakozz Discord szerverünkhöz</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Segíts lefordítani a Flare-t</string>
     <string name="settings_privacy_policy">Adatvédelmi irányelvek</string>
     <string name="users">Felhasználók</string>
     <string name="hashtags">Hashtagek</string>

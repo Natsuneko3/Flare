@@ -361,8 +361,6 @@
     <string name="settings_about_telegram">Телеграма</string>
     <string name="settings_about_telegram_description">Приєднуйтесь до нашої групи в Telegram</string>
     <string name="settings_about_discord_description">Приєднуйтесь до нашого сервера в Discord</string>
-    <string name="settings_about_localization">Кравдін</string>
-    <string name="settings_about_localization_description">Допоможіть нам перекласти Flare</string>
     <string name="settings_privacy_policy">Політика конфіденційності</string>
     <string name="users">Користувачі</string>
     <string name="hashtags">Хештеги</string>

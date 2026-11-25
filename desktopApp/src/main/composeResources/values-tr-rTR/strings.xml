@@ -308,8 +308,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Telegram grubumuza katılın</string>
     <string name="settings_about_discord_description">Discord sunucumuza katılın</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Flare\'i çevirmemize yardımcı olun</string>
     <string name="settings_privacy_policy">Gizlilik Politikası</string>
     <string name="users">Kullanıcılar</string>
     <string name="hashtags">Etiketler</string>

@@ -96,8 +96,6 @@
     <string name="settings_about_telegram_description">Telegramグループに参加する</string>
     <string name="settings_about_discord_description">Discordサーバーに参加する</string>
     <string name="settings_about_line_description">Lineグループに参加する</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Flareの翻訳に協力する</string>
     <string name="settings_privacy_policy">プライバシーポリシー</string>
     <string name="settings_side_panel">サイドパネルのカスタマイズ</string>
     <string name="settings_side_panel_description">サイドパネルをカスタマイズする</string>

@@ -118,8 +118,6 @@
     <string name="settings_about_telegram_description">Připojte se k naší skupině na Telegramu</string>
     <string name="settings_about_discord_description">Připojte se k našemu Discord serveru</string>
     <string name="settings_about_line_description">Připojte se k naší skupině na Line</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Pomozte nám přeložit Flare</string>
     <string name="settings_privacy_policy">Zásady ochrany osobních údajů</string>
     <string name="settings_side_panel">Přizpůsobení bočního panelu</string>
     <string name="settings_side_panel_description">Přizpůsobit boční panel</string>

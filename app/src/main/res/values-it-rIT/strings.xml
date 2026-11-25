@@ -116,8 +116,6 @@
     <string name="settings_about_telegram_description">Unisciti al nostro gruppo Telegram</string>
     <string name="settings_about_discord_description">Unisciti al nostro server Discord</string>
     <string name="settings_about_line_description">Unisciti al nostro gruppo Line</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Aiutaci a tradurre Flare</string>
     <string name="settings_privacy_policy">Informativa sulla privacy</string>
     <string name="settings_side_panel">Personalizzazione pannello laterale</string>
     <string name="settings_side_panel_description">Personalizza il pannello laterale</string>

@@ -513,8 +513,6 @@
   "settingsAboutTelegramDescription": "저희 Telegram 그룹에 참여하세요",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "저희 Discord 서버에 참여하세요",
-  "settingsAboutLocalization": "Crowdin",
-  "settingsAboutLocalizationDescription": "Flare 번역을 도와주세요",
   "settingsPrivacyPolicy": "개인정보 처리방침",
   "settingsSectionLocalData": "로컬 데이터",
   "settingsSectionIntelligence": "지능형 기능",

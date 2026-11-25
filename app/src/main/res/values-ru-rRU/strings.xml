@@ -114,8 +114,6 @@
     <string name="settings_about_telegram_description">Вступить в нашу группу в Telegram</string>
     <string name="settings_about_discord_description">Присоединиться к нашему серверу Discord</string>
     <string name="settings_about_line_description">Вступить в нашу группу в Line</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Помочь с переводом Flare</string>
     <string name="settings_privacy_policy">Политика конфиденциальности</string>
     <string name="settings_side_panel">Настройка боковой панели</string>
     <string name="settings_side_panel_description">Настроить боковую панель</string>

@@ -331,8 +331,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">加入我們的 Telegram 群組</string>
     <string name="settings_about_discord_description">加入我們的 Discord 伺服器</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">協助我們翻譯 Flare</string>
     <string name="settings_privacy_policy">隱私權政策</string>
     <string name="users">使用者</string>
     <string name="hashtags">標籤</string>

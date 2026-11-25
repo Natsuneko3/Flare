@@ -513,8 +513,6 @@
   "settingsAboutTelegramDescription": "Присъединете се към нашата Telegram група",
   "settingsAboutDiscord": "Discord",
   "settingsAboutDiscordDescription": "Присъединете се към нашия Discord сървър",
-  "settingsAboutLocalization": "Crowdin",
-  "settingsAboutLocalizationDescription": "Помогнете ни да преведем Flare",
   "settingsPrivacyPolicy": "Политика за поверителност",
   "settingsSectionLocalData": "Local data",
   "settingsSectionIntelligence": "Intelligence",

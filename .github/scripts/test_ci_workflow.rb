@@ -59,19 +59,15 @@ groups = builds.map do |id|
 end
 check(groups.uniq.size == builds.size, 'Independent platforms must not cancel each other')
 
-other_workflows = %w[static crowdin-upload crowdin-download plugin-sdk dependabot].to_h do |name|
+other_workflows = %w[static plugin-sdk dependabot].to_h do |name|
   [name, load_yaml.call(File.join(root, ".github/workflows/#{name}.yml"))]
 end
 other_triggers = other_workflows.transform_values { |config| config['on'] || config[true] }
-%w[static crowdin-upload].each do |name|
-  check(other_triggers.dig(name, 'push', 'branches') == ['master'], "#{name} must automatically run on master")
-end
-check(other_triggers.dig('crowdin-upload', 'push', 'paths') == ['**/values/strings.xml', 'crowdin.yml', 'appleApp/Shared/FlareAppleResource/Resources/Localizable.xcstrings'], 'Crowdin uploads must retain their source string filters')
-check(other_triggers.dig('crowdin-download', 'schedule') == [{ 'cron' => '0 0 * * *' }], 'Crowdin downloads must automatically run daily')
+check(other_triggers.dig('static', 'push', 'branches') == ['master'], 'static must automatically run on master')
 check(other_triggers.dig('plugin-sdk', 'pull_request', 'paths') == ['feature/plugin/sdk/**', 'README.md', 'LICENSE', '.github/workflows/plugin-sdk.yml'], 'SDK changes must automatically validate on pull requests')
 check(other_triggers.dig('plugin-sdk', 'push', 'tags') == ['plugin-sdk-v*'], 'SDK releases must retain their own tag trigger')
 check(other_workflows.dig('plugin-sdk', 'jobs', 'publish', 'if') == "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/plugin-sdk-v')", 'SDK PRs and manual validations must not publish to npm')
-%w[static crowdin-upload crowdin-download plugin-sdk].each do |name|
+%w[static plugin-sdk].each do |name|
   check(other_triggers.fetch(name).key?('workflow_dispatch'), "#{name} must retain manual dispatch")
 end
 check(other_workflows.dig('dependabot', 'jobs', 'dependabot', 'if') == "github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'flaresocialapp/Flare'", 'Dependabot automation must target the migrated repository')

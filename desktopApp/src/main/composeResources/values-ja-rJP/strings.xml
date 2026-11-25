@@ -352,8 +352,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Telegramグループに参加</string>
     <string name="settings_about_discord_description">Discordサーバーに参加</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Flareの翻訳を手伝う</string>
     <string name="settings_privacy_policy">プライバシーポリシー</string>
     <string name="users">ユーザー</string>
     <string name="hashtags">ハッシュタグ</string>

@@ -149,13 +149,6 @@ private extension AboutLink {
             url: URL(string: "https://discord.gg/De9NhXBryT")!
         ),
         AboutLink(
-            id: "localization",
-            titleKey: "settings_about_localization",
-            subtitleKey: "settings_about_localization_description",
-            icon: .language,
-            url: URL(string: "https://crowdin.com/project/flareapp")!
-        ),
-        AboutLink(
             id: "privacy-policy",
             titleKey: "settings_privacy_policy",
             subtitleKey: "https://legal.mask.io/maskbook",

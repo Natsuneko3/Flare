@@ -308,8 +308,6 @@
     <string name="settings_about_telegram">Телеграм</string>
     <string name="settings_about_telegram_description">Pridružite se našoj Telegram grupi</string>
     <string name="settings_about_discord_description">Pridružite se našem Discord serveru</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Pomozite nam da prevedemo Flare</string>
     <string name="settings_privacy_policy">Politika privatnosti</string>
     <string name="users">Korisnici</string>
     <string name="hashtags">Heštegovi</string>
