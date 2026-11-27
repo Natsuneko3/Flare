@@ -15,7 +15,7 @@ internal class LikeRemoteMediator(
     private val accountKey: MicroBlogKey,
 ) : CacheableRemoteLoader<UiTimelineV2> {
     override val pagingKey: String = "like_$accountKey"
-    private val containerId = "2308691748186704_-_mix"
+    private val containerId = "230869${accountKey.id}_-_mix"
 
     override suspend fun load(
         pageSize: Int,
