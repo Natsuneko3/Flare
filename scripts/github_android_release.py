@@ -179,7 +179,7 @@ def build(*, android_only=False):
     value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
     title = publisher.run(['git', 'log', '-1', '--format=%s', source]).stdout.strip()[:1000]
     if android_only:
-        title = '修复 Android 更新测试的编译错误。Release 附带 Flare API v2 的 Instagram 只读插件。'
+        title += '\n\nRelease 附带 Flare API v2 的 Instagram 只读插件。'
     notes = Path(os.environ['RUNNER_TEMP']) / 'flare-release-notes.md'
     notes.write_text(f'本次更新：{title}\n\n源代码：{source}\n', encoding='utf-8')
     folder = publisher.prepare(SimpleNamespace(notes_file=str(notes), gradle_arg=[

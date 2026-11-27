@@ -5,6 +5,7 @@ import android.view.ViewGroup.LayoutParams
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.widget.FrameLayout
@@ -49,12 +50,8 @@ import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.seconds
 import android.webkit.WebView as AndroidWebView
 
-private val userAgent =
-    mapOf(
-        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.3",
-        "Pragma" to "no-cache",
-        "Cache-Control" to "no-cache",
-    )
+private const val LEGACY_LOGIN_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.3"
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,6 +65,7 @@ internal fun WebCookieLoginScreen(
     var route by remember { mutableStateOf<ProxySnapshot?>(null) }
     var errorMessage by remember { mutableStateOf<Int?>(null) }
     var retry by remember { mutableStateOf(0) }
+    var httpStatus by remember(retry) { mutableStateOf<Int?>(null) }
     var cookiesCleared by remember { mutableStateOf(false) }
     DisposableEffect(Unit) {
         onDispose {
@@ -83,6 +81,7 @@ internal fun WebCookieLoginScreen(
             if (route?.isValid == true) return@collectLatest
             route = null
             errorMessage = null
+            httpStatus = null
             try {
                 if (!cookiesCleared) {
                     WebStorage.getInstance().deleteAllData()
@@ -124,9 +123,11 @@ internal fun WebCookieLoginScreen(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
             val prepared = route
-            val error = errorMessage
+            val error =
+                httpStatus?.let { stringResource(R.string.login_webview_http_error, it) }
+                    ?: errorMessage?.let { stringResource(it) }
             if (error != null) {
-                ErrorContent(IllegalStateException(stringResource(error)), onRetry = { retry++ })
+                ErrorContent(IllegalStateException(error), onRetry = { retry++ })
             } else if (prepared != null && prepared.isValid) {
                 key(prepared.key, retry) {
                     ProxyLoginWebView(
@@ -135,7 +136,8 @@ internal fun WebCookieLoginScreen(
                         callback,
                         onBack,
                         onOriginChange = { currentOrigin = it },
-                        onError = { errorMessage = R.string.proxy_webview_error },
+                        onError = { errorMessage = R.string.login_webview_load_error },
+                        onHttpError = { httpStatus = it },
                     )
                 }
             } else {
@@ -153,6 +155,7 @@ private fun ProxyLoginWebView(
     onBack: () -> Unit,
     onOriginChange: (String) -> Unit,
     onError: () -> Unit,
+    onHttpError: (Int) -> Unit,
 ) {
     val webViewState = rememberWebViewState(request.url.takeIf { it.httpsOriginOrNull() != null } ?: "about:blank")
     LaunchedEffect(webViewState.lastLoadedUrl) {
@@ -215,14 +218,28 @@ private fun ProxyLoginWebView(
                         error: WebResourceError?,
                     ) {
                         super.onReceivedError(view, request, error)
-                        if (request?.isForMainFrame == true && route.isValid) onError()
+                        if (request?.isForMainFrame == true && route.isValid && !disposed) onError()
+                    }
+
+                    override fun onReceivedHttpError(
+                        view: AndroidWebView,
+                        request: WebResourceRequest,
+                        errorResponse: WebResourceResponse,
+                    ) {
+                        super.onReceivedHttpError(view, request, errorResponse)
+                        if (request.isForMainFrame && route.isValid && !disposed) {
+                            onHttpError(errorResponse.statusCode)
+                        }
                     }
                 }
             },
         onCreated = { view ->
             view.clearCache(true)
+            val host = Uri.parse(request.url).host?.lowercase()
             with(view.settings) {
-                userAgentString = userAgent.getValue("user-agent")
+                if (host != "instagram.com" && host != "www.instagram.com") {
+                    userAgentString = LEGACY_LOGIN_USER_AGENT
+                }
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 javaScriptCanOpenWindowsAutomatically = false

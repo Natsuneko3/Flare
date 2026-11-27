@@ -889,6 +889,8 @@
     <string name="settings_accounts_remove_failed">Could not remove this account. Please try again.</string>
     <string name="proxy_webview_error">The webpage could not be loaded with the global proxy settings. Check the proxy and try again.</string>
     <string name="proxy_webview_unsupported">This Android WebView does not support proxy overrides. Update Android System WebView to use the global proxy settings.</string>
+    <string name="login_webview_load_error">The sign-in page could not be loaded. Tap to retry.</string>
+    <string name="login_webview_http_error">The sign-in page returned HTTP %1$d. Tap to retry.</string>
     <string name="image_translation_title">Image translation</string>
     <string name="image_translation_off">Off</string>
     <string name="image_translation_tencent">Tencent Cloud</string>
