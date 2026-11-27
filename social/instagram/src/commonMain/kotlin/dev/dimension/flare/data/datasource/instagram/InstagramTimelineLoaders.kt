@@ -24,7 +24,7 @@ internal class InstagramTimelineLoader(
         val history = (request as? PagingRequest.Append)?.let { Json.decodeFromString<List<String>>(it.nextKey) }.orEmpty()
         val page = fetch(history.lastOrNull())
         val items = page.items.mapNotNull(map).distinctBy { it.statusKey }
-        val next = page.nextCursor?.takeIf { it.isNotBlank() && it !in history && items.isNotEmpty() }
+        val next = page.nextCursor?.takeIf { it.isNotBlank() && it !in history }
         return PagingResult(
             data = items,
             nextKey = next?.let { Json.encodeToString(history.takeLast(7) + it) },

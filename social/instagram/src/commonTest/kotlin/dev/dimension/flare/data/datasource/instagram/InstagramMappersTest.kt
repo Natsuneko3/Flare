@@ -67,7 +67,7 @@ class InstagramMappersTest {
     }
 
     @Test
-    fun emptyAndRepeatedCursorsStopAndPrependNeverFetches() =
+    fun filteredPagesCanAdvanceButRepeatedCursorsStopAndPrependNeverFetches() =
         runTest {
             val fetched = mutableListOf<String?>()
             val loader =
@@ -85,7 +85,8 @@ class InstagramMappersTest {
             loader.load(10, PagingRequest.Prepend("unused"))
             assertEquals(listOf(null, "A", "B"), fetched)
             val empty = InstagramTimelineLoader("empty", fetch = { InstagramPage(emptyList(), "C") }, map = { null })
-            assertNull(empty.load(10, PagingRequest.Refresh).nextKey)
+            val cursor = assertNotNull(empty.load(10, PagingRequest.Refresh).nextKey)
+            assertNull(empty.load(10, PagingRequest.Append(cursor)).nextKey)
         }
 
     @Test

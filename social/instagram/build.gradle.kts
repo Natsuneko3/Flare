@@ -32,7 +32,6 @@ kotlin {
                 implementation(libs.bundles.ktorfit)
                 implementation(libs.bundles.ktor)
                 implementation(libs.ktor.client.resources)
-                implementation(libs.ksoup)
                 implementation(dependencies.platform(libs.koin.bom))
                 implementation(libs.koin.core)
                 implementation(libs.koin.annotations)

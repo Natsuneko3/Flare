@@ -3,7 +3,6 @@ package dev.dimension.flare.data.network.instagram
 import dev.dimension.flare.common.JSON
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.network.instagram.api.createInstagramApiResources
-import dev.dimension.flare.data.network.instagram.api.createInstagramWebResources
 import dev.dimension.flare.data.network.ktorfit
 import dev.dimension.flare.data.platform.InstagramCredential
 import io.ktor.client.statement.HttpResponse
@@ -14,9 +13,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.TimeMark
-import kotlin.time.TimeSource
 
 internal data class InstagramPage(
     val items: List<JsonObject>,
@@ -30,24 +26,13 @@ internal class InstagramService(
     private val onCredentialRefreshed: suspend (InstagramCredential, InstagramCredential) -> Unit = { _, _ -> },
     private val proxy: ProxyRef = ProxyRef.Global,
 ) {
-    // Keep WebView cookies on the origin where they were collected, including REST calls.
-    private fun client(path: String) =
-        ktorfit("https://www.instagram.com/" + path, proxy = proxy) {
+    private val api by lazy {
+        ktorfit("https://www.instagram.com/api/v1/", proxy = proxy) {
             followRedirects = false
             expectSuccess = false
             install(InstagramHeaderPlugin) { credentials = credentialFlow }
-        }
-
-    private val api by lazy { client("api/v1/").createInstagramApiResources() }
-    private val web by lazy { client("").createInstagramWebResources() }
-
-    private class BootstrapCache(
-        val session: String,
-        val created: TimeMark,
-        val data: InstagramBootstrap,
-    )
-
-    private var cached: BootstrapCache? = null
+        }.createInstagramApiResources()
+    }
 
     private suspend fun <T> guarded(
         explicitLogin: Boolean = false,
@@ -58,83 +43,26 @@ internal class InstagramService(
         return gate.run(explicitLogin) { gate.block(credentialFlow.first()) }
     }
 
-    private suspend fun InstagramCircuitBreaker.read(
-        response: HttpResponse,
-        html: Boolean = false,
-    ): Pair<String, List<JsonObject>> {
-        val body =
-            response
-                .bodyAsText()
-                .trim()
-                .removePrefix("for (;;);")
-                .trimStart()
-        val frames =
-            if (body.startsWith("{")) {
-                val single = runCatching { JSON.parseToJsonElement(body) as? JsonObject }.getOrNull()
-                if (single != null) {
-                    listOf(single)
-                } else {
-                    body
-                        .lineSequence()
-                        .filter { it.isNotBlank() }
-                        .map { runCatching { JSON.parseToJsonElement(it) as? JsonObject }.getOrNull() }
-                        .toList()
-                        .let { lines -> if (lines.any { it == null }) emptyList() else lines.filterNotNull() }
-                }
-            } else {
-                emptyList()
-            }
-        val isLogin =
-            body.startsWith("<") && (
-                body.contains("name=\"password\"", ignoreCase = true) ||
-                    body.contains("name='password'", ignoreCase = true) ||
-                    (!html && body.contains("/accounts/login/"))
-            )
-        classify(response.status.value, frames, response.headers[HttpHeaders.Location], response.headers[HttpHeaders.RetryAfter], isLogin)
+    private suspend fun InstagramCircuitBreaker.json(response: HttpResponse): JsonObject {
+        val body = response.bodyAsText().trim().removePrefix("for (;;);").trimStart()
+        val data = if (body.startsWith("{")) runCatching { JSON.parseToJsonElement(body) as? JsonObject }.getOrNull() else null
+        classify(
+            response.status.value,
+            listOfNotNull(data),
+            response.headers[HttpHeaders.Location],
+            response.headers[HttpHeaders.RetryAfter],
+            body.startsWith("<") && body.contains("/accounts/login/"),
+        )
         val previous = response.request.attributes[requestCredential]
         val next = previous.rotated(response.headers.getAll(HttpHeaders.SetCookie).orEmpty())
         if (next != previous) onCredentialRefreshed(previous, next)
-        if (!html && frames.isEmpty()) invalidInstagramResponse()
-        return body to frames
-    }
-
-    private suspend fun InstagramCircuitBreaker.json(response: HttpResponse): JsonObject =
-        read(response).second.singleOrNull() ?: invalidInstagramResponse()
-
-    private suspend fun InstagramCircuitBreaker.bootstrap(
-        credential: InstagramCredential,
-        force: Boolean = false,
-    ): InstagramBootstrap {
-        cached?.takeIf { !force && it.session == credential.sessionId && it.created.elapsedNow() < 15.minutes }?.let { return it.data }
-        val data = InstagramBootstrap(read(web.bootstrap(), html = true).first)
-        data.requireViewer(credential.dsUserId)
-        return data.also { cached = BootstrapCache(credential.sessionId, TimeSource.Monotonic.markNow(), it) }
+        return data ?: invalidInstagramResponse()
     }
 
     suspend fun verifySession(): JsonObject =
-        guarded(explicitLogin = true) { credential ->
-            bootstrap(credential, force = true)
-            checkedUser(json(api.user(credential.dsUserId)), credential.dsUserId)
-        }
+        guarded(explicitLogin = true) { credential -> checkedUser(json(api.currentUser()), credential.dsUserId) }
 
-    suspend fun following(cursor: String?): InstagramPage =
-        guarded { credential ->
-            val tokens = bootstrap(credential)
-            try {
-                val response =
-                    web.following(
-                        tokens.lsd,
-                        FOLLOWING_QUERY,
-                        FOLLOWING_FIELD,
-                        "https://www.instagram.com/?variant=following",
-                        tokens.form(cursor, credential.igDid),
-                    )
-                followingPage(read(response).second)
-            } catch (error: Exception) {
-                cached = null
-                throw error
-            }
-        }
+    suspend fun home(cursor: String?): InstagramPage = guarded { homePage(json(api.home(cursor))) }
 
     suspend fun userById(id: String): JsonObject = guarded { checkedUser(json(api.user(id)), id) }
 

@@ -61,9 +61,9 @@ internal class InstagramDataSource(
 
     override fun homeTimeline(): RemoteLoader<UiTimelineV2> =
         InstagramTimelineLoader(
-            pagingKey = "instagram_following_$accountKey",
+            pagingKey = "instagram_home_$accountKey",
             canJoinTimeline = true,
-            fetch = service::following,
+            fetch = service::home,
             map = { it.toInstagramPostOrNull(accountKey) },
         )
 
