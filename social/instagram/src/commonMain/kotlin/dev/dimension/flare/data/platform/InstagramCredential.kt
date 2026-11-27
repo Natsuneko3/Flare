@@ -23,6 +23,7 @@ public data class InstagramCredential(
 }
 
 private val cookieNames = setOf("sessionid", "csrftoken", "ds_user_id", "mid", "ig_did", "rur")
+
 internal fun validInstagramCookieValue(raw: String): Boolean {
     val value = raw.removeSurrounding("\"")
     return value.length in 1..4096 && value.all { it.code in 33..126 && it !in "\";," }

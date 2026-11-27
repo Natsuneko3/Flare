@@ -98,8 +98,28 @@ private data class InstagramLink(
 
 private val usernamePattern = Regex("[A-Za-z0-9_.]{1,30}")
 private val reservedSegments =
-    setOf("accounts", "about", "api", "developer", "developers", "direct", "directory", "emails", "explore", "legal",
-        "p", "press", "privacy", "reel", "reels", "share", "static", "stories", "terms", "web")
+    setOf(
+        "accounts",
+        "about",
+        "api",
+        "developer",
+        "developers",
+        "direct",
+        "directory",
+        "emails",
+        "explore",
+        "legal",
+        "p",
+        "press",
+        "privacy",
+        "reel",
+        "reels",
+        "share",
+        "static",
+        "stories",
+        "terms",
+        "web",
+    )
 
 private const val SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 

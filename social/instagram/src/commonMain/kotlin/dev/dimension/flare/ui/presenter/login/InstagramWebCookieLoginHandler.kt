@@ -111,12 +111,20 @@ internal class InstagramWebCookieLoginHandler(
         } catch (error: Exception) {
             val message =
                 when (error) {
-                    is InstagramRequestException -> error.message
-                    is ReloginAccountMismatchException -> "Sign in to the same Instagram account to reconnect it."
-                    else -> if (error.message == "This account belongs to another platform") {
-                        "This account is already connected through another platform in Flare."
-                    } else {
-                        "Flare could not verify or save this Instagram session."
+                    is InstagramRequestException -> {
+                        error.message
+                    }
+
+                    is ReloginAccountMismatchException -> {
+                        "Sign in to the same Instagram account to reconnect it."
+                    }
+
+                    else -> {
+                        if (error.message == "This account belongs to another platform") {
+                            "This account is already connected through another platform in Flare."
+                        } else {
+                            "Flare could not verify or save this Instagram session."
+                        }
                     }
                 }
             mutableState.value = form(error = message)
