@@ -1,4 +1,4 @@
-"""Publish upgrade-compatible APKs from trusted master pushes; keep local publishing intact."""
+"""Publish upgrade-compatible APKs from trusted GitHub workflows."""
 import argparse
 import base64
 import json
@@ -12,13 +12,17 @@ from types import SimpleNamespace
 import android_release as publisher
 
 
-def require_ci():
+ANDROID_ONLY_REF = 'refs/heads/codex/instagram-plugin'
+
+
+def require_ci(*, android_only=False):
     env = os.environ
+    ref = ANDROID_ONLY_REF if android_only else 'refs/heads/master'
+    events = {'workflow_dispatch'} if android_only else {'push', 'workflow_dispatch'}
     if (env.get('GITHUB_ACTIONS') != 'true' or env.get('GITHUB_REPOSITORY') != publisher.REPO
-            or env.get('GITHUB_REF') != 'refs/heads/master'
-            or env.get('GITHUB_EVENT_NAME') not in {'push', 'workflow_dispatch'}
+            or env.get('GITHUB_REF') != ref or env.get('GITHUB_EVENT_NAME') not in events
             or not re.fullmatch(r'[0-9a-f]{40}', env.get('GITHUB_SHA', ''))):
-        raise ValueError('Signing/publishing is allowed only for trusted master workflows in the configured repository')
+        raise ValueError('Signing/publishing requires the configured repository, workflow event and release ref')
     return env['GITHUB_SHA']
 
 
@@ -115,8 +119,8 @@ def commit_version(source, config):
     return publisher.source_state(root)[0]
 
 
-def install_signing():
-    require_ci()
+def install_signing(*, android_only=False):
+    require_ci(android_only=android_only)
     encoded = os.environ.get('FLARE_ANDROID_KEYSTORE_BASE64', '')
     if not encoded:
         raise ValueError('FLARE_ANDROID_KEYSTORE_BASE64 is missing; restore the existing signing key in repository Secrets')
@@ -154,9 +158,13 @@ def plan():
                      f'build_commit={build_commit}\ntag={tag}\n')
 
 
-def verify_build_source():
-    source = require_ci()
+def verify_build_source(*, android_only=False):
+    source = require_ci(android_only=android_only)
     current, _ = publisher.source_state()
+    if android_only:
+        if current != source:
+            raise ValueError('Android-only build commit differs from the dispatched source commit')
+        return source, current
     parent = publisher.run(['git', 'rev-parse', 'HEAD^']).stdout.strip()
     if parent != source:
         raise ValueError('Build commit is not the version-only child of this workflow source')
@@ -166,10 +174,12 @@ def verify_build_source():
     return source, current
 
 
-def build():
-    source, _ = verify_build_source()
+def build(*, android_only=False):
+    source, _ = verify_build_source(android_only=android_only)
     value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
     title = publisher.run(['git', 'log', '-1', '--format=%s', source]).stdout.strip()[:1000]
+    if android_only:
+        title = '修复 Android 更新测试的编译错误。Release 附带 Flare API v2 的 Instagram 只读插件。'
     notes = Path(os.environ['RUNNER_TEMP']) / 'flare-release-notes.md'
     notes.write_text(f'本次更新：{title}\n\n源代码：{source}\n', encoding='utf-8')
     folder = publisher.prepare(SimpleNamespace(notes_file=str(notes), gradle_arg=[
@@ -179,13 +189,15 @@ def build():
         output.write(f'folder={folder}\n')
 
 
-def source_can_publish(source):
+def source_can_publish(source, *, ref='refs/heads/master'):
     latest_source = json.loads(publisher.run(['gh', 'api', '-H', 'Cache-Control: no-cache',
-        f'repos/{publisher.REPO}/git/ref/heads/master']).stdout)['object']['sha']
+        f'repos/{publisher.REPO}/git/ref/{ref.removeprefix("refs/")}']).stdout)['object']['sha']
     if not re.fullmatch(r'[0-9a-f]{40}', latest_source):
         raise ValueError('GitHub returned an invalid master commit')
     if latest_source == source:
         return True
+    if ref != 'refs/heads/master':
+        return False
     # Trigger-excluded docs may land while an application build is running.
     # Fetch and compare the full diff instead of the API's truncated file list.
     root = publisher.ROOT
@@ -200,35 +212,44 @@ def source_can_publish(source):
                for path in paths.split('\0') if path)
 
 
-def publish():
-    source, current = verify_build_source()
-    if not source_can_publish(source):
+def publish(*, android_only=False):
+    source, current = verify_build_source(android_only=android_only)
+    ref = ANDROID_ONLY_REF if android_only else 'refs/heads/master'
+    if not source_can_publish(source, ref=ref):
+        if android_only:
+            raise ValueError('The release source branch changed after the build started')
         print('A newer master commit is queued; keeping the previous release until that build succeeds')
         return
     value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
     folder = publisher.ROOT / 'build/android-release' / ('android-v' + value['versionName'])
-    from github_ios_release import validate_artifacts
-    ios_assets = validate_artifacts(publisher.ROOT / 'build/ios-release', value['versionName'],
+    if android_only:
+        assets = (publisher.ROOT / 'build/artifacts/flare-instagram-0.1.0.fpp',)
+    else:
+        from github_ios_release import validate_artifacts
+        assets = validate_artifacts(publisher.ROOT / 'build/ios-release', value['versionName'],
                                     int(value['versionCode']), source, current)
     publisher.previous_remote_manifest = latest_manifest
-    publisher.publish(folder, value, push_source=False, extra_files=ios_assets,
-                      can_publish=lambda: source_can_publish(source))
+    publisher.publish(folder, value, push_source=False, extra_files=assets,
+                      can_publish=lambda: source_can_publish(source, ref=ref))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['install-signing', 'plan', 'build', 'publish', 'cleanup'])
+    parser.add_argument('--android-only', action='store_true')
     args = parser.parse_args()
     if args.command == 'install-signing':
-        install_signing()
+        install_signing(android_only=args.android_only)
     elif args.command == 'plan':
+        if args.android_only:
+            parser.error('Android-only dispatch uses the version committed on its branch')
         plan()
     elif args.command == 'build':
-        build()
+        build(android_only=args.android_only)
     elif args.command == 'publish':
-        publish()
+        publish(android_only=args.android_only)
     else:
-        require_ci()
+        require_ci(android_only=args.android_only)
         (Path(os.environ['RUNNER_TEMP']) / 'flare-release.keystore').unlink(missing_ok=True)
         (publisher.ROOT / 'signing.properties').unlink(missing_ok=True)
 

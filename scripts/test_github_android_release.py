@@ -99,6 +99,23 @@ class GithubReleaseTests(unittest.TestCase):
             with self.subTest(key=key), patch.dict(os.environ, {**good,key:value}, clear=True), self.assertRaises(ValueError):
                 self.ci.require_ci()
 
+    def test_android_only_requires_manual_dispatch_on_the_release_branch(self):
+        source = 'a' * 40
+        env = dict(GITHUB_ACTIONS='true', GITHUB_REPOSITORY='Natsuneko3/Flare',
+                   GITHUB_REF=self.ci.ANDROID_ONLY_REF, GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_SHA=source)
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(self.ci.require_ci(android_only=True), source)
+            with patch.object(self.ci.publisher, 'source_state', return_value=(source, 'hash')):
+                self.assertEqual(self.ci.verify_build_source(android_only=True), (source, source))
+            with patch.object(self.ci.publisher, 'source_state', return_value=('b' * 40, 'hash')):
+                with self.assertRaises(ValueError):
+                    self.ci.verify_build_source(android_only=True)
+        for changes in ({'GITHUB_REF': 'refs/heads/master'}, {'GITHUB_EVENT_NAME': 'push'},
+                        {'GITHUB_REPOSITORY': 'someone/Flare'}):
+            with self.subTest(changes=changes), patch.dict(os.environ, {**env, **changes}, clear=True):
+                with self.assertRaises(ValueError):
+                    self.ci.require_ci(android_only=True)
+
     def test_build_context_binds_the_version_commit_to_the_triggering_source(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

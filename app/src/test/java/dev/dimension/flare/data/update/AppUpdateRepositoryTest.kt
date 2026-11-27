@@ -187,7 +187,7 @@ class AppUpdateRepositoryTest {
 
         assertEquals(listOf("https://github.com/Natsuneko3/Flare/releases/download/v1.0.1/flare.apk"), transport.urls)
         assertArrayEquals("hello".toByteArray(), file.readBytes())
-        assertEquals(cacheDir.canonicalFile, file.parentFile.canonicalFile)
+        assertEquals(cacheDir.canonicalFile, requireNotNull(file.parentFile).canonicalFile)
         assertTrue(file.name.endsWith(".apk"))
         assertTrue(progress.isNotEmpty())
         assertEquals(5L to 5L, progress.last())
