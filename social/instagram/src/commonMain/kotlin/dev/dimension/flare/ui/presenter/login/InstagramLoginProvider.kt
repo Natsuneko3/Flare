@@ -17,10 +17,7 @@ internal data object InstagramLoginProvider : LoginPlatformProvider {
     override val metadata: PlatformMetadata get() = InstagramPlatformSpec.metadata
     override val detector: PlatformDetector = InstagramPlatformDetector
     override val methods: List<LoginMethodSpec> =
-        listOf(
-            LoginMethodSpec(LoginMethodType.WebCookie, UiStrings.WebCookieLogin, priority = 10),
-            LoginMethodSpec(LoginMethodType.CredentialImport, UiStrings.ImportSessionCookies),
-        )
+        listOf(LoginMethodSpec(LoginMethodType.CredentialImport, UiStrings.ImportSessionCookies))
 
     private val instance: UiInstance
         get() =
@@ -56,7 +53,7 @@ internal data object InstagramLoginProvider : LoginPlatformProvider {
     override fun createHandler(context: LoginContext): LoginMethodHandler {
         require(context.host.equals(INSTAGRAM_HOST, true) || context.host.equals(INSTAGRAM_WEB_HOST, true))
         require(methods.any { it.type == context.methodType })
-        return InstagramWebCookieLoginHandler(context)
+        return InstagramCookieLoginHandler(context)
     }
 }
 

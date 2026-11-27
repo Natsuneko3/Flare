@@ -5,7 +5,6 @@ import dev.dimension.flare.data.network.instagram.InstagramRequestException
 import dev.dimension.flare.data.network.instagram.InstagramService
 import dev.dimension.flare.data.platform.INSTAGRAM_HOST
 import dev.dimension.flare.data.platform.INSTAGRAM_PLATFORM_ID
-import dev.dimension.flare.data.platform.INSTAGRAM_WEB_HOST
 import dev.dimension.flare.data.platform.InstagramCredential
 import dev.dimension.flare.data.platform.extractInstagramCredential
 import dev.dimension.flare.data.repository.AccountService
@@ -15,59 +14,36 @@ import dev.dimension.flare.ui.model.UiAccount
 import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiText
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.sync.Mutex
 
-private const val LOGIN_URL = "https://$INSTAGRAM_WEB_HOST/accounts/login/"
-private const val COOKIE_PROBE_URL = "https://$INSTAGRAM_WEB_HOST/"
 private const val COOKIE_FIELD = "cookie"
 private const val LOGIN_ACTION = "login"
-private val cookieNames = listOf("sessionid", "csrftoken", "ds_user_id", "mid", "ig_did", "rur")
 
-internal class InstagramWebCookieLoginHandler(
+internal class InstagramCookieLoginHandler(
     private val context: LoginContext,
 ) : LoginMethodHandler {
     private val accountService: AccountService by koinInject()
-    private val manual = context.methodType == LoginMethodType.CredentialImport
     private val verification = Mutex()
     private var input = ""
-    private var browserPending = false
     private val mutableState = MutableStateFlow(form())
-    private val mutableEffects = MutableSharedFlow<LoginEffect>()
     override val state = mutableState.asStateFlow()
-    override val effects = mutableEffects.asSharedFlow()
+    override val effects = emptyFlow<LoginEffect>()
 
     override fun updateField(
         id: String,
         value: String,
     ) {
-        if (!manual || id != COOKIE_FIELD || state.value.loading) return
+        if (id != COOKIE_FIELD || state.value.loading) return
         input = value
         mutableState.value = form()
     }
 
     override suspend fun perform(actionId: String) {
-        if (actionId != LOGIN_ACTION || state.value.loading) return
-        if (manual) {
-            resume(input)
-        } else {
-            browserPending = true
-            mutableState.value = form()
-            mutableEffects.emit(
-                LoginEffect.OpenWebCookieLogin(LOGIN_URL, listOf(LoginCookieProbe(COOKIE_PROBE_URL, cookieNames))),
-            )
-        }
-    }
-
-    // WebCookie flows use origin-scoped probes; URI callbacks must never be treated as credentials.
-    override fun canResume(value: String): Boolean = false
-
-    override suspend fun resume(value: String) {
-        if (!manual) return
-        val credential = extractInstagramCredential(value)
+        if (actionId != LOGIN_ACTION || state.value.loading || input.isBlank()) return
+        val credential = extractInstagramCredential(input)
         if (credential == null) {
             mutableState.value = form(error = "The cookie must include sessionid, csrftoken and ds_user_id.")
             return
@@ -75,15 +51,9 @@ internal class InstagramWebCookieLoginHandler(
         verify(credential)
     }
 
-    override suspend fun checkCookies(snapshot: LoginCookieSnapshot): Boolean {
-        if (manual || !browserPending) return false
-        val credential = snapshot.instagramCredential() ?: return false
-        browserPending = false
-        // Both a saved account and a terminal verification error finish the browser step.
-        // Returning to the login screen exposes the error and avoids silent verification retries.
-        verify(credential)
-        return true
-    }
+    override fun canResume(value: String): Boolean = false
+
+    override suspend fun resume(value: String) = Unit
 
     private suspend fun verify(credential: InstagramCredential) {
         if (!verification.tryLock()) return
@@ -137,30 +107,20 @@ internal class InstagramWebCookieLoginHandler(
     }
 
     override fun clear() {
-        browserPending = false
         input = ""
         mutableState.value = form()
     }
+
+    override fun close() = clear()
 
     private fun form(
         loading: Boolean = false,
         error: String? = null,
     ): LoginFlowState =
         LoginFlowState(
-            fields =
-                if (manual) {
-                    listOf(LoginField(COOKIE_FIELD, LoginFieldType.PasswordInput, UiText.Raw("Instagram Cookie"), value = input))
-                } else {
-                    emptyList()
-                },
-            actions = listOf(LoginAction(LOGIN_ACTION, UiStrings.Login, enabled = !loading && (!manual || input.isNotBlank()))),
+            fields = listOf(LoginField(COOKIE_FIELD, LoginFieldType.PasswordInput, UiText.Raw("Instagram Cookie"), value = input)),
+            actions = listOf(LoginAction(LOGIN_ACTION, UiStrings.Login, enabled = !loading && input.isNotBlank())),
             loading = loading,
             error = error,
         )
-}
-
-internal fun LoginCookieSnapshot.instagramCredential(): InstagramCredential? {
-    val cookies = values.filter { it.sourceUrl == COOKIE_PROBE_URL && it.name in cookieNames }
-    if (cookies.any { it.value.any { ch -> ch == ';' || ch.isISOControl() } }) return null
-    return extractInstagramCredential(cookies.joinToString("; ") { "${it.name}=${it.value}" })
 }

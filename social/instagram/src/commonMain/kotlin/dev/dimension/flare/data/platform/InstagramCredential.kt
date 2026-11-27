@@ -30,9 +30,12 @@ internal fun validInstagramCookieValue(raw: String): Boolean {
 }
 
 internal fun extractInstagramCredential(rawCookie: String): InstagramCredential? {
-    if (rawCookie.length > 16384 || rawCookie.any { it.code < 32 }) return null
+    if (rawCookie.length > 16384) return null
+    val input = rawCookie.trim()
+    if (input.any { it.code < 32 }) return null
+    val header = if (input.startsWith("Cookie:", ignoreCase = true)) input.substringAfter(':') else input
     val fields = mutableMapOf<String, String>()
-    for (pair in rawCookie.trim().removePrefix("Cookie:").split(';')) {
+    for (pair in header.split(';')) {
         val name = pair.substringBefore('=').trim()
         if (name !in cookieNames) continue
         val value = pair.substringAfter('=', "").trim()
