@@ -1,0 +1,19 @@
+{
+  "plugin.description": "在 Flare 中浏览 Instagram 的关注动态、个人主页、帖子和评论。",
+  "login.browser": "登录 Instagram",
+  "login.browser.description": "在 Flare 打开的 Instagram 页面中完成登录。",
+  "login.importCookies": "导入会话 Cookie",
+  "login.importCookies.description": "粘贴你自己已登录的 Instagram 会话的 Cookie 请求标头。请像保管密码一样保管它。",
+  "login.importCookies.cookie": "Instagram Cookie 请求标头",
+  "timeline.home": "关注",
+  "profile.posts": "帖子",
+  "profile.gallery": "图库",
+  "error.authenticationRequired": "Instagram 要求进行验证。请通过 Flare 重新登录，并在 Instagram 页面完成验证。",
+  "error.rateLimited": "Instagram 暂时限制了请求频率，请在冷却结束后重试。",
+  "error.invalidResponse": "Instagram 返回了非预期的响应。",
+  "error.invalidCookies": "请输入含有有效 sessionid 和 ds_user_id 的 Cookie 请求标头。",
+  "error.notFound": "此 Instagram 个人主页或帖子不可用。",
+  "error.remote": "Instagram 暂时无法完成请求。",
+  "error.unsupported": "Flare 暂不支持此 Instagram 操作。",
+  "error.network": "Flare 无法连接到 Instagram。"
+}

@@ -1,0 +1,19 @@
+{
+  "plugin.description": "Browse your Instagram following feed, profiles, posts, and comments in Flare.",
+  "login.browser": "Sign in to Instagram",
+  "login.browser.description": "Complete sign-in in the Instagram page opened by Flare.",
+  "login.importCookies": "Import session cookies",
+  "login.importCookies.description": "Paste the Cookie header from your own signed-in Instagram session. Treat it like a password.",
+  "login.importCookies.cookie": "Instagram Cookie header",
+  "timeline.home": "Following",
+  "profile.posts": "Posts",
+  "profile.gallery": "Gallery",
+  "error.authenticationRequired": "Instagram requires verification. Sign in again through Flare and complete any checks on the Instagram page.",
+  "error.rateLimited": "Instagram is limiting requests. Try again after the cooldown.",
+  "error.invalidResponse": "Instagram returned an unexpected response.",
+  "error.invalidCookies": "Enter a Cookie header containing a valid sessionid and ds_user_id.",
+  "error.notFound": "This Instagram profile or post is unavailable.",
+  "error.remote": "Instagram could not complete the request.",
+  "error.unsupported": "This Instagram operation is unavailable in Flare.",
+  "error.network": "Flare could not connect to Instagram."
+}

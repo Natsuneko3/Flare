@@ -1,0 +1,131 @@
+{
+  "$schema": "../../feature/plugin/sdk/skill/flare-plugin/manifest.schema.json",
+  "schemaVersion": 1,
+  "apiVersion": 2,
+  "id": "dev.dimension.flare.instagram",
+  "version": "0.1.0",
+  "defaultLocale": "en",
+  "name": "Instagram",
+  "description": {
+    "key": "plugin.description",
+    "fallback": "Browse your Instagram following feed, profiles, posts, and comments in Flare."
+  },
+  "permissions": {
+    "authOrigins": ["https://www.instagram.com"],
+    "httpOrigins": ["https://www.instagram.com"],
+    "mediaNetwork": true
+  },
+  "platform": {
+    "id": "instagram",
+    "name": "Instagram",
+    "detector": {},
+    "loginMethods": [
+      {
+        "id": "browser",
+        "interaction": "WebCookie",
+        "title": {
+          "key": "login.browser",
+          "fallback": "Sign in to Instagram"
+        },
+        "description": {
+          "key": "login.browser.description",
+          "fallback": "Complete sign-in in the Instagram page opened by Flare."
+        },
+        "cookie": {
+          "startUrl": "https://www.instagram.com/accounts/login/",
+          "probes": [
+            {
+              "url": "https://www.instagram.com/",
+              "cookies": [
+                { "name": "sessionid", "required": true },
+                { "name": "ds_user_id", "required": true },
+                { "name": "csrftoken", "required": false },
+                { "name": "mid", "required": false },
+                { "name": "ig_did", "required": false },
+                { "name": "rur", "required": false }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "importCookies",
+        "interaction": "CredentialImport",
+        "title": {
+          "key": "login.importCookies",
+          "fallback": "Import session cookies"
+        },
+        "description": {
+          "key": "login.importCookies.description",
+          "fallback": "Paste the Cookie header from your own signed-in Instagram session. Treat it like a password."
+        },
+        "fields": [
+          {
+            "id": "cookie",
+            "type": "Secret",
+            "label": {
+              "key": "login.importCookies.cookie",
+              "fallback": "Instagram Cookie header"
+            }
+          }
+        ]
+      }
+    ],
+    "capabilities": {
+      "flare.datasource.account-capabilities/v1": {
+        "operations": { "negotiate": {} }
+      },
+      "flare.datasource.timeline/v1": {
+        "operations": {
+          "page": { "directions": ["refresh", "older"] }
+        }
+      },
+      "flare.datasource.profile/v1": {
+        "operations": {
+          "byId": {},
+          "byHandle": {},
+          "timeline": { "directions": ["refresh", "older"] }
+        }
+      },
+      "flare.datasource.post/v1": {
+        "operations": {
+          "detail": {},
+          "context": { "directions": ["refresh", "older"] }
+        }
+      }
+    },
+    "timelines": [
+      {
+        "id": "home",
+        "title": {
+          "key": "timeline.home",
+          "fallback": "Following"
+        },
+        "icon": "Home",
+        "defaultForNewAccount": true
+      }
+    ],
+    "profileTabs": [
+      {
+        "id": "posts",
+        "title": {
+          "key": "profile.posts",
+          "fallback": "Posts"
+        },
+        "icon": "Profile",
+        "display": "List"
+      },
+      {
+        "id": "gallery",
+        "title": {
+          "key": "profile.gallery",
+          "fallback": "Gallery"
+        },
+        "icon": "Featured",
+        "display": "Grid"
+      }
+    ],
+    "credentialSchemaVersion": 1,
+    "timelineSchemaVersion": 1
+  }
+}
