@@ -257,6 +257,8 @@ private val UiStrings.androidStringRes: Int
 
             UiStrings.CredentialImport -> R.string.login_button
 
+            UiStrings.ImportSessionCookies -> R.string.import_session_cookies
+
             UiStrings.ExternalSigner -> R.string.login_button
 
             UiStrings.WebCookieLogin -> R.string.login_button

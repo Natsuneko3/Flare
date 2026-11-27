@@ -157,6 +157,7 @@
 		Weibo: brands.faWeibo ?? faGlobe,
 		Nostr: brands.faNostr ?? faGlobe,
 		Pixiv: brands.faPixiv ?? faGlobe,
+		Instagram: brands.faInstagram ?? faGlobe,
 		Fanbox: brands.faPixiv ?? faGlobe,
 		Image: faImage,
 		Palette: faPalette,

@@ -196,6 +196,8 @@ public extension UiStrings {
             localizedPresentationString("plugin_login_qr_new_code", fallback: "Generate a new code")
         case .qrLoginRetrySave:
             localizedPresentationString("plugin_login_qr_retry_save", fallback: "Retry saving account")
+        case .importSessionCookies:
+            localizedPresentationString("import_session_cookies", fallback: "Import session cookies")
         case .credentialImport:
             localizedPresentationString("nostr_login_title", fallback: "Credential Import")
         case .externalSigner:
@@ -387,6 +389,8 @@ public extension UiIcon {
             .weibo
         case .pixiv:
             .pixiv
+        case .instagram:
+            .instagram
         case .fanbox:
             .pixiv
         case .list:

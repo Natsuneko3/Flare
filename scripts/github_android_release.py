@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import android_release as publisher
 
 
-ANDROID_ONLY_REF = 'refs/heads/codex/instagram-plugin'
+ANDROID_ONLY_REF = 'refs/heads/codex/instagram-native'
 
 
 def require_ci(*, android_only=False):
@@ -178,8 +178,6 @@ def build(*, android_only=False):
     source, _ = verify_build_source(android_only=android_only)
     value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
     title = publisher.run(['git', 'log', '-1', '--format=%s', source]).stdout.strip()[:1000]
-    if android_only:
-        title += '\n\nRelease 附带 Flare API v2 的 Instagram 只读插件。'
     notes = Path(os.environ['RUNNER_TEMP']) / 'flare-release-notes.md'
     notes.write_text(f'本次更新：{title}\n\n源代码：{source}\n', encoding='utf-8')
     folder = publisher.prepare(SimpleNamespace(notes_file=str(notes), gradle_arg=[
@@ -223,7 +221,7 @@ def publish(*, android_only=False):
     value = publisher.load_properties(publisher.ROOT / 'android-release.properties')
     folder = publisher.ROOT / 'build/android-release' / ('android-v' + value['versionName'])
     if android_only:
-        assets = (publisher.ROOT / 'build/artifacts/flare-instagram-0.1.0.fpp',)
+        assets = ()
     else:
         from github_ios_release import validate_artifacts
         assets = validate_artifacts(publisher.ROOT / 'build/ios-release', value['versionName'],

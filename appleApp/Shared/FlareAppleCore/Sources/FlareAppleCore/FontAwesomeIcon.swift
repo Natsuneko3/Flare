@@ -75,6 +75,7 @@ public enum FontAwesomeIcon: String, CaseIterable, Hashable, Identifiable, Senda
     case penToSquare = "pen-to-square"
     case photoFilm = "photo-film"
     case pixiv = "pixiv"
+    case instagram = "instagram"
     case play = "play"
     case plus = "plus"
     case puzzlePiece = "puzzle-piece"

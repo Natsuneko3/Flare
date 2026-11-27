@@ -165,6 +165,7 @@ private fun UiStrings.webLabel(): String =
         UiStrings.PasswordLogin -> "Password"
         UiStrings.QrConnect -> "QR connect"
         UiStrings.CredentialImport -> "Import key"
+        UiStrings.ImportSessionCookies -> "Import session cookies"
         UiStrings.ExternalSigner -> "External signer"
         UiStrings.WebCookieLogin -> "Cookie login"
         UiStrings.BlueskyFixDelegationScopes -> "Fix Tranquil permissions"

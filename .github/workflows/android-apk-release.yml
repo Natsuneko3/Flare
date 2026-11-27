@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       android_only:
-        description: Publish the Android package from the Instagram branch
+        description: Publish the Android package from the native Instagram branch
         type: boolean
         default: false
 
@@ -183,7 +183,7 @@ jobs:
 
   android-only:
     name: Android signed release
-    if: github.repository == 'Natsuneko3/Flare' && github.ref == 'refs/heads/codex/instagram-plugin' && github.event_name == 'workflow_dispatch' && inputs.android_only
+    if: github.repository == 'Natsuneko3/Flare' && github.ref == 'refs/heads/codex/instagram-native' && github.event_name == 'workflow_dispatch' && inputs.android_only
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -204,11 +204,10 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;37.0.0'
-      - name: Test release policy and package Instagram plugin
+      - name: Test release policy, native Instagram, and Desktop compilation
         run: |
           python3 -B scripts/test_github_android_release.py
-          node --test plugins/instagram.test.mjs
-          node feature/plugin/sdk/skill/flare-plugin/pack.mjs plugins/instagram build/artifacts/flare-instagram-0.1.0.fpp
+          ./gradlew :social:instagram:jvmTest :desktopApp:compileKotlin -x kmpPartiallyResolvedDependenciesChecker --max-workers=2 --console=plain -Pkotlin.compiler.execution.strategy=in-process
       - name: Restore existing Android signing key
         env:
           FLARE_ANDROID_KEYSTORE_BASE64: ${{ secrets.FLARE_ANDROID_KEYSTORE_BASE64 }}

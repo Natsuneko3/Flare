@@ -57,7 +57,9 @@ public fun ktorClient(
         install(Logging) {
             logger = FlareLogger
             filter {
-                (BuildConfig.debug || DebugRepository.isEnabled) && !it.isMediaUpload()
+                (BuildConfig.debug || DebugRepository.isEnabled) &&
+                    !it.isMediaUpload() &&
+                    it.url.host !in instagramSessionHosts
             }
             level =
                 if (BuildConfig.debug) {
@@ -67,6 +69,9 @@ public fun ktorClient(
                 }
         }
     }
+
+// Both hosts carry the Instagram session and can return refreshed credentials.
+private val instagramSessionHosts = setOf("www.instagram.com", "i.instagram.com")
 
 internal val httpClientEngine: HttpClientEngine get() = ProxyRoutingEngine(ProxyRef.Global)
 

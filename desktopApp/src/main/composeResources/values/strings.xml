@@ -938,4 +938,5 @@
     <string name="plugin_marketplace_install">Install</string>
     <string name="plugin_marketplace_local">Local plugin</string>
     <string name="plugin_marketplace_search">Search plugins</string>
+    <string name="import_session_cookies">Import session cookies</string>
 </resources>

@@ -48,6 +48,7 @@ import dev.dimension.flare.home_tab_me_title
 import dev.dimension.flare.home_tab_notifications_title
 import dev.dimension.flare.home_tab_popular_title
 import dev.dimension.flare.illustrations_title
+import dev.dimension.flare.import_session_cookies
 import dev.dimension.flare.liked_title
 import dev.dimension.flare.manga_title
 import dev.dimension.flare.mastodon_tab_local_title
@@ -316,6 +317,8 @@ private val UiStrings.desktopStringResource: StringResource
             UiStrings.QrLoginNewCode, UiStrings.QrLoginRetrySave -> Res.string.ok
 
             UiStrings.CredentialImport -> Res.string.ok
+
+            UiStrings.ImportSessionCookies -> Res.string.import_session_cookies
 
             UiStrings.ExternalSigner -> Res.string.ok
 

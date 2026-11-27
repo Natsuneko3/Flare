@@ -111,6 +111,28 @@
         }
       }
     },
+    "import_session_cookies" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import session cookies"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入会话 Cookie"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匯入工作階段 Cookie"
+          }
+        }
+      }
+    },
     "plugin_login_qr_new_code" : {
       "localizations" : {
         "en" : {

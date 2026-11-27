@@ -98,6 +98,7 @@ public sealed interface UiMedia {
         override val downloadUrl: String? = null,
         // shortcut: legacy cached media defaults to video until the next source refresh restores its kind.
         val kind: Kind = Kind.Video,
+        val durationMillis: Long? = null,
     ) : UiMedia {
         @Serializable
         public enum class Kind {

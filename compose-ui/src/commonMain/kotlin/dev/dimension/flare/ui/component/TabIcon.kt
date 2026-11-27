@@ -46,6 +46,7 @@ import dev.dimension.flare.compose.ui.home_tab_me_title
 import dev.dimension.flare.compose.ui.home_tab_notifications_title
 import dev.dimension.flare.compose.ui.home_tab_popular_title
 import dev.dimension.flare.compose.ui.illustrations_title
+import dev.dimension.flare.compose.ui.import_session_cookies
 import dev.dimension.flare.compose.ui.liked_title
 import dev.dimension.flare.compose.ui.login_button
 import dev.dimension.flare.compose.ui.manga_title
@@ -399,6 +400,8 @@ internal val UiStrings.res: StringResource
             UiStrings.QrLoginRetrySave -> Res.string.plugin_login_qr_retry_save
 
             UiStrings.CredentialImport -> Res.string.nostr_login_title
+
+            UiStrings.ImportSessionCookies -> Res.string.import_session_cookies
 
             UiStrings.ExternalSigner -> Res.string.nostr_login_amber_button
 

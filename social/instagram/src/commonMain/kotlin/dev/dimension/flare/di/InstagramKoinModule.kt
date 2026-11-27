@@ -1,0 +1,16 @@
+package dev.dimension.flare.di
+
+import dev.dimension.flare.data.platform.InstagramPlatformSpec
+import dev.dimension.flare.model.PlatformSpec
+import org.koin.core.annotation.Configuration
+import org.koin.core.annotation.Module
+import org.koin.core.annotation.Single
+import kotlin.native.HiddenFromObjC
+
+@HiddenFromObjC
+@Module
+@Configuration
+internal class InstagramKoinModule {
+    @Single(binds = [PlatformSpec::class])
+    fun platformSpec(): InstagramPlatformSpec = InstagramPlatformSpec
+}

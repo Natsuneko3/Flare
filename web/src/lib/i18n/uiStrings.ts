@@ -94,6 +94,8 @@ export function localizedUiString(value: UiStrings): string {
 			return m.loginPassword();
 		case 'QrConnect':
 			return m.loginQrConnect();
+		case 'ImportSessionCookies':
+			return `${m.loginCredentialImport()} (Cookie)`;
 		case 'CredentialImport':
 			return m.loginCredentialImport();
 		case 'ExternalSigner':

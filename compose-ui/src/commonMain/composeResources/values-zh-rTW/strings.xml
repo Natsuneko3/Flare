@@ -491,4 +491,5 @@
     <string name="share_replies_more">載入更多回覆</string>
     <string name="share_replies_retry">重試</string>
     <string name="share_replies_children">載入此留言的回覆</string>
+    <string name="import_session_cookies">匯入工作階段 Cookie</string>
 </resources>
