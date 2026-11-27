@@ -41,7 +41,7 @@ internal class InstagramBootstrap(
                     }
 
                     else -> {
-                        Unit
+                        continue
                     }
                 }
             }
