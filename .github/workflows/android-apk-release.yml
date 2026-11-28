@@ -96,11 +96,11 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 180
     env:
-      # Keep dead-code elimination while avoiding the costly full-program LLVM optimization pass.
+      # This Kotlin/Native optimization saturates the 6 GiB heap during framework linking.
       GRADLE_OPTS: >-
         -Dorg.gradle.workers.max=1
         -Dorg.gradle.project.kotlin.native.parallelThreads=1
-        -Dorg.gradle.project.flare.ios.release.llvmLtoPasses=internalize,globaldce
+        -Dorg.gradle.project.flare.ios.release.disabledCompilerPhases=RemoveRedundantCallsToStaticInitializersPhase
         -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process
     steps:
       - uses: actions/checkout@v7

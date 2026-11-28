@@ -12,7 +12,7 @@ plugins {
     alias(libs.plugins.skie)
 }
 
-val iosReleaseLlvmLtoPasses = providers.gradleProperty("flare.ios.release.llvmLtoPasses")
+val iosReleaseDisabledCompilerPhases = providers.gradleProperty("flare.ios.release.disabledCompilerPhases")
 
 kotlin {
     flare {
@@ -50,9 +50,9 @@ kotlin {
                 isStatic = true
 
                 if (appleTarget.name == "iosArm64" && buildType == NativeBuildType.RELEASE) {
-                    iosReleaseLlvmLtoPasses.orNull?.let { passes ->
+                    iosReleaseDisabledCompilerPhases.orNull?.let { phases ->
                         freeCompilerArgs += listOf(
-                            "-Xllvm-lto-passes=$passes",
+                            "-Xdisable-phases=$phases",
                             "-Xverbose-phases=ModuleBitcodeOptimization,LTOBitcodeOptimization",
                         )
                     }
