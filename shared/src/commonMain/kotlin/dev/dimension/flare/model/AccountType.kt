@@ -34,6 +34,16 @@ public sealed class AccountType {
         DbAccountType {
         override fun toString(): String = "guest_$host"
     }
+
+    @Serializable
+    @Immutable
+    public data class GuestPlugin(
+        val platformId: String,
+        val host: String,
+    ) : AccountType(),
+        DbAccountType {
+        override fun toString(): String = "guest_plugin_${platformId}_$host"
+    }
 }
 
 @HiddenFromObjC

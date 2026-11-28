@@ -419,14 +419,12 @@ private fun Note.renderNotificationPost(accountKey: MicroBlogKey): UiTimelineV2.
     )
 }
 
+internal val Note.isQuote: Boolean
+    get() = text != null || cw != null || replyId != null || poll != null || !fileIds.isNullOrEmpty() || !files.isNullOrEmpty()
+
 internal fun Note.render(accountKey: MicroBlogKey): UiTimelineV2 {
     val wrapperStatus = this.renderStatus(accountKey)
-    val actualStatus =
-        if (!text.isNullOrEmpty() || !files.isNullOrEmpty() || poll != null || cw != null) {
-            this
-        } else {
-            renote ?: this
-        }
+    val actualStatus = if (isQuote) this else renote ?: this
     val topMessage =
         if (actualStatus !== this) {
             val user = user.render(accountKey)
@@ -589,7 +587,7 @@ private fun Note.renderStatus(accountKey: MicroBlogKey): UiTimelineV2.Post {
                                 renoteNote.user.host?.takeIf { host -> host.isNotEmpty() } ?: accountKey.host,
                             ),
                         type =
-                            if (text != null || !files.isNullOrEmpty() || cw != null || poll != null) {
+                            if (isQuote) {
                                 ReferenceType.Quote
                             } else {
                                 ReferenceType.Retweet
@@ -847,6 +845,8 @@ internal fun UserLite.render(accountKey: MicroBlogKey): UiProfile {
             id = id,
             host = accountKey.host,
         )
+    val trimmedUsername = username.trim()
+    val isLocalUser = host.isNullOrBlank() || host.equals(accountKey.host, ignoreCase = true)
     return UiProfile(
         avatar = avatarUrl.toUiImage(),
         nameInternal = parseName(name.orEmpty(), accountKey, emojis),
@@ -868,6 +868,7 @@ internal fun UserLite.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
         platformId = MISSKEY_PLATFORM_ID,
         platformIcon = UiIcon.Misskey.asType(),
+        url = if (isLocalUser && trimmedUsername.isNotEmpty()) "https://${accountKey.host}/@$trimmedUsername" else null,
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -892,6 +893,8 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
             host = accountKey.host,
         )
     val sourceLanguages = listOfNotNull(lang).toPersistentList()
+    val trimmedUsername = username.trim()
+    val isLocalUser = host.isNullOrBlank() || host.equals(accountKey.host, ignoreCase = true)
     return UiProfile(
         avatar = avatarUrl.toUiImage(),
         nameInternal = parseName(name.orEmpty(), accountKey, emojis, sourceLanguages),
@@ -942,6 +945,13 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
                 },
         platformId = MISSKEY_PLATFORM_ID,
         platformIcon = UiIcon.Misskey.asType(),
+        url =
+            url?.trim()?.takeIf { it.isNotEmpty() }
+                ?: if (isLocalUser && trimmedUsername.isNotEmpty()) {
+                    "https://${accountKey.host}/@$trimmedUsername"
+                } else {
+                    null
+                },
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile

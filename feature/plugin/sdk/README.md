@@ -13,18 +13,20 @@ For an existing V1 plugin, follow the [migration steps](skill/flare-plugin/ABI.m
 
 ## Create a plugin
 
-With Node 22 or newer, create a social starter for a build with Host API v2.
+With Node 22 or newer, create a social starter with SDK `0.1.0-beta.13`.
+Choose a Flare build that supports the features you plan to use.
 
 ```sh
-npx flare-plugin-sdk@0.1.0-beta.11 init my-plugin
+npx flare-plugin-sdk@0.1.0-beta.13 init my-plugin
 cd my-plugin
 npm install
 ```
 
-For Flare 1.8.0, use `flare-plugin-sdk@0.1.0-beta.10`. For features newer than the
-published SDK, [create the starter from the matching checkout](skill/flare-plugin/README.md#use-the-sdk-from-a-flare-checkout).
-The initializer copies the GitHub template bundled with the selected SDK into
-`my-plugin`.
+For earlier Flare builds, choose the SDK in the [version guide](skill/flare-plugin/README.md#match-flare-and-the-sdk).
+For features newer than the published SDK, [create the starter from the matching checkout](skill/flare-plugin/README.md#use-the-sdk-from-a-flare-checkout).
+The initializer copies the bundled social starter into `my-plugin`. The
+starter uses Host API v1. For a v2 feature, set `apiVersion: 2` and follow its
+manifest and registration requirements.
 
 ```text
 my-plugin/
@@ -209,13 +211,15 @@ association in workspace settings instead. See the
 [manifest editor guide](skill/flare-plugin/references/manifest.md#json-schema-and-editor-support)
 and [VS Code schema settings](https://code.visualstudio.com/docs/languages/json#_json-schemas-and-settings).
 
-For an existing project targeting Host API v2, install the published SDK.
+For an existing project targeting the current Host API v2 features, install
+the published SDK that matches your Flare build.
 
 ```sh
-npm install --save-dev --save-exact flare-plugin-sdk@0.1.0-beta.11
+npm install --save-dev --save-exact flare-plugin-sdk@0.1.0-beta.13
 ```
 
-For Flare 1.8.0, pin `0.1.0-beta.10`. For features newer than the published SDK,
+For earlier Flare builds, choose the SDK in the [version guide](skill/flare-plugin/README.md#match-flare-and-the-sdk).
+For features newer than the published SDK,
 [install the source SDK tarball](skill/flare-plugin/README.md#use-the-sdk-from-a-flare-checkout).
 Add the package to your TypeScript project's compiler options.
 
@@ -251,6 +255,15 @@ the [temporary page contract](skill/flare-plugin/references/capabilities.md#api-
 and [implementation recipe](skill/flare-plugin/references/recipes.md#temporary-timeline-pages-api-v2).
 See the [wire contract](skill/flare-plugin/references/wire-data.md#timeline-items-and-interactions)
 for timeline and post detail results.
+
+For the Host API v2 features covered by SDK `0.1.0-beta.13`, see the
+[timeline widget example](skill/flare-plugin/examples/timeline-processor/README.md),
+[guest manga reader example](skill/flare-plugin/examples/manga-reader/README.md),
+[HTML parsing API](skill/flare-plugin/references/runtime-http.md#html-extraction-and-entity-decoding-api-v2),
+[guest access](skill/flare-plugin/references/recipes.md#guest-access),
+[fixed-site selection](skill/flare-plugin/references/authentication.md#recommended-origins-and-single-site-plugins-api-v2),
+[session challenge recovery](skill/flare-plugin/references/authentication.md#session-challenge-recovery-api-v2),
+and [post actions without native post detail](skill/flare-plugin/references/recipes.md#post-and-semantic-actions).
 
 ## Validate this SDK
 

@@ -74,6 +74,19 @@ public enum class UiStrings {
     QrLoginNewCode,
     QrLoginRetrySave,
     ImportSessionCookies,
+    Comments,
+    ByPopularity,
+    ByTime,
+    Replies,
+    Quotes,
+    Relevance,
+    Recency,
+    Likes,
+    Oldest,
+    RepostedBy,
+    LikedBy,
+    Reactions,
+    AllReactions,
 }
 
 public fun UiStrings.asText(): UiText = UiText.Localized(this)

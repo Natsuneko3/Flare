@@ -15,6 +15,7 @@ import dev.dimension.flare.data.network.vvo.model.Status
 import dev.dimension.flare.data.network.vvo.model.StatusPic
 import dev.dimension.flare.data.network.vvo.model.User
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.model.vvoHostLong
 import dev.dimension.flare.model.vvoHostShort
 import dev.dimension.flare.ui.humanizer.PlatformFormatter
 import dev.dimension.flare.ui.model.UiMedia
@@ -28,6 +29,7 @@ import dev.dimension.flare.ui.route.DeeplinkRoute
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import org.koin.core.annotation.Module
 import org.koin.core.annotation.Single
 import org.koin.core.context.startKoin
@@ -38,6 +40,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -200,7 +203,7 @@ class VVORenderTest {
                             "type": "livephoto",
                             "url": "https://media.example.test/live-preview.jpg",
                             "large": {
-                                "url": "https://media.example.test/live-original.jpg",
+                                "url": "https://media.example.test/mw2000/live-original.jpg",
                                 "geo": {"width": 600, "height": 800}
                             },
                             "videoSrc": "$playbackUrl"
@@ -224,9 +227,14 @@ class VVORenderTest {
         assertEquals(UiMedia.Video.Kind.LivePhoto, livePhoto.kind)
         assertEquals(playbackUrl, livePhoto.url)
         assertEquals("https://media.example.test/live-preview.jpg", livePhoto.thumbnailUrl)
+        assertEquals(
+            JsonPrimitive("https://media.example.test/large/live-original.jpg"),
+            JSON.encodeToJsonElement(UiMedia.serializer(), livePhoto).jsonObject["livePhotoCoverUrl"],
+        )
         assertEquals(600f, livePhoto.width)
         assertEquals(800f, livePhoto.height)
         assertEquals(ProxyRef.Account(accountKey), livePhoto.proxy)
+        assertEquals(ProxyRef.Account(accountKey), livePhoto.livePhotoCover?.proxy)
         assertEquals("https://media.example.test/last.jpg", assertIs<UiMedia.Image>(post.images[2]).url)
         assertEquals(signedUrl, assertIs<UiMedia.Video>(post.images[3]).url)
         assertEquals(UiMedia.Video.Kind.LivePhoto, assertIs<UiMedia.Video>(post.images[3]).kind)
@@ -336,6 +344,89 @@ class VVORenderTest {
         assertEquals(
             actions.filterNot { it == quote },
             post.actions.applyPostActionLayout(hiddenConfig),
+        )
+    }
+
+    @Test
+    fun userRenderPopulatesCanonicalProfileUrl() {
+        val withId = createUser(123456L, "vvo_user").render(accountKey)
+        val withoutId = User(id = null, screenName = "anonymous").render(accountKey)
+
+        assertEquals("https://$vvoHostLong/u/123456", withId.url)
+        assertNull(withoutId.url)
+    }
+
+    @Test
+    fun statusAndCommentClicksUseGenericDetailAndTimelinePageRoutes() {
+        val user = createUser(1L, "author")
+        val status =
+            JSON
+                .decodeFromString<Status>("""{"id":"51001","bid":"51001","title":{"text":"热搜"},"text":"正文"}""")
+                .copy(user = user)
+        val renderedStatus = assertIs<UiTimelineV2.TimelinePostItem>(status.render(accountKey))
+        val expectedDetail =
+            DeeplinkRoute.Status.Detail(
+                statusKey = MicroBlogKey("51001", accountKey.host),
+                accountType = dev.dimension.flare.model.AccountType.Specific(accountKey),
+            )
+        assertEquals(
+            expectedDetail,
+            DeeplinkRoute.parse(assertIs<dev.dimension.flare.ui.model.ClickEvent.Deeplink>(renderedStatus.post.clickEvent).url),
+        )
+        assertEquals(
+            expectedDetail,
+            DeeplinkRoute.parse(
+                assertIs<dev.dimension.flare.ui.model.ClickEvent.Deeplink>(
+                    requireNotNull(renderedStatus.presentation.message).clickEvent,
+                ).url,
+            ),
+        )
+
+        for (href in listOf("98765", "/status/98765")) {
+            val text = renderVVOText("""<a href="$href">查看微博</a>""", accountKey)
+            val block = assertIs<RenderContent.Text>(text.renderRuns.single())
+            val run = assertIs<RenderRun.Text>(block.runs.single())
+            val linkRoute = assertIs<DeeplinkRoute.Status.Detail>(DeeplinkRoute.parse(requireNotNull(run.style.link)))
+            assertEquals(MicroBlogKey("98765", accountKey.host), linkRoute.statusKey)
+        }
+
+        val notificationComment =
+            JSON.decodeFromString<Comment>(
+                """{"id":"701","status":{"id":"51001","mid":"51001","bid":"51001","text":"原博"}}""",
+            )
+        val notificationPost = assertNotNull(notificationComment.render(accountKey).contentPostOrNull())
+        assertEquals(
+            expectedDetail,
+            DeeplinkRoute.parse(assertIs<dev.dimension.flare.ui.model.ClickEvent.Deeplink>(notificationPost.clickEvent).url),
+        )
+
+        val floorComment =
+            JSON.decodeFromString<Comment>(
+                """{"id":"801","comments":[{"id":"802","text":"子回复","status":{"id":"51001","mid":"51001"}}]}""",
+            )
+        val renderedFloor = assertIs<UiTimelineV2.TimelinePostItem>(floorComment.render(accountKey, rootStatusId = "51001"))
+        val expectedPage =
+            DeeplinkRoute.Timeline.Page(
+                accountType = dev.dimension.flare.model.AccountType.Specific(accountKey),
+                pluginId = "VVo",
+                platformId = "VVo",
+                packageHash = "",
+                pageId = "comment_replies",
+                title = dev.dimension.flare.ui.model.UiStrings.Comments.let { dev.dimension.flare.ui.model.UiText.Localized(it) },
+                parameters = mapOf("commentId" to "801", "rootStatusId" to "51001"),
+                detailStatusKey = MicroBlogKey("801", accountKey.host),
+            )
+        assertEquals(
+            expectedPage,
+            DeeplinkRoute.parse(assertIs<dev.dimension.flare.ui.model.ClickEvent.Deeplink>(renderedFloor.post.clickEvent).url),
+        )
+        assertEquals(
+            expectedPage,
+            DeeplinkRoute.parse(
+                assertIs<dev.dimension.flare.ui.model.ClickEvent.Deeplink>(
+                    renderedFloor.presentation.quotes.single().clickEvent,
+                ).url,
+            ),
         )
     }
 

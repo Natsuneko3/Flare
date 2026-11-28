@@ -47,6 +47,7 @@ private fun AccountType.toWebAccountSegment(): String =
         is AccountType.Specific -> accountKey.toWebPathSegment()
         AccountType.Guest -> "guest"
         is AccountType.GuestHost -> "guest@$host".toWebPathSegment()
+        is AccountType.GuestPlugin -> "guest-plugin@${platformId}@${host}".toWebPathSegment()
     }
 
 private fun MicroBlogKey.toWebPathSegment(): String = toString().toWebPathSegment()

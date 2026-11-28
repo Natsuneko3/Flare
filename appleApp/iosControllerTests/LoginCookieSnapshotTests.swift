@@ -48,6 +48,25 @@ final class LoginCookieSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.values.map(\.name), ["session", "other"])
     }
 
+    func testUserAgentDefaultsToNilAndIsForwardedWhenProvided() throws {
+        let url = "https://login.example/api/cookie"
+        let cookies = try [cookie("session")]
+        let defaultSnapshot = loginCookieSnapshot(
+            cookies: cookies,
+            probes: [LoginCookieProbe(url: url, names: ["session"])],
+            fallbackUrl: url
+        )
+        XCTAssertNil(defaultSnapshot.userAgent)
+
+        let uaSnapshot = loginCookieSnapshot(
+            cookies: cookies,
+            probes: [LoginCookieProbe(url: url, names: ["session"])],
+            fallbackUrl: url,
+            userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15"
+        )
+        XCTAssertEqual(uaSnapshot.userAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15")
+    }
+
     private func snapshot(_ cookies: [HTTPCookie], urls: [String] = ["https://login.example/api/cookie"]) -> LoginCookieSnapshot {
         loginCookieSnapshot(
             cookies: cookies,

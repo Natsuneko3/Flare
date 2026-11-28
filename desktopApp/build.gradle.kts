@@ -1,6 +1,7 @@
 
 import io.github.kdroidfilter.nucleus.desktop.application.dsl.AppImageCategory
 import io.github.kdroidfilter.nucleus.desktop.application.dsl.CompressionLevel
+import io.github.kdroidfilter.nucleus.desktop.application.tasks.AbstractJPackageTask
 import java.util.Properties
 import org.jetbrains.compose.compose
 
@@ -253,6 +254,17 @@ $localizationsXml
     }
 }
 
+if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+    afterEvaluate {
+        tasks.withType<AbstractJPackageTask>().configureEach {
+            if (sandboxingEnabled.get()) {
+                // Nucleus moves the AppX DLL from its JAR to the app's resources directory.
+                launcherJvmArgs.add("-Dfr.acinq.secp256k1.lib.path=\$APPDIR/resources")
+            }
+        }
+    }
+}
+
 compose.resources {
     packageOfResClass = "dev.dimension.flare"
 }
@@ -302,6 +314,14 @@ val compileFoundationModelsBridge = tasks.register<Exec>("compileFoundationModel
 }
 
 tasks.test {
+    val isolatedTmpDir = layout.buildDirectory.dir("tmp/test-tmpdir")
+    inputs.property("isolatedTmpDirName", "test-tmpdir")
+    doFirst {
+        val dir = isolatedTmpDir.get().asFile
+        dir.deleteRecursively()
+        dir.mkdirs()
+    }
+    systemProperty("java.io.tmpdir", isolatedTmpDir.get().asFile.absolutePath)
     testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
 }
 

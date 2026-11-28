@@ -150,6 +150,7 @@ public data class LoginCookieAttributes(
 public data class LoginCookieSnapshot(
     val values: List<LoginCookieValue> = emptyList(),
     val rawHeader: String? = null,
+    val userAgent: String? = null,
 ) {
     internal fun legacyHeader(): String? =
         rawHeader?.takeIf(String::isNotBlank)

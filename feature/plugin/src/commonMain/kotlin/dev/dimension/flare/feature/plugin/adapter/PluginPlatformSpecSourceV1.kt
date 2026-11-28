@@ -3,6 +3,7 @@ package dev.dimension.flare.feature.plugin.adapter
 import dev.dimension.flare.common.Locale
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.notSupported
+import dev.dimension.flare.data.model.tab.TimelineCandidate
 import dev.dimension.flare.data.model.tab.TimelineLoaderFactory
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.data.model.tab.toUiTimelineTabItem
@@ -23,6 +24,7 @@ import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthStartV1
 import dev.dimension.flare.feature.plugin.login.PluginQrLoginV2
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieRequestV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieSessionV1
@@ -33,8 +35,12 @@ import dev.dimension.flare.feature.plugin.manifest.DeepLinkTargetTypeV1
 import dev.dimension.flare.feature.plugin.manifest.LoginFieldTypeV1
 import dev.dimension.flare.feature.plugin.manifest.LoginInteractionV1
 import dev.dimension.flare.feature.plugin.manifest.LoginMethodManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
+import dev.dimension.flare.feature.plugin.manifest.PluginTextV1
+import dev.dimension.flare.feature.plugin.manifest.RecommendedOriginManifestV1
 import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
 import dev.dimension.flare.feature.plugin.manifest.fallbackText
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
 import dev.dimension.flare.feature.plugin.manifest.socialPlatform
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeKeyV1
@@ -45,6 +51,7 @@ import dev.dimension.flare.feature.plugin.wire.DetectorMatchV1
 import dev.dimension.flare.feature.plugin.wire.DetectorRequestV1
 import dev.dimension.flare.feature.plugin.wire.DetectorResultV1
 import dev.dimension.flare.feature.plugin.wire.LoginSuccessV1
+import dev.dimension.flare.feature.plugin.wire.normalizeUserAgent
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.ComposeInitialTextContext
 import dev.dimension.flare.model.InitialText
@@ -95,7 +102,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -120,6 +129,7 @@ public class PluginPlatformSpecSourceV1(
     private val webCookie: PluginWebCookieLoginCoordinatorV1,
     private val coroutineScope: CoroutineScope,
     private val onIssue: (PluginStateIssueV1) -> Unit = {},
+    private val sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
 ) : PlatformSpecSource {
     override fun load(occupiedPlatformIds: Set<String>): List<PlatformSpec> {
         val occupied = occupiedPlatformIds.mapTo(mutableSetOf(), String::lowercase)
@@ -147,6 +157,7 @@ public class PluginPlatformSpecSourceV1(
                             form = form,
                             webCookie = webCookie,
                             coroutineScope = plugin.session.scope(coroutineScope),
+                            sessionChallenge = sessionChallenge,
                         )
                     }.getOrElse { error ->
                         onIssue(
@@ -172,6 +183,7 @@ private class PluginPlatformSpecV1(
     private val form: PluginFormLoginCoordinatorV1,
     private val webCookie: PluginWebCookieLoginCoordinatorV1,
     private val coroutineScope: CoroutineScope,
+    private val sessionChallenge: PluginSessionChallengeCoordinatorV1? = null,
 ) : PlatformSpec,
     LoginPlatformProvider {
     private val accountService: AccountService by koinInject()
@@ -179,16 +191,36 @@ private class PluginPlatformSpecV1(
     private val manifest = plugin.installed.manifest
     private val platform = manifest.socialPlatform
     private val accountCapabilities = PluginAccountCapabilitiesV1(plugin, runtimePool, coroutineScope)
+    private val standaloneGuestSources = MutableStateFlow<Map<Pair<String, String>, PluginDataSourceV1>>(emptyMap())
+    private val recommendedOriginsByOrigin: Map<String, RecommendedOriginManifestV1> =
+        platform.recommendedOrigins.associateBy { PluginUrlPolicy.requireOrigin(it.origin).lowercase() }
 
     val pluginId: String = plugin.installed.pluginId
     override val platformId: String = platform.id
     override val metadata: PlatformMetadata = plugin.platformMetadata()
     override val order: Int = 1_000 + (platform.detector?.priority ?: 0)
     override val isDefaultGuest: Boolean = false
+    override val standaloneGuestHost: String? =
+        platform.guest
+            ?.takeIf { manifest.apiVersion >= 2 && it.enabled }
+            ?.origin
+            ?.let { Url(PluginUrlPolicy.requireOrigin(it)).accountHost() }
+
+    private val hasTimelinePage: Boolean =
+        "page" in platform.capabilities[dev.dimension.flare.feature.plugin.abi.PluginAbiV1.Capabilities.TIMELINE]?.operations.orEmpty()
 
     private val specs: Map<String, TimelineSpec<TimelineSpec.AccountResourceData>> =
         platform.timelines.associate { timeline ->
             timeline.id to timeline.toTimelineSpec()
+        }
+
+    private val guestSpecs: Map<String, TimelineSpec<TimelineSpec.GuestPluginResourceData>> =
+        if (standaloneGuestHost != null && hasTimelinePage) {
+            platform.timelines.associate { timeline ->
+                timeline.id to timeline.toGuestTimelineSpec()
+            }
+        } else {
+            emptyMap()
         }
 
     private val dynamicTimelineSpec: TimelineSpec<PluginTimelineDataV1>? =
@@ -216,7 +248,28 @@ private class PluginPlatformSpecV1(
             }
 
     override val timelineSpecs: ImmutableList<TimelineSpec<out TimelineSpec.Data>> =
-        (specs.values + listOfNotNull(dynamicTimelineSpec)).toImmutableList()
+        (specs.values + guestSpecs.values + listOfNotNull(dynamicTimelineSpec)).toImmutableList()
+
+    override val guestDefaultTabs: ImmutableList<TimelineCandidate<*>> =
+        if (standaloneGuestHost != null && hasTimelinePage) {
+            platform.timelines
+                .filter(TimelineManifestV1::defaultForNewAccount)
+                .mapNotNull(::guestCandidate)
+                .mapIndexed { index, candidate ->
+                    if (index == 0) candidate.copy(title = metadata.displayNameText) else candidate
+                }.toImmutableList()
+        } else {
+            persistentListOf()
+        }
+
+    override val guestTimelineTabs: ImmutableList<TimelineCandidate<*>> =
+        if (standaloneGuestHost != null && hasTimelinePage) {
+            platform.timelines
+                .mapNotNull(::guestCandidate)
+                .toImmutableList()
+        } else {
+            persistentListOf()
+        }
 
     override fun resolveInitialText(context: ComposeInitialTextContext): InitialText? = context.resolveReplyParticipantInitialText()
 
@@ -225,7 +278,7 @@ private class PluginPlatformSpecV1(
 
     override fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource =
         PluginDataSourceV1
-            .authenticated(plugin, runtimePool, context, specs, dynamicTimelineSpec, coroutineScope)
+            .authenticated(plugin, runtimePool, context, specs, dynamicTimelineSpec, coroutineScope, sessionChallenge)
             .also { accountCapabilities.start(context) }
 
     override fun prepareCredential(credentialJson: String): String = plugin.prepareAccountCredential(credentialJson)
@@ -251,23 +304,50 @@ private class PluginPlatformSpecV1(
     override fun guestDataSource(
         host: String,
         locale: String,
-    ): MicroblogDataSource =
-        PluginDataSourceV1.guest(
-            plugin = plugin,
-            runtimePool = runtimePool,
-            origin = host.toHttpsOrigin(),
-            locale = locale,
-            timelineSpecs = specs,
-            dynamicTimelineSpec = dynamicTimelineSpec,
-        )
+    ): MicroblogDataSource {
+        val origin =
+            try {
+                host.toHttpsOrigin()
+            } catch (error: IllegalStateException) {
+                throw IllegalArgumentException(error.message ?: "Invalid HTTPS origin", error)
+            }
+        requireAllowedOrigin(origin)
+        val normalizedLocale = normalizePluginInvocationLocale(locale)
+
+        fun create() =
+            PluginDataSourceV1.guest(
+                plugin = plugin,
+                runtimePool = runtimePool,
+                origin = origin,
+                locale = normalizedLocale,
+                timelineSpecs = specs,
+                dynamicTimelineSpec = dynamicTimelineSpec,
+            )
+        if (standaloneGuestHost == null) return create()
+        val key = origin to normalizedLocale
+        return standaloneGuestSources
+            .updateAndGet { sources -> if (key in sources) sources else sources + (key to create()) }
+            .getValue(key)
+    }
 
     override val detector: PlatformDetector =
         object : PlatformDetector {
-            override val priority: Int = platform.detector?.priority ?: Int.MIN_VALUE
+            override val priority: Int =
+                platform.detector?.priority ?: if (platform.recommendedOrigins.isNotEmpty()) 0 else Int.MIN_VALUE
 
             override suspend fun detect(host: String): NodeDetection? {
-                if (platform.detector == null) return null
+                if (platform.detector == null && platform.recommendedOrigins.isEmpty()) return null
                 val origin = host.toHttpsOrigin()
+                val recommended = recommendedOriginsByOrigin[origin.lowercase()]
+                if (recommended != null) {
+                    val canonicalOrigin = PluginUrlPolicy.requireOrigin(recommended.origin).lowercase()
+                    return NodeDetection(
+                        host = Url(canonicalOrigin).accountHost(),
+                        software = platform.name.fallbackText,
+                        compatibleMode = false,
+                    )
+                }
+                if (!platform.allowCustomOrigin || platform.detector == null) return null
                 val result = invokeDetector(origin, PluginCallTimeoutV1.Detector)
                 if (result.match == DetectorMatchV1.None) return null
                 val canonicalOrigin = PluginUrlPolicy.requireOrigin(result.canonicalOrigin)
@@ -293,7 +373,7 @@ private class PluginPlatformSpecV1(
                     platformId = platformId,
                     packageHash = plugin.installed.packageHash,
                     candidateOrigin = origin,
-                    locale = Locale.language,
+                    locale = normalizePluginInvocationLocale(Locale.language),
                 ),
             method = "detector.detect",
             request = DetectorRequestV1(origin),
@@ -313,10 +393,30 @@ private class PluginPlatformSpecV1(
 
     override fun agreementUrl(host: String): String? = null
 
-    override suspend fun recommendInstances(): List<RecommendedInstance> = emptyList()
+    override suspend fun recommendInstances(): List<RecommendedInstance> =
+        platform.recommendedOrigins.map { item ->
+            val canonicalOrigin = PluginUrlPolicy.requireOrigin(item.origin).lowercase()
+            RecommendedInstance(
+                instance =
+                    UiInstance(
+                        name = resolveText(item.name ?: platform.name),
+                        description = (item.description ?: platform.description)?.let(::resolveText),
+                        iconUrl = null,
+                        domain = Url(canonicalOrigin).accountHost(),
+                        platformId = platformId,
+                        bannerUrl = null,
+                        usersCount = 0,
+                        platformDisplayName = metadata.displayName,
+                        platformIcon = metadata.icon,
+                    ),
+                priority = 0,
+            )
+        }
 
     override suspend fun instanceMetadata(host: String): UiInstanceMetadata {
         val origin = host.toHttpsOrigin()
+        requireAllowedOrigin(origin)
+        val recommended = recommendedOriginsByOrigin[origin.lowercase()]
         val detected =
             if (platform.detector == null) {
                 null
@@ -332,8 +432,9 @@ private class PluginPlatformSpecV1(
         return UiInstanceMetadata(
             instance =
                 UiInstance(
-                    name = detected?.title ?: domain,
-                    description = detected?.description,
+                    name = detected?.title ?: recommended?.let { resolveText(it.name ?: platform.name) } ?: domain,
+                    description =
+                        detected?.description ?: recommended?.let { (it.description ?: platform.description)?.let(::resolveText) },
                     iconUrl = detected?.iconUrl,
                     domain = domain,
                     platformId = platformId,
@@ -374,6 +475,9 @@ private class PluginPlatformSpecV1(
     }
 
     override fun createHandler(context: LoginContext): LoginMethodHandler {
+        if (!platform.allowCustomOrigin) {
+            requireAllowedOrigin(context.host.toHttpsOrigin())
+        }
         val candidates = platform.loginMethods.filter { it.interaction.toLoginMethodType() == context.methodType }
         val method = candidates.singleOrNull() ?: error("Plugin login method is ambiguous or unavailable: ${context.methodType}")
         return PluginLoginMethodHandlerV1(
@@ -390,6 +494,35 @@ private class PluginPlatformSpecV1(
         )
     }
 
+    private fun requireAllowedOrigin(origin: String) {
+        require(platform.allowCustomOrigin || origin.lowercase() in recommendedOriginsByOrigin) {
+            "Origin is not allowed for single-site platform: $platformId"
+        }
+    }
+
+    private fun resolveText(text: PluginTextV1): String {
+        val installed = plugin.installed
+        return when (val uiText = text.toUiText(installed.pluginId)) {
+            is UiText.Raw -> {
+                uiText.string
+            }
+
+            is UiText.ExternalRef -> {
+                runCatching {
+                    PluginCatalogBundleV1(
+                        pluginId = installed.pluginId,
+                        defaultLocale = manifest.defaultLocale,
+                        catalogs = installed.catalogs,
+                    ).resolve(uiText, Locale.language)
+                }.getOrElse { text.fallbackText }
+            }
+
+            else -> {
+                text.fallbackText
+            }
+        }
+    }
+
     private fun TimelineManifestV1.toTimelineSpec(): TimelineSpec<TimelineSpec.AccountResourceData> =
         TimelineSpec(
             id = canonicalTimelineSpecId("timeline:$id"),
@@ -404,6 +537,37 @@ private class PluginPlatformSpecV1(
                     }
                 },
         )
+
+    private fun TimelineManifestV1.toGuestTimelineSpec(): TimelineSpec<TimelineSpec.GuestPluginResourceData> =
+        TimelineSpec(
+            id = canonicalTimelineSpecId("guest-timeline:$id"),
+            title = title.toUiText(manifest.id),
+            icon = icon.toUiIcon().asType(),
+            serializer = TimelineSpec.GuestPluginResourceData.serializer(),
+            targetId = { "${it.platformId}:${it.host}:$id" },
+            loaderFactory =
+                TimelineLoaderFactory { data, context ->
+                    if (data.platformId != platformId || data.host != standaloneGuestHost || data.resourceId != id) {
+                        flowOf(notSupported())
+                    } else {
+                        context.accountServiceFlow(AccountType.GuestPlugin(platformId, data.host)).map { service ->
+                            (service as? PluginNamedTimelineDataSourceV1)?.timeline(id, parameters) ?: notSupported()
+                        }
+                    }
+                },
+        )
+
+    private fun guestCandidate(timeline: TimelineManifestV1): TimelineCandidate<*>? {
+        val host = standaloneGuestHost ?: return null
+        val spec = guestSpecs[timeline.id] ?: return null
+        val data = TimelineSpec.GuestPluginResourceData(platformId, host, timeline.id)
+        val title = timeline.title.toUiText(manifest.id)
+        val icon = if (timeline.defaultForNewAccount) metadata.icon else timeline.icon.toUiIcon().asType()
+        return when (timeline.display) {
+            dev.dimension.flare.feature.plugin.wire.TimelineDisplayV1.List -> spec.candidate(data, title, icon)
+            dev.dimension.flare.feature.plugin.wire.TimelineDisplayV1.Grid -> spec.galleryCandidate(data, title, icon)
+        }
+    }
 
     private fun canonicalTimelineSpecId(kind: String): String =
         "plugin:${manifest.id}:$platformId:schema${platform.timelineSchemaVersion}:$kind"
@@ -541,7 +705,7 @@ internal class PluginLoginMethodHandlerV1(
                                 plugin = plugin,
                                 methodId = method.id,
                                 origin = context.host.toHttpsOrigin(),
-                                locale = Locale.language,
+                                locale = normalizePluginInvocationLocale(Locale.language),
                                 expectedAccountId = context.reloginTarget?.accountKey?.id,
                             )
                     ) {
@@ -572,7 +736,7 @@ internal class PluginLoginMethodHandlerV1(
                             plugin = plugin,
                             methodId = method.id,
                             origin = context.host.toHttpsOrigin(),
-                            locale = Locale.language,
+                            locale = normalizePluginInvocationLocale(Locale.language),
                             values = values,
                             expectedAccountId = context.reloginTarget?.accountKey?.id,
                         ),
@@ -586,7 +750,7 @@ internal class PluginLoginMethodHandlerV1(
                             plugin = plugin,
                             methodId = method.id,
                             origin = context.host.toHttpsOrigin(),
-                            locale = Locale.language,
+                            locale = normalizePluginInvocationLocale(Locale.language),
                             expectedAccountId = context.reloginTarget?.accountKey?.id,
                         )
                     cookieSession = session
@@ -628,7 +792,7 @@ internal class PluginLoginMethodHandlerV1(
                         plugin = plugin,
                         methodId = method.id,
                         origin = context.host.toHttpsOrigin(),
-                        locale = Locale.language,
+                        locale = normalizePluginInvocationLocale(Locale.language),
                         expectedAccountId = context.reloginTarget?.accountKey?.id,
                     ).login { content, scanned ->
                         if (attempt.isActive) {
@@ -677,7 +841,7 @@ internal class PluginLoginMethodHandlerV1(
             require(parsePluginOAuthCallback(value).flowId == expectedFlowId) {
                 "OAuth callback belongs to another login flow"
             }
-            if (!oauthCallbacks.handle(value, Locale.language)) {
+            if (!oauthCallbacks.handle(value, normalizePluginInvocationLocale(Locale.language))) {
                 throw IllegalArgumentException("Unsupported OAuth callback")
             }
             if (oauthFlowId != null) mutableState.value = state()
@@ -739,6 +903,7 @@ internal class PluginLoginMethodHandlerV1(
                                         cookies
                                     }
                                 },
+                        userAgent = normalizeUserAgent(snapshot.userAgent),
                     ),
                 )
             if (result is PluginCookieCheckResultV1.Success) {

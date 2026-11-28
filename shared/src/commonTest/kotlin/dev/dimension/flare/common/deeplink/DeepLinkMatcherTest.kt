@@ -1,6 +1,7 @@
 package dev.dimension.flare.common.deeplink
 
 import io.ktor.http.URLBuilder
+import io.ktor.http.Url
 import io.ktor.http.path
 import kotlinx.serialization.Serializable
 import kotlin.test.Test
@@ -20,6 +21,38 @@ class DeepLinkMatcherTest {
         assertNotNull(match)
         assertEquals(HomeKey.serializer(), match.serializer)
         assertEquals(emptyMap(), match.args)
+    }
+
+    @Test
+    fun literalTemplateDoesNotSkipArgumentParsing() {
+        val template = "https://example.com/profile/{userId}"
+        val pattern = DeepLinkPattern(ProfileKey.serializer(), Url(template))
+
+        assertNull(DeepLinkMatcher(DeepLinkRequest(Url(template)), pattern).match())
+    }
+
+    @Test
+    fun webHostnameMatchingIgnoresCase() {
+        val pattern = DeepLinkPattern(HomeKey.serializer(), Url("https://example.com/home"))
+
+        assertNotNull(DeepLinkMatcher(DeepLinkRequest(Url("http://Example.COM/home")), pattern).match())
+    }
+
+    @Test
+    fun webPatternsRejectUnregisteredSchemesAndPorts() {
+        val pattern = DeepLinkPattern(HomeKey.serializer(), Url("https://example.com/home"))
+
+        listOf("ftp://example.com/home", "https://example.com:8443/home").forEach { url ->
+            assertNull(DeepLinkMatcher(DeepLinkRequest(Url(url)), pattern).match(), url)
+        }
+    }
+
+    @Test
+    fun matchesAnExplicitlyConfiguredPort() {
+        val pattern = DeepLinkPattern(HomeKey.serializer(), Url("https://example.com:8443/home"))
+
+        assertNotNull(DeepLinkMatcher(DeepLinkRequest(Url("https://example.com:8443/home")), pattern).match())
+        assertNull(DeepLinkMatcher(DeepLinkRequest(Url("https://example.com/home")), pattern).match())
     }
 
     @Test

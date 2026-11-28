@@ -44,7 +44,6 @@ import compose.icons.fontawesomeicons.brands.Telegram
 import compose.icons.fontawesomeicons.solid.AngleRight
 import compose.icons.fontawesomeicons.solid.Bars
 import compose.icons.fontawesomeicons.solid.EllipsisVertical
-import compose.icons.fontawesomeicons.solid.Language
 import compose.icons.fontawesomeicons.solid.List
 import compose.icons.fontawesomeicons.solid.Lock
 import compose.icons.fontawesomeicons.solid.Plus
@@ -89,8 +88,6 @@ import dev.dimension.flare.save_completed
 import dev.dimension.flare.save_error
 import dev.dimension.flare.settings_about_discord
 import dev.dimension.flare.settings_about_discord_description
-import dev.dimension.flare.settings_about_localization
-import dev.dimension.flare.settings_about_localization_description
 import dev.dimension.flare.settings_about_source_code
 import dev.dimension.flare.settings_about_telegram
 import dev.dimension.flare.settings_about_telegram_description
@@ -292,7 +289,10 @@ import dev.dimension.flare.settings_translation_title
 import dev.dimension.flare.tab_settings_drag
 import dev.dimension.flare.ui.component.AccountItem
 import dev.dimension.flare.ui.component.AvatarComponent
+import dev.dimension.flare.ui.component.CardExpanderItem
 import dev.dimension.flare.ui.component.ComposeInAppNotification
+import dev.dimension.flare.ui.component.Expander
+import dev.dimension.flare.ui.component.ExpanderItem
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareScrollBar
 import dev.dimension.flare.ui.component.Header
@@ -332,13 +332,10 @@ import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.AutoSuggestBoxDefaults
 import io.github.composefluent.component.AutoSuggestionBox
 import io.github.composefluent.component.Button
-import io.github.composefluent.component.CardExpanderItem
 import io.github.composefluent.component.CheckBox
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.DropDownButton
-import io.github.composefluent.component.Expander
-import io.github.composefluent.component.ExpanderItem
 import io.github.composefluent.component.ExpanderItemSeparator
 import io.github.composefluent.component.FlyoutPlacement
 import io.github.composefluent.component.HyperlinkButton
@@ -1923,6 +1920,8 @@ internal fun SettingsScreen(
                                     onConfirm = aiConfigState::setOpenAIApiKey,
                                 )
                                 ExpanderItemSeparator()
+                                AiConfigHeadersSetting(aiConfigState.openAIHeaders) { aiConfigState.setOpenAIHeaders(it) }
+                                ExpanderItemSeparator()
                                 val shouldShowManualModelInput =
                                     when (val openAIModels = aiConfigState.openAIModels) {
                                         is UiState.Error -> true
@@ -2539,32 +2538,6 @@ internal fun SettingsScreen(
                         FAIcon(
                             imageVector = FontAwesomeIcons.Brands.Discord,
                             contentDescription = stringResource(resource = Res.string.settings_about_discord),
-                            modifier = Modifier.size(24.dp),
-                        )
-                    },
-                )
-                ExpanderItemSeparator()
-                ExpanderItem(
-                    heading = {
-                        Text(text = stringResource(resource = Res.string.settings_about_localization))
-                    },
-                    caption = {
-                        Text(text = stringResource(resource = Res.string.settings_about_localization_description))
-                    },
-                    trailing = {
-                        HyperlinkButton(
-                            "https://crowdin.com/project/flareapp",
-                        ) {
-                            Text(
-                                text = "https://crowdin.com/project/flareapp",
-                                maxLines = 1,
-                            )
-                        }
-                    },
-                    icon = {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Language,
-                            contentDescription = stringResource(resource = Res.string.settings_about_localization),
                             modifier = Modifier.size(24.dp),
                         )
                     },

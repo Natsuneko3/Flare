@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.profile_banner
@@ -33,6 +34,7 @@ import dev.dimension.flare.ui.model.UiHandle
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.render.UiRichText
 import dev.dimension.flare.ui.theme.PlatformTheme
+import dev.dimension.flare.ui.theme.profileName
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import org.jetbrains.compose.resources.stringResource
 
@@ -44,21 +46,26 @@ internal fun CommonProfileHeader(
     userKey: MicroBlogKey,
     handle: UiHandle,
     modifier: Modifier = Modifier,
+    useCard: Boolean = !isBigScreen(),
+    includeStatusBarInset: Boolean = true,
+    statusBarTopInset: Dp =
+        if (includeStatusBarInset) {
+            with(LocalDensity.current) {
+                WindowInsets.statusBars.getTop(this).toDp()
+            }
+        } else {
+            0.dp
+        },
     onAvatarClick: (() -> Unit)? = null,
     onBannerClick: (() -> Unit)? = null,
     headerTrailing: @Composable RowScope.() -> Unit = {},
     handleTrailing: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
-    val isBigScreen = isBigScreen()
     val profileName = displayName.raw.ifBlank { handle.display }
-    val statusBarHeight =
-        with(LocalDensity.current) {
-            WindowInsets.statusBars.getTop(this).toDp()
-        }
     val actualBannerHeight =
-        remember(statusBarHeight) {
-            ProfileHeaderConstants.BANNER_HEIGHT.dp + statusBarHeight
+        remember(statusBarTopInset, includeStatusBarInset) {
+            ProfileHeaderConstants.BANNER_HEIGHT.dp + if (includeStatusBarInset) statusBarTopInset else 0.dp
         }
     Box(
         modifier =
@@ -170,15 +177,15 @@ internal fun CommonProfileHeader(
                 modifier =
                     Modifier
                         .let {
-                            if (isBigScreen) {
-                                it
-                            } else {
+                            if (useCard) {
                                 it
                                     .padding(horizontal = screenHorizontalPadding)
                                     .padding(bottom = 8.dp)
                                     .listCard()
                                     .background(PlatformTheme.colorScheme.card)
                                     .fillMaxWidth()
+                            } else {
+                                it
                             }
                         }.padding(horizontal = screenHorizontalPadding, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -187,7 +194,7 @@ internal fun CommonProfileHeader(
                     Column {
                         RichText(
                             text = displayName,
-                            textStyle = PlatformTheme.typography.title,
+                            textStyle = PlatformTheme.typography.profileName,
 //                        modifier =
 //                            Modifier
 //                                .sharedElement(

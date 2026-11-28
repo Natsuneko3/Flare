@@ -71,8 +71,6 @@
     <string name="settings_about_telegram_description">Tham gia nhóm Telegram của chúng tôi</string>
     <string name="settings_about_discord_description">Tham gia máy chủ Discord của chúng tôi</string>
     <string name="settings_about_line_description">Tham gia nhóm Line của chúng tôi</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Giúp chúng tôi dịch Flare</string>
     <string name="settings_privacy_policy">Chính sách Bảo mật</string>
     <string name="settings_side_panel">Tùy chỉnh bảng điều khiển bên</string>
     <string name="settings_side_panel_description">Tùy chỉnh bảng điều khiển bên</string>
@@ -812,7 +810,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Tự động</string>
     <string name="image_translation_original_file">Tệp gốc</string>
-    <string name="image_translation_use_shared_description">Chia sẻ URL dịch vụ, khóa API và mô hình. Dịch vụ và mô hình phải hỗ trợ xuất hình ảnh. Tắt để cấu hình dịch thuật hình ảnh riêng.</string>
+    <string name="image_translation_use_shared_description">Chia sẻ URL dịch vụ, khóa API, mô hình và tiêu đề tùy chỉnh. Dịch vụ và mô hình phải hỗ trợ xuất hình ảnh. Tắt để cấu hình dịch thuật hình ảnh riêng.</string>
     <string name="plugin_permission_cookie">Đọc cookie %2$s từ %1$s</string>
     <string name="plugin_ai_create">Tạo bằng AI Flare</string>
     <string name="plugin_ai_untitled">Tiện ích mới</string>
@@ -935,6 +933,8 @@
     <string name="plugin_warning_compatibility">Cảnh báo tương thích</string>
     <string name="plugin_install_github">Cài đặt từ GitHub</string>
     <string name="plugin_check_updates">Kiểm tra cập nhật</string>
+    <string name="plugin_local_import">Nhập từ thiết bị</string>
+    <string name="plugin_updated_at">Cập nhật ngày %1$s</string>
     <string name="plugin_warning_source_changed">Cài đặt này thay đổi nguồn plugin</string>
     <string name="plugin_warning_tag_moved">Thẻ này hiện trỏ đến một commit khác</string>
     <string name="plugin_unverified_github_warning">Plugin GitHub này chưa được xác minh. Chỉ cài đặt nếu bạn tin tưởng tác giả.</string>

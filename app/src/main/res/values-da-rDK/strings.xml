@@ -116,8 +116,6 @@
     <string name="settings_about_telegram_description">Bliv medlem af vores Telegram-gruppe</string>
     <string name="settings_about_discord_description">Bliv medlem af vores Discord-server</string>
     <string name="settings_about_line_description">Bliv medlem af vores Line-gruppe</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Hjælp os med at oversætte Flare</string>
     <string name="settings_privacy_policy">Privatlivspolitik</string>
     <string name="settings_side_panel">Tilpasning af sidepanel</string>
     <string name="settings_side_panel_description">Tilpas sidepanelet</string>
@@ -822,7 +820,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automatisk</string>
     <string name="image_translation_original_file">Originalfil</string>
-    <string name="image_translation_use_shared_description">Del tjeneste-URL, API-nøgle og model. Tjenesten og modellen skal understøtte billedoutput. Slå fra for at konfigurere billedoversættelse separat.</string>
+    <string name="image_translation_use_shared_description">Del tjeneste-URL, API-nøgle, model og brugerdefinerede headere. Tjenesten og modellen skal understøtte billedoutput. Slå fra for at konfigurere billedoversættelse separat.</string>
     <string name="plugin_permission_cookie">Læs cookie %2$s fra %1$s</string>
     <string name="plugin_ai_create">Opret med Flare AI</string>
     <string name="plugin_ai_untitled">Ny plugin</string>
@@ -944,6 +942,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitetsadvarsel</string>
     <string name="plugin_install_github">Installer fra GitHub</string>
     <string name="plugin_check_updates">Tjek for opdateringer</string>
+    <string name="plugin_local_import">Lokal import</string>
+    <string name="plugin_updated_at">Opdateret %1$s</string>
     <string name="plugin_update">Opdater</string>
     <string name="plugin_up_to_date">GitHub plugins er opdaterede</string>
     <string name="plugin_warning_source_changed">Denne installation ændrer plugin-kilden</string>

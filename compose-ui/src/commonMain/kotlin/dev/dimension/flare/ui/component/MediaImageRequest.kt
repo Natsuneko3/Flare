@@ -15,6 +15,7 @@ import coil3.network.NetworkFetcher
 import coil3.network.NetworkHeaders
 import coil3.network.NetworkRequest
 import coil3.network.NetworkResponse
+import coil3.network.NetworkResponseBody
 import coil3.network.httpHeaders
 import coil3.network.ktor3.asNetworkClient
 import coil3.request.ImageRequest
@@ -25,8 +26,22 @@ import dev.dimension.flare.data.network.ProxySnapshot
 import dev.dimension.flare.data.network.mediaHttpClient
 import dev.dimension.flare.ui.model.UiMedia
 import kotlinx.coroutines.CancellationException
+import okio.Buffer
+import okio.BufferedSink
+import okio.FileSystem
+import okio.ForwardingSink
+import okio.Path
+import okio.buffer
 
 private val imageProxy = Extras.Key<ProxyRef>(ProxyRef.Unbound)
+private val downloadProgressListener = Extras.Key<((Float?) -> Unit)?>(null)
+
+/** Reports the fraction of the response body received, or null until its size is known. */
+public fun ImageRequest.Builder.onMediaDownloadProgress(listener: (Float?) -> Unit): ImageRequest.Builder =
+    apply { extras[downloadProgressListener] = listener }
+
+public val ImageRequest.mediaDownloadProgressListener: ((Float?) -> Unit)?
+    get() = extras[downloadProgressListener]
 
 public fun proxyImageFetcherFactory(): NetworkFetcher.Factory =
     NetworkFetcher.Factory(
@@ -38,7 +53,11 @@ public fun proxyImageFetcherFactory(): NetworkFetcher.Factory =
                 ): T =
                     mediaHttpClient((request.extras[imageProxy] ?: ProxyRef.Unbound)).let { client ->
                         try {
-                            client.asNetworkClient().executeRequest(request, block)
+                            val onProgress = request.extras[downloadProgressListener]
+                            onProgress?.invoke(null)
+                            client.asNetworkClient().executeRequest(request) { response ->
+                                block(if (onProgress == null) response else response.reportingProgress(onProgress))
+                            }
                         } finally {
                             client.close()
                             client.engine.close()
@@ -47,6 +66,47 @@ public fun proxyImageFetcherFactory(): NetworkFetcher.Factory =
             }
         },
     )
+
+internal fun NetworkResponse.reportingProgress(onProgress: (Float) -> Unit): NetworkResponse {
+    val source = body ?: return this
+    val length = headers["Content-Length"]?.toLongOrNull() ?: return this
+    val encoding = headers["Content-Encoding"]
+    if (code != 200 || length <= 0 || headers["Transfer-Encoding"] != null ||
+        (encoding != null && !encoding.equals("identity", ignoreCase = true))
+    ) {
+        return this
+    }
+
+    onProgress(0f)
+    return copy(
+        body =
+            object : NetworkResponseBody by source {
+                override suspend fun writeTo(sink: BufferedSink) {
+                    var received = 0L
+                    val counting =
+                        object : ForwardingSink(sink) {
+                            override fun write(
+                                source: Buffer,
+                                byteCount: Long,
+                            ) {
+                                super.write(source, byteCount)
+                                received += byteCount
+                                onProgress((received.toDouble() / length).toFloat().coerceIn(0f, 1f))
+                            }
+                        }.buffer()
+                    source.writeTo(counting)
+                    counting.emit()
+                }
+
+                override suspend fun writeTo(
+                    fileSystem: FileSystem,
+                    path: Path,
+                ) {
+                    fileSystem.sink(path).buffer().use { writeTo(it) }
+                }
+            },
+    )
+}
 
 public fun ImageRequest.Builder.media(
     data: UiMedia,

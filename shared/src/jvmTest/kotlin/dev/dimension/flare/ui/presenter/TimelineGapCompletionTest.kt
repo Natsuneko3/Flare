@@ -71,6 +71,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -86,9 +87,13 @@ class TimelineGapCompletionTest {
     @Test
     fun cancelingThePresenterReleasesThePendingButtonOnMain() = completion(fail = false, canceled = true)
 
+    @Test
+    fun openingAGapInvalidatesThePublishedStartupBookmarkBeforeLoading() = completion(fail = false, pendingBookmark = true)
+
     private fun completion(
         fail: Boolean,
         canceled: Boolean = false,
+        pendingBookmark: Boolean = false,
     ) = runBlocking {
         val main = Executors.newSingleThreadExecutor { Thread(it, "timeline-ui") }.asCoroutineDispatcher()
         Dispatchers.setMain(main)
@@ -180,18 +185,21 @@ class TimelineGapCompletionTest {
             seed.load(LoadType.REFRESH, state)
             val presenter = TimelinePresenter(tabId = "home", loader = flowOf(loader), isHomeTimeline = true)
             val displayedGap = CompletableDeferred<UiTimelineV2.Gap>()
+            val startupReading = CompletableDeferred<TimelineReadingState>()
             scope.launch(Dispatchers.Main) {
                 moleculeFlow(RecompositionMode.Immediate) { presenter.body() }.collect { model ->
                     model.listState.onSuccess {
                         model.reading
-                            ?.restorePosition
-                            ?.takeIf { it.index < itemCount }
-                            ?.let { model.reading?.restorationFinished() }
+                            ?.takeIf { reading -> reading.restorePosition?.let { it.index < itemCount } == true }
+                            ?.let { reading ->
+                                if (pendingBookmark) startupReading.complete(reading) else reading.restorationFinished()
+                            }
                         (0 until itemCount).mapNotNull { peek(it) as? UiTimelineV2.Gap }.firstOrNull()?.let { displayedGap.complete(it) }
                     }
                 }
             }
             val gap = withTimeout(10_000) { displayedGap.await() }
+            val publishedReading = if (pendingBookmark) withTimeout(10_000) { startupReading.await() } else null
             filling = true
             val uiThread = withContext(Dispatchers.Main) { Thread.currentThread() }
             val callback = CompletableDeferred<Pair<Thread, List<String>>>()
@@ -200,6 +208,9 @@ class TimelineGapCompletionTest {
                 gap.onActivate!!.invoke { keys -> callback.complete(Thread.currentThread() to keys) }
             }
             withTimeout(5_000) { entered.await() }
+            if (publishedReading != null) {
+                assertNull(publishedReading.restorePosition, "A native list still holding this model must skip its startup bookmark")
+            }
             withContext(Dispatchers.Main) { gap.onActivate!!.invoke { duplicate.complete(Unit) } }
             if (canceled) scope.cancel() else release.complete(Unit)
             val delivered = withTimeout(5_000) { callback.await() }

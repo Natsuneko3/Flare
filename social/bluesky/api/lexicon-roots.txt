@@ -22,8 +22,11 @@ app.bsky.feed.getAuthorFeed
 app.bsky.feed.getFeed
 app.bsky.feed.getFeedGenerator
 app.bsky.feed.getFeedGenerators
+app.bsky.feed.getLikes
 app.bsky.feed.getListFeed
 app.bsky.feed.getPosts
+app.bsky.feed.getQuotes
+app.bsky.feed.getRepostedBy
 app.bsky.feed.getTimeline
 app.bsky.feed.like
 app.bsky.feed.post
@@ -50,6 +53,7 @@ chat.bsky.actor.defs
 chat.bsky.convo.defs
 chat.bsky.convo.deleteMessageForSelf
 chat.bsky.convo.getConvo
+chat.bsky.convo.getConvoAvailability
 chat.bsky.convo.getConvoForMembers
 chat.bsky.convo.getLog
 chat.bsky.convo.getMessages

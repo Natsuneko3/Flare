@@ -19,11 +19,96 @@
       "hostValid": true
     },
     {
+      "name": "API v2 post context tabs can coexist with legacy context",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "detail": {},
+                "context": {},
+                "contextTabs": {},
+                "contextPage": {
+                  "directions": [
+                    "refresh",
+                    "older"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects post context tabs",
+      "patch": {
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "detail": {},
+                "contextTabs": {},
+                "contextPage": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "Post context tabs require the page operation",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "detail": {},
+                "contextTabs": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "Post context pages require the tabs operation",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "detail": {},
+                "contextPage": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
       "name": "QR login is available in API v2",
       "patch": {
         "apiVersion": 2,
         "platform": {
-          "loginMethods": [{ "id": "scan", "interaction": "QrCode", "title": "Scan" }]
+          "loginMethods": [
+            {
+              "id": "scan",
+              "interaction": "QrCode",
+              "title": "Scan"
+            }
+          ]
         }
       },
       "schemaValid": true,
@@ -33,7 +118,13 @@
       "name": "API v1 rejects QR login",
       "patch": {
         "platform": {
-          "loginMethods": [{ "id": "scan", "interaction": "QrCode", "title": "Scan" }]
+          "loginMethods": [
+            {
+              "id": "scan",
+              "interaction": "QrCode",
+              "title": "Scan"
+            }
+          ]
         }
       },
       "schemaValid": false,
@@ -44,7 +135,20 @@
       "patch": {
         "apiVersion": 2,
         "platform": {
-          "loginMethods": [{ "id": "scan", "interaction": "QrCode", "title": "Scan", "fields": [{ "id": "token", "type": "Secret", "label": "Token" }] }]
+          "loginMethods": [
+            {
+              "id": "scan",
+              "interaction": "QrCode",
+              "title": "Scan",
+              "fields": [
+                {
+                  "id": "token",
+                  "type": "Secret",
+                  "label": "Token"
+                }
+              ]
+            }
+          ]
         }
       },
       "schemaValid": false,
@@ -2261,6 +2365,723 @@
           "capabilities": {
             "flare.datasource.account-capabilities/v1": {
               "operations": {}
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor-only plugin",
+      "patch": {
+        "platform": null,
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "apiVersion": 1,
+          "maxBatchSize": 20,
+          "filter": {
+            "containsAny": [
+              "-----BEGIN PGP MESSAGE-----"
+            ],
+            "regex": "\\$[A-Z]{1,6}\\b",
+            "linkHosts": [
+              "polymarket.com"
+            ],
+            "requireLinks": false
+          },
+          "cache": {
+            "storageNamespaces": [
+              "options"
+            ]
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "timelineProcessor requires v2",
+      "patch": {
+        "apiVersion": 1,
+        "timelineProcessor": {}
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor rejects batch size out of range",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "maxBatchSize": 51
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor rejects non-canonical linkHost",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "filter": {
+            "linkHosts": [
+              "https://polymarket.com"
+            ]
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor regex syntax is Host validated",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "filter": {
+            "regex": "[unclosed"
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": false
+    },
+    {
+      "name": "timelineProcessor storage dependencies cap at 16",
+      "patch": {
+        "apiVersion": 2,
+        "timelineProcessor": {
+          "cache": {
+            "storageNamespaces": [
+              "n0",
+              "n1",
+              "n2",
+              "n3",
+              "n4",
+              "n5",
+              "n6",
+              "n7",
+              "n8",
+              "n9",
+              "n10",
+              "n11",
+              "n12",
+              "n13",
+              "n14",
+              "n15",
+              "n16"
+            ]
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "standalone guest origin on API v2",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": true,
+            "origin": "https://manga.example"
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects standalone guest origin",
+      "patch": {
+        "platform": {
+          "guest": {
+            "enabled": true,
+            "origin": "https://manga.example"
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "disabled guest config rejects standalone origin",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": false,
+            "origin": "https://manga.example"
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "disabled guest config accepts null origin",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": false,
+            "origin": null
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "standalone guest origin rejects a path",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "guest": {
+            "enabled": true,
+            "origin": "https://manga.example/path"
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 manga capability with optional operations",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {},
+                "pageImage": {},
+                "comments": { "directions": ["refresh", "older"] },
+                "recommendations": { "directions": ["refresh"] }
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v2 manga capability requires permissions.mediaNetwork",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v1 rejects manga capability",
+      "patch": {
+        "permissions": { "mediaNetwork": true },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "manga capability requires detail and pages",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "manga non-paging operations reject directions",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": { "directions": ["refresh"] },
+                "pages": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 allows post.mutate without post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": { "mediaNetwork": true },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.manga/v1": {
+              "operations": {
+                "detail": {},
+                "pages": {}
+              }
+            },
+            "flare.datasource.post/v1": {
+              "operations": {
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects post.mutate without post.detail",
+      "patch": {
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 post.context still requires post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "context": {},
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 post.delete still requires post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "delete": {},
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 post.contextTabs still requires post.detail",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.post/v1": {
+              "operations": {
+                "contextTabs": {},
+                "contextPage": {},
+                "mutate": {}
+              }
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 single-site recommendedOrigins with allowCustomOrigin false",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org",
+              "name": "ExHentai",
+              "description": {
+                "key": "origin.eh.desc",
+                "fallback": "Members gallery"
+              }
+            }
+          ]
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects recommendedOrigins",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org"
+            }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v1 rejects allowCustomOrigin false",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org"
+            }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 allowCustomOrigin false requires non-empty recommendedOrigins",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": []
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 recommendedOrigins rejects non-canonical HTTPS origin",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "recommendedOrigins": [
+            {
+              "origin": "https://exhentai.org/"
+            }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 session-challenge capability with valid challengeProbes",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": {
+          "authOrigins": [
+            "https://auth.example.org"
+          ]
+        },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "url": "https://auth.example.org/verify",
+                  "cookies": [
+                    {
+                      "name": "igneous",
+                      "required": false
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": true
+    },
+    {
+      "name": "API v1 rejects session-challenge capability",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "session-challenge requires at least one challengeProbe",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": []
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "challengeProbes is rejected on non-session-challenge capabilities",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.timeline/v1": {
+              "operations": {
+                "page": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "HTTP origin does not grant session-challenge probes",
+      "patch": {
+        "apiVersion": 2,
+        "permissions": {
+          "httpOrigins": [
+            "https://http-only.example.org"
+          ]
+        },
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "https://http-only.example.org/verify",
+                  "cookies": [
+                    {
+                      "name": "cf_clearance"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": true,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 recommendedOrigins rejects more than 8 items",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "recommendedOrigins": [
+            { "origin": "https://a0.example.org" },
+            { "origin": "https://a1.example.org" },
+            { "origin": "https://a2.example.org" },
+            { "origin": "https://a3.example.org" },
+            { "origin": "https://a4.example.org" },
+            { "origin": "https://a5.example.org" },
+            { "origin": "https://a6.example.org" },
+            { "origin": "https://a7.example.org" },
+            { "origin": "https://a8.example.org" }
+          ]
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 recommendedOrigins rejects duplicate origins",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "recommendedOrigins": [
+            { "origin": "https://exhentai.org", "name": "ExHentai" },
+            { "origin": "https://exhentai.org", "name": "Duplicate" }
+          ]
+        }
+      },
+      "schemaValid": true,
+      "hostValid": false
+    },
+    {
+      "name": "API v1 rejects allowCustomOrigin false with empty recommendedOrigins",
+      "patch": {
+        "apiVersion": 1,
+        "platform": {
+          "allowCustomOrigin": false,
+          "recommendedOrigins": []
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 session-challenge rejects more than 16 challengeProbes",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": { "complete": {} },
+              "challengeProbes": [
+                { "url": "$accountOrigin/p0", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p1", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p2", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p3", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p4", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p5", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p6", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p7", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p8", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p9", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p10", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p11", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p12", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p13", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p14", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p15", "cookies": [{ "name": "c" }] },
+                { "url": "$accountOrigin/p16", "cookies": [{ "name": "c" }] }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": false
+    },
+    {
+      "name": "API v2 session-challenge editor schema rejects unknown operation while Host ignores additively",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {
+                "complete": {},
+                "extra": {}
+              },
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [{ "name": "cf_clearance" }]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemaValid": false,
+      "hostValid": true
+    },
+    {
+      "name": "API v2 session-challenge requires complete operation",
+      "patch": {
+        "apiVersion": 2,
+        "platform": {
+          "capabilities": {
+            "flare.datasource.session-challenge/v1": {
+              "operations": {},
+              "challengeProbes": [
+                {
+                  "url": "$accountOrigin/gallery",
+                  "cookies": [{ "name": "cf_clearance" }]
+                }
+              ]
             }
           }
         }

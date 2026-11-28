@@ -28,7 +28,6 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.material3.rememberWideNavigationRailState
 import androidx.compose.runtime.Composable
-import dev.dimension.flare.ui.component.status.LocalOpenRssMedia
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +72,7 @@ import dev.dimension.flare.ui.component.NavigationSuiteScaffold2
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.TabIcon
 import dev.dimension.flare.ui.component.TopLevelBackStack
+import dev.dimension.flare.ui.component.status.LocalOpenRssMedia
 import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.asType
 import dev.dimension.flare.ui.model.map
@@ -91,6 +91,7 @@ import dev.dimension.flare.ui.presenter.settings.AiAgentEnabledPresenter
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.Router
 import dev.dimension.flare.ui.route.hasVisibleMediaViewer
+import dev.dimension.flare.ui.screen.serviceselect.LocalAndroidChallengeReloginHandler
 import dev.dimension.flare.ui.screen.splash.SplashScreen
 import kotlinx.coroutines.launch
 import moe.tlaster.precompose.molecule.producePresenter
@@ -112,6 +113,15 @@ internal fun HomeScreen(afterInit: () -> Unit) {
     val hapticFeedback = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val pluginOAuthCallbacks = remember { koinGet<PluginOAuthCallbackCoordinatorV1>() }
+    val challengeReloginHandler = LocalAndroidChallengeReloginHandler.current
+    DisposableEffect(challengeReloginHandler, state) {
+        challengeReloginHandler?.value = { target ->
+            state.navigate(Route.ServiceSelect.Relogin(target))
+        }
+        onDispose {
+            challengeReloginHandler?.value = null
+        }
+    }
     state.tabs
         .onSuccess { tabs ->
             val currentRoute =

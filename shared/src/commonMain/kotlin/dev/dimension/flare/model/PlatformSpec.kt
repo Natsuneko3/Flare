@@ -3,6 +3,7 @@ package dev.dimension.flare.model
 import dev.dimension.flare.data.database.app.model.SubscriptionType
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.paging.CacheableRemoteLoader
+import dev.dimension.flare.data.model.tab.TimelineCandidate
 import dev.dimension.flare.data.model.tab.TimelineSpec
 import dev.dimension.flare.ui.model.UiInstance
 import dev.dimension.flare.ui.model.UiTimelineV2
@@ -31,16 +32,25 @@ public interface PlatformSpec {
         get() = 0
     public val isDefaultGuest: Boolean
         get() = false
+    public val standaloneGuestHost: String?
+        get() = null
     public val capabilities: Set<PlatformCapability>
         get() = emptySet()
 
     public fun resolveInitialText(context: ComposeInitialTextContext): InitialText? = null
 
     public val timelineSpecs: ImmutableList<TimelineSpec<out TimelineSpec.Data>>
+    public val guestDefaultTabs: ImmutableList<TimelineCandidate<*>>
+        get() = persistentListOf()
+    public val guestTimelineTabs: ImmutableList<TimelineCandidate<*>>
+        get() = persistentListOf()
     public val subscriptionTimelineSpecs: ImmutableList<SubscriptionTimelineSpec>
         get() = persistentListOf()
 
     public fun deepLinks(accountKey: MicroBlogKey): ImmutableList<PlatformDeepLink<*>>
+
+    public val shortLink: PlatformShortLink?
+        get() = null
 
     public fun createDataSource(context: PlatformDataSourceContext): MicroblogDataSource
 
@@ -102,6 +112,13 @@ public data class PlatformDeepLink<T>(
     public val serializer: KSerializer<T>,
     public val matcher: (T) -> Boolean = { true },
     public val callback: (T) -> DeeplinkRoute,
+)
+
+/** Resolves a short URL to one handled by the same platform's deep link rules. */
+@HiddenFromObjC
+public data class PlatformShortLink(
+    public val host: String,
+    public val resolve: suspend (String) -> String?,
 )
 
 @HiddenFromObjC

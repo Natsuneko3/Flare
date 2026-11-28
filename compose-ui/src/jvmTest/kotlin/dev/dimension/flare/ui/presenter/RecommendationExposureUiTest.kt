@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
 import androidx.paging.PagingData
-import androidx.paging.compose.collectAsLazyPagingItems
+import dev.dimension.flare.common.collectAsPagingItems
 import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.common.toPagingState
 import dev.dimension.flare.model.AccountType
@@ -89,7 +89,7 @@ class RecommendationExposureUiTest {
                 ),
             )
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val state =
                 object : TimelineItemPresenter.State {
                     override val listState = paging

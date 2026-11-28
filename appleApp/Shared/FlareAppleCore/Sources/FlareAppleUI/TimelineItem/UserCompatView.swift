@@ -3,6 +3,8 @@ import KotlinSharedUI
 import FlareAppleCore
 
 public struct UserCompatView<TrailingContent: View>: View {
+    @Environment(\.isPostContent) private var isPostContent
+    @Environment(\.timelineGalleryFallback) private var isGalleryFallback
     private let data: UiProfile
     private let subtitle: String
     private let trailing: () -> TrailingContent
@@ -23,7 +25,7 @@ public struct UserCompatView<TrailingContent: View>: View {
     public var body: some View {
         HStack(spacing: 8) {
             AvatarView(data: data.avatar)
-                .frame(width: 44, height: 44)
+                .frame(width: isPostContent ? 48 : 44, height: isPostContent ? 48 : 44)
                 .if(onClicked != nil) { view in
                     view
                         .accessibilityLabel(
@@ -37,9 +39,10 @@ public struct UserCompatView<TrailingContent: View>: View {
                 alignment: .leading,
                 spacing: 0
             ) {
-                RichText(text: data.name)
+                RichText(text: data.name, usesDisplayNameFont: !isGalleryFallback)
+                    .fontWeight(isGalleryFallback ? (isPostContent ? .heavy : nil) : .bold)
                 Text(subtitle)
-                    .font(.caption)
+                    .font(isPostContent ? .body : .caption)
                     .flareSecondaryText()
             }
             .if(onClicked != nil) { view in
@@ -67,21 +70,24 @@ public extension UserCompatView {
 }
 
 public struct UserLoadingView: View {
+    @Environment(\.isPostContent) private var isPostContent
     public init() {}
 
     public var body: some View {
         HStack(spacing: 8) {
             Rectangle()
                 .fill(.placeholder)
-                .frame(width: 44, height: 44)
+                .frame(width: isPostContent ? 48 : 44, height: isPostContent ? 48 : 44)
                 .clipShape(.circle)
             VStack(
                 alignment: .leading,
                 spacing: 0
             ) {
                 Text("#loading", bundle: FlareAppleUILocalization.bundle)
+                    .flarePrimaryText()
+                    .fontWeight(isPostContent ? .bold : nil)
                 Text("#loading", bundle: FlareAppleUILocalization.bundle)
-                    .font(.caption)
+                    .font(isPostContent ? .body : .caption)
                     .flareSecondaryText()
             }
             .frame(maxWidth: .infinity, alignment: .leading)

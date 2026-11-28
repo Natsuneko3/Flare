@@ -18,37 +18,58 @@ struct ProfileScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShare: (MicroBlogKey) -> Void
     @State private var presenter: KotlinPresenter<ProfileState>
-    @State private var selectedTab: Int = 0
+    @State private var tabSelection = ProfileTabSelection()
     @State private var showToolbarTabPicker = false
     @State private var isProfileHeaderVisible = true
     @State private var isInlineTabPickerVisible = true
     @State private var showBlockedProfileContent = false
+    @State private var currentLayout = ProfileLayoutPolicy(size: .zero, isRegularWidth: false)
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     
     var body: some View {
-        ZStack {
-            if horizontalSizeClass == .regular {
-                regularBody
+        let isSplit = currentLayout.mode.isSplit
+        GeometryReader { proxy in
+            let division = proxy.activeDivisionFrame
+            let layout = ProfileLayoutPolicy(
+                size: proxy.size,
+                isRegularWidth: horizontalSizeClass == .regular,
+                division: division,
+                layoutDirection: layoutDirection
+            )
+            Group {
+                switch layout.mode {
+                case .compact:
+                    compatBody
+                case .horizontalSplit:
+                    horizontalSplitBody(proxy: proxy, layout: layout)
+                case let .verticalSplit(primaryHeight, spacing):
+                    verticalSplitBody(proxy: proxy, layout: layout, primaryHeight: primaryHeight, spacing: spacing)
+                }
             }
-            else {
-                compatBody
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: division)
+            .onChange(of: layout, initial: true) { _, newLayout in
+                currentLayout = newLayout
             }
         }
-        .flareTextBackground(timelineDisplayMode == .plain && horizontalSizeClass == .compact ? .flareSystemBackground : .flareSystemGroupedBackground)
-        .background(Color(timelineDisplayMode == .plain && horizontalSizeClass == .compact ? .clear : .systemGroupedBackground))
+        .flareTextBackground(timelineDisplayMode == .plain && !isSplit ? .flareSystemBackground : .flareSystemGroupedBackground)
+        .background(Color(timelineDisplayMode == .plain && !isSplit ? .clear : .systemGroupedBackground))
         .toolbarBackground(
-            horizontalSizeClass == .compact ? Visibility.hidden : Visibility.automatic,
+            !isSplit ? Visibility.hidden : Visibility.automatic,
             for: .navigationBar
         )
         .navigationBarTitleDisplayMode(.inline)
+        .onSuccessOf(of: presenter.state.tabs) { tabs in
+            tabSelection.update(availableIDs: tabs.cast(ProfileState.Tab.self).map(\.id))
+        }
         .onChange(of: isBlockedProfile) { _, isBlocked in
             if !isBlocked {
                 showBlockedProfileContent = false
             }
         }
         .toolbar {
-            if horizontalSizeClass == .compact && !isProfileHeaderVisible && !shouldGateBlockedProfile, case .success(let userState) = onEnum(of: presenter.state.userState) {
+            if !isSplit && !isProfileHeaderVisible && !shouldGateBlockedProfile, case .success(let userState) = onEnum(of: presenter.state.userState) {
                 if #available(iOS 27.1, *) {
                     ProfileNavigationTitle(text: userState.data.name)
                 } else {
@@ -58,20 +79,21 @@ struct ProfileScreen: View {
                 }
             }
             
-            if !shouldGateBlockedProfile && horizontalSizeClass == .regular, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
+            if !shouldGateBlockedProfile && currentLayout.showsToolbarInlineTabs, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
                 let tabs = tabState.data.cast(ProfileState.Tab.self)
                 if tabs.count > 1 {
+                    let tabIDs = tabs.map(\.id)
+                    let selectedIndex = tabSelection[indexIn: tabIDs]
                     ToolbarItemGroup {
-                        ForEach(0..<tabs.count, id: \.self) { index in
-                            let tab = tabs[index]
+                        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                             Button {
                                 withAnimation(.spring) {
-                                    selectedTab = index
+                                    tabSelection[indexIn: tabIDs] = index
                                 }
                             } label: {
                                 Text(profileTabTitle(for: tab))
-                                    .foregroundStyle(selectedTab == index ? Color.accentColor : .primary)
-                                    .fontWeight(selectedTab == index ? .bold : .regular)
+                                    .foregroundStyle(selectedIndex == index ? Color.accentColor : .primary)
+                                    .fontWeight(selectedIndex == index ? .bold : .regular)
                             }
                         }
                     }
@@ -79,129 +101,172 @@ struct ProfileScreen: View {
                 if #available(iOS 26.0, *) {
                     ToolbarSpacer()
                 }
-            } else if !shouldGateBlockedProfile && horizontalSizeClass == .compact, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
+            } else if !shouldGateBlockedProfile && !isSplit, case .success(let tabState) = onEnum(of: presenter.state.tabs) {
                 let tabs = tabState.data.cast(ProfileState.Tab.self)
                 if tabs.count > 1 && showToolbarTabPicker {
                     ToolbarItem(placement: .primaryAction) {
-                        profileTabPicker(tabs: tabs)
+                        ProfileTabPicker(tabs: tabs, selectedTab: $tabSelection[indexIn: tabs.map(\.id)])
                             .pickerStyle(.menu)
                             .fixedSize()
                     }
                 }
             }
-            if agentEnabled || !presenter.state.actions.isEmpty {
+            if loadedProfile != nil || agentEnabled || !presenter.state.actions.isEmpty {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    if agentEnabled, case .success(let userState) = onEnum(of: presenter.state.userState) {
-                        Button {
-                            onProfileInsight(userState.data.key)
-                        } label: {
-                            Image(fontAwesome: .robot)
+                    if let user = loadedProfile {
+                        if agentEnabled {
+                            Button {
+                                onProfileInsight(user.key)
+                            } label: {
+                                Image(fontAwesome: .robot)
+                            }
+                            .accessibilityLabel(Text(String(localized: "profile_insight_title", defaultValue: "Profile insight")))
                         }
-                        .accessibilityLabel(Text(String(localized: "profile_insight_title", defaultValue: "Profile insight")))
+                        Button {
+                            onProfileShare(user.key)
+                        } label: {
+                            Image(fontAwesome: .shareNodes)
+                        }
+                        .accessibilityLabel(Text("fx_share"))
                     }
-                    if !presenter.state.actions.isEmpty {
-                        StatusActionsView(
-                            data: presenter.state.actions,
-                            useText: false,
-                            allowSpacer: false,
-                            applyPostActionLayout: false,
-                            isDetail: true
-                        )
+                    if let group = presenter.state.actions.first as? ActionMenu.Group {
+                        ProfileToolbarMenu(group: group)
                     }
                 }
             }
         }
     }
     
-    var regularBody: some View {
-        GeometryReader { proxy in
-            let division = profileDivision(in: proxy)
-            let layout = ProfileLayoutPolicy(
-                width: proxy.size.width,
-                division: division,
-                layoutDirection: layoutDirection
-            )
-            HStack(spacing: 0) {
-                ScrollView {
-                    ProfileHeader(
-                        user: presenter.state.userState,
-                        relation: presenter.state.relationState,
-                        followButtonState: presenter.state.followButtonState,
-                        isMe: presenter.state.isMe,
-                        bannerTopInset: layout.usesCard ? 0 : proxy.safeAreaInsets.top,
-                        onFollowClick: { user, followButtonState in
-                            handleFollowAction(user: user, followButtonState: followButtonState)
-                        },
-                        onFollowingClick: onFollowingClick,
-                        onFansClick: onFansClick
-                    )
-                    .padding(.bottom)
-                    .flareTextBackground(layout.usesCard ? .flareSecondarySystemGroupedBackground : .flareSystemBackground)
-                    .background(layout.usesCard ? Color.flareSecondarySystemGroupedBackground : Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: layout.usesCard ? 32 : 0, style: .continuous))
-                }
-                .contentMargins(.top, 0, for: .scrollContent)
-                .padding(.leading, layout.usesCard ? 16 : 0)
-                .frame(width: layout.profileWidth)
-                .background {
-                    if !layout.usesCard {
-                        Color(.systemBackground).ignoresSafeArea(edges: .vertical)
-                    }
-                }
-                .ignoresSafeArea(.container, edges: layout.usesCard ? [] : .top)
-
-                Divider()
-                    .frame(width: layout.columnSpacing)
-                    .opacity(layout.usesCard ? 0 : 1)
-                    .background(layout.usesCard ? Color.clear : Color(.systemBackground))
-                    .ignoresSafeArea(.container, edges: .vertical)
-
-                if shouldGateBlockedProfile {
-                    BlockedProfileGate {
-                        showBlockedProfileContent = true
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                } else {
-                    StateView(state: presenter.state.tabs) { tabsArray in
-                        let tabs = tabsArray.cast(ProfileState.Tab.self)
-                        profileTimelineCollection(
-                            tabs: tabs,
-                            showsProfileAccessories: false
-                        )
-                    } errorContent: { error in
-                        ListErrorView(error: error) {
-                            presenter.state.retryTabs()
-                        }
-                    } loadingContent: {
-                        GeometryReader { proxy in
-                            ScrollView {
-                                LazyVStack(spacing: 0) {
-                                    ProfileTabsLoadingPlaceholder()
-                                    ProfileTimelineUIKitLoadingPlaceholder(
-                                        columnCount: TimelineColumnPolicy.adaptive.columnCount(for: proxy.size.width)
-                                    )
-                                }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        }
-                    }
+    private func horizontalSplitBody(proxy: GeometryProxy, layout: ProfileLayoutPolicy) -> some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                ProfileHeader(
+                    user: presenter.state.userState,
+                    relation: presenter.state.relationState,
+                    followButtonState: presenter.state.followButtonState,
+                    isMe: presenter.state.isMe,
+                    bannerTopInset: layout.usesCard ? 0 : proxy.safeAreaInsets.top,
+                    onFollowClick: { user, followButtonState in
+                        handleFollowAction(user: user, followButtonState: followButtonState)
+                    },
+                    onFollowingClick: onFollowingClick,
+                    onFansClick: onFansClick
+                )
+                .padding(.bottom)
+                .flareTextBackground(layout.usesCard ? .flareSecondarySystemGroupedBackground : .flareSystemBackground)
+                .background(layout.usesCard ? Color.flareSecondarySystemGroupedBackground : Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: layout.usesCard ? 32 : 0, style: .continuous))
+            }
+            .contentMargins(.top, 0, for: .scrollContent)
+            .padding(.leading, layout.usesCard ? 16 : 0)
+            .frame(width: layout.profileWidth)
+            .background {
+                if !layout.usesCard {
+                    Color(.systemBackground).ignoresSafeArea(edges: .vertical)
                 }
             }
-            .modifier(TimelineListBackground(
-                columnPolicy: layout.usesCard ? .adaptive : .single
-            ))
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: division)
+            .ignoresSafeArea(.container, edges: layout.usesCard ? [] : .top)
+
+            Divider()
+                .frame(width: layout.columnSpacing)
+                .opacity(layout.usesCard ? 0 : 1)
+                .background(layout.usesCard ? Color.clear : Color(.systemBackground))
+                .ignoresSafeArea(.container, edges: .vertical)
+
+            splitSecondaryContent(layout: layout, isVerticalSplit: false)
         }
+        .modifier(TimelineListBackground(
+            columnPolicy: layout.usesCard ? .adaptive : .single
+        ))
     }
 
-    private func profileDivision(in proxy: GeometryProxy) -> CGRect? {
-        if #available(iOS 27.1, *) {
-            return proxy.reservedRegions(kind: .division)
-                .first { $0.isActive && $0.frame.height > $0.frame.width }?.frame
+    private func verticalSplitBody(
+        proxy: GeometryProxy,
+        layout: ProfileLayoutPolicy,
+        primaryHeight: CGFloat,
+        spacing: CGFloat
+    ) -> some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                ProfileHeader(
+                    user: presenter.state.userState,
+                    relation: presenter.state.relationState,
+                    followButtonState: presenter.state.followButtonState,
+                    isMe: presenter.state.isMe,
+                    bannerTopInset: proxy.safeAreaInsets.top,
+                    onFollowClick: { user, followButtonState in
+                        handleFollowAction(user: user, followButtonState: followButtonState)
+                    },
+                    onFollowingClick: onFollowingClick,
+                    onFansClick: onFansClick
+                )
+                .padding(.bottom)
+                .flareTextBackground(.flareSystemBackground)
+                .background(Color(.systemBackground))
+            }
+            .contentMargins(.top, 0, for: .scrollContent)
+            .frame(height: primaryHeight)
+            .frame(maxWidth: .infinity)
+            .background {
+                Color(.systemBackground).ignoresSafeArea(edges: .top)
+            }
+            .ignoresSafeArea(.container, edges: .top)
+
+            Divider()
+                .frame(height: spacing)
+                .frame(maxWidth: .infinity)
+                .background(Color(.systemBackground))
+
+            splitSecondaryContent(layout: layout, isVerticalSplit: true)
         }
-        return nil
+        .modifier(TimelineListBackground(columnPolicy: .single))
+    }
+
+    @ViewBuilder
+    private func splitSecondaryContent(layout: ProfileLayoutPolicy, isVerticalSplit: Bool) -> some View {
+        if shouldGateBlockedProfile {
+            BlockedProfileGate {
+                showBlockedProfileContent = true
+            }
+            .padding(.horizontal)
+            .padding(.top, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            StateView(state: presenter.state.tabs) { tabsArray in
+                let tabs = tabsArray.cast(ProfileState.Tab.self)
+                VStack(spacing: 0) {
+                    if layout.showsInlinePaneTabs && tabs.count > 1 {
+                        ProfileTabBar(
+                            tabs: tabs,
+                            selectedTab: $tabSelection[indexIn: tabs.map(\.id)]
+                        )
+                        .environment(\.profileUsesPlainStyle, true)
+                        .background(Color(.systemBackground))
+                    }
+                    profileTimelineCollection(
+                        tabs: tabs,
+                        showsProfileAccessories: false,
+                        ignoredVerticalSafeAreaEdges: isVerticalSplit || (layout.showsInlinePaneTabs && tabs.count > 1) ? .bottom : .vertical
+                    )
+                }
+            } errorContent: { error in
+                ListErrorView(error: error) {
+                    presenter.state.retryTabs()
+                }
+            } loadingContent: {
+                GeometryReader { paneProxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ProfileTabsLoadingPlaceholder()
+                            ProfileTimelineUIKitLoadingPlaceholder(
+                                columnCount: TimelineColumnPolicy.adaptive.columnCount(for: paneProxy.size.width)
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+            }
+        }
     }
     
     @ViewBuilder
@@ -220,6 +285,7 @@ struct ProfileScreen: View {
                     onFansClick: onFansClick
                 )
                 .padding(.bottom)
+                .plainProfileAccessory()
                 BlockedProfileGate {
                     showBlockedProfileContent = true
                 }
@@ -258,8 +324,11 @@ struct ProfileScreen: View {
                             onFollowingClick: onFollowingClick,
                             onFansClick: onFansClick
                         )
+                        .plainProfileAccessory()
                         ProfileTabsLoadingPlaceholder()
+                            .plainProfileAccessory()
                         ProfileTimelineUIKitLoadingPlaceholder(columnCount: 1)
+                            .padding(.top, timelineDisplayMode == .plain ? 0 : 8)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -271,13 +340,14 @@ struct ProfileScreen: View {
 
     private func profileTimelineCollection(
         tabs: [ProfileState.Tab],
-        showsProfileAccessories: Bool
+        showsProfileAccessories: Bool,
+        ignoredVerticalSafeAreaEdges: Edge.Set = .vertical
     ) -> some View {
         GeometryReader { proxy in
             ProfileTimelineCollectionView(
                 profileState: presenter.state,
                 tabs: tabs,
-                selectedTab: $selectedTab,
+                selectedTab: $tabSelection[indexIn: tabs.map(\.id)],
                 showsProfileAccessories: showsProfileAccessories,
                 timelineColumnCount: TimelineColumnPolicy.adaptive.columnCount(for: proxy.size.width),
                 onFollowClick: { user, followButtonState in
@@ -304,12 +374,7 @@ struct ProfileScreen: View {
             )
             .id(accountID)
         }
-        .ignoresSafeArea(edges: .vertical)
-    }
-
-    @ViewBuilder
-    private func profileTabPicker(tabs: [ProfileState.Tab]) -> some View {
-        ProfileTabPicker(tabs: tabs, selectedTab: $selectedTab)
+        .ignoresSafeArea(edges: ignoredVerticalSafeAreaEdges)
     }
 
     private func updateToolbarTabPickerVisibility() {
@@ -337,6 +402,13 @@ struct ProfileScreen: View {
         }
     }
 
+    private var loadedProfile: UiProfile? {
+        if case .success(let userState) = onEnum(of: presenter.state.userState) {
+            return userState.data
+        }
+        return nil
+    }
+
     private var isBlockedProfile: Bool {
         if case .success(let relationState) = onEnum(of: presenter.state.relationState) {
             return relationState.data.blocking
@@ -346,6 +418,16 @@ struct ProfileScreen: View {
 
     private var shouldGateBlockedProfile: Bool {
         isBlockedProfile && !showBlockedProfileContent
+    }
+}
+
+private extension View {
+    func plainProfileAccessory() -> some View {
+        self
+            .environment(\.profileUsesPlainStyle, true)
+            .frame(maxWidth: .infinity)
+            .flareTextBackground(.flareSystemBackground)
+            .background(Color.flareSystemBackground)
     }
 }
 
@@ -412,7 +494,7 @@ private struct ProfileTimelineUIKitLoadingPlaceholder: View {
                     isMultipleColumn: true
                 )
             }
-            .padding(.horizontal, TimelineUIKitLayoutMetrics.horizontalInset)
+            .padding(.horizontal, TimelineHorizontalInsets.multiColumnGrid)
         } else {
             LazyVStack(spacing: TimelineUIKitLayoutMetrics.rowSpacing) {
                 placeholderCards(
@@ -422,7 +504,7 @@ private struct ProfileTimelineUIKitLoadingPlaceholder: View {
             }
             .padding(
                 .horizontal,
-                isPlainTimelineDisplayMode ? 0 : TimelineUIKitLayoutMetrics.horizontalInset
+                isPlainTimelineDisplayMode ? 0 : TimelineHorizontalInsets.card
             )
         }
     }
@@ -570,19 +652,6 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
             selectedTabBinding.wrappedValue = index
         }
 
-        guard !tabs.isEmpty else {
-            controller.setPages([], selectedIndex: 0)
-            context.coordinator.prunePages(validIDs: [])
-            return
-        }
-
-        let clampedIndex = min(max(selectedTab, 0), tabs.count - 1)
-        if clampedIndex != selectedTab {
-            DispatchQueue.main.async {
-                selectedTab = clampedIndex
-            }
-        }
-        let validIDs = Set(tabs.map(profileTimelineID(for:)))
         let coordinator = context.coordinator
         let pageConfigurations = tabs.map { tab in
             ProfileTimelinePageConfiguration(
@@ -599,8 +668,8 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
                 }
             )
         }
-        controller.setPages(pageConfigurations, selectedIndex: clampedIndex)
-        context.coordinator.prunePages(validIDs: validIDs)
+        controller.setPages(pageConfigurations, selectedIndex: selectedTab)
+        coordinator.prunePages(validIDs: Set(pageConfigurations.map(\.id)))
     }
 
     final class Coordinator {
@@ -675,22 +744,30 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
             let newHeaderSignature = ProfileHeaderAccessorySignature(
                 profileState: profileState,
                 timelineAppearance: timelineAppearance,
-                horizontalSizeClass: horizontalSizeClass
+                horizontalSizeClass: horizontalSizeClass,
+                showsTimelineDivider: tabs.count == 1
             )
             if headerSignature != newHeaderSignature {
                 headerSignature = newHeaderSignature
                 headerView.update(
                     AnyView(
-                        ProfileHeader(
-                            user: profileState.userState,
-                            relation: profileState.relationState,
-                            followButtonState: profileState.followButtonState,
-                            isMe: profileState.isMe,
-                            onFollowClick: onFollowClick,
-                            onFollowingClick: onFollowingClick,
-                            onFansClick: onFansClick
-                        )
+                        VStack(spacing: 0) {
+                            ProfileHeader(
+                                user: profileState.userState,
+                                relation: profileState.relationState,
+                                followButtonState: profileState.followButtonState,
+                                isMe: profileState.isMe,
+                                onFollowClick: onFollowClick,
+                                onFollowingClick: onFollowingClick,
+                                onFansClick: onFansClick
+                            )
+                            if newHeaderSignature.showsTimelineDivider {
+                                Divider()
+                                    .padding(.top, 8)
+                            }
+                        }
                         .environment(\.timelineAppearance, timelineAppearance)
+                        .environment(\.profileUsesPlainStyle, true)
                         .environment(\.openURL, openURL)
                         .environment(\.horizontalSizeClass, horizontalSizeClass)
                     )
@@ -713,6 +790,7 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
                                 progress: tabSelectionProgress
                             )
                                 .environment(\.timelineAppearance, timelineAppearance)
+                                .environment(\.profileUsesPlainStyle, true)
                                 .environment(\.openURL, openURL)
                                 .environment(\.horizontalSizeClass, horizontalSizeClass)
                         )
@@ -740,6 +818,7 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
             controller.usesGroupedBackgroundOverride = appearance.usesCardBackground || timelineColumnCount > 1
             controller.networkKind = networkKind
             controller.extendsContentUnderTopBars = extendsContentUnderTopBars
+            controller.timelineCardTopSpacing = extendsContentUnderTopBars ? 8 : 0
             controller.topScrollIndicatorInset = 0
             controller.suppressInitialRefreshIndicator = true
             controller.restoresScrollAnchorOnSnapshotChanges = false
@@ -817,7 +896,7 @@ private struct ProfileTimelineCollectionView: UIViewControllerRepresentable {
     }
 }
 
-private struct ProfileTimelinePageConfiguration {
+struct ProfileTimelinePageConfiguration {
     let id: String
     let makeController: () -> UITimelineCollectionViewController
 }
@@ -908,7 +987,7 @@ private final class ProfileAccessoryScrollView: UIScrollView {
     }
 }
 
-private final class ProfileTimelinePagerViewController: UIViewController,
+final class ProfileTimelinePagerViewController: UIViewController,
     UIPageViewControllerDataSource,
     UIPageViewControllerDelegate,
     UIScrollViewDelegate {
@@ -1030,8 +1109,6 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         view.backgroundColor = color
         pageViewController.view.backgroundColor = color
         pages.forEach { $0.setBackgroundColor(color) }
-        setBaseBackgroundColor(color, for: headerView)
-        setBaseBackgroundColor(color, for: pickerView)
         updateAccessoryAppearance(navigationTitleVisible: lastHeaderVisibility == false)
     }
 
@@ -1058,7 +1135,10 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         guard !pages.isEmpty else {
             currentIndex = 0
             accessoryScrollView.isScrollEnabled = false
-            pageViewController.setViewControllers(nil, direction: .forward, animated: false)
+            if !previousIDs.isEmpty {
+                // UIPageViewController requires one controller when replacing its visible page.
+                pageViewController.setViewControllers([UIViewController()], direction: .forward, animated: false)
+            }
             finishPageTransition(at: 0)
             reportVisibility(effectiveOffsetY: 0)
             return
@@ -1068,7 +1148,7 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         let targetIndex = min(max(selectedIndex, 0), pages.count - 1)
         view.setNeedsLayout()
         let pagesChanged = previousIDs != pages.map(\.id)
-        selectPage(at: targetIndex, animated: !pagesChanged && view.window != nil)
+        selectPage(at: targetIndex, pagesChanged: pagesChanged)
     }
 
     func pageViewController(
@@ -1132,13 +1212,13 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         return pages[currentIndex].timelineController
     }
 
-    private func selectPage(at index: Int, animated: Bool) {
+    private func selectPage(at index: Int, pagesChanged: Bool) {
         guard pages.indices.contains(index) else { return }
         let target = pages[index]
         let targetTimeline = activate(target)
         let visiblePage = pageViewController.viewControllers?.first as? ProfileTimelinePageViewController
         let sourceIndex = visiblePage.flatMap(index(of:)) ?? currentIndex
-        if visiblePage === target {
+        if visiblePage === target && !pagesChanged {
             currentIndex = index
             updateAccessoryFrames(effectiveOffsetY: targetTimeline.effectiveContentOffsetY)
             if pageTransition == nil {
@@ -1146,9 +1226,10 @@ private final class ProfileTimelinePagerViewController: UIViewController,
             }
             return
         }
-        if let visiblePage {
+        if let visiblePage, visiblePage !== target {
             synchronizeInitialOffset(from: visiblePage, to: targetTimeline)
         }
+        let animated = !pagesChanged && view.window != nil
         let direction: UIPageViewController.NavigationDirection = index >= sourceIndex ? .forward : .reverse
         if animated {
             beginPageTransition(from: sourceIndex, to: index, isProgrammatic: true)
@@ -1535,14 +1616,6 @@ private final class ProfileTimelinePagerViewController: UIViewController,
         }
     }
 
-    private func setBaseBackgroundColor(_ color: UIColor, for view: UIView?) {
-        if let accessory = view as? ProfileHostedAccessoryView {
-            accessory.setBaseBackgroundColor(color)
-        } else {
-            view?.backgroundColor = color
-        }
-    }
-
     private func updateAccessoryAppearance(navigationTitleVisible: Bool) {
         headerView?.alpha = navigationTitleVisible ? 0 : 1
         collapsedGlassView.isHidden = !navigationTitleVisible || headerView == nil
@@ -1559,11 +1632,13 @@ private struct ProfileHeaderAccessorySignature: Equatable {
     let isMeState: String
     let appearance: TimelineUIKitAppearance
     let horizontalSizeClass: UserInterfaceSizeClass?
+    let showsTimelineDivider: Bool
 
     init(
         profileState: ProfileState,
         timelineAppearance: TimelineAppearance,
-        horizontalSizeClass: UserInterfaceSizeClass?
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        showsTimelineDivider: Bool
     ) {
         userState = Self.userStateSignature(profileState.userState)
         relationState = Self.relationStateSignature(profileState.relationState)
@@ -1571,6 +1646,7 @@ private struct ProfileHeaderAccessorySignature: Equatable {
         isMeState = Self.isMeStateSignature(profileState.isMe)
         appearance = TimelineUIKitAppearance(timeline: timelineAppearance)
         self.horizontalSizeClass = horizontalSizeClass
+        self.showsTimelineDivider = showsTimelineDivider
     }
 
     private static func userStateSignature(_ state: UiState<UiProfile>) -> String {
@@ -1657,7 +1733,6 @@ private struct ProfilePickerAccessorySignature: Equatable {
 private final class ProfileHostedAccessoryView: UIView {
     private let host = UIHostingController(rootView: AnyView(EmptyView()))
     private let ignoresSafeArea: Bool
-    private var baseBackgroundColor = UIColor.clear
     private var hidesBaseBackground = false
 
     init(ignoresSafeArea: Bool) {
@@ -1685,17 +1760,10 @@ private final class ProfileHostedAccessoryView: UIView {
         setNeedsLayout()
     }
 
-    func setBaseBackgroundColor(_ color: UIColor) {
-        baseBackgroundColor = color
-        traitOverrides[FlareTextBackgroundTrait.self] = hidesBaseBackground ? nil : color
-        backgroundColor = hidesBaseBackground ? .clear : color
-    }
-
     func setBaseBackgroundHidden(_ hidden: Bool) {
         guard hidesBaseBackground != hidden else { return }
         hidesBaseBackground = hidden
-        traitOverrides[FlareTextBackgroundTrait.self] = hidden ? nil : baseBackgroundColor
-        backgroundColor = hidden ? .clear : baseBackgroundColor
+        updateBaseBackground()
     }
 
     override func didMoveToWindow() {
@@ -1710,7 +1778,7 @@ private final class ProfileHostedAccessoryView: UIView {
     }
 
     private func commonInit() {
-        backgroundColor = .clear
+        updateBaseBackground()
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
         if #available(iOS 16.0, *) {
@@ -1726,6 +1794,11 @@ private final class ProfileHostedAccessoryView: UIView {
             host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
             host.view.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    private func updateBaseBackground() {
+        traitOverrides[FlareTextBackgroundTrait.self] = hidesBaseBackground ? nil : .systemBackground
+        backgroundColor = hidesBaseBackground ? .clear : .systemBackground
     }
 
     private func findParentViewController() -> UIViewController? {
@@ -1765,7 +1838,8 @@ extension ProfileScreen {
         userKey: MicroBlogKey?,
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
-        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in }
+        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShare: @escaping (MicroBlogKey) -> Void = { _ in }
     ) {
         self.init(
             accountType: accountType,
@@ -1773,6 +1847,7 @@ extension ProfileScreen {
             onFollowingClick: onFollowingClick,
             onFansClick: onFansClick,
             onProfileInsight: onProfileInsight,
+            onProfileShare: onProfileShare,
             presenter: .init(presenter: ProfilePresenter(accountType: accountType, userKey: userKey))
         )
     }
@@ -1784,6 +1859,7 @@ struct ProfileWithUserNameAndHostScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShare: (MicroBlogKey) -> Void
     
     init(
         userName: String,
@@ -1791,12 +1867,14 @@ struct ProfileWithUserNameAndHostScreen: View {
         accountType: AccountType,
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
-        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in }
+        onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShare: @escaping (MicroBlogKey) -> Void = { _ in }
     ) {
         self.accountType = accountType
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
         self.onProfileInsight = onProfileInsight
+        self.onProfileShare = onProfileShare
         self._presenter = .init(wrappedValue: .init(presenter: ProfileWithUserNameAndHostPresenter(userName: userName, host: host, accountType: accountType)))
     }
     var body: some View {
@@ -1806,7 +1884,8 @@ struct ProfileWithUserNameAndHostScreen: View {
                 userKey: user.key,
                 onFollowingClick: onFollowingClick,
                 onFansClick: onFansClick,
-                onProfileInsight: onProfileInsight
+                onProfileInsight: onProfileInsight,
+                onProfileShare: onProfileShare
             )
         } loadingContent: {
             ProgressView()

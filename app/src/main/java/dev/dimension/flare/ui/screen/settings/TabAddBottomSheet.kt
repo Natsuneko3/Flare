@@ -82,9 +82,10 @@ import dev.dimension.flare.ui.component.TabRowIndicator
 import dev.dimension.flare.ui.component.listCard
 import dev.dimension.flare.ui.component.status.ListEmptyView
 import dev.dimension.flare.ui.model.asText
-import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
@@ -126,77 +127,102 @@ internal fun TabAddBottomSheet(
             modifier = Modifier.fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            allTabs.accountTabs.onSuccess { accountTabGroups ->
-                val pagerState =
-                    rememberPagerState {
-                        accountTabGroups.size + 1
-                    }
-                val scope = rememberCoroutineScope()
-                SecondaryScrollableTabRow(
-                    selectedTabIndex = pagerState.currentPage,
-                    containerColor = Color.Transparent,
-                    indicator = {
-                        TabRowIndicator(
-                            selectedIndex = pagerState.currentPage,
-                        )
+            val guestGroups = allTabs.guestPluginTabs
+            val accountTabGroups = allTabs.accountTabs.takeSuccess() ?: persistentListOf()
+            val pagerState =
+                rememberPagerState {
+                    1 + guestGroups.size + accountTabGroups.size
+                }
+            val scope = rememberCoroutineScope()
+            SecondaryScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage,
+                containerColor = Color.Transparent,
+                indicator = {
+                    TabRowIndicator(
+                        selectedIndex = pagerState.currentPage,
+                    )
+                },
+                divider = {},
+            ) {
+                Tab(
+                    selected = pagerState.currentPage == 0,
+                    onClick = {
+                        scope.launch {
+                            pagerState.animateScrollToPage(0)
+                        }
                     },
-                    divider = {},
-                ) {
-                    Tab(
-                        selected = pagerState.currentPage == 0,
+                    text = {
+                        Text(text = stringResource(id = R.string.rss_title))
+                    },
+                    modifier = Modifier.clip(CircleShape),
+                )
+                guestGroups.forEachIndexed { index, group ->
+                    val pageIndex = index + 1
+                    LeadingIconTab(
+                        modifier = Modifier.clip(CircleShape),
+                        selected = pagerState.currentPage == pageIndex,
                         onClick = {
                             scope.launch {
-                                pagerState.animateScrollToPage(0)
+                                pagerState.animateScrollToPage(pageIndex)
                             }
                         },
                         text = {
-                            Text(text = stringResource(id = R.string.rss_title))
+                            UiText(group.title)
                         },
-                        modifier = Modifier.clip(CircleShape),
+                        icon = {
+                            TabIcon(
+                                icon = group.icon,
+                                title = group.title,
+                                size = 24.dp,
+                            )
+                        },
                     )
-                    accountTabGroups.forEachIndexed { index, tab ->
-                        LeadingIconTab(
-                            modifier = Modifier.clip(CircleShape),
-                            selected = pagerState.currentPage == index + 1,
-                            onClick = {
-                                scope.launch {
-                                    pagerState.animateScrollToPage(index + 1)
-                                }
-                            },
-                            text = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    RichText(
-                                        text = tab.profile.name,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = tab.profile.handle.display,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.outline,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            },
-                            icon = {
-                                AvatarComponent(
-                                    tab.profile.avatar,
-                                    size = 24.dp,
-                                )
-                            },
-                        )
-                    }
                 }
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.fillMaxHeight(),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    if (it == 0) {
+                accountTabGroups.forEachIndexed { index, tab ->
+                    val pageIndex = 1 + guestGroups.size + index
+                    LeadingIconTab(
+                        modifier = Modifier.clip(CircleShape),
+                        selected = pagerState.currentPage == pageIndex,
+                        onClick = {
+                            scope.launch {
+                                pagerState.animateScrollToPage(pageIndex)
+                            }
+                        },
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                RichText(
+                                    text = tab.profile.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = tab.profile.handle.display,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        },
+                        icon = {
+                            AvatarComponent(
+                                tab.profile.avatar,
+                                size = 24.dp,
+                            )
+                        },
+                    )
+                }
+            }
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxHeight(),
+                verticalAlignment = Alignment.Top,
+            ) { page ->
+                when {
+                    page == 0 -> {
                         LazyColumn(
                             contentPadding = PaddingValues(horizontal = screenHorizontalPadding),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -236,78 +262,102 @@ internal fun TabAddBottomSheet(
                                 }
                             }
                         }
-                    } else {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
+                    }
+
+                    page in 1..guestGroups.size -> {
+                        val group = guestGroups[page - 1]
+                        LazyColumn(
+                            contentPadding = PaddingValues(horizontal = screenHorizontalPadding),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
-                            val accountTabs = accountTabGroups[it - 1]
-                            var selectedIndex by remember { mutableIntStateOf(0) }
-                            if (accountTabs.tabs.size > 1) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    accountTabs.tabs.forEachIndexed { index, section ->
-                                        FilterChip(
-                                            selected = selectedIndex == index,
-                                            onClick = { selectedIndex = index },
-                                            label = {
-                                                UiText(section.title)
-                                            },
-                                        )
-                                    }
-                                }
-                            }
-                            if (accountTabs.tabsLoaded && accountTabs.tabs.isEmpty()) {
-                                ListEmptyView(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                                    text = stringResource(R.string.empty_tab_candidates),
-                                    icon = FontAwesomeIcons.Solid.TableList,
+                            itemsIndexed(group.tabs) { index, item ->
+                                TabItem(
+                                    item,
+                                    modifier =
+                                        Modifier
+                                            .listCard(
+                                                index = index,
+                                                totalCount = group.tabs.size,
+                                            ),
                                 )
                             }
-                            when (selectedIndex) {
-                                in accountTabs.tabs.indices -> {
-                                    val section = accountTabs.tabs[selectedIndex]
-                                    LazyColumn(
-                                        contentPadding = PaddingValues(horizontal = screenHorizontalPadding),
-                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        }
+                    }
+
+                    else -> {
+                        val accountTabs = accountTabGroups.getOrNull(page - 1 - guestGroups.size)
+                        if (accountTabs != null) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                var selectedIndex by remember { mutableIntStateOf(0) }
+                                if (accountTabs.tabs.size > 1) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                                        modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        itemsIndexed(
-                                            state = section.data,
-                                            emptyContent = {
-                                                ListEmptyView(
-                                                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                                                    text = stringResource(R.string.empty_tab_candidates),
-                                                    icon = FontAwesomeIcons.Solid.TableList,
-                                                )
-                                            },
-                                            errorContent = { error ->
-                                                ErrorContent(
-                                                    error = error,
-                                                    onRetry = { section.data.onError { onRetry() } },
-                                                )
-                                            },
-                                            loadingCount = 1,
-                                            loadingContent = { _, _ ->
-                                                Box(
-                                                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                                                    contentAlignment = Alignment.Center,
-                                                ) {
-                                                    CircularProgressIndicator()
-                                                }
-                                            },
-                                        ) { index, totalCount, item ->
-                                            TabItem(
-                                                item,
-                                                modifier =
-                                                    Modifier
-                                                        .listCard(
-                                                            index = index,
-                                                            totalCount = totalCount,
-                                                        ),
+                                        accountTabs.tabs.forEachIndexed { index, section ->
+                                            FilterChip(
+                                                selected = selectedIndex == index,
+                                                onClick = { selectedIndex = index },
+                                                label = {
+                                                    UiText(section.title)
+                                                },
                                             )
+                                        }
+                                    }
+                                }
+                                if (accountTabs.tabsLoaded && accountTabs.tabs.isEmpty()) {
+                                    ListEmptyView(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                        text = stringResource(R.string.empty_tab_candidates),
+                                        icon = FontAwesomeIcons.Solid.TableList,
+                                    )
+                                }
+                                when (selectedIndex) {
+                                    in accountTabs.tabs.indices -> {
+                                        val section = accountTabs.tabs[selectedIndex]
+                                        LazyColumn(
+                                            contentPadding = PaddingValues(horizontal = screenHorizontalPadding),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            itemsIndexed(
+                                                state = section.data,
+                                                emptyContent = {
+                                                    ListEmptyView(
+                                                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                        text = stringResource(R.string.empty_tab_candidates),
+                                                        icon = FontAwesomeIcons.Solid.TableList,
+                                                    )
+                                                },
+                                                errorContent = { error ->
+                                                    ErrorContent(
+                                                        error = error,
+                                                        onRetry = { section.data.onError { onRetry() } },
+                                                    )
+                                                },
+                                                loadingCount = 1,
+                                                loadingContent = { _, _ ->
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                        contentAlignment = Alignment.Center,
+                                                    ) {
+                                                        CircularProgressIndicator()
+                                                    }
+                                                },
+                                            ) { index, totalCount, item ->
+                                                TabItem(
+                                                    item,
+                                                    modifier =
+                                                        Modifier
+                                                            .listCard(
+                                                                index = index,
+                                                                totalCount = totalCount,
+                                                            ),
+                                                )
+                                            }
                                         }
                                     }
                                 }

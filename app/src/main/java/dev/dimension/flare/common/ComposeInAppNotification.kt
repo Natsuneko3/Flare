@@ -3,6 +3,7 @@ package dev.dimension.flare.common
 import androidx.annotation.StringRes
 import dev.dimension.flare.R
 import dev.dimension.flare.data.repository.LoginExpiredException
+import dev.dimension.flare.data.repository.RequireReLoginException
 import dev.dimension.flare.ui.presenter.login.ReloginTarget
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,20 +63,31 @@ internal class ComposeInAppNotification : InAppNotification {
                     success = false,
                     args =
                         listOfNotNull(
-                            if (throwable is LoginExpiredException) {
-                                throwable.accountKey
-                            } else {
-                                null
+                            when (throwable) {
+                                is LoginExpiredException -> throwable.accountKey
+                                is RequireReLoginException -> throwable.accountKey
+                                else -> null
                             },
                         ),
                     reloginTarget =
-                        if (throwable is LoginExpiredException) {
-                            ReloginTarget(
-                                accountKey = throwable.accountKey,
-                                platformId = throwable.platformId,
-                            )
-                        } else {
-                            null
+                        when (throwable) {
+                            is LoginExpiredException -> {
+                                ReloginTarget(
+                                    accountKey = throwable.accountKey,
+                                    platformId = throwable.platformId,
+                                )
+                            }
+
+                            is RequireReLoginException -> {
+                                ReloginTarget(
+                                    accountKey = throwable.accountKey,
+                                    platformId = throwable.platformId,
+                                )
+                            }
+
+                            else -> {
+                                null
+                            }
                         },
                 ),
             )

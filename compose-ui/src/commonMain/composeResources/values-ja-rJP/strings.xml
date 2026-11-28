@@ -484,4 +484,12 @@
     <string name="weibo_private_following_title">非公開フォロー</string>
     <string name="visibility_friends">友達のサークル</string>
     <string name="visibility_self">自分のみ</string>
+    <string name="manga_boundary_previous_chapter">前の話: %1$s</string>
+    <string name="manga_boundary_next_chapter">次の話: %1$s</string>
+    <string name="manga_boundary_read_previous">前の話を読む</string>
+    <string name="manga_boundary_read_next">次の話を読む</string>
+    <string name="manga_locked_chapter_title">ロックされた話</string>
+    <string name="manga_locked_chapter_message">%1$s はロックされています。ブラウザで元のサイトを開きますか？</string>
+    <string name="manga_open_in_browser">ブラウザで開く</string>
+    <string name="manga_page_retry">ページを再試行</string>
 </resources>

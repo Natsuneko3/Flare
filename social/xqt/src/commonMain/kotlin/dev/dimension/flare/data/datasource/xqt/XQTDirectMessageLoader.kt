@@ -7,6 +7,7 @@ import dev.dimension.flare.data.datasource.microblog.loader.DirectMessageRuntime
 import dev.dimension.flare.data.datasource.microblog.paging.PagingRequest
 import dev.dimension.flare.data.datasource.microblog.paging.PagingResult
 import dev.dimension.flare.data.network.xqt.XQTService
+import dev.dimension.flare.data.network.xqt.api.V11GetApi
 import dev.dimension.flare.data.network.xqt.model.AddToConversationRequest
 import dev.dimension.flare.data.network.xqt.model.PostDmNew2Request
 import dev.dimension.flare.data.platform.XQTCredential
@@ -250,22 +251,24 @@ internal class XQTDirectMessageLoader(
             )
         }
 
-    override suspend fun canSend(userKey: MicroBlogKey): Boolean =
-        tryRun {
-            val canDm =
-                service
-                    .getDMPermissions(userKey.id)
-                    .body()
-                    ?.permissions
-                    ?.idKeys
-                    ?.get(userKey.id)
-                    ?.canDm == true
-            if (!canDm) {
-                throw Exception("Cannot send DM")
-            }
-        }.isSuccess
+    override suspend fun canSend(userKey: MicroBlogKey): Boolean = service.canSendDirectMessage(userKey.id)
 
     override suspend fun loadBadgeCount(): Int = service.getBadgeCount().dmUnreadCount?.toInt() ?: 0
+}
+
+internal suspend fun V11GetApi.canSendDirectMessage(userId: String): Boolean {
+    val response = getDMPermissions(userId)
+    check(response.isSuccessful) { "Could not load X direct message permissions (HTTP ${response.code})" }
+    return checkNotNull(
+        response
+            .body()
+            ?.permissions
+            ?.idKeys
+            ?.get(userId)
+            ?.canDm,
+    ) {
+        "X returned no direct message permission for the recipient"
+    }
 }
 
 private fun UiDMRoom.withXqtMediaAuth(

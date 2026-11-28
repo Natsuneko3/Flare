@@ -3,6 +3,7 @@ package dev.dimension.flare.data.datasource.microblog
 import dev.dimension.flare.data.datasource.microblog.datasource.ArticleDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.GalleryDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.ListDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.MangaDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.NotificationDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.PostDataSource
@@ -37,6 +38,7 @@ public data class DataSourceCapabilitySet(
     public val directMessage: DirectMessageDataSource? = null,
     public val article: ArticleDataSource? = null,
     public val gallery: GalleryDataSource? = null,
+    public val manga: MangaDataSource? = null,
     public val tabCatalog: TabCatalogCapability? = null,
     public val timelinePage: TimelinePageDataSource? = null,
     public val accountHttp: AccountHttpCapability? = null,
@@ -123,7 +125,15 @@ public class ProfileCapability(
 
     public fun fans(userKey: MicroBlogKey): RemoteLoader<UiProfile> = delegate.fans(userKey)
 
+    public val supportsProfileTabsCache: Boolean
+        get() = delegate.supportsProfileTabsCache
+
     public suspend fun profileTabs(userKey: MicroBlogKey): ImmutableList<ProfileTab> = delegate.profileTabs(userKey)
+
+    public fun restoreProfileTabs(
+        userKey: MicroBlogKey,
+        cached: List<CachedProfileTab>,
+    ): ImmutableList<ProfileTab>? = delegate.restoreProfileTabs(userKey, cached)
 }
 
 @HiddenFromObjC
@@ -168,12 +178,14 @@ private fun MicroblogDataSource.legacyCapabilitySet(): DataSourceCapabilitySet {
         directMessage = this as? DirectMessageDataSource,
         article = this as? ArticleDataSource,
         gallery = this as? GalleryDataSource,
+        manga = this as? MangaDataSource,
         tabCatalog =
             if (tabConfiguration != null || pinnableTabs != null) {
                 TabCatalogCapability(tabConfiguration, pinnableTabs)
             } else {
                 null
             },
+        timelinePage = this as? TimelinePageDataSource,
         accountHttp = this as? AccountHttpCapability,
     )
 }

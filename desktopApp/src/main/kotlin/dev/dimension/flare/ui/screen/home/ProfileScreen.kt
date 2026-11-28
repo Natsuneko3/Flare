@@ -3,6 +3,7 @@ package dev.dimension.flare.ui.screen.home
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,9 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridScope
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.rememberScrollState
@@ -27,7 +28,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,10 +39,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.Robot
+import compose.icons.fontawesomeicons.solid.ShareNodes
 import dev.dimension.flare.LocalWindowPadding
 import dev.dimension.flare.RegisterTabCallback
 import dev.dimension.flare.Res
@@ -53,31 +58,38 @@ import dev.dimension.flare.profile_blocked_gate_description
 import dev.dimension.flare.profile_blocked_gate_show
 import dev.dimension.flare.profile_blocked_gate_title
 import dev.dimension.flare.profile_insight_title
+import dev.dimension.flare.settings_post_action_family_share
 import dev.dimension.flare.ui.common.items
 import dev.dimension.flare.ui.common.plus
 import dev.dimension.flare.ui.component.ErrorContent
 import dev.dimension.flare.ui.component.FAIcon
+import dev.dimension.flare.ui.component.FlareDividerDefaults
 import dev.dimension.flare.ui.component.FlareScrollBar
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.ProfileHeader
 import dev.dimension.flare.ui.component.ProfileHeaderLoading
 import dev.dimension.flare.ui.component.ProfileMenu
 import dev.dimension.flare.ui.component.ProfileTabsLoadingPlaceholder
+import dev.dimension.flare.ui.component.UnderlinedTabs
+import dev.dimension.flare.ui.component.adaptive.AdaptiveSplitLayout
+import dev.dimension.flare.ui.component.adaptive.PrimaryWidthStrategy
+import dev.dimension.flare.ui.component.adaptive.rememberSplitPaneState
 import dev.dimension.flare.ui.component.placeholder
 import dev.dimension.flare.ui.component.platform.isBigScreen
 import dev.dimension.flare.ui.component.status.LazyStatusVerticalStaggeredGrid
 import dev.dimension.flare.ui.component.status.MediaItem
+import dev.dimension.flare.ui.component.status.StatusComponentDefaults
 import dev.dimension.flare.ui.component.status.StatusPlaceholder
 import dev.dimension.flare.ui.component.status.status
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiRelation
-import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.contentPostOrNull
 import dev.dimension.flare.ui.model.map
 import dev.dimension.flare.ui.model.onError
 import dev.dimension.flare.ui.model.onLoading
 import dev.dimension.flare.ui.model.onSuccess
+import dev.dimension.flare.ui.model.takeSuccess
 import dev.dimension.flare.ui.model.takeSuccessOr
 import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.presenter.profile.ProfileMedia
@@ -107,6 +119,7 @@ internal fun ProfileWithUserNameAndHostDeeplinkRoute(
     onMediaClick: (statusKey: MicroBlogKey, index: Int, preview: String?) -> Unit,
     onRawMediaClick: (media: UiMedia.Image) -> Unit,
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit,
+    onProfileShareClick: (userKey: MicroBlogKey) -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val state by producePresenter(key = "acct_${accountType}_$userName@$host") {
@@ -125,6 +138,7 @@ internal fun ProfileWithUserNameAndHostDeeplinkRoute(
                 onMediaClick = onMediaClick,
                 onRawMediaClick = onRawMediaClick,
                 onProfileInsightClick = onProfileInsightClick,
+                onProfileShareClick = onProfileShareClick,
                 userKey = it.key,
             )
         }.onLoading {
@@ -153,6 +167,7 @@ private fun ProfileErrorScreen(onBack: () -> Unit) {
 @Composable
 private fun ProfileLoadingScreen(onBack: () -> Unit) {
     val listState = rememberLazyListState()
+    val headerBackground = profileHeaderBackground(isBigScreen())
     FlareScrollBar(listState) {
         LazyColumn(
             state = listState,
@@ -160,16 +175,23 @@ private fun ProfileLoadingScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
-                ProfileHeaderLoading(withStatusBarHeight = false)
+                ProfileHeaderLoading(
+                    withStatusBarHeight = false,
+                    modifier = Modifier.background(headerBackground),
+                )
             }
             items(5) {
                 StatusPlaceholder(
-                    modifier = Modifier.padding(horizontal = screenHorizontalPadding),
+                    modifier = Modifier.padding(horizontal = StatusComponentDefaults.horizontalPadding),
                 )
             }
         }
     }
 }
+
+@Composable
+private fun profileHeaderBackground(bigScreen: Boolean): Color =
+    if (bigScreen) Color.Transparent else FluentTheme.colors.background.solid.base
 
 @Composable
 private fun profileWithUserNameAndHostPresenter(
@@ -198,16 +220,22 @@ internal fun ProfileScreen(
     onMediaClick: (statusKey: MicroBlogKey, index: Int, preview: String?) -> Unit = { _, _, _ -> },
     onRawMediaClick: (media: UiMedia.Image) -> Unit = {},
     onProfileInsightClick: (userKey: MicroBlogKey) -> Unit = {},
+    onProfileShareClick: (userKey: MicroBlogKey) -> Unit = {},
+    profileState: @Composable () -> ProfileState = {
+        remember(accountType, userKey) { ProfilePresenter(accountType, userKey) }.invoke()
+    },
 ) {
     val state by producePresenter(
         key = "profile_${accountType}_$userKey",
     ) {
-        presenter(accountType, userKey)
+        presenter(profileState())
     }
     val listState = rememberLazyStaggeredGridState()
     val profileHeaderScrollState = rememberScrollState()
     RegisterTabCallback(listState, state::refresh)
-    val isBigScreen = isBigScreen()
+    val splitState = rememberSplitPaneState(initialIsSplit = isBigScreen())
+    val isSplit = splitState.mode.isSplit
+    val headerBackground = profileHeaderBackground(isSplit)
     var showBlockedProfileContent by remember(accountType, userKey) { mutableStateOf(false) }
     val isBlockedProfile =
         state.state
@@ -220,19 +248,236 @@ internal fun ProfileScreen(
         }
     }
     val shouldGateBlockedProfile = isBlockedProfile && !showBlockedProfileContent
+    val populateTabItems: LazyStaggeredGridScope.(Boolean) -> Unit = { splitMode ->
+        if (shouldGateBlockedProfile) {
+            if (splitMode) {
+                item(
+                    span = StaggeredGridItemSpan.FullLine,
+                ) {
+                    BlockedProfileGate(
+                        onShow = {
+                            showBlockedProfileContent = true
+                        },
+                        modifier =
+                            Modifier.padding(
+                                horizontal = screenHorizontalPadding,
+                                vertical = 24.dp,
+                            ),
+                    )
+                }
+            }
+        } else {
+            state.state.tabs.onLoading {
+                if (splitMode) {
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        ProfileTabsLoadingPlaceholder()
+                    }
+                }
+                repeat(5) {
+                    item {
+                        StatusPlaceholder(
+                            modifier =
+                                Modifier.padding(
+                                    horizontal = StatusComponentDefaults.horizontalPadding,
+                                ),
+                        )
+                    }
+                }
+            }
+            state.state.tabs.onError { error ->
+                item(
+                    span = StaggeredGridItemSpan.FullLine,
+                ) {
+                    ErrorContent(
+                        error = error,
+                        onRetry = state.state::retryTabs,
+                    )
+                }
+            }
+            state.state.tabs.onSuccess { tabs ->
+                if (tabs.size > 1 && splitMode) {
+                    item(
+                        span = StaggeredGridItemSpan.FullLine,
+                    ) {
+                        LiteFilter {
+                            repeat(tabs.size) { index ->
+                                val tab = tabs.get(index)
+                                PillButton(
+                                    selected = state.selectedTabIndex == index,
+                                    onSelectedChanged = {
+                                        state.setSelectedTab(tab.id)
+                                    },
+                                ) {
+                                    dev.dimension.flare.ui.component.Text(
+                                        text = tab.name,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            state.selectedTabItem?.let { tab ->
+                when (tab) {
+                    is ProfileTabItem.Media -> {
+                        items(
+                            tab.data,
+                            loadingContent = {
+                                Card(
+                                    modifier = Modifier,
+                                ) {
+                                    Box(modifier = Modifier.size(120.dp).placeholder(true))
+                                }
+                            },
+                        ) { item ->
+                            CompositionLocalProvider(
+                                LocalTimelineAppearance provides
+                                    LocalTimelineAppearance.current.copy(
+                                        videoAutoplay = VideoAutoplay.NEVER,
+                                    ),
+                            ) {
+                                val media = item.media
+                                BoxWithConstraints {
+                                    MediaItem(
+                                        media = media,
+                                        showCountdown = false,
+                                        modifier =
+                                            Modifier
+                                                .clip(FluentTheme.shapes.control)
+                                                .padding(
+                                                    vertical = 4.dp,
+                                                ).heightIn(max = maxWidth * 21 / 9)
+                                                .clipToBounds()
+                                                .clickable {
+                                                    if (item.status.contentPostOrNull() != null) {
+                                                        onMediaClick(
+                                                            item.statusKey,
+                                                            item.index,
+                                                            when (media) {
+                                                                is UiMedia.Image -> media.previewUrl
+                                                                is UiMedia.Video -> media.thumbnailUrl
+                                                                is UiMedia.Gif -> media.previewUrl
+                                                                is UiMedia.Ugoira -> media.previewUrl
+                                                                else -> null
+                                                            },
+                                                        )
+                                                    }
+                                                },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    is ProfileTabItem.Timeline -> {
+                        status(tab.data)
+                    }
+                }
+            }
+        }
+    }
     Box {
-        Row {
-            if (isBigScreen) {
+        AdaptiveSplitLayout(
+            primaryWidthStrategy = PrimaryWidthStrategy.Fixed(348.dp),
+            state = splitState,
+            contentPadding = LocalWindowPadding.current,
+            compactContent = { _ ->
+                FlareScrollBar(listState) {
+                    LazyStatusVerticalStaggeredGrid(
+                        contentPadding = PaddingValues(),
+                        state = listState,
+                    ) {
+                        item(
+                            span = StaggeredGridItemSpan.FullLine,
+                        ) {
+                            Column {
+                                ProfileHeader(
+                                    state = state.state,
+                                    modifier = Modifier.background(headerBackground),
+                                    menu = {
+                                        ProfileInsightAction(
+                                            profileState = state.state,
+                                            onClick = onProfileInsightClick,
+                                        )
+                                        ProfileShareAction(
+                                            profileState = state.state,
+                                            onClick = onProfileShareClick,
+                                        )
+                                        ProfileMenu(
+                                            profileState = state.state,
+                                            modifier = Modifier.padding(horizontal = 8.dp),
+                                        )
+                                    },
+                                    onAvatarClick = {
+                                        state.state.userState.onSuccess {
+                                            it.avatar?.let { avatar ->
+                                                onRawMediaClick(avatar)
+                                            }
+                                        }
+                                    },
+                                    onBannerClick = {
+                                        state.state.userState.onSuccess {
+                                            it.banner?.let { banner ->
+                                                onRawMediaClick(banner)
+                                            }
+                                        }
+                                    },
+                                    isBigScreen = false,
+                                    useCard = false,
+                                    onFollowListClick = onFollowListClick,
+                                    onFansListClick = onFansListClick,
+                                )
+                                if (shouldGateBlockedProfile) {
+                                    BlockedProfileGate(
+                                        onShow = {
+                                            showBlockedProfileContent = true
+                                        },
+                                        modifier =
+                                            Modifier.padding(
+                                                horizontal = screenHorizontalPadding,
+                                                vertical = 24.dp,
+                                            ),
+                                    )
+                                } else {
+                                    state.state.tabs.onLoading {
+                                        ProfileTabsLoadingPlaceholder(modifier = Modifier.background(headerBackground))
+                                    }
+                                    state.state.tabs.onSuccess { tabs ->
+                                        if (tabs.isNotEmpty()) {
+                                            Column(Modifier.fillMaxWidth().background(headerBackground)) {
+                                                if (tabs.size > 1) {
+                                                    UnderlinedTabs(
+                                                        titles = tabs.map { it.name },
+                                                        selectedIndex = state.selectedTabIndex,
+                                                        onTabSelected = { index -> state.setSelectedTab(tabs[index].id) },
+                                                    )
+                                                }
+                                                Spacer(
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(top = if (tabs.size == 1) 8.dp else 0.dp)
+                                                        .height(FlareDividerDefaults.thickness)
+                                                        .background(FlareDividerDefaults.color),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        populateTabItems(false)
+                    }
+                }
+            },
+            primaryPane = { _, padding ->
                 FlareScrollBar(profileHeaderScrollState) {
                     Column(
                         modifier =
                             Modifier
-                                .padding(LocalWindowPadding.current)
-                                .padding(
-                                    vertical = 16.dp,
-                                ).padding(
-                                    start = 16.dp,
-                                ).width(332.dp)
+                                .padding(padding)
+                                .padding(vertical = 16.dp)
+                                .padding(start = 16.dp)
+                                .fillMaxWidth()
                                 .verticalScroll(profileHeaderScrollState),
                     ) {
                         Card(
@@ -244,6 +489,10 @@ internal fun ProfileScreen(
                                     ProfileInsightAction(
                                         profileState = state.state,
                                         onClick = onProfileInsightClick,
+                                    )
+                                    ProfileShareAction(
+                                        profileState = state.state,
+                                        onClick = onProfileShareClick,
                                     )
                                     ProfileMenu(
                                         profileState = state.state,
@@ -269,230 +518,21 @@ internal fun ProfileScreen(
                         }
                     }
                 }
-            }
-            FlareScrollBar(listState) {
-                LazyStatusVerticalStaggeredGrid(
-                    contentPadding =
-                        PaddingValues(
-                            vertical =
-                                if (isBigScreen) {
-                                    16.dp
-                                } else {
-                                    0.dp
-                                },
-                        ) +
-                            if (isBigScreen) {
-                                LocalWindowPadding.current
-                            } else {
-                                PaddingValues()
-                            },
-                    state = listState,
-                ) {
-                    if (!isBigScreen) {
-                        item(
-                            span = StaggeredGridItemSpan.FullLine,
-                        ) {
-                            Column {
-                                ProfileHeader(
-                                    state = state.state,
-                                    menu = {
-                                        ProfileInsightAction(
-                                            profileState = state.state,
-                                            onClick = onProfileInsightClick,
-                                        )
-                                        ProfileMenu(
-                                            profileState = state.state,
-                                            modifier = Modifier.padding(horizontal = 8.dp),
-                                        )
-                                    },
-                                    onAvatarClick = {
-                                        state.state.userState.onSuccess {
-                                            it.avatar?.let { avatar ->
-                                                onRawMediaClick(avatar)
-                                            }
-                                        }
-                                    },
-                                    onBannerClick = {
-                                        state.state.userState.onSuccess {
-                                            it.banner?.let { banner ->
-                                                onRawMediaClick(banner)
-                                            }
-                                        }
-                                    },
-                                    isBigScreen = false,
-                                    onFollowListClick = onFollowListClick,
-                                    onFansListClick = onFansListClick,
-                                )
-                                if (shouldGateBlockedProfile) {
-                                    BlockedProfileGate(
-                                        onShow = {
-                                            showBlockedProfileContent = true
-                                        },
-                                        modifier =
-                                            Modifier.padding(
-                                                horizontal = screenHorizontalPadding,
-                                                vertical = 24.dp,
-                                            ),
-                                    )
-                                } else {
-                                    state.state.tabs.onSuccess { tabs ->
-                                        LiteFilter(
-                                            modifier =
-                                                Modifier
-                                                    .padding(horizontal = screenHorizontalPadding),
-                                        ) {
-                                            repeat(tabs.size) { index ->
-                                                val tab = tabs.get(index)
-                                                PillButton(
-                                                    selected = state.selectedTabIndex == index,
-                                                    onSelectedChanged = {
-                                                        state.setSelectedTab(index)
-                                                    },
-                                                ) {
-                                                    dev.dimension.flare.ui.component.Text(
-                                                        text = tab.name,
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (shouldGateBlockedProfile) {
-                        if (isBigScreen) {
-                            item(
-                                span = StaggeredGridItemSpan.FullLine,
-                            ) {
-                                BlockedProfileGate(
-                                    onShow = {
-                                        showBlockedProfileContent = true
-                                    },
-                                    modifier =
-                                        Modifier.padding(
-                                            horizontal = screenHorizontalPadding,
-                                            vertical = 24.dp,
-                                        ),
-                                )
-                            }
-                        }
-                    } else {
-                        state.state.tabs.onLoading {
-                            item(
-                                span = StaggeredGridItemSpan.FullLine,
-                            ) {
-                                ProfileTabsLoadingPlaceholder()
-                            }
-                            repeat(5) {
-                                item {
-                                    StatusPlaceholder(
-                                        modifier =
-                                            Modifier.padding(
-                                                horizontal = screenHorizontalPadding,
-                                            ),
-                                    )
-                                }
-                            }
-                        }
-                        state.state.tabs.onError { error ->
-                            item(
-                                span = StaggeredGridItemSpan.FullLine,
-                            ) {
-                                ErrorContent(
-                                    error = error,
-                                    onRetry = state.state::retryTabs,
-                                )
-                            }
-                        }
-                        state.state.tabs.onSuccess { tabs ->
-                            if (tabs.size > 1 && isBigScreen) {
-                                item(
-                                    span = StaggeredGridItemSpan.FullLine,
-                                ) {
-                                    LiteFilter {
-                                        repeat(tabs.size) { index ->
-                                            val tab = tabs.get(index)
-                                            PillButton(
-                                                selected = state.selectedTabIndex == index,
-                                                onSelectedChanged = {
-                                                    state.setSelectedTab(index)
-                                                },
-                                            ) {
-                                                dev.dimension.flare.ui.component.Text(
-                                                    text = tab.name,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        state.selectedTabItem.onSuccess { tab ->
-                            when (tab) {
-                                is ProfileTabItem.Media -> {
-                                    items(
-                                        tab.data,
-                                        loadingContent = {
-                                            Card(
-                                                modifier = Modifier,
-                                            ) {
-                                                Box(modifier = Modifier.size(120.dp).placeholder(true))
-                                            }
-                                        },
-                                    ) { item ->
-                                        CompositionLocalProvider(
-                                            LocalTimelineAppearance provides
-                                                LocalTimelineAppearance.current.copy(
-                                                    videoAutoplay = VideoAutoplay.NEVER,
-                                                ),
-                                        ) {
-                                            val media = item.media
-                                            BoxWithConstraints {
-                                                MediaItem(
-                                                    media = media,
-                                                    showCountdown = false,
-                                                    modifier =
-                                                        Modifier
-                                                            .clip(FluentTheme.shapes.control)
-                                                            .padding(
-                                                                vertical = 4.dp,
-                                                            ).heightIn(max = maxWidth * 21 / 9)
-                                                            .clipToBounds()
-                                                            .clickable {
-                                                                if (item.status.contentPostOrNull() != null) {
-                                                                    onMediaClick(
-                                                                        item.statusKey,
-                                                                        item.index,
-                                                                        when (media) {
-                                                                            is UiMedia.Image -> media.previewUrl
-                                                                            is UiMedia.Video -> media.thumbnailUrl
-                                                                            is UiMedia.Gif -> media.previewUrl
-                                                                            is UiMedia.Ugoira -> media.previewUrl
-                                                                            else -> null
-                                                                        },
-                                                                    )
-                                                                }
-                                                            },
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                is ProfileTabItem.Timeline -> {
-                                    status(tab.data)
-                                }
-                            }
-                        }
+            },
+            secondaryPane = { _, padding ->
+                FlareScrollBar(listState) {
+                    LazyStatusVerticalStaggeredGrid(
+                        contentPadding = PaddingValues(vertical = 16.dp) + padding,
+                        state = listState,
+                    ) {
+                        populateTabItems(true)
                     }
                 }
-            }
-        }
+            },
+        )
 
         if (!shouldGateBlockedProfile) {
-            state.selectedTabItem.onSuccess {
+            state.selectedTabItem?.let {
                 val isRefreshing =
                     when (it) {
                         is ProfileTabItem.Media -> it.data.isRefreshing
@@ -571,85 +611,103 @@ private fun ProfileInsightAction(
 }
 
 @Composable
-private fun presenter(
-    accountType: AccountType,
-    userKey: MicroBlogKey?,
-) = run {
-    val scope = rememberCoroutineScope()
-    val state =
-        remember(accountType, userKey) {
-            ProfilePresenter(accountType, userKey)
-        }.invoke()
-    var selectedTabIndex by remember {
-        mutableStateOf(0)
-    }
-
-    val tabs =
-        state.tabs.map {
-            it.map {
-                when (it) {
-                    is ProfileState.Tab.Timeline -> {
-                        ProfileTabItem.Timeline(
-                            name = it.name,
-                            data = it.presenter.body().listState,
-                        )
-                    }
-
-                    is ProfileState.Tab.Media -> {
-                        ProfileTabItem.Media(
-                            name = it.name,
-                            data = it.presenter.body().mediaState,
-                        )
-                    }
-                }
-            }
-        }
-
-    val selectedTab =
-        tabs.map {
-            it[selectedTabIndex]
-        }
-
-    object {
-        val state = state
-        val selectedTabIndex = selectedTabIndex
-        val selectedTabItem = selectedTab
-
-        fun refresh() {
-            scope.launch {
-                selectedTabItem.onSuccess { tab ->
-                    when (tab) {
-                        is ProfileTabItem.Media -> {
-                            tab.data.refreshSuspend()
-                        }
-
-                        is ProfileTabItem.Timeline -> {
-                            tab.data.refreshSuspend()
-                        }
-                    }
-                }
-            }
-        }
-
-        fun setSelectedTab(value: Int) {
-            if (selectedTabIndex == value) {
-                refresh()
-            }
-            selectedTabIndex = value
+private fun ProfileShareAction(
+    profileState: ProfileState,
+    onClick: (MicroBlogKey) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    profileState.userState.onSuccess { profile ->
+        SubtleButton(
+            onClick = {
+                onClick(profile.key)
+            },
+            iconOnly = true,
+            modifier = modifier,
+        ) {
+            FAIcon(
+                imageVector = FontAwesomeIcons.Solid.ShareNodes,
+                contentDescription = stringResource(Res.string.settings_post_action_family_share),
+            )
         }
     }
 }
 
+@Composable
+private fun presenter(state: ProfileState) =
+    run {
+        val scope = rememberCoroutineScope()
+        var selectedTabId by remember { mutableStateOf<String?>(null) }
+
+        val tabs =
+            state.tabs
+                .map { tabs ->
+                    tabs.map { tab ->
+                        key(tab) {
+                            when (tab) {
+                                is ProfileState.Tab.Timeline -> {
+                                    ProfileTabItem.Timeline(
+                                        id = tab.id,
+                                        data = tab.presenter.body().listState,
+                                    )
+                                }
+
+                                is ProfileState.Tab.Media -> {
+                                    ProfileTabItem.Media(
+                                        id = tab.id,
+                                        data = tab.presenter.body().mediaState,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }.takeSuccess()
+
+        val selectedTabIndex = tabs?.indexOfFirst { it.id == selectedTabId }?.coerceAtLeast(0) ?: 0
+        val selectedTab = tabs?.getOrNull(selectedTabIndex)
+        if (tabs != null && selectedTabId != selectedTab?.id) {
+            SideEffect { selectedTabId = selectedTab?.id }
+        }
+
+        object {
+            val state = state
+            val selectedTabIndex = selectedTabIndex
+            val selectedTabItem = selectedTab
+
+            fun refresh() {
+                scope.launch {
+                    selectedTabItem?.let { tab ->
+                        when (tab) {
+                            is ProfileTabItem.Media -> {
+                                tab.data.refreshSuspend()
+                            }
+
+                            is ProfileTabItem.Timeline -> {
+                                tab.data.refreshSuspend()
+                            }
+                        }
+                    }
+                }
+            }
+
+            fun setSelectedTab(id: String) {
+                if (selectedTabItem?.id == id) {
+                    refresh()
+                }
+                selectedTabId = id
+            }
+        }
+    }
+
 private sealed interface ProfileTabItem {
-    val name: UiText
+    val id: String
 
     data class Timeline(
-        override val name: UiText,
+        override val id: String,
         val data: PagingState<UiTimelineV2>,
     ) : ProfileTabItem
 
     data class Media(
-        override val name: UiText,
+        override val id: String,
         val data: PagingState<ProfileMedia>,
     ) : ProfileTabItem
 }

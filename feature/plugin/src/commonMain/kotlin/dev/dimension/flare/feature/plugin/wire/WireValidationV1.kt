@@ -3,6 +3,7 @@ package dev.dimension.flare.feature.plugin.wire
 import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.abi.PluginJsonV1
 import dev.dimension.flare.feature.plugin.host.PluginUrlPolicy
+import dev.dimension.flare.feature.plugin.host.isCookieValueChar
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import kotlinx.serialization.json.JsonElement
@@ -24,10 +25,39 @@ public object WireLimitsV1 {
     public const val MAX_MEDIA_HEADERS: Int = 32
     public const val MAX_MEDIA_HEADER_VALUE_LENGTH: Int = 8_192
     public const val MAX_MEDIA_HEADER_BYTES: Int = 64 * 1_024
+    public const val MAX_USER_AGENT_LENGTH: Int = 1_024
+    public const val MAX_CHALLENGE_SEED_COOKIES: Int = 32
+    public const val MAX_CHALLENGE_SEED_COOKIE_BYTES: Int = 64 * 1_024
 }
 
 public fun TimelinePageLoadRequestV2.requireValid() {
     require(pageId.isWireName()) { "Invalid timeline page ID" }
+    page.requireValid()
+}
+
+public fun PostContextTabsV2.requireValid() {
+    require(tabs.size <= 16) { "Too many post context tabs" }
+    val tabIds = tabs.mapTo(mutableSetOf(), PostContextTabV2::id)
+    require(tabIds.size == tabs.size && tabIds.all(String::isWireName)) { "Invalid or duplicate post context tab ID" }
+    require(replyTabId == null || replyTabId in tabIds) { "Unknown post context reply tab ID" }
+    tabs.forEach { tab ->
+        tab.title.requireValid()
+        tab.filter?.let { filter ->
+            require(filter.options.size in 1..32) { "Invalid number of post context filter options" }
+            val optionIds = filter.options.mapTo(mutableSetOf(), PostContextFilterOptionV2::id)
+            require(optionIds.size == filter.options.size && optionIds.all(String::isWireName)) {
+                "Invalid or duplicate post context filter option ID"
+            }
+            require(filter.defaultOptionId in optionIds) { "Unknown default post context filter option" }
+            filter.options.forEach { it.title.requireValid() }
+        }
+    }
+}
+
+public fun PostContextPageRequestV2.requireValid() {
+    key.requireValid()
+    require(tabId.isWireName()) { "Invalid post context tab ID" }
+    require(filterId == null || filterId.isWireName()) { "Invalid post context filter option ID" }
     page.requireValid()
 }
 
@@ -277,6 +307,221 @@ public fun GalleryV1.requireValid() {
     actions.requireValid()
 }
 
+public fun MangaV1.requireValid(mediaNetwork: Boolean = true) {
+    key.requireValid()
+    require(title.isNotBlank() && title.length <= 16_384) { "Invalid manga title" }
+    require(altTitles.size <= 64 && altTitles.all { it.isNotBlank() && it.length <= 4_096 && it.none(Char::isISOControl) }) {
+        "Invalid manga alternate titles"
+    }
+    cover?.let {
+        require(mediaNetwork) { "Plugin has no media network permission" }
+        require(it.type == MediaTypeV1.Image) { "Manga cover must be an image" }
+        it.requireValid()
+    }
+    author?.let {
+        it.requireValid()
+        require(mediaNetwork || (it.avatarUrl.isNullOrBlank() && it.bannerUrl.isNullOrBlank())) {
+            "Plugin has no media network permission"
+        }
+    }
+    require(authors.size <= 64 && authors.all { it.isNotBlank() && it.length <= 1_024 && it.none(Char::isISOControl) }) {
+        "Invalid manga authors"
+    }
+    require(artists.size <= 64 && artists.all { it.isNotBlank() && it.length <= 1_024 && it.none(Char::isISOControl) }) {
+        "Invalid manga artists"
+    }
+    content?.let {
+        it.requireValid()
+        if (it.format == RichTextFormatV1.Html) {
+            val html = it.validatedHtml()
+            require(mediaNetwork || (html.getElementsByTag("img").isEmpty() && html.getElementsByTag("emoji").isEmpty())) {
+                "Plugin has no media network permission"
+            }
+        }
+    }
+    url.requireHttpsUrl()
+    updatedAt?.requireTimestamp()
+    require(tags == null || tagGroups == null) { "Manga cannot declare both tags and tagGroups" }
+    tags?.let {
+        require(it.size <= 200) { "Too many manga tags" }
+        it.forEach(MangaTagV1::requireValid)
+    }
+    tagGroups?.let { groups ->
+        require(groups.size <= 64) { "Too many manga tag groups" }
+        val groupIds = groups.mapTo(mutableSetOf(), MangaTagGroupV1::id)
+        require(groupIds.size == groups.size && groupIds.all(String::isMangaId)) { "Invalid or duplicate manga tag group ID" }
+        groups.forEach { group ->
+            group.title.requireValid()
+            require(group.tags.size <= 200) { "Too many tags in manga tag group" }
+            group.tags.forEach(MangaTagV1::requireValid)
+        }
+    }
+    require(chapters == null || chapterGroups == null) { "Manga cannot declare both chapters and chapterGroups" }
+    chapterGroups?.let { groups ->
+        require(groups.size <= 32) { "Too many manga chapter groups" }
+        val groupIds = groups.mapTo(mutableSetOf(), MangaChapterGroupV1::id)
+        require(groupIds.size == groups.size && groupIds.all(String::isMangaId)) { "Invalid or duplicate manga chapter group ID" }
+        groups.forEach { it.title.requireValid() }
+    }
+    val allChapters = chapters ?: chapterGroups?.flatMap(MangaChapterGroupV1::chapters).orEmpty()
+    require(allChapters.size <= 5_000) { "Too many manga chapters" }
+    val chapterIds = HashSet<String>(allChapters.size)
+    allChapters.forEach { chapter ->
+        require(chapter.id.isMangaId()) { "Invalid manga chapter ID" }
+        require(chapterIds.add(chapter.id)) { "Duplicate manga chapter ID" }
+        require(chapter.title.isNotBlank() && chapter.title.length <= 4_096) { "Invalid manga chapter title" }
+        require(chapter.subtitle == null || chapter.subtitle.length <= 4_096) { "Manga chapter subtitle is too long" }
+        chapter.uploadedAt?.requireTimestamp()
+        chapter.url.requireHttpsUrl()
+        if (chapter.locked) {
+            require(!chapter.url.isNullOrBlank() || !url.isNullOrBlank()) {
+                "Locked manga chapter requires chapter.url or manga.url"
+            }
+        }
+        require(chapter.entityToken == null || chapter.entityToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
+            "Manga chapter entity token is too large"
+        }
+    }
+    require(entityToken == null || entityToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
+        "Manga entity token is too large"
+    }
+    actions.requireValid()
+    sourceLanguages.requireLanguages()
+}
+
+public fun MangaTagV1.requireValid() {
+    require(name.isNotBlank() && name.length <= 1_024 && name.none(Char::isISOControl)) { "Invalid manga tag" }
+    target?.requireValid()
+}
+
+public fun MangaPagesRequestV1.requireValid() {
+    key.requireValid()
+    require(chapterId.isMangaId()) { "Invalid manga chapter ID" }
+    require(entityToken == null || entityToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
+        "Manga entity token is too large"
+    }
+    require(chapterToken == null || chapterToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
+        "Manga chapter token is too large"
+    }
+    require(offset == null || offset >= 0) { "Invalid manga pages offset" }
+    require(limit == null || limit in 1..2_000) { "Invalid manga pages limit" }
+    require(cursor == null || (cursor.isNotBlank() && cursor.length <= WireLimitsV1.MAX_CURSOR_LENGTH)) {
+        "Invalid manga pages cursor"
+    }
+    require(!(offset != null && cursor != null)) {
+        "Manga pages request cannot specify both offset and cursor"
+    }
+}
+
+public fun MangaPagesV1.requireValid(
+    mediaNetwork: Boolean,
+    pageImageSupported: Boolean,
+) {
+    require(pages.size in 1..2_000) { "Invalid manga page count" }
+    require(offset == null || offset >= 0) { "Invalid manga pages offset" }
+    require(totalCount == null || totalCount in 1..50_000) { "Invalid manga pages totalCount" }
+    require(nextCursor == null || (nextCursor.isNotBlank() && nextCursor.length <= WireLimitsV1.MAX_CURSOR_LENGTH)) {
+        "Invalid manga pages nextCursor"
+    }
+    totalCount?.let { total ->
+        require((offset ?: 0).toLong() + pages.size.toLong() <= total.toLong()) {
+            "Manga pages exceed totalCount"
+        }
+    }
+    require(endReached || nextCursor != null) {
+        "Manga pages with endReached = false requires nextCursor"
+    }
+    val pageIds = HashSet<String>(pages.size)
+    pages.forEach { page ->
+        require(pageIds.add(page.id)) { "Duplicate manga page ID" }
+        page.requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
+    }
+}
+
+public fun MangaPagesV1.requireValid(
+    mediaNetwork: Boolean,
+    pageImageSupported: Boolean,
+    request: MangaPagesRequestV1,
+) {
+    request.requireValid()
+    requireValid(mediaNetwork = mediaNetwork, pageImageSupported = pageImageSupported)
+    if (request.cursor != null) {
+        require(totalCount == null) { "Cursor manga pages response cannot specify totalCount" }
+        return
+    }
+    val requestedOffset = request.offset
+    if (requestedOffset != null && requestedOffset > 0) {
+        require(totalCount != null) { "Range manga pages response requires totalCount" }
+        val returnedOffset = requireNotNull(offset) { "Range manga pages response requires offset" }
+        require(returnedOffset <= requestedOffset && requestedOffset.toLong() < returnedOffset.toLong() + pages.size.toLong()) {
+            "Manga pages response offset does not cover requested offset"
+        }
+    } else {
+        require(offset == null || offset == 0) { "Initial manga pages response offset must be 0" }
+    }
+}
+
+public fun MangaPageV1.requireValid(
+    mediaNetwork: Boolean,
+    pageImageSupported: Boolean,
+) {
+    require(mediaNetwork) { "Plugin has no media network permission" }
+    require(id.isMangaId()) { "Invalid manga page ID" }
+    require((media != null) xor (pageToken != null)) { "Manga page must provide exactly one of media or pageToken" }
+    media?.requireValidMangaPageMedia(mediaNetwork)
+    pageToken?.let {
+        require(pageImageSupported) { "Manga pageToken requires negotiated manga.pageImage operation" }
+        require(it.isNotBlank() && it.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) { "Invalid manga pageToken" }
+    }
+    previewUrl.requireHttpsUrl()
+    require(width == null || width in 1..100_000) { "Invalid manga page width" }
+    require(height == null || height in 1..100_000) { "Invalid manga page height" }
+    customHeaders.requireValidMediaHeaders()
+}
+
+public fun MediaV1.requireValidMangaPageMedia(mediaNetwork: Boolean) {
+    require(mediaNetwork) { "Plugin has no media network permission" }
+    require(type == MediaTypeV1.Image || type == MediaTypeV1.Gif) { "Manga page media must be image or gif" }
+    requireValid()
+    url.requireStrictMangaHttpsUrl("Invalid manga page media url")
+    previewUrl?.requireStrictMangaHttpsUrl("Invalid manga page media previewUrl")
+}
+
+public fun MangaPageImageRequestV1.requireValid() {
+    key.requireValid()
+    require(chapterId.isMangaId()) { "Invalid manga chapter ID" }
+    require(pageId.isMangaId()) { "Invalid manga page ID" }
+    require(pageToken.isNotBlank() && pageToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) { "Invalid manga pageToken" }
+    require(entityToken == null || entityToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
+        "Manga entity token is too large"
+    }
+    require(chapterToken == null || chapterToken.length <= WireLimitsV1.MAX_ENTITY_TOKEN_LENGTH) {
+        "Manga chapter token is too large"
+    }
+    require(attempt == null || attempt in 0..100) { "Invalid manga page image attempt" }
+    failedUrl?.let { url ->
+        require(reason == MangaPageImageReasonV1.ImageLoadFailed) {
+            "Manga page failedUrl requires imageLoadFailed reason"
+        }
+        url.requireStrictMangaHttpsUrl("Invalid manga page failedUrl")
+    }
+}
+
+private fun String.requireStrictMangaHttpsUrl(message: String) {
+    require(
+        isNotBlank() &&
+            startsWith("https://", ignoreCase = true) &&
+            none(Char::isISOControl) &&
+            none(Char::isWhitespace) &&
+            '#' !in this,
+    ) {
+        message
+    }
+    val authority = substringAfter("://").substringBefore('/').substringBefore('?')
+    require(authority.isNotBlank()) { message }
+    PluginUrlPolicy.requireHttpsUrl(this)
+}
+
 public fun TimelineDescriptorV1.requireValid() {
     require(id.isWireName()) { "Invalid timeline ID" }
     title.requireValid()
@@ -420,9 +665,82 @@ public fun CookieSnapshotV1.requireValid() {
             require(attributes.sameSite == null || attributes.sameSite in setOf("strict", "lax", "none")) { "Invalid Cookie SameSite" }
         }
     }
-    require(encodedSize(this, CookieSnapshotV1.serializer()) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+    val normalized = copy(userAgent = normalizeUserAgent(userAgent))
+    require(encodedSize(normalized, CookieSnapshotV1.serializer()) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
         "Cookie snapshot is too large"
     }
+}
+
+public fun CookieCheckRequestV1.requireValid() {
+    require(methodId.isWireName()) { "Invalid login method ID" }
+    require(origin.isNotBlank() && origin.length <= 8_192) { "Invalid login origin" }
+    require(flowId.isNotBlank() && flowId.length <= WireLimitsV1.MAX_ID_LENGTH) { "Invalid login flow ID" }
+    cookies.requireValid()
+    require(pendingPayload == null || encodedJsonSize(pendingPayload) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+        "Login pending payload is too large"
+    }
+    require(userAgent == null || normalizeUserAgent(userAgent) == userAgent) { "Invalid userAgent" }
+}
+
+public fun SessionChallengeCompleteRequestV1.requireValid() {
+    require(challengeUrl.none(Char::isISOControl) && challengeUrl.none(Char::isWhitespace) && '#' !in challengeUrl) {
+        "Invalid challenge URL"
+    }
+    PluginUrlPolicy.requireHttpsUrl(challengeUrl)
+    cookies.requireValid()
+    require(cookies.userAgent == null) { "Nested challenge cookie snapshot cannot carry userAgent" }
+    require(pendingPayload == null || encodedJsonSize(pendingPayload) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+        "Challenge pending payload is too large"
+    }
+    require(userAgent == null || normalizeUserAgent(userAgent) == userAgent) { "Invalid userAgent" }
+}
+
+public fun SessionChallengeResultV1.requireValid() {
+    when (this) {
+        is SessionChallengeResultV1.Pending -> {
+            require(pendingPayload == null || encodedJsonSize(pendingPayload) <= WireLimitsV1.MAX_PENDING_PAYLOAD_BYTES) {
+                "Challenge pending payload is too large"
+            }
+        }
+
+        SessionChallengeResultV1.Completed -> {}
+    }
+}
+
+public fun PluginChallengeV1.requireValid() {
+    require(url.none(Char::isISOControl) && url.none(Char::isWhitespace) && '#' !in url) {
+        "Invalid challenge URL"
+    }
+    PluginUrlPolicy.requireHttpsUrl(url)
+    require(seedCookies.size <= WireLimitsV1.MAX_CHALLENGE_SEED_COOKIES) { "Too many challenge seed cookies" }
+    var totalBytes = 0
+    seedCookies.forEach { cookie ->
+        require(
+            COOKIE_NAME.matches(cookie.name) &&
+                cookie.value.length <= MAX_COOKIE_VALUE_LENGTH &&
+                cookie.value.all(::isCookieValueChar),
+        ) {
+            "Invalid challenge seed cookie"
+        }
+        totalBytes += cookie.name.encodeToByteArray().size + cookie.value.encodeToByteArray().size
+    }
+    require(totalBytes <= WireLimitsV1.MAX_CHALLENGE_SEED_COOKIE_BYTES) { "Challenge seed cookies are too large" }
+}
+
+public fun PluginErrorV1.requireValid() {
+    message.requireValid()
+    require(retryAfterSeconds == null || retryAfterSeconds in 0..604_800) { "Invalid retry delay" }
+    require(remoteCode == null || remoteCode.length <= 512) { "Remote error code is too long" }
+    if (code == PluginErrorCodeV1.ChallengeRequired) {
+        requireNotNull(challenge) { "ChallengeRequired error requires challenge metadata" }.requireValid()
+    } else {
+        require(challenge == null) { "Challenge metadata is only valid for ChallengeRequired errors" }
+    }
+}
+
+public fun normalizeUserAgent(raw: String?): String? {
+    if (raw.isNullOrBlank() || raw.any(Char::isISOControl)) return null
+    return raw.trim().takeIf { it.isNotEmpty() && it.length <= WireLimitsV1.MAX_USER_AGENT_LENGTH }
 }
 
 public fun LoginTransitionV1.requireValid() {
@@ -603,6 +921,8 @@ internal fun String?.requireHttpsUrl(required: Boolean = false) {
 }
 
 private fun String.isWireName(): Boolean = WIRE_NAME.matches(this)
+
+private fun String.isMangaId(): Boolean = isNotBlank() && length <= WireLimitsV1.MAX_ID_LENGTH && none(Char::isISOControl)
 
 private val WIRE_NAME = Regex("[A-Za-z][A-Za-z0-9_.-]{0,127}")
 private val FILE_EXTENSION = Regex("[A-Za-z0-9]{1,24}")

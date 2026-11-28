@@ -13,8 +13,10 @@ import androidx.compose.runtime.snapshotFlow
 import dev.dimension.flare.common.OnDeviceAI
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.model.AgentOpenAIApi
+import dev.dimension.flare.data.datastore.model.AiRequestHeader
 import dev.dimension.flare.data.datastore.model.AppSettings
 import dev.dimension.flare.data.datastore.model.OpenAIConfigDefaults
+import dev.dimension.flare.data.datastore.model.areValidAiRequestHeaders
 import dev.dimension.flare.data.network.ai.OpenAIService
 import dev.dimension.flare.data.translation.PluginTranslationProvider
 import dev.dimension.flare.data.translation.canonicalTranslationLanguage
@@ -81,6 +83,7 @@ public class AiConfigPresenter(
         public val aiType: AiTypeOption
         public val openAIServerUrl: String
         public val openAIApiKey: String
+        public val openAIHeaders: List<AiRequestHeader>
         public val openAIModel: String
         public val openAIReasoningEffort: AiReasoningEffortOption
         public val openAIContextWindow: String
@@ -130,6 +133,8 @@ public class AiConfigPresenter(
         public fun setOpenAIServerUrl(value: String)
 
         public fun setOpenAIApiKey(value: String)
+
+        public fun setOpenAIHeaders(value: List<AiRequestHeader>): Boolean
 
         public fun setOpenAIModel(value: String)
 
@@ -215,12 +220,13 @@ public class AiConfigPresenter(
 
         LaunchedEffect(Unit) {
             snapshotFlow { appSettings.aiConfig.editingType(agentConfig) as? AppSettings.AiConfig.Type.OpenAI }
-                .map { (it?.serverUrl ?: "") to (it?.apiKey ?: "") }
+                .map { Triple(it?.serverUrl.orEmpty(), it?.apiKey.orEmpty(), it?.customHeaders.orEmpty()) }
                 .distinctUntilChanged()
                 .debounce(666L)
-                .collectLatest { (serverUrl, apiKey) ->
-                    if (serverUrl.isBlank() || apiKey.isBlank()) {
-                        openAIModels = UiState.Success(openAIModelPresets(serverUrl))
+                .collectLatest { (serverUrl, apiKey, customHeaders) ->
+                    val presets = openAIModelPresets(serverUrl)
+                    if (serverUrl.isBlank() || (apiKey.isBlank() && customHeaders.isEmpty() && presets.isNotEmpty())) {
+                        openAIModels = UiState.Success(presets)
                     } else {
                         openAIModels = UiState.Loading()
                         openAIModels =
@@ -230,6 +236,7 @@ public class AiConfigPresenter(
                                         .models(
                                             serverUrl = serverUrl,
                                             apiKey = apiKey,
+                                            customHeaders = customHeaders,
                                         ).toImmutableList(),
                                 )
                             }.getOrElse {
@@ -331,6 +338,9 @@ public class AiConfigPresenter(
 
             override val openAIApiKey: String =
                 (editingType as? AppSettings.AiConfig.Type.OpenAI)?.apiKey ?: ""
+
+            override val openAIHeaders: List<AiRequestHeader> =
+                (editingType as? AppSettings.AiConfig.Type.OpenAI)?.customHeaders.orEmpty()
 
             override val openAIModel: String =
                 (editingType as? AppSettings.AiConfig.Type.OpenAI)?.model ?: ""
@@ -438,6 +448,15 @@ public class AiConfigPresenter(
 
             override fun setOpenAIApiKey(value: String) {
                 update { updateOpenAIConfig(agentConfig) { copy(apiKey = value) } }
+            }
+
+            override fun setOpenAIHeaders(value: List<AiRequestHeader>): Boolean {
+                if (!areValidAiRequestHeaders(value)) return false
+                val headers = value.toList()
+                update {
+                    if (agentConfig && agentType == null) this else updateOpenAIConfig(agentConfig) { copy(customHeaders = headers) }
+                }
+                return true
             }
 
             override fun setOpenAIModel(value: String) {

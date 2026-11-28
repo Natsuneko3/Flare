@@ -1,6 +1,336 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "status_detail_comments" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comments"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "评论"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "留言"
+          }
+        }
+      }
+    },
+    "status_detail_by_popularity" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By popularity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按热度"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依熱門程度"
+          }
+        }
+      }
+    },
+    "status_detail_by_time" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By time"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按时间"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依時間"
+          }
+        }
+      }
+    },
+    "status_detail_replies" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replies"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回复"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回覆"
+          }
+        }
+      }
+    },
+    "status_detail_quotes" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quotes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引用"
+          }
+        }
+      }
+    },
+    "status_detail_relevance" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Most relevant"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最相关"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最相關"
+          }
+        }
+      }
+    },
+    "status_detail_recency" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latest"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最新"
+          }
+        }
+      }
+    },
+    "status_detail_likes" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Most liked"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最多点赞"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最多讚好"
+          }
+        }
+      }
+    },
+    "status_detail_oldest" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oldest"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最早"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最早"
+          }
+        }
+      }
+    },
+    "status_detail_reposted_by" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reposted by"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转发者"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轉發者"
+          }
+        }
+      }
+    },
+    "status_detail_liked_by" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liked by"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点赞者"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按讚者"
+          }
+        }
+      }
+    },
+    "status_detail_reactions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reactions"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表情回应"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表情回應"
+          }
+        }
+      }
+    },
+    "status_detail_all_reactions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All reactions"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部表情"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部表情"
+          }
+        }
+      }
+    },
+    "status_detail_filter_empty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No results for this filter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前筛选无结果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前篩選沒有結果"
+          }
+        }
+      }
+    },
+    "status_detail_filter" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort and filter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排序和筛选"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排序和篩選"
+          }
+        }
+      }
+    },
     "plugin_login_qr_hint" : {
       "localizations" : {
         "en" : {
@@ -173,6 +503,396 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重試儲存帳號"
+          }
+        }
+      }
+    },
+    "plugin_local_import" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local import"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地导入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機匯入"
+          }
+        },
+        "af" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plaaslik ingevoer"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "استيراد محلي"
+          }
+        },
+        "bg" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локално импортиране"
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importació local"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Místní import"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokal import"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokaler Import"
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Τοπική εισαγωγή"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paikallinen tuonti"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import local"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ייבוא מקומי"
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helyi importálás"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importazione locale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルから読み込み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬에서 가져옴"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokal import"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokale import"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import lokalny"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importação local"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importação local"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import local"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальный импорт"
+          }
+        },
+        "sr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локални увоз"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokal import"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yerel içe aktarma"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальний імпорт"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nhập từ thiết bị"
+          }
+        }
+      }
+    },
+    "plugin_updated_at %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updated %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新于 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新於 %@"
+          }
+        },
+        "af" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bygewerk op %@"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "آخر تحديث في %@"
+          }
+        },
+        "bg" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Актуализирано на %@"
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualitzat el %@"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualizováno %@"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opdateret %@"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualisiert am %@"
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ενημερώθηκε στις %@"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Päivitetty %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mis à jour le %@"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "עודכן ב־%@"
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frissítve: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiornato il %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 更新"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 업데이트"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppdatert %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bijgewerkt op %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaktualizowano %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atualizado em %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atualizado em %@"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualizat la %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновлено %@"
+          }
+        },
+        "sr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ажурирано %@"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uppdaterad %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Güncellenme tarihi: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оновлено %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cập nhật ngày %@"
+          }
+        }
+      }
+    },
+    "plugin_marketplace_community_notice" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plugins in the marketplace are created by third-party community developers and are not official. Review the source repository before installing."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件市场收录的插件均由社区第三方开发，并非官方出品。安装前请核对来源仓库。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外掛市集收錄的外掛均由社群第三方開發，並非官方出品。安裝前請核對來源儲存庫。"
           }
         }
       }
@@ -13819,173 +14539,173 @@
     }
   }
 },
-    "image_translation_use_shared_description" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Share the service URL, API key and model. The service and model must support image output. Turn off to configure image translation separately."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "共用服务地址、API 密钥和模型。服务与模型需要支持输出图片；关闭后可单独配置。"}},
+    "image_translation_use_shared_description" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Share the service URL, API key, model and custom headers. The service and model must support image output. Turn off to configure image translation separately."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "共用服务地址、API 密钥、模型和自定义请求头。服务与模型需要支持输出图片；关闭后可单独配置。"}},
   "af": {
     "stringUnit": {
       "state": "translated",
-      "value": "Deel die diens-URL, API-sleutel en model. Die diens en model moet beelduitvoer ondersteun. Skakel af om beeldvertaling afsonderlik te konfigureer."
+      "value": "Deel die diens-URL, API-sleutel, model en pasgemaakte opskrifte. Die diens en model moet beelduitvoer ondersteun. Skakel af om beeldvertaling afsonderlik te konfigureer."
     }
   },
   "ar": {
     "stringUnit": {
       "state": "translated",
-      "value": "شارك عنوان URL للخدمة ومفتاح API والنموذج. يجب أن تدعم الخدمة والنموذج إخراج الصور. قم بإيقاف التشغيل لتكوين ترجمة الصور بشكل منفصل."
+      "value": "شارك عنوان URL للخدمة ومفتاح API والنموذج وترويسات الطلب المخصصة. يجب أن تدعم الخدمة والنموذج إخراج الصور. قم بإيقاف التشغيل لتكوين ترجمة الصور بشكل منفصل."
     }
   },
   "bg": {
     "stringUnit": {
       "state": "translated",
-      "value": "Споделете URL на услугата, API ключ и модела. Услугата и моделът трябва да поддържат изход на изображения. Изключете за отделна конфигурация на превода на изображения."
+      "value": "Споделете URL на услугата, API ключа, модела и персонализираните заглавки. Услугата и моделът трябва да поддържат изход на изображения. Изключете за отделна конфигурация на превода на изображения."
     }
   },
   "ca": {
     "stringUnit": {
       "state": "translated",
-      "value": "Compartir l'URL del servei, la clau API i el model. El servei i el model han de suportar la sortida d'imatges. Desactivar per configurar la traducció d'imatges separatament."
+      "value": "Compartir l'URL del servei, la clau API, el model i les capçaleres personalitzades. El servei i el model han de suportar la sortida d'imatges. Desactivar per configurar la traducció d'imatges separatament."
     }
   },
   "cs": {
     "stringUnit": {
       "state": "translated",
-      "value": "Sdílejte URL služby, API klíč a model. Služba a model musí podporovat výstup obrázků. Vypněte pro samostatnou konfiguraci překladu obrázků."
+      "value": "Sdílejte URL služby, API klíč, model a vlastní hlavičky. Služba a model musí podporovat výstup obrázků. Vypněte pro samostatnou konfiguraci překladu obrázků."
     }
   },
   "da": {
     "stringUnit": {
       "state": "translated",
-      "value": "Del tjeneste-URL, API-nøgle og model. Tjenesten og modellen skal understøtte billedoutput. Slå fra for at konfigurere billedoversættelse separat."
+      "value": "Del tjeneste-URL, API-nøgle, model og brugerdefinerede headere. Tjenesten og modellen skal understøtte billedoutput. Slå fra for at konfigurere billedoversættelse separat."
     }
   },
   "de": {
     "stringUnit": {
       "state": "translated",
-      "value": "Teile die Dienst-URL, den API-Schlüssel und das Modell. Der Dienst und das Modell müssen Bildausgabe unterstützen. Deaktivieren, um die Bildübersetzung separat zu konfigurieren."
+      "value": "Teile die Dienst-URL, den API-Schlüssel, das Modell und die benutzerdefinierten Header. Der Dienst und das Modell müssen Bildausgabe unterstützen. Deaktivieren, um die Bildübersetzung separat zu konfigurieren."
     }
   },
   "el": {
     "stringUnit": {
       "state": "translated",
-      "value": "Κοινοποίηση της URL της υπηρεσίας, του κλειδιού API και του μοντέλου. Η υπηρεσία και το μοντέλο πρέπει να υποστηρίζουν έξοδο εικόνων. Απενεργοποίηση για ξεχωριστή ρύθμιση μετάφρασης εικόνων."
+      "value": "Κοινοποίηση της URL της υπηρεσίας, του κλειδιού API, του μοντέλου και των προσαρμοσμένων κεφαλίδων. Η υπηρεσία και το μοντέλο πρέπει να υποστηρίζουν έξοδο εικόνων. Απενεργοποίηση για ξεχωριστή ρύθμιση μετάφρασης εικόνων."
     }
   },
   "fi": {
     "stringUnit": {
       "state": "translated",
-      "value": "Jaa palvelun URL-osoite, API-avain ja malli. Palvelun ja mallin on tuettava kuvatulostusta. Sammuta konfiguroidaksesi kuvakäännöksen erikseen."
+      "value": "Jaa palvelun URL-osoite, API-avain, malli ja mukautetut otsakkeet. Palvelun ja mallin on tuettava kuvatulostusta. Sammuta konfiguroidaksesi kuvakäännöksen erikseen."
     }
   },
   "fr": {
     "stringUnit": {
       "state": "translated",
-      "value": "Partager l'URL du service, la clé API et le modèle. Le service et le modèle doivent prendre en charge la sortie d'images. Désactiver pour configurer la traduction d'images séparément."
+      "value": "Partager l'URL du service, la clé API, le modèle et les en-têtes personnalisés. Le service et le modèle doivent prendre en charge la sortie d'images. Désactiver pour configurer la traduction d'images séparément."
     }
   },
   "he": {
     "stringUnit": {
       "state": "translated",
-      "value": "שתף את כתובת השירות, מפתח ה-API והמודל. השירות והמודל חייבים לתמוך בפלט תמונות. כבה כדי להגדיר תרגום תמונות בנפרד."
+      "value": "שתף את כתובת השירות, מפתח ה-API, המודל וכותרות הבקשה המותאמות אישית. השירות והמודל חייבים לתמוך בפלט תמונות. כבה כדי להגדיר תרגום תמונות בנפרד."
     }
   },
   "hu": {
     "stringUnit": {
       "state": "translated",
-      "value": "Megosztja a szolgáltatás URL-jét, API kulcsát és modelljét. A szolgáltatásnak és a modellnek képkimenetet kell támogatnia. Kikapcsolja a képfordítás külön konfigurálására."
+      "value": "Megosztja a szolgáltatás URL-jét, API-kulcsát, modelljét és egyéni fejléceit. A szolgáltatásnak és a modellnek képkimenetet kell támogatnia. Kikapcsolja a képfordítás külön konfigurálására."
     }
   },
   "it": {
     "stringUnit": {
       "state": "translated",
-      "value": "Condividi l'URL del servizio, la chiave API e il modello. Il servizio e il modello devono supportare l'output di immagini. Disattiva per configurare la traduzione delle immagini separatamente."
+      "value": "Condividi l'URL del servizio, la chiave API, il modello e le intestazioni personalizzate. Il servizio e il modello devono supportare l'output di immagini. Disattiva per configurare la traduzione delle immagini separatamente."
     }
   },
   "ja": {
     "stringUnit": {
       "state": "translated",
-      "value": "サービスURL、APIキー、モデルを共有します。サービスとモデルは画像出力をサポートする必要があります。オフにすると、画像翻訳を個別に設定できます。"
+      "value": "サービスURL、APIキー、モデル、カスタムヘッダーを共有します。サービスとモデルは画像出力をサポートする必要があります。オフにすると、画像翻訳を個別に設定できます。"
     }
   },
   "ko": {
     "stringUnit": {
       "state": "translated",
-      "value": "서비스 URL, API 키 및 모델을 공유합니다. 서비스와 모델은 이미지 출력을 지원해야 합니다. 이미지 번역을 별도로 구성하려면 끄십시오."
+      "value": "서비스 URL, API 키, 모델 및 사용자 지정 헤더를 공유합니다. 서비스와 모델은 이미지 출력을 지원해야 합니다. 이미지 번역을 별도로 구성하려면 끄십시오."
     }
   },
   "nb": {
     "stringUnit": {
       "state": "translated",
-      "value": "Del tjeneste-URL, API-nøkkel og modell. Tjenesten og modellen må støtte bildeutdata. Slå av for å konfigurere bildeoversettelse separat."
+      "value": "Del tjeneste-URL, API-nøkkel, modell og egendefinerte headere. Tjenesten og modellen må støtte bildeutdata. Slå av for å konfigurere bildeoversettelse separat."
     }
   },
   "nl": {
     "stringUnit": {
       "state": "translated",
-      "value": "De service-URL, API-sleutel en het model delen. De service en het model moeten beeldoutput ondersteunen. Schakel uit om beeldvertaling afzonderlijk in te stellen."
+      "value": "De service-URL, de API-sleutel, het model en de aangepaste headers delen. De service en het model moeten beeldoutput ondersteunen. Schakel uit om beeldvertaling afzonderlijk in te stellen."
     }
   },
   "pl": {
     "stringUnit": {
       "state": "translated",
-      "value": "Udostępnij adres URL usługi, klucz API i model. Usługa i model muszą obsługiwać wyjście obrazów. Wyłącz, aby skonfigurować tłumaczenie obrazów osobno."
+      "value": "Udostępnij adres URL usługi, klucz API, model i niestandardowe nagłówki. Usługa i model muszą obsługiwać wyjście obrazów. Wyłącz, aby skonfigurować tłumaczenie obrazów osobno."
     }
   },
   "pt": {
     "stringUnit": {
       "state": "translated",
-      "value": "Partilhar a URL do serviço, a chave de API e o modelo. O serviço e o modelo devem suportar saída de imagem. Desativar para configurar a tradução de imagem separadamente."
+      "value": "Partilhar a URL do serviço, a chave de API, o modelo e os cabeçalhos personalizados. O serviço e o modelo devem suportar saída de imagem. Desativar para configurar a tradução de imagem separadamente."
     }
   },
   "pt-BR": {
     "stringUnit": {
       "state": "translated",
-      "value": "Compartilhe a URL do serviço, a chave de API e o modelo. O serviço e o modelo devem suportar saída de imagem. Desligue para configurar a tradução de imagem separadamente."
+      "value": "Compartilhe a URL do serviço, a chave de API, o modelo e os cabeçalhos personalizados. O serviço e o modelo devem suportar saída de imagem. Desligue para configurar a tradução de imagem separadamente."
     }
   },
   "ro": {
     "stringUnit": {
       "state": "translated",
-      "value": "Distribuie URL-ul serviciului, cheia API și modelul. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat."
+      "value": "Distribuie URL-ul serviciului, cheia API, modelul și anteturile personalizate. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat."
     }
   },
   "ru": {
     "stringUnit": {
       "state": "translated",
-      "value": "Поделиться URL-адресом сервиса, ключом API и моделью. Сервис и модель должны поддерживать вывод изображений. Отключите, чтобы настроить перевод изображений отдельно."
+      "value": "Поделиться URL-адресом сервиса, ключом API, моделью и пользовательскими заголовками. Сервис и модель должны поддерживать вывод изображений. Отключите, чтобы настроить перевод изображений отдельно."
     }
   },
   "sr": {
     "stringUnit": {
       "state": "translated",
-      "value": "Поделити URL сервиса, API кључ и модел. Сервис и модел морају да подржавају излаз слика. Искључити да би се превод слика конфигурисао одвојено."
+      "value": "Поделити URL сервиса, API кључ, модел и прилагођена заглавља. Сервис и модел морају да подржавају излаз слика. Искључити да би се превод слика конфигурисао одвојено."
     }
   },
   "sv": {
     "stringUnit": {
       "state": "translated",
-      "value": "Dela tjänstens URL, API-nyckel och modell. Tjänsten och modellen måste stödja bildutdata. Stäng av för att konfigurera bildöversättning separat."
+      "value": "Dela tjänstens URL, API-nyckel, modell och anpassade rubriker. Tjänsten och modellen måste stödja bildutdata. Stäng av för att konfigurera bildöversättning separat."
     }
   },
   "tr": {
     "stringUnit": {
       "state": "translated",
-      "value": "Hizmet URL'sini, API anahtarını ve modeli paylaşın. Hizmet ve modelin görsel çıktı desteklemesi gerekir. Görsel çeviriyi ayrı yapılandırmak için kapatın."
+      "value": "Hizmet URL'sini, API anahtarını, modeli ve özel başlıkları paylaşın. Hizmet ve modelin görsel çıktı desteklemesi gerekir. Görsel çeviriyi ayrı yapılandırmak için kapatın."
     }
   },
   "uk": {
     "stringUnit": {
       "state": "translated",
-      "value": "Поділіться URL-адресою сервісу, ключем API та моделлю. Сервіс та модель повинні підтримувати виведення зображень. Вимкніть, щоб налаштувати переклад зображень окремо."
+      "value": "Поділіться URL-адресою сервісу, ключем API, моделлю та спеціальними заголовками. Сервіс та модель повинні підтримувати виведення зображень. Вимкніть, щоб налаштувати переклад зображень окремо."
     }
   },
   "vi": {
     "stringUnit": {
       "state": "translated",
-      "value": "Chia sẻ URL dịch vụ, khóa API và mô hình. Dịch vụ và mô hình phải hỗ trợ xuất hình ảnh. Tắt để cấu hình dịch thuật hình ảnh riêng."
+      "value": "Chia sẻ URL dịch vụ, khóa API, mô hình và tiêu đề tùy chỉnh. Dịch vụ và mô hình phải hỗ trợ xuất hình ảnh. Tắt để cấu hình dịch thuật hình ảnh riêng."
     }
   },
   "zh-Hant": {
     "stringUnit": {
       "state": "translated",
-      "value": "共用服務網址、API 金鑰與模型。服務與模型都必須支援輸出圖片。關閉後可個別設定圖片翻譯。"
+      "value": "共用服務網址、API 金鑰、模型與自訂請求標頭。服務與模型都必須支援輸出圖片。關閉後可個別設定圖片翻譯。"
     }
   }
 }},
@@ -25168,6 +25888,34 @@
       }
     }
   },
+  "plugin_install_auto_add_tabs": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Automatically add default tabs after installing"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "安装后自动添加默认标签页"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "安裝後自動新增預設分頁"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "インストール後にデフォルトタブを自動追加"
+        }
+      }
+    }
+  },
   "plugin_confirm_install": {
     "localizations": {
       "en": {
@@ -28662,6 +29410,236 @@
         "stringUnit": {
           "state": "translated",
           "value": "登入期間存取 %1$@"
+        }
+      }
+    }
+  },
+  "plugin_permission_timeline_post_access": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Read displayed timeline posts to attach widgets, which may send post content to permitted network origins"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "读取时间线中显示的帖子以附加小组件，帖子内容可能会发送到允许访问的网络来源"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "讀取時間軸中顯示的貼文以附加小工具，貼文內容可能會傳送到允許存取的網路來源"
+        }
+      }
+    }
+  },
+  "plugin_timeline_processor_toggle": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Timeline post widgets"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "时间线帖子小组件"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "時間軸貼文小工具"
+        }
+      }
+    }
+  },
+  "plugin_widget_copy": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Copy"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "复制"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "複製"
+        }
+      }
+    }
+  },
+  "plugin_widget_page_indicator": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Page %1$lld of %2$lld"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "第 %1$lld 页，共 %2$lld 页"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "第 %1$lld 頁，共 %2$lld 頁"
+        }
+      }
+    }
+  },
+  "plugin_widget_refresh": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Refresh"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "刷新"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "重新整理"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_falling": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Falling trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "下降趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "下降趨勢"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_flat": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Flat trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "持平趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "持平趨勢"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_fluctuating": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Fluctuating trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "波动趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "波動趨勢"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_range": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Low %1$@, high %2$@"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最低 %1$@，最高 %2$@"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "最低 %1$@，最高 %2$@"
+        }
+      }
+    }
+  },
+  "plugin_widget_sparkline_rising": {
+    "extractionState": "manual",
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Rising trend"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "上升趋势"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "上升趨勢"
         }
       }
     }
@@ -35277,6 +36255,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重試"
+          }
+        }
+      }
+    },
+    "share_image_too_large" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image is too long to share."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片过长，无法分享。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "圖片過長，無法分享。"
+          }
+        }
+      }
+    },
+    "share_image_render_failed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to prepare the image. Please try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法准备图片，请重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法準備圖片，請重試。"
           }
         }
       }
@@ -78821,6 +79843,160 @@
         }
       }
     },
+    "compose_poll_unsupported_accounts" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "One or more selected accounts cannot publish polls."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有选中的账号不支持发布投票。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有已選帳號不支援發佈投票。"
+          }
+        }
+      }
+    },
+    "compose_poll_option_limits" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter 2 to %lld choices, up to %lld characters each."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填写 2 到 %lld 个选项，每项最多 %lld 个字符。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填寫 2 到 %lld 個選項，每項最多 %lld 個字元。"
+          }
+        }
+      }
+    },
+    "compose_x_reply_everyone" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Everyone"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有人"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有人"
+          }
+        }
+      }
+    },
+    "compose_x_reply_following" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts you follow"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你关注的账号"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你跟隨的帳號"
+          }
+        }
+      }
+    },
+    "compose_x_reply_mentioned" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only mentioned accounts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅提及的账号"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅提及的帳號"
+          }
+        }
+      }
+    },
+    "compose_x_reply_restriction" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Who can reply on X"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "谁能在 X 上回复"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "誰能在 X 上回覆"
+          }
+        }
+      }
+    },
+    "compose_x_reply_verified" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verified accounts"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已认证的账号"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已認證的帳號"
+          }
+        }
+      }
+    },
     "compose_poll_choice_placeholder" : {
       "localizations" : {
         "af" : {
@@ -86729,6 +87905,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法載入私訊"
+          }
+        }
+      }
+    },
+    "dm_add_image" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attach image"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加图片"
+          }
+        }
+      }
+    },
+    "dm_remove_image" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove image"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除图片"
+          }
+        }
+      }
+    },
+    "dm_image_attached" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Image attached"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已添加图片"
+          }
+        }
+      }
+    },
+    "dm_image_send_failed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not send image. Try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片发送失败，请重试。"
           }
         }
       }
@@ -192472,374 +193712,6 @@
         }
       }
     },
-    "settings_about_localization" : {
-      "localizations" : {
-        "af" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "كرودن"
-          }
-        },
-        "bg" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "ca" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "da" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "el" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "fi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdiini"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "he" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "קרואדין"
-          }
-        },
-        "hu" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "nb" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "ro" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "sr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "sv" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Кравдін"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Crowdin"
-          }
-        }
-      }
-    },
-    "settings_about_localization_description" : {
-      "localizations" : {
-        "af" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Help ons om Flare te vertaal"
-          }
-        },
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ساعدنا في ترجمة Flare"
-          }
-        },
-        "bg" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Помогнете ни да преведем Flare"
-          }
-        },
-        "ca" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ajuda'ns a traduir Flare"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pomozte nám přeložit Flare"
-          }
-        },
-        "da" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hjælp os med at oversætte Flare"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hilf uns, Flare zu übersetzen"
-          }
-        },
-        "el" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Βοηθήστε μας να μεταφράσουμε το Flare"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Help us translate Flare"
-          }
-        },
-        "fi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auta meitä kääntämään Flare"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aidez-nous à traduire Flare"
-          }
-        },
-        "he" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "עזרו לנו לתרגם את Flare"
-          }
-        },
-        "hu" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Segíts nekünk lefordítani a Flare-t"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aiutaci a tradurre Flare"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flareの翻訳にご協力ください"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flare 번역에 도움을 주세요"
-          }
-        },
-        "nb" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hjelp oss å oversette Flare"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Help ons Flare te vertalen"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pomóż nam przetłumaczyć Flare"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ajude-nos a traduzir o Flare"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ajude-nos a traduzir o Flare"
-          }
-        },
-        "ro" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ajută-ne să traducem Flare"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Помогите нам перевести Flare"
-          }
-        },
-        "sr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Помозите нам да преведемо Flare"
-          }
-        },
-        "sv" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hjälp oss att översätta Flare"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flare'ı çevirmemize yardım edin"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Допоможіть нам перекласти Flare"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hãy giúp chúng tôi dịch Flare"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "帮助我们翻译 Flare"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "幫助我們翻譯 Flare"
-          }
-        }
-      }
-    },
     "settings_about_source_code" : {
       "localizations" : {
         "af" : {
@@ -211098,6 +211970,28 @@
         }
       }
     },
+    "storage_clear_database_cache_busy" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cache cleared. The database is busy. Try again later to reclaim the remaining space."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缓存已清除。数据库正忙，稍后再试即可回收剩余空间。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快取已清除。資料庫忙碌中，請稍後再試以回收剩餘空間。"
+          }
+        }
+      }
+    },
     "storage_clear_database_cache_confirm" : {
       "localizations" : {
         "af" : {
@@ -224716,190 +225610,6 @@
         }
       }
     },
-    "vvo_status_title" : {
-      "localizations" : {
-        "af" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Status"
-          }
-        },
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "الحالة"
-          }
-        },
-        "bg" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Състояние"
-          }
-        },
-        "ca" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Estat"
-          }
-        },
-        "cs" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stav"
-          }
-        },
-        "da" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Indlæg"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Beitrag"
-          }
-        },
-        "el" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ανάρτηση"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Post"
-          }
-        },
-        "fi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Viesti"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Statut"
-          }
-        },
-        "he" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "פוסט"
-          }
-        },
-        "hu" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bejegyzés"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stato"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "投稿"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "게시물"
-          }
-        },
-        "nb" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Innlegg"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "status"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wpis"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Publicação"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Postagem"
-          }
-        },
-        "ro" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Postare"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пост"
-          }
-        },
-        "sr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Објава"
-          }
-        },
-        "sv" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Inlägg"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gönderi"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пост"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bài đăng"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "帖子"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "貼文"
-          }
-        }
-      }
-    },
     "xqt_notification_mention" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -226926,6 +227636,11 @@
       }
     }
   },
+  "settings_ai_config_custom_headers": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Custom headers"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "自定义请求头"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "自訂請求標頭"}}}},
+  "settings_ai_config_header_add": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Add header"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "添加请求头"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "新增請求標頭"}}}},
+  "settings_ai_config_header_name": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Header name"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "请求头名称"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "請求標頭名稱"}}}},
+  "settings_ai_config_header_value": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Header value"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "请求头值"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "請求標頭值"}}}},
+  "settings_ai_config_headers_invalid": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Use valid, unique header names and single-line ASCII values."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "请使用有效且不重复的请求头名称，值须为单行 ASCII 文本。"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "請使用有效且不重複的請求標頭名稱，值須為單行 ASCII 文字。"}}}},
   "settings_ai_config_use_shared": {
     "localizations": {
       "en": {
@@ -227476,6 +228191,390 @@
           "value": "Mô hình AI được sử dụng cho cấu hình này"
         }
       }
+    }
+  },
+  "manga_detail_read": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Read" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "読む" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "开始阅读" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "開始閱讀" } }
+    }
+  },
+  "manga_detail_start_chapter": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Read: %@" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "読む: %@" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "阅读：%@" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "閱讀：%@" } }
+    }
+  },
+  "manga_detail_continue_chapter": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Continue: %@" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "続きを読む: %@" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "继续阅读：%@" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "繼續閱讀：%@" } }
+    }
+  },
+  "manga_detail_chapters_title": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Chapters" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "チャプター" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "章节" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "章節" } }
+    }
+  },
+  "manga_detail_tab_comments": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Comments" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "コメント" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "评论" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "評論" } }
+    }
+  },
+  "manga_detail_tab_recommendations": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Recommendations" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "おすすめ" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "推荐" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "推薦" } }
+    }
+  },
+  "manga_detail_view_more": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "View more" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "もっと見る" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "查看更多" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "查看更多" } }
+    }
+  },
+  "manga_detail_sort_ascending": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Ascending" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "昇順" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "正序" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "正序" } }
+    }
+  },
+  "manga_detail_sort_descending": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Descending" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "降順" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "倒序" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "倒序" } }
+    }
+  },
+  "manga_detail_mark_read": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Mark as read" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "既読にする" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "标为已读" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "標為已讀" } }
+    }
+  },
+  "manga_detail_mark_unread": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Mark as unread" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "未読にする" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "标为未读" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "標為未讀" } }
+    }
+  },
+  "manga_detail_page_progress": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Page %1$lld / %2$lld" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%1$lld / %2$lld ページ" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "第 %1$lld / %2$lld 页" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "第 %1$lld / %2$lld 頁" } }
+    }
+  },
+  "manga_detail_empty_chapters": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "No chapters available" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "チャプターがありません" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "暂无章节" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "暫無章節" } }
+    }
+  },
+  "manga_detail_empty_recommendations": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "No recommended works yet" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "おすすめの作品はまだありません" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "暂无推荐作品" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "暫無推薦作品" } }
+    }
+  },
+  "manga_status_ongoing": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Ongoing" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "連載中" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "连载中" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "連載中" } }
+    }
+  },
+  "manga_status_completed": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Completed" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "完結" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "已完结" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "已完結" } }
+    }
+  },
+  "manga_status_hiatus": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Hiatus" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "休載中" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "休刊中" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "休刊中" } }
+    }
+  },
+  "manga_status_cancelled": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Cancelled" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "打ち切り" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "已停更" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "已停更" } }
+    }
+  },
+  "manga_locked_chapter_title": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Locked chapter" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "ロックされた話" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "章节已锁定" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "章節已鎖定" } }
+    }
+  },
+  "manga_locked_chapter_message": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "%@ is locked. Open in browser to view on the original site?" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%@ はロックされています。ブラウザで元のサイトを開きますか？" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "%@ 已锁定，是否在浏览器中打开原网站查看？" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "%@ 已鎖定，是否在瀏覽器中打開原網站查看？" } }
+    }
+  },
+  "manga_open_in_browser": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Open in browser" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "ブラウザで開く" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "在浏览器中打开" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "在瀏覽器中打開" } }
+    }
+  },
+  "manga_reader_settings": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Reader settings" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "リーダー設定" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "阅读设置" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "閱讀設定" } }
+    }
+  },
+  "manga_reader_direction": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Reading direction" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "読み方向" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "阅读方向" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "閱讀方向" } }
+    }
+  },
+  "manga_reader_direction_rtl": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Right to Left" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "右から左" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "从右往左" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "由右至左" } }
+    }
+  },
+  "manga_reader_direction_ltr": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Left to Right" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "左から右" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "从左往右" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "由左至右" } }
+    }
+  },
+  "manga_reader_direction_webtoon": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Webtoon" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "縦スクロール" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "条漫" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "條漫" } }
+    }
+  },
+  "manga_reader_double_page_spread": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Double-page spread" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "見開き表示" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "双页拼合" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "雙頁拼合" } }
+    }
+  },
+  "manga_reader_spread_cover_single": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Single cover page" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "表紙を単ページ表示" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "首页单页显示" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "首頁單頁顯示" } }
+    }
+  },
+  "manga_reader_previous_chapter": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Previous chapter" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "前の話" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "上一话" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "上一話" } }
+    }
+  },
+  "manga_reader_next_chapter": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Next chapter" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "次の話" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "下一话" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "下一話" } }
+    }
+  },
+  "manga_reader_page_position": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Page position" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "ページ位置" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "页面位置" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "頁面位置" } }
+    }
+  },
+  "manga_reader_page_of": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "%1$lld of %2$lld" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%1$lld / %2$lld ページ" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "第 %1$lld 页，共 %2$lld 页" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "第 %1$lld 頁，共 %2$lld 頁" } }
+    }
+  },
+  "manga_boundary_previous_chapter": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Previous chapter: %@" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "前の話: %@" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "上一话：%@" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "上一話：%@" } }
+    }
+  },
+  "manga_boundary_next_chapter": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Next chapter: %@" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "次の話: %@" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "下一话：%@" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "下一話：%@" } }
+    }
+  },
+  "manga_boundary_read_previous": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Read previous chapter" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "前の話を読む" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "阅读上一话" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "閱讀上一話" } }
+    }
+  },
+  "manga_boundary_read_next": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Read next chapter" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "次の話を読む" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "阅读下一话" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "閱讀下一話" } }
+    }
+  },
+  "manga_page_retry": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Retry page" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "ページを再試行" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "重试本页" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "重試本頁" } }
+    }
+  },
+  "manga_reader_chapters": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Chapters" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "チャプター" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "章节" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "章節" } }
+    }
+  },
+  "manga_reader_constrain_webtoon_width": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Constrain webtoon width" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "縦スクロールの幅を制限" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "限制条漫宽度" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "限制條漫寬度" } }
+    }
+  },
+  "manga_reader_copy_image": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Copy image" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "画像をコピー" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "复制图片" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "複製圖片" } }
+    }
+  },
+  "manga_reader_page_number": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Page %lld" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "%lld ページ" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "第 %lld 页" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "第 %lld 頁" } }
+    }
+  },
+  "session_challenge_complete_verification": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Complete Verification" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "完成验证" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "完成驗證" } }
+    }
+  },
+  "session_challenge_required_message": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Verification is required to continue." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "需要完成验证才能继续。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "需要完成驗證才能繼續。" } }
+    }
+  },
+  "session_challenge_title": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Verification" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "安全验证" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "安全驗證" } }
+    }
+  },
+  "session_challenge_close": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Close" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "关闭" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "關閉" } }
+    }
+  },
+  "session_challenge_expired": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "This verification session has expired or is no longer valid. Close this window and retry." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "当前验证会话已过期或失效，请关闭后重试。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "目前驗證工作階段已過期或失效，請關閉後重試。" } }
+    }
+  },
+  "session_challenge_proxy_error": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "The webpage could not be loaded with this account's proxy settings. Check the proxy and try again." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法使用该账号的代理设置加载网页。请检查代理后重试。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法使用此帳號的代理設定載入網頁。請檢查代理後重試。" } }
+    }
+  },
+  "session_challenge_relogin_title": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Login required" } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "需要重新登录" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "需要重新登入" } }
+    }
+  },
+  "session_challenge_relogin_message": {
+    "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Your session is no longer valid. Please log in again to continue." } },
+      "zh-Hans": { "stringUnit": { "state": "translated", "value": "当前登录状态已失效，请重新登录以继续使用。" } },
+      "zh-Hant": { "stringUnit": { "state": "translated", "value": "目前登入狀態已失效，請重新登入以繼續使用。" } }
     }
   }
 

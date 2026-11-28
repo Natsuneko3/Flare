@@ -22,8 +22,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentWithReceiverOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,7 +75,9 @@ import dev.dimension.flare.ui.presenter.profile.FollowButtonState
 import dev.dimension.flare.ui.presenter.profile.ProfileState
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
+import dev.dimension.flare.ui.theme.PlatformContentColor
 import dev.dimension.flare.ui.theme.PlatformTheme
+import dev.dimension.flare.ui.theme.profileName
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import org.jetbrains.compose.resources.stringResource
 
@@ -109,10 +114,19 @@ public fun ProfileHeader(
     onFansListClick: (userKey: MicroBlogKey) -> Unit,
     modifier: Modifier = Modifier,
     isBigScreen: Boolean = false,
+    useCard: Boolean = !isBigScreen(),
 ) {
+    // Keep an open menu attached when the loaded header replaces its placeholder.
+    val currentMenu by rememberUpdatedState(menu)
+    val headerMenu =
+        remember {
+            movableContentWithReceiverOf<RowScope> {
+                CompositionLocalProvider(PlatformContentColor provides PlatformTheme.colorScheme.onCard) { currentMenu() }
+            }
+        }
     when (val userState = state.userState) {
         is UiState.Loading -> {
-            ProfileHeaderLoading(modifier = modifier, withStatusBarHeight = true)
+            ProfileHeaderLoading(modifier = modifier, withStatusBarHeight = true, menu = headerMenu)
         }
 
         is UiState.Error -> {
@@ -129,8 +143,9 @@ public fun ProfileHeader(
                 onFollowClick = state::follow,
                 onUnfollowClick = state::unfollow,
                 isMe = state.isMe,
-                menu = menu,
+                menu = headerMenu,
                 expandMatrices = isBigScreen,
+                useCard = useCard,
                 onAvatarClick = onAvatarClick,
                 onBannerClick = onBannerClick,
                 onFollowListClick = onFollowListClick,
@@ -154,6 +169,7 @@ private fun ProfileHeaderSuccess(
     menu: @Composable RowScope.() -> Unit,
     onFollowListClick: (userKey: MicroBlogKey) -> Unit,
     onFansListClick: (userKey: MicroBlogKey) -> Unit,
+    useCard: Boolean,
     modifier: Modifier = Modifier,
     expandMatrices: Boolean = false,
 ) {
@@ -165,6 +181,7 @@ private fun ProfileHeaderSuccess(
         displayName = user.name,
         userKey = user.key,
         handle = user.handle,
+        useCard = useCard,
         headerTrailing = {
             isMe.onSuccess {
                 if (!it) {
@@ -297,58 +314,7 @@ private fun ProfileHeaderSuccess(
             }
         },
         handleTrailing = {
-            user.mark.fastForEach {
-                when (it) {
-                    UiProfile.Mark.Verified -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.CircleCheck,
-                            contentDescription = stringResource(Res.string.profile_mark_verified),
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                            tint = Color.Blue,
-                        )
-                    }
-
-                    UiProfile.Mark.Cat -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Cat,
-                            contentDescription = stringResource(Res.string.profile_mark_cat),
-                            tint = PlatformTheme.colorScheme.caption,
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                        )
-                    }
-
-                    UiProfile.Mark.Bot -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Robot,
-                            contentDescription = stringResource(Res.string.profile_mark_bot),
-                            tint = PlatformTheme.colorScheme.caption,
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                        )
-                    }
-
-                    UiProfile.Mark.Locked -> {
-                        FAIcon(
-                            imageVector = FontAwesomeIcons.Solid.Lock,
-                            contentDescription = stringResource(Res.string.profile_mark_locked),
-                            tint = PlatformTheme.colorScheme.caption,
-                            modifier =
-                                Modifier
-                                    .size(12.dp),
-                        )
-                    }
-                }
-            }
-            AnimatedVisibility(user.translationDisplayState != TranslationDisplayState.Hidden) {
-                TranslationDisplayBadge(
-                    state = user.translationDisplayState,
-                )
-            }
+            ProfileMarksAndTranslation(user)
         },
         content = {
             user.description?.let {
@@ -358,47 +324,7 @@ private fun ProfileHeaderSuccess(
                     )
                 }
             }
-            when (val content = user.bottomContent) {
-                is UiProfile.BottomContent.Fields -> {
-                    UserFields(
-                        fields = content.fields,
-                        modifier =
-                            Modifier
-                                .background(PlatformTheme.colorScheme.cardAlt)
-                                .ignoreHorizontalParentPadding(screenHorizontalPadding)
-                                .padding(vertical = 8.dp)
-                                .fillMaxWidth(),
-                    )
-                }
-
-                is UiProfile.BottomContent.Iconify -> {
-                    content.items.forEach { (key, value) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            val (icon, iconDescriptionResource) =
-                                when (key) {
-                                    UiProfile.BottomContent.Iconify.Icon.Location -> {
-                                        FontAwesomeIcons.Solid.LocationDot to Res.string.profile_field_location
-                                    }
-
-                                    UiProfile.BottomContent.Iconify.Icon.Url -> {
-                                        FontAwesomeIcons.Solid.Globe to Res.string.profile_field_website
-                                    }
-
-                                    UiProfile.BottomContent.Iconify.Icon.Verify -> {
-                                        FontAwesomeIcons.Solid.CircleCheck to Res.string.profile_field_verified_link
-                                    }
-                                }
-                            FAIcon(icon, contentDescription = stringResource(iconDescriptionResource))
-                            RichText(text = value)
-                        }
-                    }
-                }
-
-                null -> {}
-            }
+            ProfileBottomContent(user.bottomContent)
             MatricesDisplay(
                 data = user.matrices,
                 expanded = expandMatrices,
@@ -414,6 +340,107 @@ private fun ProfileHeaderSuccess(
 }
 
 @Composable
+internal fun RowScope.ProfileMarksAndTranslation(user: UiProfile) {
+    user.mark.fastForEach {
+        when (it) {
+            UiProfile.Mark.Verified -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.CircleCheck,
+                    contentDescription = stringResource(Res.string.profile_mark_verified),
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                    tint = Color.Blue,
+                )
+            }
+
+            UiProfile.Mark.Cat -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Cat,
+                    contentDescription = stringResource(Res.string.profile_mark_cat),
+                    tint = PlatformTheme.colorScheme.caption,
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                )
+            }
+
+            UiProfile.Mark.Bot -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Robot,
+                    contentDescription = stringResource(Res.string.profile_mark_bot),
+                    tint = PlatformTheme.colorScheme.caption,
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                )
+            }
+
+            UiProfile.Mark.Locked -> {
+                FAIcon(
+                    imageVector = FontAwesomeIcons.Solid.Lock,
+                    contentDescription = stringResource(Res.string.profile_mark_locked),
+                    tint = PlatformTheme.colorScheme.caption,
+                    modifier =
+                        Modifier
+                            .size(12.dp),
+                )
+            }
+        }
+    }
+    AnimatedVisibility(user.translationDisplayState != TranslationDisplayState.Hidden) {
+        TranslationDisplayBadge(
+            state = user.translationDisplayState,
+        )
+    }
+}
+
+@Composable
+internal fun ProfileBottomContent(bottomContent: UiProfile.BottomContent?) {
+    when (bottomContent) {
+        is UiProfile.BottomContent.Fields -> {
+            UserFields(
+                fields = bottomContent.fields,
+                modifier =
+                    Modifier
+                        .background(PlatformTheme.colorScheme.cardAlt)
+                        .ignoreHorizontalParentPadding(screenHorizontalPadding)
+                        .padding(vertical = 8.dp)
+                        .fillMaxWidth(),
+            )
+        }
+
+        is UiProfile.BottomContent.Iconify -> {
+            bottomContent.items.forEach { (key, value) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    val (icon, iconDescriptionResource) =
+                        when (key) {
+                            UiProfile.BottomContent.Iconify.Icon.Location -> {
+                                FontAwesomeIcons.Solid.LocationDot to Res.string.profile_field_location
+                            }
+
+                            UiProfile.BottomContent.Iconify.Icon.Url -> {
+                                FontAwesomeIcons.Solid.Globe to Res.string.profile_field_website
+                            }
+
+                            UiProfile.BottomContent.Iconify.Icon.Verify -> {
+                                FontAwesomeIcons.Solid.CircleCheck to Res.string.profile_field_verified_link
+                            }
+                        }
+                    FAIcon(icon, contentDescription = stringResource(iconDescriptionResource))
+                    RichText(text = value)
+                }
+            }
+        }
+
+        null -> {}
+    }
+}
+
+@Composable
 private fun ProfileHeaderError() {
 }
 
@@ -421,6 +448,7 @@ private fun ProfileHeaderError() {
 public fun ProfileHeaderLoading(
     withStatusBarHeight: Boolean,
     modifier: Modifier = Modifier,
+    menu: @Composable RowScope.() -> Unit = {},
 ) {
     val statusBarHeight =
         with(LocalDensity.current) {
@@ -457,7 +485,7 @@ public fun ProfileHeaderLoading(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = screenHorizontalPadding),
+                        .padding(start = screenHorizontalPadding),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(
@@ -483,7 +511,7 @@ public fun ProfileHeaderLoading(
                 ) {
                     PlatformText(
                         text = "Loading user",
-                        style = PlatformTheme.typography.title,
+                        style = PlatformTheme.typography.profileName,
                         modifier = Modifier.placeholder(true),
                     )
                     PlatformText(
@@ -492,6 +520,7 @@ public fun ProfileHeaderLoading(
                         modifier = Modifier.placeholder(true),
                     )
                 }
+                Row(modifier = Modifier.padding(top = actualBannerHeight), content = menu)
             }
             PlatformText(
                 text = "Lorem Ipsum is simply dummy text",

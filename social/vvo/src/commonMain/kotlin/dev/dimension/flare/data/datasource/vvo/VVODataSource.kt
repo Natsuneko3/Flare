@@ -2,7 +2,6 @@ package dev.dimension.flare.data.datasource.vvo
 
 import androidx.paging.ExperimentalPagingApi
 import androidx.paging.Pager
-import dev.dimension.flare.common.CacheData
 import dev.dimension.flare.common.FileItem
 import dev.dimension.flare.common.MemCacheable
 import dev.dimension.flare.common.decodeJson
@@ -14,8 +13,14 @@ import dev.dimension.flare.data.datasource.microblog.ComposeData
 import dev.dimension.flare.data.datasource.microblog.ComposeDataSource
 import dev.dimension.flare.data.datasource.microblog.ComposeType
 import dev.dimension.flare.data.datasource.microblog.DatabaseUpdater
+import dev.dimension.flare.data.datasource.microblog.DirectMessageDataSource
+import dev.dimension.flare.data.datasource.microblog.MicroblogCacheLookup
 import dev.dimension.flare.data.datasource.microblog.NotificationFilter
 import dev.dimension.flare.data.datasource.microblog.NotificationTimelineDataSource
+import dev.dimension.flare.data.datasource.microblog.PostDetailFilter
+import dev.dimension.flare.data.datasource.microblog.PostDetailFilterOption
+import dev.dimension.flare.data.datasource.microblog.PostDetailTab
+import dev.dimension.flare.data.datasource.microblog.PostDetailTabs
 import dev.dimension.flare.data.datasource.microblog.PostEvent
 import dev.dimension.flare.data.datasource.microblog.ProfileTab
 import dev.dimension.flare.data.datasource.microblog.SearchOperation
@@ -24,8 +29,10 @@ import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimeline
 import dev.dimension.flare.data.datasource.microblog.datasource.PinnableTimelineTabSection
 import dev.dimension.flare.data.datasource.microblog.datasource.PostDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.RelationDataSource
+import dev.dimension.flare.data.datasource.microblog.datasource.TimelinePageDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.TimelineTabConfigurationDataSource
 import dev.dimension.flare.data.datasource.microblog.datasource.UserDataSource
+import dev.dimension.flare.data.datasource.microblog.handler.DirectMessageHandler
 import dev.dimension.flare.data.datasource.microblog.handler.EmojiHandler
 import dev.dimension.flare.data.datasource.microblog.handler.NotificationHandler
 import dev.dimension.flare.data.datasource.microblog.handler.PostEventHandler
@@ -42,6 +49,7 @@ import dev.dimension.flare.data.model.IconType
 import dev.dimension.flare.data.model.ProxyRef
 import dev.dimension.flare.data.model.tab.ShortcutSpec
 import dev.dimension.flare.data.model.tab.TimelineSpec
+import dev.dimension.flare.data.network.ktorClient
 import dev.dimension.flare.data.network.vvo.VVOService
 import dev.dimension.flare.data.network.vvo.model.StatusDetailItem
 import dev.dimension.flare.data.platform.CommonTimelineSpecs
@@ -60,14 +68,33 @@ import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiStrings
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.contentPostOrNull
+import dev.dimension.flare.ui.model.map
+import dev.dimension.flare.ui.model.mapper.VVO_COMMENT_ID_PARAM
+import dev.dimension.flare.ui.model.mapper.VVO_COMMENT_REPLIES_PAGE_ID
+import dev.dimension.flare.ui.model.mapper.VVO_ROOT_STATUS_ID_PARAM
 import dev.dimension.flare.ui.model.mapper.render
+import dev.dimension.flare.ui.model.mapper.renderVVOText
+import dev.dimension.flare.ui.model.mapper.withVvoExtendedText
 import dev.dimension.flare.ui.model.toUi
 import dev.dimension.flare.ui.presenter.compose.ComposeStatus
+import dev.dimension.flare.ui.route.DeeplinkRoute
+import io.ktor.client.HttpClient
+import io.ktor.client.HttpClientConfig
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 
 private val MEDIA_COMPRESSION =
     ComposeConfig.Media.Compression(
@@ -103,6 +130,7 @@ internal class VVODataSource(
     override val accountKey: MicroBlogKey,
     credentialFlow: Flow<VVoCredential>,
     private val updateCredential: suspend (VVoCredential) -> Unit = {},
+    private val httpClientFactory: ((HttpClientConfig<*>.() -> Unit) -> HttpClient)? = null,
 ) : AuthenticatedMicroblogDataSource,
     NotificationTimelineDataSource,
     ComposeDataSource,
@@ -111,19 +139,32 @@ internal class VVODataSource(
     RelationDataSource,
     TimelineTabConfigurationDataSource,
     PinnableTimelineTabDataSource,
+    TimelinePageDataSource,
     PostDataSource,
+    DirectMessageDataSource,
     AccountHttpCapability,
-    PostEventHandler.Handler {
+    PostEventHandler.Handler,
+    AutoCloseable {
+    override val pluginId: String = VVO_PLATFORM_ID
+    override val packageHash: String = ""
+    private val timelinePageRevision = MutableStateFlow(0L)
+    override val revision: StateFlow<Long> = timelinePageRevision
+
     override val accountOrigin = "https://m.weibo.cn"
     override val origins: Set<String> = setOf("https://m.weibo.cn", "https://weibo.com")
 
     override suspend fun authenticate(request: AccountHttpRequest): Map<String, String> = service.extensionAuthHeaders(request.url)
 
+    override suspend fun authenticateMedia(url: String): Map<String, String> = service.directMessageImageHeaders(url)
+
     private val imageCompressor: ImageCompressor by koinInject()
+    private val cacheLookup: MicroblogCacheLookup by koinInject()
     private val service by lazy {
+        val proxy = ProxyRef.forAccount(accountKey)
         VVOService(
-            proxy = ProxyRef.forAccount(accountKey),
+            proxy = proxy,
             credentialFlow = credentialFlow,
+            httpClientFactory = httpClientFactory ?: { ktorClient(proxy, config = it) },
             refreshCookieWhenStale = true,
             onCredentialRefreshed = { credential ->
                 updateCredential(credential)
@@ -136,6 +177,23 @@ internal class VVODataSource(
             accountKey = accountKey,
             service = service,
         )
+    }
+
+    private val appScope: CoroutineScope by koinInject()
+    private val messageScope =
+        lazy {
+            CoroutineScope(appScope.coroutineContext + SupervisorJob(appScope.coroutineContext[Job]))
+        }
+
+    override val directMessageHandler by lazy {
+        DirectMessageHandler(accountKey, VVODirectMessageLoader(service, accountKey), messageScope.value)
+    }
+
+    override val supportsLeavingDirectMessage: Boolean = false
+    override val supportsSendingDirectMessageImage: Boolean = true
+
+    override fun close() {
+        if (messageScope.isInitialized()) messageScope.value.cancel()
     }
 
     private val notificationBadgeStore: VVONotificationBadgeStore by lazy {
@@ -190,6 +248,14 @@ internal class VVODataSource(
 
     override val shortcuts by lazy {
         persistentListOf(
+            ShortcutSpec(
+                title = UiStrings.DirectMessage,
+                icon = UiIcon.Messages,
+                target =
+                    ShortcutSpec.Target.Route(
+                        DeeplinkRoute.AllDirectMessages(accountKey),
+                    ),
+            ),
             ShortcutSpec(
                 title = UiStrings.Featured,
                 icon = UiIcon.Featured,
@@ -361,6 +427,55 @@ internal class VVODataSource(
         mediaOnly = mediaOnly,
     )
 
+    override suspend fun postDetailTabs(statusKey: MicroBlogKey): PostDetailTabs {
+        val comments =
+            PostDetailTab(
+                id = "comments",
+                title = UiStrings.Comments.asText(),
+                filter =
+                    PostDetailFilter(
+                        options =
+                            listOf(
+                                PostDetailFilterOption(StatusCommentSort.Hot.id, UiStrings.ByPopularity.asText()),
+                                PostDetailFilterOption(StatusCommentSort.Time.id, UiStrings.ByTime.asText()),
+                            ),
+                        defaultOptionId = StatusCommentSort.Hot.id,
+                    ),
+                loader = { filterId ->
+                    StatusCommentRemoteMediator(
+                        service = service,
+                        accountKey = accountKey,
+                        statusKey = statusKey,
+                        sort = if (filterId == StatusCommentSort.Time.id) StatusCommentSort.Time else StatusCommentSort.Hot,
+                    )
+                },
+            )
+        return PostDetailTabs(
+            tabs =
+                listOf(
+                    comments,
+                    PostDetailTab(id = "reposts", title = UiStrings.Reposts.asText(), loader = { statusRepost(statusKey) }),
+                    PostDetailTab(
+                        id = "liked-by",
+                        title = UiStrings.LikedBy.asText(),
+                        loader = { StatusLikedByLoader(service, accountKey, statusKey) },
+                    ),
+                ),
+            replyTabId = comments.id,
+        )
+    }
+
+    override fun postDetailPost(statusKey: MicroBlogKey): Flow<UiState<UiTimelineV2>> =
+        postHandler.post(statusKey).toUi().combine(statusExtendedText(statusKey)) { status, extendedText ->
+            status.map { item ->
+                if (extendedText is UiState.Success && extendedText.data.isNotBlank()) {
+                    item.withVvoExtendedText(renderVVOText(extendedText.data, accountKey))
+                } else {
+                    item
+                }
+            }
+        }
+
     override fun shareReplies(statusKey: MicroBlogKey): RemoteLoader<UiTimelineV2> =
         ShareRepliesLoader(statusComment(statusKey), statusKey, comments = true)
 
@@ -466,7 +581,7 @@ internal class VVODataSource(
         data: ComposeData,
         progress: () -> Unit,
     ) {
-        val visible = requireNotNull(data.visibility).toVvoVisible()
+        val visible = data.visibility?.toVvoVisible()
         val st = ensureLogin()
 
         val mediaIds =
@@ -488,6 +603,7 @@ internal class VVODataSource(
                 st = st,
                 picId = mediaId,
             )
+            timelinePageRevision.update { it + 1 }
         } else if (composeStatus is ComposeStatus.Reply) {
             service.commentStatus(
                 id = composeStatus.statusKey.id,
@@ -577,6 +693,7 @@ internal class VVODataSource(
             service = service,
             accountKey = accountKey,
             statusKey = statusKey,
+            sort = null,
         )
 
     fun statusRepost(statusKey: MicroBlogKey): RemoteLoader<UiTimelineV2> =
@@ -586,6 +703,32 @@ internal class VVODataSource(
             statusKey = statusKey,
         )
 
+    override fun timelinePage(
+        pageId: String,
+        parameters: Map<String, String>,
+    ): RemoteLoader<UiTimelineV2> {
+        require(pageId == VVO_COMMENT_REPLIES_PAGE_ID) { "Unknown Weibo timeline page: $pageId" }
+        val commentId =
+            parameters[VVO_COMMENT_ID_PARAM]?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("Missing commentId parameter")
+        val commentKey = MicroBlogKey(id = commentId, host = accountKey.host)
+        return CommentChildRemoteMediator(
+            service = service,
+            accountKey = accountKey,
+            commentKey = commentKey,
+            rootStatusId = parameters[VVO_ROOT_STATUS_ID_PARAM],
+            cachedRootComment = {
+                try {
+                    cacheLookup.findPost(AccountType.Specific(accountKey), commentKey)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            },
+        )
+    }
+
     fun commentChild(commentKey: MicroBlogKey): RemoteLoader<UiTimelineV2> =
         CommentChildRemoteMediator(
             service = service,
@@ -593,30 +736,13 @@ internal class VVODataSource(
             commentKey = commentKey,
         )
 
-    fun comment(statusKey: MicroBlogKey): CacheData<UiTimelineV2> =
-        MemCacheable("vvo_comment_${accountKey}_$statusKey") {
-            service
-                .getHotFlowChild(statusKey.id)
-                .rootComment
-                ?.firstOrNull()
-                ?.render(accountKey)
-                ?: throw Exception("status not found")
-        }
-
-    fun statusExtendedText(statusKey: MicroBlogKey): Flow<UiState<String>> =
+    private fun statusExtendedText(statusKey: MicroBlogKey): Flow<UiState<String>> =
         MemCacheable(
-            "status_extended_text_$statusKey",
+            "status_extended_text_${accountKey}_$statusKey",
         ) {
             val st = ensureLogin()
             val response = service.getStatusExtend(statusKey.id, st)
             response.data?.longTextContent.orEmpty()
-        }.toUi()
-
-    fun status(statusKey: MicroBlogKey): Flow<UiState<UiTimelineV2>> =
-        MemCacheable(
-            "vvo_status_$statusKey",
-        ) {
-            loadStatusDetail(statusKey)
         }.toUi()
 
     private suspend fun uploadMedia(

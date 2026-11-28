@@ -4,7 +4,6 @@ import androidx.datastore.core.DataStore
 import dev.dimension.flare.data.datastore.model.AccountSelectionPreferences
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
-import dev.dimension.flare.model.toAccountType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -16,6 +15,43 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+internal const val GUEST_PLUGIN_KEY_PREFIX: String = "__guest_plugin__:"
+
+internal fun guestPluginSearchKey(
+    platformId: String,
+    host: String,
+): MicroBlogKey = MicroBlogKey("$GUEST_PLUGIN_KEY_PREFIX$platformId", host)
+
+internal fun MicroBlogKey.toSearchAccountType(): AccountType =
+    if (id.startsWith(GUEST_PLUGIN_KEY_PREFIX)) {
+        val platformId = id.removePrefix(GUEST_PLUGIN_KEY_PREFIX)
+        if (platformId.isNotEmpty() && host.isNotEmpty()) {
+            AccountType.GuestPlugin(platformId = platformId, host = host)
+        } else {
+            AccountType.Specific(this)
+        }
+    } else {
+        AccountType.Specific(this)
+    }
+
+internal fun AccountType?.toSearchSelectionKeyOrNull(): MicroBlogKey? =
+    when (this) {
+        is AccountType.Specific -> {
+            accountKey
+        }
+
+        is AccountType.GuestPlugin -> {
+            guestPluginSearchKey(platformId, host)
+        }
+
+        AccountType.Guest,
+        is AccountType.GuestHost,
+        null,
+        -> {
+            null
+        }
+    }
+
 internal class RememberedAccountSelection(
     private val preferences: DataStore<AccountSelectionPreferences>,
     private val appScope: CoroutineScope,
@@ -25,7 +61,7 @@ internal class RememberedAccountSelection(
     // null means restoration is pending; Guest means the account list is ready and empty.
     private val selected = MutableStateFlow<AccountType?>(null)
     val selectedAccountType = selected.asStateFlow()
-    val selectedAccountKey = selected.map { (it as? AccountType.Specific)?.accountKey }.distinctUntilChanged()
+    val selectedAccountKey = selected.map { it.toSearchSelectionKeyOrNull() }.distinctUntilChanged()
     private var accounts: List<MicroBlogKey>? = null
     private var restored = false
     private var initialAccountKey: MicroBlogKey? = null
@@ -60,16 +96,16 @@ internal class RememberedAccountSelection(
         if (accounts?.contains(key) != true) return
         restored = true
         initialAccountKey = null
-        selected.value = AccountType.Specific(key)
+        selected.value = key.toSearchAccountType()
         persist { if (accountExists(key)) it.copy(selectedAccountKey = key) else it }
     }
 
     private fun resolveAccount() {
         val keys = accounts ?: return
         if (!restored) return
-        val previous = (selected.value as? AccountType.Specific)?.accountKey ?: initialAccountKey
+        val previous = selected.value.toSearchSelectionKeyOrNull() ?: initialAccountKey
         initialAccountKey = null
-        selected.value = (previous?.takeIf { it in keys } ?: keys.firstOrNull()).toAccountType()
+        selected.value = (previous?.takeIf { it in keys } ?: keys.firstOrNull())?.toSearchAccountType() ?: AccountType.Guest
         if (previous != null && previous !in keys) {
             persist {
                 if (it.selectedAccountKey == previous && !accountExists(previous)) it.copy(selectedAccountKey = null) else it

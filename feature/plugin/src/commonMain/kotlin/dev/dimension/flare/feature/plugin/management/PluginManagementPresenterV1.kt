@@ -1,15 +1,19 @@
 package dev.dimension.flare.feature.plugin.management
 
+import dev.dimension.flare.common.Locale
 import dev.dimension.flare.data.model.PluginPermission
 import dev.dimension.flare.data.repository.AccountService
+import dev.dimension.flare.data.repository.AccountTabSyncCoordinator
 import dev.dimension.flare.data.repository.AuthoredPlugin
 import dev.dimension.flare.di.koinGet
 import dev.dimension.flare.feature.plugin.PluginSubsystemV1
+import dev.dimension.flare.feature.plugin.abi.PluginAbiV1
 import dev.dimension.flare.feature.plugin.development.PluginDevelopmentStateV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginCatalogV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginClient
 import dev.dimension.flare.feature.plugin.github.GitHubPluginVersionV1
 import dev.dimension.flare.feature.plugin.github.GitHubRepositorySizeConfirmationRequired
+import dev.dimension.flare.feature.plugin.github.gitHubPluginLocationOrNull
 import dev.dimension.flare.feature.plugin.github.stableGitHubVersion
 import dev.dimension.flare.feature.plugin.installer.PluginInstallWarningV1
 import dev.dimension.flare.feature.plugin.installer.PreparedPluginInstallV1
@@ -18,8 +22,12 @@ import dev.dimension.flare.feature.plugin.lifecycle.InstalledPluginV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginInstallSourceV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginRuntimeSwitcherV1
 import dev.dimension.flare.feature.plugin.lifecycle.PluginStateIssueV1
+import dev.dimension.flare.feature.plugin.manifest.PluginCatalogBundleV1
+import dev.dimension.flare.feature.plugin.manifest.TimelineManifestV1
+import dev.dimension.flare.feature.plugin.manifest.fallbackText
 import dev.dimension.flare.feature.plugin.manifest.toUiText
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplace
+import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceEntryV1
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceStateV1
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimeIssueV1
 import dev.dimension.flare.model.PlatformRegistry
@@ -43,6 +51,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okio.Path.Companion.toPath
 import okio.Source
+import org.koin.mp.KoinPlatformTools
 import kotlin.native.HiddenFromObjC
 
 public data class PluginManagementStateV1(
@@ -104,7 +113,14 @@ public data class PluginManagementItemV1(
     val authoring: AuthoredPlugin? = null,
     val hasSettings: Boolean = false,
     val hasPlatformExtension: Boolean = false,
-)
+    val hasTimelineProcessor: Boolean = false,
+    val timelineProcessorEnabled: Boolean = false,
+    val updatedAt: String? = null,
+    val sourceCommitSha: String? = null,
+) {
+    public val repositoryFullName: String? get() = sourceUrl?.gitHubPluginLocationOrNull()?.fullName
+    public val repositoryWebUrl: String? get() = sourceUrl?.gitHubPluginLocationOrNull()?.webUrl(sourceCommitSha)
+}
 
 public data class PluginInstallReviewV1(
     val pluginId: String,
@@ -115,7 +131,11 @@ public data class PluginInstallReviewV1(
     val permissions: List<PluginPermission>,
     val warnings: List<PluginInstallWarningV1>,
     val sourceUrl: String?,
-)
+    val defaultGuestTabTitles: List<String> = emptyList(),
+) {
+    public val canAutoAddDefaultTabs: Boolean
+        get() = defaultGuestTabTitles.isNotEmpty()
+}
 
 /** The scope belongs to the application so installed platforms outlive the management screen. */
 @HiddenFromObjC
@@ -127,6 +147,13 @@ public class PluginManagementPresenterV1(
     registry: () -> PlatformRegistry = { koinGet() },
     accounts: () -> AccountService = { koinGet() },
     private val marketplace: PluginMarketplace = subsystem.marketplace,
+    private val addGuestPluginDefaultTabs: suspend (String) -> Unit = { platformId ->
+        KoinPlatformTools
+            .defaultContext()
+            .getOrNull()
+            ?.getOrNull<AccountTabSyncCoordinator>()
+            ?.addGuestPluginDefaultTabs(platformId)
+    },
 ) {
     private val switcher by lazy { PluginRuntimeSwitcherV1(subsystem, registry(), accounts(), scope) }
     private val updates = MutableStateFlow(emptyMap<String, GitHubPluginVersionV1>())
@@ -144,11 +171,13 @@ public class PluginManagementPresenterV1(
     private val observation: Job =
         combine(
             subsystem.stateStore.desired,
+            subsystem.running,
             subsystem.sourceIssues,
             subsystem.runtimePool.issues,
             subsystem.developmentState,
-        ) { _, _, _, _ -> Unit }
+        ) { _, _, _, _, _ -> Unit }
             .combine(subsystem.authoring.plugins) { _, _ -> Unit }
+            .combine(subsystem.timelineGrants.observedGrants()) { _, _ -> Unit }
             .onEach { refreshState() }
             .launchIn(scope)
 
@@ -242,7 +271,15 @@ public class PluginManagementPresenterV1(
                 ) { "Plugin is no longer in the marketplace" }
             clearPreview()
             val catalog = github.catalog(entry.repository, forceRefresh = true)
-            prepareGitHub(catalog, catalog.versions.first(), marketplacePluginId = entry.id)
+            val version =
+                if (entry.commitSha == null) {
+                    catalog.versions.first()
+                } else {
+                    checkNotNull(catalog.versions.firstOrNull { it.commitSha == entry.commitSha }) {
+                        "The listed plugin version is no longer available. Refresh the marketplace and try again."
+                    }
+                }
+            prepareGitHub(catalog, version, marketplaceEntry = entry)
         }
     }
 
@@ -262,6 +299,7 @@ public class PluginManagementPresenterV1(
                     subsystem.stateStore.desired.value.plugins.values
                         .filter { !it.removing && it.source is PluginInstallSourceV1.GitHub }
                 val refreshedRepositories = mutableSetOf<Long>()
+                val missingDates = mutableListOf<Pair<InstalledPluginV1, Boolean>>()
                 installed.forEach { plugin ->
                     val source = plugin.source as PluginInstallSourceV1.GitHub
                     var failure: PluginStateIssueV1? = null
@@ -280,7 +318,8 @@ public class PluginManagementPresenterV1(
                             null
                         }
                     actionMutex.withLock {
-                        if (subsystem.stateStore.desired.value.plugins[plugin.pluginId] == plugin) {
+                        val current = subsystem.stateStore.desired.value.plugins[plugin.pluginId]
+                        if (current != null && !current.removing && current.source == source && current.packageHash == plugin.packageHash) {
                             updates.update { if (update == null) it - plugin.pluginId else it + (plugin.pluginId to update) }
                             if (failure == null) {
                                 updateIssues.update { it - plugin.pluginId }
@@ -290,7 +329,20 @@ public class PluginManagementPresenterV1(
                             refreshState()
                         }
                     }
+                    if (plugin.updatedAt == null) missingDates += plugin to (failure == null)
                 }
+                // Check every install for updates before spending any GitHub requests on optional dates.
+                missingDates.forEach { (plugin, allowNetwork) ->
+                    val source = plugin.source as PluginInstallSourceV1.GitHub
+                    try {
+                        packageUpdateDate(plugin.pluginId, plugin.version, source, allowNetwork)?.let { date ->
+                            subsystem.stateStore.recordUpdateDate(plugin, date)
+                        }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                    }
+                }
+                refreshState()
             }
         }
     }
@@ -311,22 +363,25 @@ public class PluginManagementPresenterV1(
         version: GitHubPluginVersionV1,
         expectedPluginId: String? = null,
         allowLargeRepository: Boolean = false,
-        marketplacePluginId: String? = null,
+        marketplaceEntry: PluginMarketplaceEntryV1? = null,
     ) = subsystem.installer.withRepositoryDownload { archive ->
         val fileSystem = subsystem.appFiles.fileSystem
         try {
             github.archive(catalog.repository, version, fileSystem, archive, allowLargeRepository)
         } catch (_: GitHubRepositorySizeConfirmationRequired) {
-            pendingDownload = PendingGitHubDownload(catalog, version, expectedPluginId, marketplacePluginId)
+            pendingDownload = PendingGitHubDownload(catalog, version, expectedPluginId, marketplaceEntry)
             mutableState.update { it.copy(needsRepositoryDownloadConfirmation = true) }
             return@withRepositoryDownload
         }
         val source = PluginInstallSourceV1.GitHub(catalog.repository, version.tag, version.commitSha, catalog.path)
         val prepared = subsystem.installer.inspect(archive, source, expectedPluginId)
         try {
-            if (marketplacePluginId != null) {
-                check(prepared.pluginId == marketplacePluginId) { "Downloaded plugin ID does not match the marketplace entry" }
-                requireInstallTargetAvailable(marketplacePluginId, fromMarketplace = true)
+            if (marketplaceEntry != null) {
+                check(prepared.pluginId == marketplaceEntry.id) { "Downloaded plugin ID does not match the marketplace entry" }
+                check(marketplaceEntry.version == null || prepared.version == marketplaceEntry.version) {
+                    "Downloaded plugin version does not match the marketplace entry"
+                }
+                requireInstallTargetAvailable(marketplaceEntry.id, fromMarketplace = true)
             }
             if (expectedPluginId != null &&
                 prepared.packageHash ==
@@ -335,7 +390,10 @@ public class PluginManagementPresenterV1(
             ) {
                 updates.update { it - expectedPluginId }
             } else {
-                preview = InstallPreview(prepared, fromMarketplace = marketplacePluginId != null)
+                val updatedAt =
+                    marketplaceEntry?.takeIf { it.commitSha == source.commitSha }?.updatedAt
+                        ?: packageUpdateDate(prepared.pluginId, prepared.version, source)
+                preview = InstallPreview(prepared, fromMarketplace = marketplaceEntry != null, updatedAt = updatedAt)
             }
         } finally {
             if (preview?.prepared !== prepared) {
@@ -344,18 +402,39 @@ public class PluginManagementPresenterV1(
         }
     }
 
+    private suspend fun packageUpdateDate(
+        pluginId: String,
+        pluginVersion: String,
+        source: PluginInstallSourceV1.GitHub,
+        allowNetwork: Boolean = true,
+    ): String? {
+        val entry =
+            marketplace.cachedCatalog()?.plugins?.find {
+                it.id == pluginId && it.version == pluginVersion &&
+                    it.commitSha == source.commitSha
+            }
+        val location = entry?.repository?.gitHubPluginLocationOrNull()
+        if (entry?.updatedAt != null && location?.path == source.path &&
+            location.owner.equals(source.repository.owner, ignoreCase = true) &&
+            location.name.equals(source.repository.name, ignoreCase = true)
+        ) {
+            return entry.updatedAt
+        }
+        return if (allowNetwork) github.packageUpdateDate(source.repository, source.commitSha, source.path) else null
+    }
+
     public suspend fun confirmRepositoryDownload() {
         runAction(gitHubInstall = mutableState.value.gitHubInstall != null) {
             val pending = requireNotNull(pendingDownload) { "No repository download is pending" }
             pendingDownload = null
             mutableState.update { it.copy(needsRepositoryDownloadConfirmation = false) }
-            pending.marketplacePluginId?.let { requireInstallTargetAvailable(it, fromMarketplace = true) }
+            pending.marketplaceEntry?.let { requireInstallTargetAvailable(it.id, fromMarketplace = true) }
             prepareGitHub(
                 pending.catalog,
                 pending.version,
                 pending.expectedPluginId,
                 allowLargeRepository = true,
-                marketplacePluginId = pending.marketplacePluginId,
+                marketplaceEntry = pending.marketplaceEntry,
             )
         }
     }
@@ -392,7 +471,9 @@ public class PluginManagementPresenterV1(
                 .inspect(source)
                 .also { prepared ->
                     preview = InstallPreview(prepared)
-                }.toReview()
+                }.let { prepared ->
+                    prepared.toReview(isFreshInstall = prepared.pluginId !in subsystem.stateStore.desired.value.plugins)
+                }
         }
 
     public suspend fun inspect(path: String): PluginInstallReviewV1 =
@@ -402,24 +483,84 @@ public class PluginManagementPresenterV1(
                 .inspect(path.toPath())
                 .also { prepared ->
                     preview = InstallPreview(prepared)
-                }.toReview()
+                }.let { prepared ->
+                    prepared.toReview(isFreshInstall = prepared.pluginId !in subsystem.stateStore.desired.value.plugins)
+                }
         }
 
-    public suspend fun confirmInstall() {
+    public suspend fun confirmInstall(addDefaultTabs: Boolean = true) {
         runMutation(gitHubInstall = mutableState.value.gitHubInstall != null) {
-            val (prepared, fromMarketplace) = requireNotNull(preview) { "No plugin installation is pending" }
+            val (prepared, fromMarketplace, updatedAt) = requireNotNull(preview) { "No plugin installation is pending" }
             try {
                 requireInstallTargetAvailable(prepared.pluginId, fromMarketplace)
             } catch (error: IllegalStateException) {
                 if (fromMarketplace) clearPreview()
                 throw error
             }
-            subsystem.installer.commit(prepared, confirmed = true, activate = switcher::install)
+            val existingPlugin = subsystem.stateStore.desired.value.plugins[prepared.pluginId]
+            val isFreshInstall = existingPlugin == null
+            val hasGuestDefaults = prepared.defaultGuestTabTitles(isFreshInstall).isNotEmpty()
+            val existingManifest = existingPlugin?.manifest
+            val previousGrant = subsystem.timelineGrants.awaitCurrent()[prepared.pluginId]
+            subsystem.installer.commit(
+                prepared,
+                confirmed = true,
+                updatedAt = updatedAt,
+                activate = { record ->
+                    subsystem.applyConfirmedTimelineProcessorGrant(
+                        existingManifest = existingManifest,
+                        nextManifest = record.manifest,
+                    )
+                    try {
+                        switcher.install(record)
+                    } catch (error: Throwable) {
+                        subsystem.timelineGrants.updateSuspend { current ->
+                            if (previousGrant == null) {
+                                current - record.pluginId
+                            } else {
+                                current + (record.pluginId to previousGrant)
+                            }
+                        }
+                        throw error
+                    }
+                },
+            )
             updates.update { it - prepared.pluginId }
             updateIssues.update { it - prepared.pluginId }
             preview = null
             mutableState.update { snapshot(it).copy(gitHubInstall = null) }
+            if (isFreshInstall && addDefaultTabs && hasGuestDefaults && prepared.platformId.isNotEmpty()) {
+                try {
+                    addGuestPluginDefaultTabs(prepared.platformId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    error.printStackTrace()
+                }
+            }
         }
+    }
+
+    public fun setTimelineProcessorEnabled(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
+        if (closed.value) return
+        if (enabled) {
+            val manifest =
+                (
+                    subsystem.running.value.plugins[pluginId]
+                        ?.installed
+                        ?: subsystem.stateStore.desired.value.plugins[pluginId]
+                            ?.takeUnless { it.removing }
+                )?.manifest ?: return
+            if (manifest.timelineProcessor == null) return
+            subsystem.timelineGrants.setEnabledAsync(pluginId, manifest.permissions, scope)
+        } else {
+            subsystem.timelineGrants.setEnabledAsync(pluginId, null, scope)
+            subsystem.clearTimelineProcessor(pluginId)
+        }
+        refreshState()
     }
 
     public suspend fun cancelInstall() {
@@ -482,15 +623,22 @@ public class PluginManagementPresenterV1(
 
     private fun snapshot(current: PluginManagementStateV1 = PluginManagementStateV1()): PluginManagementStateV1 {
         val desired = subsystem.stateStore.desired.value
+        val running = subsystem.running.value.plugins
+        val grants = subsystem.timelineGrants.current
         return current.copy(
             plugins =
                 desired.plugins.values.sortedBy(InstalledPluginV1::pluginId).map { installed ->
+                    val effectiveManifest = running[installed.pluginId]?.installed?.manifest ?: installed.manifest
                     installed.toItem(
                         iconPath =
                             subsystem.stateStore.paths
                                 .iconPath(installed.packageHash, installed.iconExtension)
                                 .toString(),
                         availableUpdate = updates.value[installed.pluginId].takeUnless { installed.removing },
+                        hasTimelineProcessor = !installed.removing && effectiveManifest.timelineProcessor != null,
+                        timelineProcessorEnabled =
+                            !installed.removing &&
+                                subsystem.timelineGrants.isEnabled(installed.pluginId, effectiveManifest, grants),
                     )
                 },
             issues = subsystem.sourceIssues.value + updateIssues.value.values.filter { it.pluginId in desired.plugins },
@@ -500,7 +648,7 @@ public class PluginManagementPresenterV1(
             development = subsystem.developmentState.value,
             authoredPlugins = subsystem.authoring.plugins.value,
             canRebuildIndex = !desired.indexHealthy,
-            pendingInstall = preview?.prepared?.toReview(),
+            pendingInstall = preview?.prepared?.let { it.toReview(isFreshInstall = it.pluginId !in desired.plugins) },
         )
     }
 
@@ -593,19 +741,22 @@ public class PluginManagementPresenterV1(
     private data class InstallPreview(
         val prepared: PreparedPluginInstallV1,
         val fromMarketplace: Boolean = false,
+        val updatedAt: String? = null,
     )
 
     private data class PendingGitHubDownload(
         val catalog: GitHubPluginCatalogV1,
         val version: GitHubPluginVersionV1,
         val expectedPluginId: String?,
-        val marketplacePluginId: String?,
+        val marketplaceEntry: PluginMarketplaceEntryV1?,
     )
 }
 
 private fun InstalledPluginV1.toItem(
     iconPath: String,
     availableUpdate: GitHubPluginVersionV1?,
+    hasTimelineProcessor: Boolean = false,
+    timelineProcessorEnabled: Boolean = false,
 ): PluginManagementItemV1 =
     PluginManagementItemV1(
         pluginId = pluginId,
@@ -615,11 +766,15 @@ private fun InstalledPluginV1.toItem(
         iconPath = iconPath,
         sourceUrl = (source as? PluginInstallSourceV1.GitHub)?.url,
         availableUpdate = availableUpdate,
+        updatedAt = updatedAt,
+        sourceCommitSha = (source as? PluginInstallSourceV1.GitHub)?.commitSha,
         hasSettings = manifest.settings != null,
         hasPlatformExtension = manifest.platformExtension != null,
+        hasTimelineProcessor = hasTimelineProcessor,
+        timelineProcessorEnabled = timelineProcessorEnabled,
     )
 
-private fun PreparedPluginInstallV1.toReview(): PluginInstallReviewV1 =
+private fun PreparedPluginInstallV1.toReview(isFreshInstall: Boolean): PluginInstallReviewV1 =
     PluginInstallReviewV1(
         pluginId = pluginId,
         platformId = platformId,
@@ -632,4 +787,25 @@ private fun PreparedPluginInstallV1.toReview(): PluginInstallReviewV1 =
         permissions = permissions.sortedWith(compareBy({ it.type.name }, { it.origin }, { it.cookieName.orEmpty() })),
         warnings = warnings,
         sourceUrl = (source as? PluginInstallSourceV1.GitHub)?.url,
+        defaultGuestTabTitles = defaultGuestTabTitles(isFreshInstall),
     )
+
+private fun PreparedPluginInstallV1.defaultGuestTabTitles(isFreshInstall: Boolean): List<String> {
+    if (!isFreshInstall) return emptyList()
+    val manifest = validated.manifest
+    val platform = manifest.platform ?: return emptyList()
+    if (manifest.apiVersion < 2) return emptyList()
+    val guest = platform.guest ?: return emptyList()
+    if (!guest.enabled || guest.origin == null) return emptyList()
+    if ("page" !in platform.capabilities[PluginAbiV1.Capabilities.TIMELINE]?.operations.orEmpty()) return emptyList()
+    val bundle = PluginCatalogBundleV1(pluginId, manifest.defaultLocale, validated.catalogs)
+    return platform.timelines
+        .filter(TimelineManifestV1::defaultForNewAccount)
+        .map { timeline ->
+            when (val text = timeline.title.toUiText(pluginId)) {
+                is UiText.Raw -> text.string
+                is UiText.ExternalRef -> bundle.resolve(text, Locale.language)
+                is UiText.Localized -> timeline.title.fallbackText
+            }
+        }
+}

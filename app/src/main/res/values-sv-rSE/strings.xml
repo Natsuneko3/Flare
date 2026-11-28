@@ -116,8 +116,6 @@
     <string name="settings_about_telegram_description">Gå med i vår Telegram-grupp</string>
     <string name="settings_about_discord_description">Gå med i vår Discord-server</string>
     <string name="settings_about_line_description">Gå med i vår Line-grupp</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Hjälp oss översätta Flare</string>
     <string name="settings_privacy_policy">Integritetspolicy</string>
     <string name="settings_side_panel">Anpassning av sidopanel</string>
     <string name="settings_side_panel_description">Anpassa sidopanelen</string>
@@ -813,7 +811,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automatiskt</string>
     <string name="image_translation_original_file">Originalfil</string>
-    <string name="image_translation_use_shared_description">Dela tjänstens URL, API-nyckel och modell. Tjänsten och modellen måste stödja bildutdata. Stäng av för att konfigurera bildöversättning separat.</string>
+    <string name="image_translation_use_shared_description">Dela tjänstens URL, API-nyckel, modell och anpassade rubriker. Tjänsten och modellen måste stödja bildutdata. Stäng av för att konfigurera bildöversättning separat.</string>
     <string name="plugin_permission_cookie">Läs cookie %2$s från %1$s</string>
     <string name="plugin_ai_create">Skapa med Flare AI</string>
     <string name="plugin_ai_untitled">Ny plugin</string>
@@ -935,6 +933,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitetsvarning</string>
     <string name="plugin_install_github">Installera från GitHub</string>
     <string name="plugin_check_updates">Kontrollera uppdateringar</string>
+    <string name="plugin_local_import">Lokal import</string>
+    <string name="plugin_updated_at">Uppdaterad %1$s</string>
     <string name="plugin_warning_source_changed">Denna installation ändrar pluginkällan</string>
     <string name="plugin_warning_tag_moved">Denna tag pekar nu på ett annat commit</string>
     <string name="plugin_unverified_github_warning">Detta GitHub-plugin har inte verifierats. Installera det endast om du litar på skaparen.</string>

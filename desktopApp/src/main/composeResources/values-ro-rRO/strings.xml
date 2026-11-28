@@ -370,8 +370,6 @@
     <string name="settings_about_telegram">Telegramă</string>
     <string name="settings_about_telegram_description">Alătură-te grupului nostru de Telegram</string>
     <string name="settings_about_discord_description">Alătură-te serverului nostru de Discord</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Ajută-ne să traducem Flare</string>
     <string name="settings_privacy_policy">Politica de confidențialitate</string>
     <string name="users">Utilizatori</string>
     <string name="hashtags">Hashtag-uri</string>
@@ -737,7 +735,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automat</string>
     <string name="image_translation_original_file">Fișier original</string>
-    <string name="image_translation_use_shared_description">Distribuie URL-ul serviciului, cheia API și modelul. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat.</string>
+    <string name="image_translation_use_shared_description">Distribuie URL-ul serviciului, cheia API, modelul și anteturile personalizate. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat.</string>
     <string name="plugin_permission_cookie">Citește cookie-ul %2$s din %1$s</string>
     <string name="plugin_ai_create">Creează cu AI Flare</string>
     <string name="plugin_ai_untitled">Plugin nou</string>
@@ -814,6 +812,8 @@
     <string name="plugin_warning_compatibility">Avertisment de compatibilitate</string>
     <string name="plugin_install_github">Instalează din GitHub</string>
     <string name="plugin_check_updates">Verifică actualizări</string>
+    <string name="plugin_local_import">Import local</string>
+    <string name="plugin_updated_at">Actualizat la %1$s</string>
     <string name="plugin_development">Dezvoltare plugin</string>
     <string name="plugin_development_description">Alege directorul de ieșire al compilării care conține manifest.json și plugin.js. Salvarele sunt validate automat; reîncărcarea le aplică tuturor conturilor și paginilor acestui plugin.</string>
     <string name="plugin_development_open">Alege director…</string>

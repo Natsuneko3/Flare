@@ -33,18 +33,6 @@ internal sealed interface Route : NavKey {
         ) : Status
 
         @Serializable
-        data class VVOComment(
-            val commentKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status
-
-        @Serializable
-        data class VVOStatus(
-            val statusKey: MicroBlogKey,
-            val accountType: AccountType,
-        ) : Status
-
-        @Serializable
         data class AddReaction(
             val statusKey: MicroBlogKey,
             val accountType: AccountType,
@@ -326,6 +314,12 @@ internal sealed interface Route : NavKey {
         ) : Profile
 
         @Serializable
+        data class ShareSheet(
+            val accountType: AccountType,
+            val userKey: MicroBlogKey,
+        ) : Profile
+
+        @Serializable
         data class Me(
             val accountType: AccountType,
         ) : Profile
@@ -353,6 +347,29 @@ internal sealed interface Route : NavKey {
             val statusKey: MicroBlogKey,
             val accountType: AccountType,
         ) : Gallery
+    }
+
+    @Serializable
+    sealed interface Manga : Route {
+        @Serializable
+        data class Detail(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : Manga
+
+        @Serializable
+        data class Reader(
+            val mangaKey: MicroBlogKey,
+            val chapterId: String,
+            val initialPage: Int? = null,
+            val accountType: AccountType,
+        ) : Manga
+
+        @Serializable
+        data class Comments(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : Manga
     }
 
     @Serializable
@@ -727,6 +744,22 @@ internal sealed interface Route : NavKey {
                     )
                 }
 
+                is DeeplinkRoute.Manga.Detail -> {
+                    Manga.Detail(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        accountType = deeplinkRoute.accountType,
+                    )
+                }
+
+                is DeeplinkRoute.Manga.Reader -> {
+                    Manga.Reader(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        chapterId = deeplinkRoute.chapterId,
+                        initialPage = deeplinkRoute.initialPage,
+                        accountType = deeplinkRoute.accountType,
+                    )
+                }
+
                 is DeeplinkRoute.Status.AltText -> {
                     Status.AltText(
                         text = deeplinkRoute.text,
@@ -784,20 +817,6 @@ internal sealed interface Route : NavKey {
                         shareUrl = deeplinkRoute.shareUrl,
                         fxShareUrl = deeplinkRoute.fxShareUrl,
                         fixvxShareUrl = deeplinkRoute.fixvxShareUrl,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOComment -> {
-                    Status.VVOComment(
-                        commentKey = deeplinkRoute.commentKey,
-                        accountType = deeplinkRoute.accountType,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOStatus -> {
-                    Status.VVOStatus(
-                        statusKey = deeplinkRoute.statusKey,
-                        accountType = deeplinkRoute.accountType,
                     )
                 }
 

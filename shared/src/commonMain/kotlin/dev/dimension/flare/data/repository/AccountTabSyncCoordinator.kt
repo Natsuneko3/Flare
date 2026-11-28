@@ -11,21 +11,28 @@ import dev.dimension.flare.data.model.tab.TimelinePresentation
 import dev.dimension.flare.data.model.tab.TimelineResolver
 import dev.dimension.flare.data.model.tab.TimelineSlot
 import dev.dimension.flare.data.model.tab.TimelineSlotContent
+import dev.dimension.flare.data.model.tab.toSlot
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.model.PlatformSpec
 import dev.dimension.flare.ui.model.UiAccount
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.core.annotation.Single
+import kotlin.native.HiddenFromObjC
 
 @Single(createdAtStart = true)
-internal class AccountTabSyncCoordinator(
+@HiddenFromObjC
+public class AccountTabSyncCoordinator internal constructor(
     private val accountRepository: AccountRepository,
     private val settingsRepository: SettingsRepository,
     private val coroutineScope: CoroutineScope,
     private val timelineResolver: TimelineResolver,
+    private val mangaProgressRepository: MangaProgressRepository,
 ) {
     init {
         coroutineScope.launch {
@@ -41,6 +48,65 @@ internal class AccountTabSyncCoordinator(
                 } catch (error: Exception) {
                     error.printStackTrace()
                 }
+            }
+        }
+        var previousGuestPlatformIds =
+            accountRepository.platformRegistry.all
+                .standaloneGuestPlatforms()
+                .keys
+        coroutineScope.launch {
+            accountRepository.platformRegistry.platforms
+                .map { it.standaloneGuestPlatforms() }
+                .distinctUntilChanged()
+                .collect { activeGuestPlatforms ->
+                    try {
+                        val removedGuestPlatformIds = previousGuestPlatformIds - activeGuestPlatforms.keys
+                        previousGuestPlatformIds = activeGuestPlatforms.keys
+                        removedGuestPlatformIds.forEach { platformId ->
+                            accountRepository.clearRemovedGuestPlatform(platformId)
+                            mangaProgressRepository.deleteGuestByPlatformId(platformId)
+                        }
+                        syncGuestTabs()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        error.printStackTrace()
+                    }
+                }
+        }
+    }
+
+    public suspend fun addGuestPluginDefaultTabs(platformId: String) {
+        val defaultTabs =
+            accountRepository.platformRegistry.platforms.value
+                .firstOrNull { it.platformId == platformId && it.standaloneGuestHost != null }
+                ?.guestDefaultTabs
+                .orEmpty()
+        if (defaultTabs.isEmpty()) {
+            return
+        }
+        settingsRepository.updateTabSettingsV2 {
+            val activeSpec =
+                accountRepository.platformRegistry.platforms.value
+                    .firstOrNull { it.platformId == platformId && it.standaloneGuestHost != null }
+                    ?: return@updateTabSettingsV2 this
+            val defaultSlots = activeSpec.guestDefaultTabs.map(timelineResolver::toSlot)
+            if (defaultSlots.isEmpty()) {
+                return@updateTabSettingsV2 this
+            }
+            val shouldEnableSystemHomeMixedTimeline =
+                homeSlots.anySystemHomeMixedTimeline() ||
+                    homeSlots.countNonSystemHomeTabs() < 2
+            val newSlots =
+                (homeSlots + defaultSlots)
+                    .normalizeSystemHomeMixedTimeline(
+                        enabled = shouldEnableSystemHomeMixedTimeline,
+                    )
+            val newSettings = copy(homeSlots = newSlots)
+            if (newSettings == this) {
+                this
+            } else {
+                newSettings
             }
         }
     }
@@ -158,7 +224,51 @@ internal class AccountTabSyncCoordinator(
                 }
             }
         }
+
+    private suspend fun syncGuestTabs() {
+        settingsRepository.updateTabSettingsV2 {
+            val platforms = accountRepository.platformRegistry.all.standaloneGuestPlatforms()
+            val newSlots =
+                homeSlots
+                    .mapNotNull { it.syncGuestTabs(platforms) }
+                    .normalizeSystemHomeMixedTimeline(
+                        enabled = homeSlots.anySystemHomeMixedTimeline(),
+                    )
+            if (newSlots == homeSlots) {
+                this
+            } else {
+                copy(homeSlots = newSlots)
+            }
+        }
+    }
+
+    private fun TimelineSlot.syncGuestTabs(platforms: Map<String, PlatformSpec>): TimelineSlot? =
+        when (val slotContent = content) {
+            is TimelineSlotContent.Source -> {
+                val source = slotContent.source
+                timelineResolver.bindGuestSource(source, platforms)?.let { bound ->
+                    bound.toSlot(slotId = if (id == source.id) bound.id else id, presentation = presentation)
+                }
+            }
+
+            is TimelineSlotContent.Group -> {
+                val sanitizedChildren =
+                    slotContent.children
+                        .mapNotNull { it.syncGuestTabs(platforms) }
+                        .distinctBy { it.id }
+                if (sanitizedChildren.isEmpty()) {
+                    null
+                } else if (sanitizedChildren == slotContent.children) {
+                    this
+                } else {
+                    copy(content = slotContent.copy(children = sanitizedChildren))
+                }
+            }
+        }
 }
+
+private fun List<PlatformSpec>.standaloneGuestPlatforms(): Map<String, PlatformSpec> =
+    filter { it.standaloneGuestHost != null }.associateBy { it.platformId }
 
 internal fun List<TimelineSlot>.normalizeSystemHomeMixedTimeline(enabled: Boolean): List<TimelineSlot> {
     val deduplicatedSlots = distinctBy { it.id }

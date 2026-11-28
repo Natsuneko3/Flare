@@ -39,13 +39,13 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     check(schemaVersion == PluginAbiV1.MANIFEST_SCHEMA_VERSION, "manifest.schema", "schemaVersion", "Unsupported schema")
     check(apiVersion in PluginAbiV1.supportedApiVersions, "manifest.api", "apiVersion", "Unsupported API version")
     check(PLUGIN_ID.matches(id), "manifest.id", "id", "Invalid plugin ID")
-    check(SEMVER.matches(version), "manifest.version", "version", "Invalid semantic version")
+    check(PLUGIN_SEMVER.matches(version), "manifest.version", "version", "Invalid semantic version")
     check(isValidLocaleTag(defaultLocale), "manifest.locale", "defaultLocale", "Invalid default locale")
     validateText(name, "name", errors)
     description?.let { validateText(it, "description", errors) }
 
     check(
-        platform != null || translation != null || settings != null || platformExtension != null,
+        platform != null || translation != null || settings != null || platformExtension != null || timelineProcessor != null,
         "manifest.empty",
         "manifest",
         "Plugin must provide a capability or settings page",
@@ -60,10 +60,10 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     }
 
     check(
-        (translation == null && settings == null && platformExtension == null) || apiVersion >= 2,
+        (translation == null && settings == null && platformExtension == null && timelineProcessor == null) || apiVersion >= 2,
         "manifest.features",
         "apiVersion",
-        "Translation, settings and platform extensions require Host API v2",
+        "Translation, settings, platform extensions and timeline processors require Host API v2",
     )
     translation?.let {
         check(it.apiVersion == 1, "translation.version", "translation.apiVersion", "Unsupported translation interface")
@@ -72,14 +72,74 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
             namespaces == null ||
                 (
                     namespaces.size <= 64 && namespaces.distinct().size == namespaces.size &&
-                        namespaces.all { name ->
-                            name.isNotEmpty() &&
-                                runCatching { name.encodeToByteArray(throwOnInvalidSequence = true).size <= 256 }.getOrDefault(false) &&
-                                name.none { char -> char.code < 32 }
-                        }
+                        namespaces.all(String::isValidStorageNamespace)
                 ),
             "translation.cache",
             "translation.cache.storageNamespaces",
+            "Invalid storage dependencies",
+        )
+    }
+    timelineProcessor?.let { processor ->
+        check(
+            processor.apiVersion == 1,
+            "timelineProcessor.version",
+            "timelineProcessor.apiVersion",
+            "Unsupported timeline processor interface",
+        )
+        check(
+            processor.maxBatchSize in 1..50,
+            "timelineProcessor.batchSize",
+            "timelineProcessor.maxBatchSize",
+            "Batch size must be between 1 and 50",
+        )
+        processor.filter?.let { filter ->
+            check(
+                filter.containsAny.size <= 32,
+                "timelineProcessor.filter.containsAny",
+                "timelineProcessor.filter.containsAny",
+                "Too many containsAny filters",
+            )
+            filter.containsAny.forEachIndexed { index, needle ->
+                check(
+                    needle.isNotBlank() &&
+                        runCatching { needle.encodeToByteArray(throwOnInvalidSequence = true).size <= 256 }.getOrDefault(false),
+                    "timelineProcessor.filter.containsAny",
+                    "timelineProcessor.filter.containsAny[$index]",
+                    "Filter needle must be non-blank and at most 256 UTF-8 bytes",
+                )
+            }
+            filter.regex?.let { pattern ->
+                check(
+                    pattern.isNotBlank() && pattern.length <= 512 && compileTimelineFilterRegex(pattern) != null,
+                    "timelineProcessor.filter.regex",
+                    "timelineProcessor.filter.regex",
+                    "Filter regex must be a valid pattern of at most 512 characters",
+                )
+            }
+            check(
+                filter.linkHosts.size <= 32,
+                "timelineProcessor.filter.linkHosts",
+                "timelineProcessor.filter.linkHosts",
+                "Too many link host filters",
+            )
+            filter.linkHosts.forEachIndexed { index, host ->
+                check(
+                    host.isCanonicalLowercaseHost(),
+                    "timelineProcessor.filter.linkHost",
+                    "timelineProcessor.filter.linkHosts[$index]",
+                    "Filter link host must be a canonical lowercase hostname",
+                )
+            }
+        }
+        val namespaces = processor.cache.storageNamespaces
+        check(
+            namespaces == null ||
+                (
+                    namespaces.size <= 16 && namespaces.distinct().size == namespaces.size &&
+                        namespaces.all(String::isValidStorageNamespace)
+                ),
+            "timelineProcessor.cache",
+            "timelineProcessor.cache.storageNamespaces",
             "Invalid storage dependencies",
         )
     }
@@ -165,6 +225,68 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
         platform.detector?.let {
             check(it.priority in -10_000..10_000, "detector.priority", "platform.detector.priority", "Invalid detector priority")
         }
+        if (platform.recommendedOrigins.isNotEmpty() || !platform.allowCustomOrigin) {
+            check(
+                apiVersion >= 2,
+                "recommendedOrigins.version",
+                if (platform.recommendedOrigins.isNotEmpty()) "platform.recommendedOrigins" else "platform.allowCustomOrigin",
+                "Recommended origins and single-site origin restrictions require Host API v2",
+            )
+        }
+        check(
+            platform.recommendedOrigins.size <= 8,
+            "recommendedOrigins.count",
+            "platform.recommendedOrigins",
+            "Too many recommended origins",
+        )
+        if (!platform.allowCustomOrigin) {
+            check(
+                platform.recommendedOrigins.isNotEmpty(),
+                "recommendedOrigins.required",
+                "platform.recommendedOrigins",
+                "Single-site platforms must declare at least one recommended origin",
+            )
+        }
+        val seenRecommendedOrigins = mutableSetOf<String>()
+        platform.recommendedOrigins.forEachIndexed { index, item ->
+            val path = "platform.recommendedOrigins[$index]"
+            check(
+                item.origin.isExactHttpsOrigin(),
+                "recommendedOrigins.origin",
+                "$path.origin",
+                "Recommended origin must be exact HTTPS origin",
+            )
+            check(
+                seenRecommendedOrigins.add(item.origin.lowercase()),
+                "recommendedOrigins.duplicate",
+                "$path.origin",
+                "Duplicate recommended origin",
+            )
+            item.name?.let { validateText(it, "$path.name", errors) }
+            item.description?.let { validateText(it, "$path.description", errors) }
+        }
+        platform.guest?.let { guest ->
+            if (!guest.enabled) {
+                check(
+                    guest.origin == null,
+                    "guest.origin.disabled",
+                    "platform.guest.origin",
+                    "Disabled guest config cannot declare an origin",
+                )
+            }
+            guest.origin?.let { origin ->
+                check(apiVersion >= 2, "guest.origin.version", "platform.guest.origin", "Standalone guest origin requires Host API v2")
+                check(origin.isExactHttpsOrigin(), "guest.origin", "platform.guest.origin", "Guest origin must be exact HTTPS origin")
+                if (!platform.allowCustomOrigin && guest.enabled) {
+                    check(
+                        platform.recommendedOrigins.any { it.origin.equals(origin, ignoreCase = true) },
+                        "guest.origin.unrecommended",
+                        "platform.guest.origin",
+                        "Standalone guest origin must be listed in recommendedOrigins when custom origins are disallowed",
+                    )
+                }
+            }
+        }
 
         check(platform.capabilities.size <= 32, "capability.count", "platform.capabilities", "Too many capabilities")
         platform.capabilities.forEach { (capabilityId, declaration) ->
@@ -174,6 +296,18 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                 "capability.version",
                 path,
                 "Timeline pages require plugin API v2",
+            )
+            check(
+                capabilityId != PluginAbiV1.Capabilities.MANGA || apiVersion >= 2,
+                "capability.version",
+                path,
+                "Manga capability requires plugin API v2",
+            )
+            check(
+                capabilityId != PluginAbiV1.Capabilities.SESSION_CHALLENGE || apiVersion >= 2,
+                "capability.version",
+                path,
+                "Session challenge requires plugin API v2",
             )
             check(CAPABILITY_ID.matches(capabilityId), "capability.id", path, "Invalid capability ID")
             val knownOperations = PluginAbiV1.knownCapabilityOperations[capabilityId] ?: return@forEach
@@ -203,13 +337,58 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
                     "Authentication origins are only valid for account HTTP",
                 )
             }
+            if (capabilityId == PluginAbiV1.Capabilities.SESSION_CHALLENGE) {
+                validateCookieProbes(declaration.challengeProbes, "$path.challengeProbes", permissions, errors)
+            } else {
+                check(
+                    declaration.challengeProbes.isEmpty(),
+                    "capability.config",
+                    "$path.challengeProbes",
+                    "Challenge probes are only valid for session challenge",
+                )
+            }
             check(declaration.operations.isNotEmpty(), "capability.empty", path, "Capability has no operations")
+            val operations = declaration.operations.keys
+            val allowsPostMutateOnly =
+                apiVersion >= 2 &&
+                    capabilityId == PluginAbiV1.Capabilities.POST &&
+                    operations.intersect(knownOperations) == setOf("mutate")
             check(
-                declaration.operations.keys.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
+                allowsPostMutateOnly || operations.containsAll(PluginAbiV1.requiredCapabilityOperations.getValue(capabilityId)),
                 "capability.incomplete",
                 path,
                 "Capability is missing operations required by the Host interface",
             )
+            if (capabilityId == PluginAbiV1.Capabilities.POST) {
+                check(
+                    apiVersion >= 2 || operations.none { it in PluginAbiV1.postContextTabOperations },
+                    "capability.version",
+                    path,
+                    "Post context tabs require plugin API v2",
+                )
+                check(
+                    PluginAbiV1.hasPairedPostContextTabOperations(operations),
+                    "capability.incomplete",
+                    path,
+                    "Post context tabs require both contextTabs and contextPage",
+                )
+            }
+            if (capabilityId == PluginAbiV1.Capabilities.MANGA) {
+                check(
+                    permissions.mediaNetwork,
+                    "capability.permission",
+                    path,
+                    "Manga capability requires permissions.mediaNetwork",
+                )
+                listOf("detail", "pages", "pageImage").forEach { operation ->
+                    check(
+                        declaration.operations[operation]?.directions.isNullOrEmpty(),
+                        "capability.directions",
+                        "$path.$operation.directions",
+                        "Non-paging manga operations cannot declare directions",
+                    )
+                }
+            }
             declaration.operations.forEach { (operation, config) ->
                 if (operation in knownOperations) {
                     check(config.directions.size <= 3, "capability.directions", "$path.$operation.directions", "Invalid paging directions")
@@ -384,6 +563,8 @@ public fun PluginManifestV1.validate(methodTable: PluginMethodTableV1? = null): 
     return ManifestValidationV1(errors = errors, warnings = warnings)
 }
 
+internal const val TIMELINE_PROCESS_BATCH_METHOD = "timelineProcessor.processBatch"
+
 public fun PluginManifestV1.requiredMethods(): Set<String> =
     buildSet {
         platform?.let { platform ->
@@ -418,6 +599,9 @@ public fun PluginManifestV1.requiredMethods(): Set<String> =
             add("translation.translateBatchDocumentJson")
         }
         platformExtension?.actions?.forEach { add("platformExtension.actions.${it.id}") }
+        if (timelineProcessor != null) {
+            add(TIMELINE_PROCESS_BATCH_METHOD)
+        }
     }
 
 private fun validateLogin(
@@ -492,15 +676,24 @@ private fun validateCookie(
         "$parentPath.cookie.startUrl",
         "Cookie start URL origin is not approved",
     )
+    validateCookieProbes(cookie.probes, "$parentPath.cookie.probes", permissions, errors)
+}
+
+private fun validateCookieProbes(
+    probes: List<CookieProbeManifestV1>,
+    probesPath: String,
+    permissions: PluginPermissionsV1,
+    errors: MutableList<ManifestIssueV1>,
+) {
     addErrorUnless(
-        cookie.probes.isNotEmpty() && cookie.probes.size <= 16,
+        probes.isNotEmpty() && probes.size <= 16,
         errors,
         "cookie.probes",
-        "$parentPath.cookie.probes",
+        probesPath,
         "Invalid Cookie probe count",
     )
-    cookie.probes.forEachIndexed { index, probe ->
-        val path = "$parentPath.cookie.probes[$index]"
+    probes.forEachIndexed { index, probe ->
+        val path = "$probesPath[$index]"
         addErrorUnless(probe.url.isHttpsUrl(), errors, "cookie.probe.url", "$path.url", "Cookie probe URL must use HTTPS")
         val origin = probe.url.approvedOriginOrNull()
         addErrorUnless(
@@ -694,6 +887,13 @@ private fun String.httpsOriginOrNull(): String? {
     return origin
 }
 
+private fun String.isValidStorageNamespace(): Boolean =
+    isNotEmpty() &&
+        runCatching { encodeToByteArray(throwOnInvalidSequence = true).size <= 256 }.getOrDefault(false) &&
+        none { char -> char.code < 32 }
+
+private fun String.isCanonicalLowercaseHost(): Boolean = LOWERCASE_ASCII_HOST.matches(this) && isValidDnsHost()
+
 private fun String.isValidDnsHost(): Boolean =
     length <= 253 &&
         split('.').all { label ->
@@ -703,6 +903,7 @@ private fun String.isValidDnsHost(): Boolean =
                 label.all { it.isLetterOrDigit() || it == '-' }
         }
 
+private val LOWERCASE_ASCII_HOST = Regex("[a-z0-9.-]+")
 private val PLUGIN_ID = Regex("[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9-]*)+")
 private val PLATFORM_ID = Regex("[A-Za-z][A-Za-z0-9_.-]{0,63}")
 private val ID = Regex("[A-Za-z][A-Za-z0-9_.-]{0,127}")
@@ -713,7 +914,7 @@ private val PATH_SEGMENT = Regex("[^/\\s?#]{1,256}")
 private val TARGET_CAPTURE = Regex("\\{([A-Za-z][A-Za-z0-9_.-]{0,127})\\}")
 private val HTTPS_URL = Regex("https://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?(?:/[^\\s]*)?")
 private const val SEMVER_IDENTIFIER = "(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
-private val SEMVER =
+internal val PLUGIN_SEMVER =
     Regex(
         "(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)" +
             "(?:-$SEMVER_IDENTIFIER(?:\\.$SEMVER_IDENTIFIER)*)?" +

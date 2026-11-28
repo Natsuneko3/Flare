@@ -51,9 +51,19 @@ public enum StatusShareRenderError: LocalizedError {
     case mediaUnavailable
 
     public var errorDescription: String? {
+        localizedMessage(includesReplies: true)
+    }
+
+    public func localizedMessage(includesReplies: Bool) -> String {
         switch self {
-        case .tooLarge: String(localized: "share_replies_too_large", bundle: .main)
-        case .mediaUnavailable: String(localized: "share_replies_render_failed", bundle: .main)
+        case .tooLarge:
+            includesReplies
+                ? String(localized: "share_replies_too_large", bundle: .main)
+                : String(localized: "share_image_too_large", bundle: .main)
+        case .mediaUnavailable:
+            includesReplies
+                ? String(localized: "share_replies_render_failed", bundle: .main)
+                : String(localized: "share_image_render_failed", bundle: .main)
         }
     }
 }

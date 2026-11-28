@@ -18,6 +18,7 @@ struct TimelineReadingScrollView<Content: View>: View {
                 content().background(TimelineScrollViewProbe { viewport.bind($0) })
             }
             .coordinateSpace(name: "timeline-reading")
+            .environment(\.tracksTimelineReadingFrames, true)
             .environment(\.timelineGapWillLoad) { message in viewport.willLoadGap(message, itemKeys: itemKeys) }
             .environment(\.timelineGapDidLoad) { message, keys in viewport.didLoadGap(message, insertedKeys: keys) }
             .onPreferenceChange(TimelineReadingFrames.self) { frames in
@@ -40,8 +41,10 @@ struct TimelineReadingScrollView<Content: View>: View {
     }
 
     private func restore(using proxy: ScrollViewProxy) {
-        guard let target = reading?.restorePosition, itemKeys.indices.contains(Int(target.index)) else { return }
-        let key = itemKeys[Int(target.index)]
+        guard let target = reading?.restorePosition else { return }
+        let index = target.itemKey == nil ? Int(target.index) : itemKeys.firstIndex { $0 == target.itemKey }
+        guard let index, itemKeys.indices.contains(index) else { return }
+        let key = itemKeys[index]
         viewport.beginRestore(key: key, offset: target.offset, reading: reading)
         proxy.scrollTo(key, anchor: .top)
     }
@@ -49,7 +52,7 @@ struct TimelineReadingScrollView<Content: View>: View {
 
 @MainActor
 private final class TimelineReadingViewport {
-    private struct Anchor { let itemKey: String; let offset: Double }
+    private struct Anchor: Equatable { let itemKey: String; let offset: Double }
     private var itemKeys: [String] = []
     private weak var scrollView: NSScrollView?
     private var reading: TimelineReadingState?
@@ -149,6 +152,7 @@ private final class TimelineReadingViewport {
         leadingGap = nil
         pending = nil
         materializingItem = nil
+        restoringBookmark = false
         let successor = itemKeys.dropFirst(index + 1).first { !gapKeys.contains($0) }
         for key in [successor, anchor?.itemKey].compactMap({ $0 }) {
             guard let frame = frames[key] else { continue }
@@ -156,7 +160,7 @@ private final class TimelineReadingViewport {
             gapBookmark = (position, itemKeys)
             if frame.maxY > 0, frame.minY < (scrollView?.contentView.bounds.height ?? 0),
                let index = itemKeys.firstIndex(of: key) {
-                reading?.positionChanged(index: Int32(index), offset: frame.minY)
+                reading?.positionChanged(index: Int32(index), offset: frame.minY, itemKey: key)
             }
             return
         }
@@ -204,9 +208,17 @@ private final class TimelineReadingViewport {
             let offset = restoringBookmark ? max(pending.offset, 1 - frame.height) : pending.offset
             let delta = frame.minY - offset
             if abs(delta) > 0.5 {
-                let maxY = max(0, (scrollView.documentView?.bounds.height ?? 0) - clip.bounds.height)
-                clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, clip.bounds.minY + delta), maxY)))
-                scrollView.reflectScrolledClipView(clip)
+                let origin = previousY + delta
+                if reading == nil {
+                    // SwiftUI can still reposition the clip view while moving the detail header between panes.
+                    DispatchQueue.main.async { [weak self, weak scrollView] in
+                        guard let self, let scrollView, self.scrollView === scrollView,
+                              self.pending == pending, !self.userScrolling else { return }
+                        self.scroll(scrollView, to: origin)
+                    }
+                    return
+                }
+                scroll(scrollView, to: origin)
             }
             // Keep the target through SwiftUI's deferred scrollTo layout passes.
             let moved = abs(clip.bounds.minY - previousY) > 0.5
@@ -226,9 +238,16 @@ private final class TimelineReadingViewport {
             }) {
             anchor = Anchor(itemKey: first.key, offset: first.value.minY)
             if scrollView?.window?.isKeyWindow == true, let index = itemKeys.firstIndex(of: first.key) {
-                reading?.viewportChanged(index: Int32(index), offset: first.value.minY)
+                reading?.viewportChanged(index: Int32(index), offset: first.value.minY, itemKey: first.key)
             }
         }
+    }
+
+    private func scroll(_ view: NSScrollView, to origin: CGFloat) {
+        let clip = view.contentView
+        let maxY = max(0, (view.documentView?.bounds.height ?? 0) - clip.bounds.height)
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, origin), maxY)))
+        view.reflectScrolledClipView(clip)
     }
 
     func save() {
@@ -239,7 +258,7 @@ private final class TimelineReadingViewport {
     private func updatePosition() {
         guard hasUserScrolled, pending == nil, reading?.restorePosition == nil,
               scrollView?.window?.isKeyWindow == true, let anchor, let index = itemKeys.firstIndex(of: anchor.itemKey) else { return }
-        reading?.positionChanged(index: Int32(index), offset: anchor.offset)
+        reading?.positionChanged(index: Int32(index), offset: anchor.offset, itemKey: anchor.itemKey)
         hasUserScrolled = false
     }
 

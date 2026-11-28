@@ -72,8 +72,6 @@
     <string name="settings_about_telegram_description">Uneix-te al nostre grup de Telegram</string>
     <string name="settings_about_discord_description">Uneix-te al nostre servidor de Discord</string>
     <string name="settings_about_line_description">Uneix-te al nostre grup de Line</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Ajuda\'ns a traduir Flare</string>
     <string name="settings_privacy_policy">Política de Privadesa</string>
     <string name="settings_side_panel">Personalització del panell lateral</string>
     <string name="settings_side_panel_description">Personalitza el panell lateral</string>
@@ -823,7 +821,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automàtic</string>
     <string name="image_translation_original_file">Fitxer original</string>
-    <string name="image_translation_use_shared_description">Compartir l\'URL del servei, la clau API i el model. El servei i el model han de suportar la sortida d\'imatges. Desactivar per configurar la traducció d\'imatges separatament.</string>
+    <string name="image_translation_use_shared_description">Compartir l\'URL del servei, la clau API, el model i les capçaleres personalitzades. El servei i el model han de suportar la sortida d\'imatges. Desactivar per configurar la traducció d\'imatges separatament.</string>
     <string name="plugin_permission_cookie">Lectura de la galleta %2$s de %1$s</string>
     <string name="plugin_ai_create">Crear amb IA Flare</string>
     <string name="plugin_ai_untitled">Nou plugin</string>
@@ -945,6 +943,8 @@
     <string name="plugin_install_github">Instalar des de GitHub</string>
     <string name="plugin_github_repository">URL del repòsitori GitHub</string>
     <string name="plugin_check_updates">Comprova actualitzacions</string>
+    <string name="plugin_local_import">Importació local</string>
+    <string name="plugin_updated_at">Actualitzat el %1$s</string>
     <string name="plugin_update">Actualitzar</string>
     <string name="plugin_up_to_date">Els plugins GitHub estan actualitzats</string>
     <string name="plugin_warning_source_changed">El plugin s\'ha posat en pausa després d\'errors fatals repetits.</string>

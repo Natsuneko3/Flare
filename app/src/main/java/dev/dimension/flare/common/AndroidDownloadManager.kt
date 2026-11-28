@@ -3,6 +3,9 @@ package dev.dimension.flare.common
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -41,6 +44,7 @@ import org.koin.core.annotation.Single
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.nio.file.Files
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
@@ -179,8 +183,9 @@ internal class AndroidDownloadManager(
         byteArray: ByteArray,
         fileName: String,
         mimeType: String = imageMimeType(byteArray),
+        keepExisting: Boolean = false,
     ): Boolean =
-        saveFile(fileName = fileName, mimeType = mimeType) { outputStream ->
+        saveFile(fileName = fileName, mimeType = mimeType, keepExisting = keepExisting) { outputStream ->
             outputStream.write(byteArray)
             outputStream.flush()
             true
@@ -220,12 +225,14 @@ internal class AndroidDownloadManager(
         media: UiMedia,
         fileName: String,
         callback: DownloadCallback? = null,
+        keepExisting: Boolean = false,
     ): Long {
         val downloadId = nextDownloadId.incrementAndGet()
         val success =
             saveMedia(
                 media = media,
                 fileName = fileName,
+                keepExisting = keepExisting,
                 onDownloadStarted = {
                     withContext(Dispatchers.Main) {
                         callback?.onDownloadStarted(downloadId)
@@ -302,8 +309,20 @@ internal class AndroidDownloadManager(
         fileName: String,
         onDownloadStarted: suspend () -> Unit,
         askDirectoryUri: Uri? = null,
+        keepExisting: Boolean = false,
     ): Boolean =
         withContext(Dispatchers.IO) {
+            var downloadStarted = false
+            if (media is UiMedia.Video && media.kind == UiMedia.Video.Kind.LivePhoto) {
+                media.livePhotoCover?.let { cover ->
+                    val saved =
+                        saveMotionPhoto(media, cover, fileName, askDirectoryUri) {
+                            onDownloadStarted()
+                            downloadStarted = true
+                        }
+                    if (saved != null) return@withContext saved
+                }
+            }
             val uri = media.urlForDownload
             if (isAdaptiveStream(uri)) {
                 Log.w(TAG, "Adaptive streams cannot be exported as a single media file: $uri")
@@ -314,7 +333,7 @@ internal class AndroidDownloadManager(
             if (uri.startsWith("file://")) {
                 if (!isImageTranslationFile(media, context.cacheDir)) return@withContext false
                 onDownloadStarted()
-                return@withContext saveFile(fileName = fileName, mimeType = mimeType, askDirectoryUri = askDirectoryUri) { output ->
+                return@withContext saveFile(fileName, mimeType, askDirectoryUri, keepExisting = keepExisting) { output ->
                     java.io
                         .File(java.net.URI(uri))
                         .inputStream()
@@ -326,7 +345,7 @@ internal class AndroidDownloadManager(
             if (media3VideoCacheManager.isFullyCached(media)) {
                 val saveMode = mediaSaveLocationRepository.state.value.mode
                 val savedFromCache =
-                    saveFile(fileName = fileName, mimeType = mimeType, askDirectoryUri = askDirectoryUri) { outputStream ->
+                    saveFile(fileName, mimeType, askDirectoryUri, keepExisting = keepExisting) { outputStream ->
                         exportToStream(
                             media = media,
                             outputStream = outputStream,
@@ -342,9 +361,9 @@ internal class AndroidDownloadManager(
                 }
             }
 
-            onDownloadStarted()
+            if (!downloadStarted) onDownloadStarted()
 
-            saveFile(fileName = fileName, mimeType = mimeType, askDirectoryUri = askDirectoryUri) { outputStream ->
+            saveFile(fileName, mimeType, askDirectoryUri, keepExisting = keepExisting) { outputStream ->
                 exportToStream(
                     media = media,
                     outputStream = outputStream,
@@ -352,6 +371,76 @@ internal class AndroidDownloadManager(
                 )
             }
         }
+
+    // null leaves the existing video save available. A destination failure must not trigger another write.
+    private suspend fun saveMotionPhoto(
+        media: UiMedia.Video,
+        cover: UiMedia.Image,
+        fileName: String,
+        askDirectoryUri: Uri?,
+        onDownloadStarted: suspend () -> Unit,
+    ): Boolean? {
+        val videoUrl = media.urlForDownload
+        if (Uri.parse(videoUrl).scheme?.lowercase(Locale.ROOT) !in setOf("http", "https") ||
+            !cover.isRemote ||
+            isAdaptiveStream(videoUrl)
+        ) {
+            return null
+        }
+        return try {
+            if (!media3VideoCacheManager.isFullyCached(cover) || !media3VideoCacheManager.isFullyCached(media)) {
+                onDownloadStarted()
+            }
+            val directory = Files.createTempDirectory(context.cacheDir.toPath(), "motion-photo-").toFile()
+            try {
+                val jpeg = File(directory, "cover.jpg")
+                val video = File(directory, "clip.mov")
+                val photo = File(directory, "photo.jpg")
+                if (!jpeg.outputStream().use { exportToStream(cover, it, cacheOnly = false) }) return null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(jpeg.path, bounds)
+                if (bounds.outMimeType != "image/jpeg" || bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+                if (!video.outputStream().use { exportToStream(media, it, cacheOnly = false) }) return false
+                if (!hasMotionVideoTrack(video)) return null
+                try {
+                    photo.outputStream().buffered().use { writeMotionPhoto(jpeg, video, it) }
+                } catch (_: IllegalArgumentException) {
+                    return null
+                }
+                currentCoroutineContext().ensureActive()
+                val name = MediaFileNamePolicy.safeLocalFileName(fileName.substringBeforeLast('.'), fallback = "media")
+                saveFile("${name}_MP.jpg", "image/jpeg", askDirectoryUri, motionPhoto = true) { output ->
+                    photo.inputStream().use { it.copyTo(output) }
+                    true
+                }
+            } finally {
+                directory.deleteRecursively()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save motion photo", e)
+            false
+        }
+    }
+
+    private fun hasMotionVideoTrack(video: File): Boolean {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(video.path)
+            for (index in 0 until extractor.trackCount) {
+                when (extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)) {
+                    "video/avc", "video/hevc", "video/av01" -> {
+                        extractor.selectTrack(index)
+                        return extractor.sampleTime >= 0
+                    }
+                }
+            }
+            return false
+        } finally {
+            extractor.release()
+        }
+    }
 
     private fun exportToStream(
         media: UiMedia,
@@ -411,6 +500,8 @@ internal class AndroidDownloadManager(
         fileName: String,
         mimeType: String,
         askDirectoryUri: Uri? = null,
+        motionPhoto: Boolean = false,
+        keepExisting: Boolean = motionPhoto,
         writer: (OutputStream) -> Boolean,
     ): Boolean {
         askDirectoryUri?.let { directoryUri ->
@@ -419,6 +510,7 @@ internal class AndroidDownloadManager(
                     directoryUri = directoryUri,
                     fileName = fileName,
                     mimeType = mimeType,
+                    keepExisting = keepExisting,
                     writer = writer,
                 )
             }
@@ -428,7 +520,11 @@ internal class AndroidDownloadManager(
         return when (state.mode) {
             MediaSaveLocationMode.DefaultDownloads -> {
                 withContext(Dispatchers.IO) {
-                    saveToDownloads(fileName = fileName, mimeType = mimeType, writer = writer)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        saveToMediaStore(fileName = fileName, mimeType = mimeType, motionPhoto = motionPhoto, writer = writer)
+                    } else {
+                        saveToPublicDirectory(fileName, motionPhoto, keepExisting, writer)
+                    }
                 }
             }
 
@@ -443,6 +539,7 @@ internal class AndroidDownloadManager(
                         directoryUri = directoryUri,
                         fileName = fileName,
                         mimeType = mimeType,
+                        keepExisting = keepExisting,
                         writer = writer,
                     )
                 }
@@ -461,35 +558,34 @@ internal class AndroidDownloadManager(
         }
     }
 
-    private fun saveToDownloads(
-        fileName: String,
-        mimeType: String,
-        writer: (OutputStream) -> Boolean,
-    ): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveToMediaStoreDownloads(fileName = fileName, mimeType = mimeType, writer = writer)
-        } else {
-            saveToPublicDownloads(fileName = fileName, writer = writer)
-        }
-
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun saveToMediaStoreDownloads(
+    private fun saveToMediaStore(
         fileName: String,
         mimeType: String,
+        motionPhoto: Boolean,
         writer: (OutputStream) -> Boolean,
     ): Boolean {
         val values =
             ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    if (motionPhoto) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_DOWNLOADS,
+                )
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         val contentResolver = context.contentResolver
         var outputUri: Uri? = null
         var success = false
         return try {
-            outputUri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+            val collection =
+                if (motionPhoto) {
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                }
+            outputUri = contentResolver.insert(collection, values) ?: return false
             if (contentResolver.openOutputStream(outputUri)?.use(writer) != true) {
                 return false
             }
@@ -521,6 +617,7 @@ internal class AndroidDownloadManager(
         directoryUri: Uri,
         fileName: String,
         mimeType: String,
+        keepExisting: Boolean,
         writer: (OutputStream) -> Boolean,
     ): Boolean {
         val safeFileName = MediaFileNamePolicy.safeLocalFileName(fileName, fallback = "media")
@@ -532,7 +629,7 @@ internal class AndroidDownloadManager(
                 directoryUri,
                 treeDocumentId,
             )
-        if (!deleteExistingChild(directoryUri = directoryUri, fileName = safeFileName)) {
+        if (!keepExisting && !deleteExistingChild(directoryUri = directoryUri, fileName = safeFileName)) {
             return false
         }
         val outputUri =
@@ -619,24 +716,40 @@ internal class AndroidDownloadManager(
             permission.uri == directoryUri && permission.isWritePermission
         }
 
-    private fun saveToPublicDownloads(
+    private fun saveToPublicDirectory(
         fileName: String,
+        motionPhoto: Boolean,
+        keepExisting: Boolean,
         writer: (OutputStream) -> Boolean,
     ): Boolean {
-        val directory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (!directory.exists() && !directory.mkdirs()) {
-            return false
-        }
-        val file = File(directory, fileName)
+        val directory =
+            Environment.getExternalStoragePublicDirectory(
+                if (motionPhoto) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_DOWNLOADS,
+            )
+        directory.mkdirs()
+        if (!directory.isDirectory) return false
+        var file = File(directory, fileName)
+        var canDelete = !keepExisting
         val success =
             try {
+                if (keepExisting) {
+                    file =
+                        when {
+                            motionPhoto -> reserveMotionPhotoFile(file)
+                            file.createNewFile() -> file
+                            else -> File.createTempFile("${file.nameWithoutExtension.padEnd(3, '_')}-", ".${file.extension}", directory)
+                        }
+                }
+                canDelete = true
                 FileOutputStream(file).use(writer)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to write public Downloads output: $file", e)
+                Log.e(TAG, "Failed to write public output: $file", e)
                 false
             }
-        if (!success) {
+        if (!success && canDelete) {
             file.delete()
+        } else if (success && motionPhoto) {
+            MediaScannerConnection.scanFile(context, arrayOf(file.path), arrayOf("image/jpeg"), null)
         }
         return success
     }

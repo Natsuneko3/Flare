@@ -16,20 +16,23 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExpandedFullScreenSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItemDefaults
@@ -40,6 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -56,20 +60,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.solid.CircleInfo
@@ -109,7 +111,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import okio.buffer
 import okio.source
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -155,7 +156,6 @@ internal fun AndroidPluginManagementScreen(
     var pendingUninstallId by remember { mutableStateOf<String?>(null) }
     val pendingUninstall = state.plugins.firstOrNull { it.pluginId == pendingUninstallId }
     val pendingAuthored = state.authoredPlugins.firstOrNull { it.id == pendingUninstallId }
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val picker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             uri ?: return@rememberLauncherForActivityResult
@@ -177,7 +177,7 @@ internal fun AndroidPluginManagementScreen(
         GitHubInstallDialog(
             state = state,
             onInstall = { url -> scope.launchPresenterAction { presenter.inspectGitHub(url) } },
-            onConfirm = { scope.launchPresenterAction { presenter.confirmInstall() } },
+            onConfirm = { addDefaultTabs -> scope.launchPresenterAction { presenter.confirmInstall(addDefaultTabs) } },
             onConfirmDownload = { scope.launchPresenterAction { presenter.confirmRepositoryDownload() } },
             onCancelDownload = { scope.launchPresenterAction { presenter.cancelRepositoryDownload() } },
             onUrlChanged = presenter::clearGitHubInstallError,
@@ -206,7 +206,7 @@ internal fun AndroidPluginManagementScreen(
         PluginInstallReviewDialog(
             review = review,
             busy = state.busy,
-            onConfirm = { scope.launchPresenterAction { presenter.confirmInstall() } },
+            onConfirm = { addDefaultTabs -> scope.launchPresenterAction { presenter.confirmInstall(addDefaultTabs) } },
             onCancel = { scope.launchPresenterAction { presenter.cancelInstall() } },
         )
     }
@@ -257,59 +257,101 @@ internal fun AndroidPluginManagementScreen(
             }
         }
     } else {
-        FlareScaffold(
-            topBar = {
-                FlareLargeFlexibleTopAppBar(
-                    title = { Text(stringResource(R.string.settings_plugins_title)) },
-                    navigationIcon = { BackButton(onBack = onBack) },
-                    actions = {
-                        PluginAddMenu(
-                            busy = state.busy,
-                            agentEnabled = LocalTimelineAppearance.current.aiConfig.agent,
-                            onGitHubInstall = presenter::openGitHubInstall,
-                            onCreateWithAI = onCreateWithAI,
-                            onFileInstall = { picker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                        )
-                        IconButton(onClick = onOpenMarketplace, enabled = !state.busy) {
-                            FAIcon(FontAwesomeIcons.Solid.Store, contentDescription = stringResource(R.string.plugin_marketplace))
-                        }
-                        PluginManagementMenu(
-                            state = state,
-                            onCheckUpdates = { checkUpdates() },
-                            onRebuildIndex = { scope.launchPresenterAction { presenter.rebuildIndex() } },
-                            onCleanup = { scope.launchPresenterAction { presenter.cleanup() } },
-                        )
-                    },
-                    scrollBehavior = scrollBehavior,
-                )
-            },
-            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        ) { padding ->
-            RefreshContainer(
-                isRefreshing = state.busy || checkingUpdates,
-                onRefresh = { checkUpdates() },
-                indicatorPadding = padding,
-                modifier = Modifier.fillMaxSize(),
-                content = {
-                    PluginManagementList(
+        InstalledPluginsScreen(
+            state = state,
+            checkingUpdates = checkingUpdates,
+            onBack = onBack,
+            onOpenMarketplace = onOpenMarketplace,
+            onGitHubInstall = presenter::openGitHubInstall,
+            onCreateWithAI = onCreateWithAI,
+            onFileInstall = { picker.launch(arrayOf("application/zip", "application/octet-stream")) },
+            onCheckUpdates = { checkUpdates() },
+            onRebuildIndex = { scope.launchPresenterAction { presenter.rebuildIndex() } },
+            onCleanup = { scope.launchPresenterAction { presenter.cleanup() } },
+            onSettings = onSettings,
+            onExtensions = onExtensions,
+            onCancelPluginUpdate = { id -> scope.launchPresenterAction { presenter.cancelPluginUpdate(id) } },
+            onUninstall = { pendingUninstallId = it },
+            onUpdate = { id -> scope.launchPresenterAction { presenter.inspectGitHubUpdate(id) } },
+            onRetryRuntime = { id -> scope.launchPresenterAction { presenter.retryRuntime(id) } },
+            onToggleTimelineProcessor = presenter::setTimelineProcessorEnabled,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun InstalledPluginsScreen(
+    state: PluginManagementStateV1,
+    checkingUpdates: Boolean,
+    onBack: () -> Unit,
+    onOpenMarketplace: () -> Unit,
+    onGitHubInstall: () -> Unit,
+    onCreateWithAI: () -> Unit,
+    onFileInstall: () -> Unit,
+    onCheckUpdates: () -> Unit,
+    onRebuildIndex: () -> Unit,
+    onCleanup: () -> Unit,
+    onSettings: (String) -> Unit,
+    onExtensions: (String) -> Unit,
+    onCancelPluginUpdate: (String) -> Unit,
+    onUninstall: (String) -> Unit,
+    onUpdate: (String) -> Unit,
+    onRetryRuntime: (String) -> Unit,
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
+) {
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    FlareScaffold(
+        topBar = {
+            FlareLargeFlexibleTopAppBar(
+                title = { Text(stringResource(R.string.settings_plugins_title)) },
+                navigationIcon = { BackButton(onBack = onBack) },
+                actions = {
+                    PluginAddMenu(
+                        busy = state.busy,
+                        agentEnabled = LocalTimelineAppearance.current.aiConfig.agent,
+                        onGitHubInstall = onGitHubInstall,
+                        onCreateWithAI = onCreateWithAI,
+                        onFileInstall = onFileInstall,
+                    )
+                    IconButton(onClick = onOpenMarketplace, enabled = !state.busy) {
+                        FAIcon(FontAwesomeIcons.Solid.Store, contentDescription = stringResource(R.string.plugin_marketplace))
+                    }
+                    PluginManagementMenu(
                         state = state,
-                        onSettings = onSettings,
-                        onExtensions = onExtensions,
-                        onCancelPluginUpdate = { id -> scope.launchPresenterAction { presenter.cancelPluginUpdate(id) } },
-                        onUninstall = { pendingUninstallId = it },
-                        onUpdate = { pluginId -> scope.launchPresenterAction { presenter.inspectGitHubUpdate(pluginId) } },
-                        onRetryRuntime = { pluginId ->
-                            scope.launchPresenterAction { presenter.retryRuntime(pluginId) }
-                        },
-                        modifier =
-                            Modifier
-                                .fillMaxSize()
-                                .padding(padding)
-                                .padding(horizontal = screenHorizontalPadding),
+                        onCheckUpdates = onCheckUpdates,
+                        onRebuildIndex = onRebuildIndex,
+                        onCleanup = onCleanup,
                     )
                 },
+                scrollBehavior = scrollBehavior,
             )
-        }
+        },
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+    ) { padding ->
+        RefreshContainer(
+            isRefreshing = state.busy || checkingUpdates,
+            onRefresh = onCheckUpdates,
+            indicatorPadding = padding,
+            modifier = Modifier.fillMaxSize(),
+            content = {
+                PluginManagementList(
+                    state = state,
+                    onSettings = onSettings,
+                    onExtensions = onExtensions,
+                    onCancelPluginUpdate = onCancelPluginUpdate,
+                    onUninstall = onUninstall,
+                    onUpdate = onUpdate,
+                    onRetryRuntime = onRetryRuntime,
+                    onToggleTimelineProcessor = onToggleTimelineProcessor,
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(horizontal = screenHorizontalPadding),
+                )
+            },
+        )
     }
 }
 
@@ -415,6 +457,23 @@ internal fun PluginMarketplaceList(
                     androidx.compose.foundation.layout
                         .PaddingValues(vertical = 16.dp),
             ) {
+                if (query.isBlank() && plugins.isNotEmpty()) {
+                    item(key = "marketplace-community-notice") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                        ) {
+                            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                FAIcon(FontAwesomeIcons.Solid.CircleInfo, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Text(
+                                    text = stringResource(R.string.plugin_marketplace_community_notice),
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                }
                 if (marketplace.error != null) {
                     item(key = "marketplace-error") {
                         Column {
@@ -446,47 +505,37 @@ internal fun PluginMarketplaceList(
                 }
                 itemsIndexed(plugins, key = { _, entry -> entry.id }) { index, entry ->
                     val iconPath by produceState<String?>(null, entry.icon) { value = onIcon(entry.id) }
-                    val installed = state.isInstalled(entry.id)
                     val managed = state.isManaged(entry.id)
-                    SegmentedListItem(
-                        onClick = { uriHandler.openUri(entry.repository) },
+                    val repositoryUrl = entry.repositoryWebUrl.takeIf(String::isNotEmpty)
+                    PluginListRow(
+                        name = entry.name,
+                        iconPath = iconPath,
+                        source = entry.repositoryFullName,
+                        sourceUrl = repositoryUrl,
+                        version = entry.version,
+                        updatedAt = entry.updatedAt,
+                        description = entry.description,
                         shapes = ListItemDefaults.segmentedShapes2(index, plugins.size),
-                        leadingContent = {
-                            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                                if (iconPath == null) FAIcon(FontAwesomeIcons.Solid.PuzzlePiece, contentDescription = null)
-                                iconPath?.let {
-                                    AsyncImage(
-                                        model = File(it),
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)),
-                                    )
-                                }
-                            }
-                        },
-                        content = { Text(entry.name) },
-                        supportingContent = {
-                            Column {
-                                Text(entry.description)
-                                if (managed) {
-                                    Text(
-                                        stringResource(if (installed) R.string.plugin_installed else R.string.plugin_marketplace_local),
-                                    )
-                                }
-                            }
-                        },
-                        trailingContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(
-                                    onClick = { if (managed) onManage() else onInstall(entry.id) },
-                                    enabled = managed || state.canInstallFromMarketplace,
+                        actions = {
+                            if (managed) {
+                                FilledTonalButton(
+                                    onClick = onManage,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    contentPadding = ButtonDefaults.ExtraSmallContentPadding,
                                 ) {
-                                    Text(
-                                        stringResource(
-                                            if (managed) R.string.plugin_marketplace_manage else R.string.plugin_marketplace_install,
-                                        ),
-                                    )
+                                    Text(stringResource(R.string.plugin_marketplace_manage))
                                 }
+                            } else {
+                                Button(
+                                    onClick = { onInstall(entry.id) },
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    enabled = state.canInstallFromMarketplace,
+                                    contentPadding = ButtonDefaults.ExtraSmallContentPadding,
+                                ) {
+                                    Text(stringResource(R.string.plugin_marketplace_install))
+                                }
+                            }
+                            if (repositoryUrl != null) {
                                 var showsMenu by remember { mutableStateOf(false) }
                                 Box {
                                     IconButton(onClick = { showsMenu = true }) {
@@ -500,11 +549,16 @@ internal fun PluginMarketplaceList(
                                             text = { Text(stringResource(R.string.plugin_marketplace_repository)) },
                                             onClick = {
                                                 showsMenu = false
-                                                uriHandler.openUri(entry.repository)
+                                                uriHandler.openUri(repositoryUrl)
                                             },
                                         )
                                     }
                                 }
+                            }
+                        },
+                        details = {
+                            if (managed && !state.isInstalled(entry.id)) {
+                                Text(stringResource(R.string.plugin_marketplace_local), style = MaterialTheme.typography.bodySmall)
                             }
                         },
                     )
@@ -610,9 +664,10 @@ internal fun PluginManagementMenu(
 private fun PluginInstallReviewDialog(
     review: PluginInstallReviewV1,
     busy: Boolean,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
+    var addDefaultTabs by remember(review.pluginId) { mutableStateOf(true) }
     AlertDialog(
         onDismissRequest = { if (!busy) onCancel() },
         title = { Text("${review.name} ${review.version}") },
@@ -624,11 +679,15 @@ private fun PluginInstallReviewDialog(
                         .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PluginInstallReviewContent(review)
+                PluginInstallReviewContent(
+                    review = review,
+                    addDefaultTabs = addDefaultTabs,
+                    onAddDefaultTabsChange = { addDefaultTabs = it },
+                )
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm, enabled = !busy) {
+            Button(onClick = { onConfirm(addDefaultTabs) }, enabled = !busy) {
                 Text(stringResource(R.string.plugin_confirm_install))
             }
         },
@@ -641,7 +700,11 @@ private fun PluginInstallReviewDialog(
 }
 
 @Composable
-private fun PluginInstallReviewContent(review: PluginInstallReviewV1) {
+private fun PluginInstallReviewContent(
+    review: PluginInstallReviewV1,
+    addDefaultTabs: Boolean,
+    onAddDefaultTabsChange: (Boolean) -> Unit,
+) {
     Text(
         stringResource(
             if (review.sourceUrl ==
@@ -668,12 +731,39 @@ private fun PluginInstallReviewContent(review: PluginInstallReviewV1) {
     review.warnings
         .filterNot { it.type == PluginInstallWarningTypeV1.UnverifiedLocal }
         .forEach { Text("• ${it.localizedMessage()}") }
+    if (review.canAutoAddDefaultTabs) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = addDefaultTabs,
+                        role = Role.Checkbox,
+                        onValueChange = onAddDefaultTabsChange,
+                    ).padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Checkbox(checked = addDefaultTabs, onCheckedChange = null)
+            Column {
+                Text(stringResource(R.string.plugin_install_auto_add_tabs))
+                Text(
+                    review.defaultGuestTabTitles.joinToString(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 @Composable
 internal fun PluginPermission.localizedDescription(): String {
     if (type == dev.dimension.flare.data.model.PluginPermissionType.MediaNetwork) {
         return stringResource(R.string.plugin_permission_media_network)
+    }
+    if (type == dev.dimension.flare.data.model.PluginPermissionType.TimelinePostAccess) {
+        return stringResource(R.string.plugin_permission_timeline_post_access)
     }
     if (type == dev.dimension.flare.data.model.PluginPermissionType.AccountHttpOrigin) {
         val displayOrigin =
@@ -713,7 +803,7 @@ internal fun PluginPermission.localizedDescription(): String {
 internal fun GitHubInstallDialog(
     state: PluginManagementStateV1,
     onInstall: (String) -> Unit,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     onConfirmDownload: () -> Unit,
     onCancelDownload: () -> Unit,
     onUrlChanged: () -> Unit,
@@ -722,6 +812,7 @@ internal fun GitHubInstallDialog(
     var url by remember { mutableStateOf("") }
     val install = state.gitHubInstall ?: return
     val review = state.pendingInstall
+    var addDefaultTabs by remember(review?.pluginId) { mutableStateOf(true) }
     val largeRepository = state.needsRepositoryDownloadConfirmation
     val dismiss = if (largeRepository) onCancelDownload else onDismiss
     AlertDialog(
@@ -756,7 +847,11 @@ internal fun GitHubInstallDialog(
                         enabled = !install.busy,
                     )
                 } else {
-                    PluginInstallReviewContent(review)
+                    PluginInstallReviewContent(
+                        review = review,
+                        addDefaultTabs = addDefaultTabs,
+                        onAddDefaultTabsChange = { addDefaultTabs = it },
+                    )
                 }
                 install.error?.let { Text(it.take(512), color = MaterialTheme.colorScheme.error) }
                 if (install.busy) {
@@ -773,7 +868,7 @@ internal fun GitHubInstallDialog(
                     } else if (review == null) {
                         onInstall(url)
                     } else {
-                        onConfirm()
+                        onConfirm(addDefaultTabs)
                     }
                 },
             ) {
@@ -796,6 +891,7 @@ internal fun PluginManagementList(
     onRetryRuntime: (String) -> Unit,
     modifier: Modifier = Modifier,
     onExtensions: (String) -> Unit = {},
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     LazyColumn(
         modifier = modifier,
@@ -902,6 +998,7 @@ internal fun PluginManagementList(
                     onCancelUpdate = onCancelPluginUpdate,
                     onUninstall = onUninstall,
                     onUpdate = onUpdate,
+                    onToggleTimelineProcessor = onToggleTimelineProcessor,
                 )
             }
         }
@@ -919,67 +1016,100 @@ internal fun PluginItem(
     onUninstall: (String) -> Unit,
     onUpdate: (String) -> Unit,
     onExtensions: (String) -> Unit = {},
+    onToggleTimelineProcessor: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     val name = plugin.nameText.resolveText().ifBlank { stringResource(R.string.plugin_ai_untitled) }
-    SegmentedListItem(
-        onClick = {},
+    val authoring = plugin.authoring
+    val authoredSource = authoring?.let { stringResource(R.string.plugin_ai_source_revision, it.revision) }
+    val sourceUrl = plugin.repositoryWebUrl
+    val uriHandler = LocalUriHandler.current
+    PluginListRow(
+        name = name,
+        iconPath = plugin.iconPath,
+        source = plugin.repositoryFullName ?: plugin.sourceUrl ?: authoredSource ?: stringResource(R.string.plugin_local_import),
+        sourceUrl = sourceUrl,
+        version = plugin.version,
+        updatedAt = plugin.updatedAt,
         shapes = ListItemDefaults.segmentedShapes2(shapesIndex, shapesCount),
-        leadingContent = {
-            AsyncImage(
-                model = File(plugin.iconPath),
-                contentDescription = name,
-                contentScale = ContentScale.Fit,
-                modifier =
-                    Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-            )
-        },
-        content = { Text(name) },
-        supportingContent = {
-            Column {
-                Text(
-                    plugin.authoring?.let { stringResource(R.string.plugin_ai_source_revision, it.revision) }
-                        ?: "${plugin.platformId.ifEmpty { plugin.pluginId }} · ${plugin.version}",
-                )
-                plugin.sourceUrl?.let { Text(it) }
-                plugin.availableUpdate?.let { update ->
-                    TextButton(enabled = !busy, onClick = { onUpdate(plugin.pluginId) }) {
-                        Text("${stringResource(R.string.plugin_update)} ${update.tag}")
-                    }
-                }
-                plugin.authoring?.let { authoring ->
-                    if (authoring.phase != PluginAuthoringPhase.Idle && authoring.phase != PluginAuthoringPhase.Applied) {
-                        Text(pluginAuthoringLabel(authoring.phase))
-                    }
-                    authoring.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    if (authoring.canCancelUpdate) {
-                        OutlinedButton(enabled = !busy, onClick = { onCancelUpdate(plugin.pluginId) }) {
-                            Text(stringResource(R.string.plugin_ai_stop))
-                        }
-                    }
+        actions = {
+            if (plugin.availableUpdate != null) {
+                Button(
+                    enabled = !busy,
+                    onClick = { onUpdate(plugin.pluginId) },
+                    modifier = Modifier.weight(1f, fill = false),
+                    contentPadding = ButtonDefaults.ExtraSmallContentPadding,
+                ) {
+                    Text(stringResource(R.string.plugin_update))
                 }
             }
-        },
-        trailingContent = {
+            if (authoring?.canCancelUpdate == true) {
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = { onCancelUpdate(plugin.pluginId) },
+                    modifier = Modifier.weight(1f, fill = false),
+                    contentPadding = ButtonDefaults.ExtraSmallContentPadding,
+                ) {
+                    Text(stringResource(R.string.plugin_ai_stop))
+                }
+            }
             PluginItemMenu(
+                pluginId = plugin.pluginId,
                 name = name,
                 busy = busy,
                 onUninstall = { onUninstall(plugin.pluginId) },
                 onSettings = if (plugin.hasSettings) ({ onSettings(plugin.pluginId) }) else null,
                 onExtensions = if (plugin.hasPlatformExtension) ({ onExtensions(plugin.pluginId) }) else null,
+                onOpenRepository = sourceUrl?.let { { uriHandler.openUri(it) } },
             )
+        },
+        details = {
+            if (authoring != null) {
+                if (plugin.sourceUrl != null && authoredSource != null) Text(authoredSource, style = MaterialTheme.typography.bodySmall)
+                if (authoring.phase != PluginAuthoringPhase.Idle && authoring.phase != PluginAuthoringPhase.Applied) {
+                    Text(pluginAuthoringLabel(authoring.phase))
+                }
+                authoring.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+            if (plugin.hasTimelineProcessor) {
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .toggleable(
+                                value = plugin.timelineProcessorEnabled,
+                                enabled = !busy,
+                                role = Role.Switch,
+                                onValueChange = { enabled -> onToggleTimelineProcessor(plugin.pluginId, enabled) },
+                            ).heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(R.string.plugin_timeline_processor_toggle),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                    Switch(
+                        checked = plugin.timelineProcessorEnabled,
+                        enabled = !busy,
+                        onCheckedChange = null,
+                    )
+                }
+            }
         },
     )
 }
 
 @Composable
 internal fun PluginItemMenu(
+    pluginId: String,
     name: String,
     busy: Boolean,
     onUninstall: () -> Unit,
     onSettings: (() -> Unit)?,
     onExtensions: (() -> Unit)? = null,
+    onOpenRepository: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -987,6 +1117,17 @@ internal fun PluginItemMenu(
             FAIcon(FontAwesomeIcons.Solid.EllipsisVertical, contentDescription = "${stringResource(R.string.more)}: $name")
         }
         FlareDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (onOpenRepository != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.plugin_marketplace_repository)) },
+                    onClick = {
+                        expanded = false
+                        onOpenRepository()
+                    },
+                )
+            } else {
+                DropdownMenuItem(text = { Text(pluginId) }, onClick = {}, enabled = false)
+            }
             if (onExtensions != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.plugin_extension_title)) },

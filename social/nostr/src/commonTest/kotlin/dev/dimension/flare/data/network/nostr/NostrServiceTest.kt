@@ -545,6 +545,24 @@ class NostrServiceTest {
         assertEquals(expectedHandle, profile.name.raw)
     }
 
+    @Test
+    fun profileOfPopulatesCanonicalNostterUrl() {
+        val service = createService()
+
+        val profile =
+            try {
+                service.profileOf(
+                    pubKey = ROOT_EVENT_PUBKEY,
+                    metadata = UserMetadata(name = "alice", displayName = "Alice"),
+                    cachedProfile = null,
+                )
+            } finally {
+                service.close()
+            }
+
+        assertEquals("https://nostter.app/${nostrBech32PublicKey(ROOT_EVENT_PUBKEY)}", profile.url)
+    }
+
     private companion object {
         fun createService(relayInfoClient: HttpClient = ktorClient { expectSuccess = true }): NostrService {
             val generated = NostrService.generateAccount()

@@ -8,12 +8,14 @@ struct ProfileScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShareScreenshot: (MicroBlogKey) -> Void
+    let onProfileCrossPost: (MicroBlogKey) -> Void
     let goBack: () -> Void
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
     @Environment(\.timelineAppearance.aiConfig.agent) private var agentEnabled
 
     @State private var presenter: KotlinPresenter<ProfileState>
-    @State private var selectedTab = 0
+    @State private var tabSelection = ProfileTabSelection()
 
     init(
         accountType: AccountType,
@@ -21,12 +23,16 @@ struct ProfileScreen: View {
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
         onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShareScreenshot: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileCrossPost: @escaping (MicroBlogKey) -> Void = { _ in },
         goBack: @escaping () -> Void = {}
     ) {
         self.accountType = accountType
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
         self.onProfileInsight = onProfileInsight
+        self.onProfileShareScreenshot = onProfileShareScreenshot
+        self.onProfileCrossPost = onProfileCrossPost
         self.goBack = goBack
         _presenter = .init(
             wrappedValue: .init(
@@ -36,37 +42,57 @@ struct ProfileScreen: View {
     }
 
     var body: some View {
-        compatBody
+        GeometryReader { proxy in
+            profileContent(usesPlainProfileStyle: proxy.size.width < 840)
+        }
     }
 
-    var compatBody: some View {
-        ScrollView {
-            LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-                ProfileHeader(
-                    user: presenter.state.userState,
-                    relation: presenter.state.relationState,
-                    followButtonState: presenter.state.followButtonState,
-                    isMe: presenter.state.isMe,
-                    onFollowClick: { user, followButtonState in
-                        handleFollowAction(user: user, followButtonState: followButtonState)
-                    },
-                    onFollowingClick: onFollowingClick,
-                    onFansClick: onFansClick
-                )
+    private func profileContent(usesPlainProfileStyle: Bool) -> some View {
+        let tabsState = presenter.state.tabs
+        let tabCount: Int? = switch onEnum(of: tabsState) {
+        case .loading: nil
+        case .success(let state): state.data.cast(ProfileState.Tab.self).count
+        case .error: 0
+        }
+        let showsTabBar = tabCount.map { $0 > 1 } ?? true
 
-                Section {
-                    StateView(state: presenter.state.tabs) { tabsArray in
-                        let tabs = tabsArray.cast(ProfileState.Tab.self)
-                        profileTabsContent(tabs: tabs)
-                    } errorContent: { error in
-                        ListErrorView(error: error) {
-                            presenter.state.retryTabs()
-                        }
-                    } loadingContent: {
-                        ProfileTimelineLoadingPlaceholder()
+        return ScrollView {
+            VStack(spacing: usesPlainProfileStyle && showsTabBar ? 0 : 12) {
+                VStack(spacing: 0) {
+                    ProfileHeader(
+                        user: presenter.state.userState,
+                        relation: presenter.state.relationState,
+                        followButtonState: presenter.state.followButtonState,
+                        isMe: presenter.state.isMe,
+                        onFollowClick: { user, followButtonState in
+                            handleFollowAction(user: user, followButtonState: followButtonState)
+                        },
+                        onFollowingClick: onFollowingClick,
+                        onFansClick: onFansClick
+                    )
+                    if usesPlainProfileStyle && tabCount == 1 {
+                        Divider()
+                            .padding(.top, 8)
                     }
-                } header: {
-                    profileTabPinnedHeader
+                }
+                .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
+                .background(usesPlainProfileStyle ? Color.flareSystemBackground : .clear)
+
+                LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        StateView(state: tabsState) { tabsArray in
+                            let tabs = tabsArray.cast(ProfileState.Tab.self)
+                            profileTabsContent(tabs: tabs)
+                        } errorContent: { error in
+                            ListErrorView(error: error) {
+                                presenter.state.retryTabs()
+                            }
+                        } loadingContent: {
+                            ProfileTimelineLoadingPlaceholder()
+                        }
+                    } header: {
+                        profileTabPinnedHeader(usesPlainProfileStyle: usesPlainProfileStyle)
+                    }
                 }
             }
             .padding(.bottom, 16)
@@ -74,6 +100,9 @@ struct ProfileScreen: View {
         .navigationTitle(title)
         .background(timelineDisplayMode == .card ? Color(.secondarySystemFill) : Color(.windowBackgroundColor))
         .detectScrolling()
+        .onSuccessOf(of: tabsState) { tabs in
+            tabSelection.update(availableIDs: tabs.cast(ProfileState.Tab.self).map(\.id))
+        }
         .toolbar {
 //            ToolbarItem(placement: .automatic) {
 //                switch onEnum(of: presenter.state.userState) {
@@ -83,30 +112,51 @@ struct ProfileScreen: View {
 //                    Text(String(localized: "profile_title", defaultValue: "Profile", bundle: .main))
 //                }
 //            }
-            if agentEnabled || !presenter.state.actions.isEmpty {
+            if loadedProfile != nil || agentEnabled || !presenter.state.actions.isEmpty {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    if agentEnabled, case .success(let userState) = onEnum(of: presenter.state.userState) {
-                        Button {
-                            onProfileInsight(userState.data.key)
-                        } label: {
-                            Image(fontAwesome: .robot)
+                    if let user = loadedProfile {
+                        if agentEnabled {
+                            Button {
+                                onProfileInsight(user.key)
+                            } label: {
+                                Image(fontAwesome: .robot)
+                            }
+                            .accessibilityLabel(Text("profile_insight_title", bundle: .main))
+                            .help(String(localized: "profile_insight_title", defaultValue: "Profile insight", bundle: .main))
                         }
-                        .accessibilityLabel(Text("profile_insight_title", bundle: .main))
-                        .help(String(localized: "profile_insight_title", defaultValue: "Profile insight", bundle: .main))
+                        MacProfileShareMenu(
+                            data: MacProfileShareData(
+                                userKey: user.key,
+                                accountType: accountType,
+                                shareUrl: user.url
+                            ),
+                            onShareScreenshot: {
+                                onProfileShareScreenshot(user.key)
+                            },
+                            onCrossPost: {
+                                onProfileCrossPost(user.key)
+                            }
+                        ) {
+                            Image(fontAwesome: .shareNodes)
+                        }
+                        .accessibilityLabel(Text("fx_share"))
+                        .help(String(localized: "fx_share", defaultValue: "Share", bundle: .main))
                     }
-                    StatusActionsView(
-                        data: presenter.state.actions,
-                        useText: false,
-                        allowSpacer: false,
-                        applyPostActionLayout: false,
-                        isDetail: true
-                    )
-                    .buttonStyle(.plain)
+                    if let group = presenter.state.actions.first as? ActionMenu.Group {
+                        ProfileToolbarMenu(group: group)
+                    }
                 }
             }
         }
     }
     
+    private var loadedProfile: UiProfile? {
+        if case .success(let userState) = onEnum(of: presenter.state.userState) {
+            return userState.data
+        }
+        return nil
+    }
+
     private var title: Text {
         if case .success(let data) = onEnum(of: presenter.state.userState) {
             Text(data.data.name.raw)
@@ -117,38 +167,35 @@ struct ProfileScreen: View {
 
     @ViewBuilder
     private func profileTabsContent(tabs: [ProfileState.Tab]) -> some View {
-        Group {
-            if tabs.isEmpty {
-                ListEmptyView()
-                    .padding()
-            } else {
-                profileTabContent(tab: tabs[clampedSelectedTabIndex(for: tabs)])
-            }
-        }
-        .onAppear {
-            normalizeSelectedTab(tabCount: tabs.count)
-        }
-        .onChange(of: tabs.count) { _, count in
-            normalizeSelectedTab(tabCount: count)
+        if tabs.isEmpty {
+            ListEmptyView()
+                .padding()
+        } else {
+            profileTabContent(tab: tabs[tabSelection[indexIn: tabs.map(\.id)]])
         }
     }
 
     @ViewBuilder
-    private var profileTabPinnedHeader: some View {
+    private func profileTabPinnedHeader(usesPlainProfileStyle: Bool) -> some View {
+        let background = usesPlainProfileStyle ? AnyShapeStyle(Color.flareSystemBackground) : AnyShapeStyle(.bar)
         switch onEnum(of: presenter.state.tabs) {
         case .loading:
             ProfileTabsLoadingPlaceholder()
                 .frame(maxWidth: .infinity)
-                .background(.bar)
+                .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
+                .background(background)
                 .overlay(alignment: .bottom) {
-                    Divider()
+                    if !usesPlainProfileStyle {
+                        Divider()
+                    }
                 }
         case .success(let tabState):
             let tabs = tabState.data.cast(ProfileState.Tab.self)
             if tabs.count > 1 {
-                ProfileTabBar(tabs: tabs, selectedTab: $selectedTab)
+                ProfileTabBar(tabs: tabs, selectedTab: $tabSelection[indexIn: tabs.map(\.id)])
                     .frame(maxWidth: .infinity)
-                    .background(.bar)
+                    .environment(\.profileUsesPlainStyle, usesPlainProfileStyle)
+                    .background(background)
             }
         case .error:
             EmptyView()
@@ -170,18 +217,6 @@ struct ProfileScreen: View {
         }
     }
 
-    private func clampedSelectedTabIndex(for tabs: [ProfileState.Tab]) -> Int {
-        min(max(selectedTab, 0), max(tabs.count - 1, 0))
-    }
-
-    private func normalizeSelectedTab(tabCount: Int) {
-        guard tabCount > 0 else {
-            selectedTab = 0
-            return
-        }
-        selectedTab = min(max(selectedTab, 0), tabCount - 1)
-    }
-
     private func handleFollowAction(user: UiProfile, followButtonState: FollowButtonState) {
         switch onEnum(of: followButtonState) {
         case .blocked:
@@ -200,6 +235,8 @@ struct ProfileWithUserNameAndHostScreen: View {
     let onFollowingClick: (MicroBlogKey) -> Void
     let onFansClick: (MicroBlogKey) -> Void
     let onProfileInsight: (MicroBlogKey) -> Void
+    let onProfileShareScreenshot: (MicroBlogKey) -> Void
+    let onProfileCrossPost: (MicroBlogKey) -> Void
     let goBack: () -> Void
 
     init(
@@ -209,12 +246,16 @@ struct ProfileWithUserNameAndHostScreen: View {
         onFollowingClick: @escaping (MicroBlogKey) -> Void,
         onFansClick: @escaping (MicroBlogKey) -> Void,
         onProfileInsight: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileShareScreenshot: @escaping (MicroBlogKey) -> Void = { _ in },
+        onProfileCrossPost: @escaping (MicroBlogKey) -> Void = { _ in },
         goBack: @escaping () -> Void = {}
     ) {
         self.accountType = accountType
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
         self.onProfileInsight = onProfileInsight
+        self.onProfileShareScreenshot = onProfileShareScreenshot
+        self.onProfileCrossPost = onProfileCrossPost
         self.goBack = goBack
         _presenter = .init(
             wrappedValue: .init(
@@ -235,6 +276,8 @@ struct ProfileWithUserNameAndHostScreen: View {
                 onFollowingClick: onFollowingClick,
                 onFansClick: onFansClick,
                 onProfileInsight: onProfileInsight,
+                onProfileShareScreenshot: onProfileShareScreenshot,
+                onProfileCrossPost: onProfileCrossPost,
                 goBack: goBack
             )
         } loadingContent: {

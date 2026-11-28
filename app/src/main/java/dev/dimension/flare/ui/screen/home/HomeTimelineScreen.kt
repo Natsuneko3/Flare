@@ -109,6 +109,7 @@ import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.component.RefreshContainer
 import dev.dimension.flare.ui.component.TabIcon
+import dev.dimension.flare.ui.component.adaptive.LocalAdaptiveSplitEnabled
 import dev.dimension.flare.ui.component.platform.LocalWindowSizeClass
 import dev.dimension.flare.ui.component.platform.WindowSizeClass
 import dev.dimension.flare.ui.component.platform.isBigScreen
@@ -212,6 +213,7 @@ internal fun HomeTimelineScreen(
                                 }
                             },
                         LocalWindowSizeClass provides WindowSizeClass.Compact,
+                        LocalAdaptiveSplitEnabled provides false,
                     ) {
                         Row {
                             Router(

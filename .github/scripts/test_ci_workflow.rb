@@ -59,19 +59,15 @@ groups = builds.map do |id|
 end
 check(groups.uniq.size == builds.size, 'Independent platforms must not cancel each other')
 
-other_workflows = %w[static crowdin-upload crowdin-download plugin-sdk dependabot].to_h do |name|
+other_workflows = %w[static plugin-sdk dependabot].to_h do |name|
   [name, load_yaml.call(File.join(root, ".github/workflows/#{name}.yml"))]
 end
 other_triggers = other_workflows.transform_values { |config| config['on'] || config[true] }
-%w[static crowdin-upload].each do |name|
-  check(other_triggers.dig(name, 'push', 'branches') == ['master'], "#{name} must automatically run on master")
-end
-check(other_triggers.dig('crowdin-upload', 'push', 'paths') == ['**/values/strings.xml', 'crowdin.yml', 'appleApp/Shared/FlareAppleResource/Resources/Localizable.xcstrings'], 'Crowdin uploads must retain their source string filters')
-check(other_triggers.dig('crowdin-download', 'schedule') == [{ 'cron' => '0 0 * * *' }], 'Crowdin downloads must automatically run daily')
+check(other_triggers.dig('static', 'push', 'branches') == ['master'], 'static must automatically run on master')
 check(other_triggers.dig('plugin-sdk', 'pull_request', 'paths') == ['feature/plugin/sdk/**', 'README.md', 'LICENSE', '.github/workflows/plugin-sdk.yml'], 'SDK changes must automatically validate on pull requests')
 check(other_triggers.dig('plugin-sdk', 'push', 'tags') == ['plugin-sdk-v*'], 'SDK releases must retain their own tag trigger')
 check(other_workflows.dig('plugin-sdk', 'jobs', 'publish', 'if') == "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/plugin-sdk-v')", 'SDK PRs and manual validations must not publish to npm')
-%w[static crowdin-upload crowdin-download plugin-sdk].each do |name|
+%w[static plugin-sdk].each do |name|
   check(other_triggers.fetch(name).key?('workflow_dispatch'), "#{name} must retain manual dispatch")
 end
 check(other_workflows.dig('dependabot', 'jobs', 'dependabot', 'if') == "github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'flaresocialapp/Flare'", 'Dependabot automation must target the migrated repository')
@@ -163,8 +159,10 @@ expected_classes = %w[
   dev.dimension.flare.common.WebViewProxyTest
   dev.dimension.flare.ui.screen.gallery.GalleryDetailScreenTest
   dev.dimension.flare.ui.screen.media.ImageTranslationErrorDialogTest
+  dev.dimension.flare.ui.screen.media.ImageLoadingIndicatorTest
+  dev.dimension.flare.ui.component.status.PostAppearanceTest#profileTabsStaySelectedWhenTheLastPageIsRemoved
 ]
-check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must retain all six regression classes')
+check(classes.to_set == expected_classes.to_set, 'The combined Android invocation must select the expected regressions')
 check(android.scan(':app:connectedDebugAndroidTest').size == 1, 'App Android regressions must use one instrumentation invocation')
 playback = android.lines.find { |line| line.include?(':compose-ui:connectedAndroidDeviceTest') }
 check(playback&.include?('-Pandroid.testInstrumentationRunnerArguments.class=dev.dimension.flare.ui.component.SurfaceBindingManagerTest'), 'Android CI must run the playback foreground regression in its owning module')
@@ -184,22 +182,33 @@ expected_selectors = %w[
   TimelineControllerTests/LoginCookieSnapshotTests
   TimelineControllerTests/UgoiraPlaybackTests
   TimelineControllerTests/VideoControlViewTests
+  TimelineControllerTests/ProfileTimelinePagerTests
   TimelineControllerTests/TimelineControllerIntegrationTests/testSingleMediaLimitUsesStableWindowAndEmbeddedViewportGeometry
   TimelineControllerTests/TimelineControllerIntegrationTests/testViewportHeightChangeResizesSingleMediaAndPreservesReadingPosition
   TimelineControllerTests/TimelineControllerIntegrationTests/testSingleMediaLimitSwitchKeepsReadingPosition
   TimelineControllerTests/TimelineControllerIntegrationTests/testLongPostExpandsDownwardFromItsPreview
   TimelineControllerTests/TimelineControllerIntegrationTests/testContentWarningRevealsTextDownward
   TimelineControllerTests/TimelineControllerIntegrationTests/testLongPostExpansionKeepsTimelineColumns
+  TimelineControllerTests/TimelineControllerIntegrationTests/testReboundTimelineCellUsesTheMatchingCachedHeight
+  TimelineControllerTests/TimelineControllerIntegrationTests/testExpandedHeightCanLayOutTheCurrentRowWithoutBeingReusedByAnotherCell
+  TimelineControllerTests/TimelineControllerIntegrationTests/testDetailAccessoryReusesItsHostUntilTheSelectedFilterChanges
+  TimelineControllerTests/TimelineControllerIntegrationTests/testDetailTabsFollowThePostWhileCommentsAreLoading
+  TimelineControllerTests/TimelineControllerIntegrationTests/testSortingCommentsKeepsTheMeasuredHeightOfAStillLoadedComment
+  TimelineControllerTests/TimelineControllerIntegrationTests/testSortingCommentsDiscardsTheExpandedHeightOfAnOffscreenComment
+  TimelineControllerTests/RichTextUIViewTests/testPlainCommentReusesItsLabelWhenTheTextIsReplaced
   TimelineControllerTests/TimelineRefreshAnimationTests
   TimelineControllerTests/FlareTextColorTests
   TimelineControllerTests/FlareTextColorIntegrationTests
+  TimelineControllerTests/DateTimeTextTests
   TimelineControllerTests/StatusShareTests
   TimelineControllerTests/TimelineMediaPreviewTests/testSwiftUIMediaKeepsItsInitialHeightWhenLazyRowsAppearAndReturn
   TimelineControllerTests/TimelineMediaPreviewTests/testSwiftUIMediaIgnoresPlaybackViewportAndChromeInsetsButRespondsToResize
   iOSTests/VideoPlaybackSessionTests
+  iOSTests/LivePhotoExportTests
   iOSTests/MediaPlaybackMemoryTests
   iOSTests/TimelinePlaybackCoordinatorTests
   iOSTests/MediaTransferCancellationTests
+  iOSTests/ProfileTabSelectionTests
   iOSTests/StateViewTests
   iOSTests/TimelineCollectionViewTests/testRefreshCollapseAppliesAPendingPrependBookmarkBeforeAnimating
   MediaViewerInteractionTests/TimelineMediaScrollTests

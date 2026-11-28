@@ -74,8 +74,6 @@
     <string name="settings_about_telegram_description">הצטרף לקבוצת הטלגרם שלנו</string>
     <string name="settings_about_discord_description">הצטרפו לשרת ה-Discord שלנו</string>
     <string name="settings_about_line_description">הצטרפו לקבוצת ה-Line שלנו</string>
-    <string name="settings_about_localization">קרואדין</string>
-    <string name="settings_about_localization_description">עזור לנו לתרגם את Flare</string>
     <string name="settings_privacy_policy">מדיניות פרטיות</string>
     <string name="settings_side_panel">התאמת פאנל צד</string>
     <string name="settings_side_panel_description">התאם אישית את פאנל הצד</string>
@@ -815,7 +813,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">אוטומטי</string>
     <string name="image_translation_original_file">קובץ מקורי</string>
-    <string name="image_translation_use_shared_description">שתף את כתובת השירות, מפתח ה-API והמודל. השירות והמודל חייבים לתמוך בפלט תמונות. כבה כדי להגדיר תרגום תמונות בנפרד.</string>
+    <string name="image_translation_use_shared_description">שתף את כתובת השירות, מפתח ה-API, המודל וכותרות הבקשה המותאמות אישית. השירות והמודל חייבים לתמוך בפלט תמונות. כבה כדי להגדיר תרגום תמונות בנפרד.</string>
     <string name="plugin_permission_cookie">קריאת קובץ ההגדרות %2$s מ-%1$s</string>
     <string name="plugin_ai_create">צור עם Flare AI</string>
     <string name="plugin_ai_untitled">תוסף חדש</string>
@@ -928,6 +926,8 @@
     <string name="plugin_warning_compatibility">נקה קבצים לא בשימוש</string>
     <string name="plugin_install_github">התקן מ-GitHub</string>
     <string name="plugin_check_updates">בדוק עדכונים</string>
+    <string name="plugin_local_import">ייבוא מקומי</string>
+    <string name="plugin_updated_at">עודכן ב־%1$s</string>
     <string name="plugin_warning_source_changed">ההתקנה הזו משנה את מקור התוסף</string>
     <string name="plugin_add">הוסף תוסף</string>
     <string name="settings_ai_config_context_window_hint">הקשר המודל נמדד בטוקנים, לא באותיות. השאר ריק כדי להשתמש במגבלת המודל הידועה. מודלים לא ידועים משתמשים בתקציב משוער של 8192 טוקנים. הזן לפחות 1024 טוקנים כדי לדרוס.</string>

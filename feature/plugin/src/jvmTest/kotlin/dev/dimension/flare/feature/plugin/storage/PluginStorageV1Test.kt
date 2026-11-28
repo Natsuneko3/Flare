@@ -169,6 +169,36 @@ class PluginStorageV1Test {
         }
 
     @Test
+    fun timelineTokensPersistExternalRevisionsAcrossProcessorWritesAndRestarts() =
+        runTest {
+            val id = "dev.test.one"
+            val processor = access.forTimelineProcessor()
+
+            fun tokens(source: PluginStorageV1) =
+                listOf(null, listOf("settings"), emptyList<String>()).map { source.token(id, it, forTimelineProcessor = true) }
+
+            fun change(value: Int) = PluginStorageChangesV1(mapOf("value" to JsonPrimitive(value)))
+
+            access.write("existing", change(0))
+            val initial = tokens(storage)
+            val originalToken = storage.token(id, null)
+            processor.write("stats", change(1))
+            assertEquals(initial, tokens(storage))
+            assertNotEquals(originalToken, storage.token(id, null))
+            access.write("settings", change(2))
+            val external = tokens(storage)
+            assertNotEquals(initial[0], external[0])
+            assertNotEquals(initial[1], external[1])
+            assertEquals(initial[2], external[2])
+            processor.write("settings", change(3))
+            val reopened = PluginStorageV1(files, root).also { it.prepare(id) }
+            assertEquals(external, tokens(reopened))
+            reopened.access(id) {}.write("stats", change(4))
+            assertNotEquals(external[0], tokens(reopened)[0])
+            assertEquals(external.drop(1), tokens(reopened).drop(1))
+        }
+
+    @Test
     fun retiredAccessCannotReadOrWriteAndReinstallGetsFreshRevisions() =
         runTest {
             var active = true

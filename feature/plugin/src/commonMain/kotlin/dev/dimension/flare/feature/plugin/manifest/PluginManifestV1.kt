@@ -7,6 +7,7 @@ import dev.dimension.flare.feature.plugin.wire.PageDirectionV1
 import dev.dimension.flare.feature.plugin.wire.TimelineDisplayV1
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 public data class PluginManifestV1(
@@ -22,6 +23,7 @@ public data class PluginManifestV1(
     val translation: PluginTranslationManifestV1? = null,
     val settings: PluginSettingsManifestV1? = null,
     val platformExtension: PluginPlatformExtensionManifestV1? = null,
+    val timelineProcessor: PluginTimelineProcessorManifestV1? = null,
     /** Editor hint only; the Host never resolves this URL. */
     @SerialName("\$schema")
     val schema: String? = null,
@@ -32,7 +34,11 @@ public data class PluginPermissionsV1(
     val authOrigins: Set<String> = emptySet(),
     val mediaNetwork: Boolean = false,
     val httpOrigins: Set<String> = emptySet(),
-)
+) {
+    // A legacy grant contains only exact HTTPS origins, so it cannot approve remote media.
+    @Transient
+    internal val timelineProcessorGrant: Set<String> = if (mediaNetwork) httpOrigins + "mediaNetwork" else httpOrigins
+}
 
 @Serializable
 public data class PluginPlatformManifestV1(
@@ -51,6 +57,15 @@ public data class PluginPlatformManifestV1(
     val credentialSchemaVersion: Int = 1,
     val timelineSchemaVersion: Int = 1,
     val composeDefaultsV3: ComposeConfigV2? = null,
+    val recommendedOrigins: List<RecommendedOriginManifestV1> = emptyList(),
+    val allowCustomOrigin: Boolean = true,
+)
+
+@Serializable
+public data class RecommendedOriginManifestV1(
+    val origin: String,
+    val name: PluginTextV1? = null,
+    val description: PluginTextV1? = null,
 )
 
 @Serializable
@@ -61,6 +76,7 @@ public data class DetectorManifestV1(
 @Serializable
 public data class GuestManifestV1(
     val enabled: Boolean = true,
+    val origin: String? = null,
 )
 
 @Serializable
@@ -69,6 +85,7 @@ public data class CapabilityManifestV1(
     val notificationFilters: Set<NotificationFilterKindV1> = emptySet(),
     val relationActions: Set<RelationActionKindV1> = emptySet(),
     val authOrigins: Set<String> = emptySet(),
+    val challengeProbes: List<CookieProbeManifestV1> = emptyList(),
 )
 
 @Serializable
@@ -259,6 +276,22 @@ public data class PluginExtensionActionV1(
     val dailyTimeZone: String? = null,
     /** Empty means all declared targets, preserving existing v2 packages. */
     val platformIds: Set<String> = emptySet(),
+)
+
+@Serializable
+public data class PluginTimelineProcessorManifestV1(
+    val apiVersion: Int = 1,
+    val maxBatchSize: Int = 20,
+    val filter: PluginTimelineFilterManifestV1? = null,
+    val cache: PluginTranslationCacheManifestV1 = PluginTranslationCacheManifestV1(),
+)
+
+@Serializable
+public data class PluginTimelineFilterManifestV1(
+    val containsAny: List<String> = emptyList(),
+    val regex: String? = null,
+    val linkHosts: List<String> = emptyList(),
+    val requireLinks: Boolean = false,
 )
 
 /** Social-only adapters call this after filtering plugins with no social platform. */

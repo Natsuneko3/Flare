@@ -72,8 +72,6 @@
     <string name="settings_about_telegram_description">Csatlakozz a Telegram csoportunkhoz</string>
     <string name="settings_about_discord_description">Csatlakozz a Discord szerverünkhöz</string>
     <string name="settings_about_line_description">Csatlakozz a Line csoportunkhoz</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Segíts lefordítani a Flare-t</string>
     <string name="settings_privacy_policy">Adatvédelmi nyilatkozat</string>
     <string name="settings_side_panel">Oldalpanel testreszabása</string>
     <string name="settings_side_panel_description">Az oldalpanel testreszabása</string>
@@ -813,7 +811,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automatikus</string>
     <string name="image_translation_original_file">Eredeti fájl</string>
-    <string name="image_translation_use_shared_description">Megosztja a szolgáltatás URL-jét, API kulcsát és modelljét. A szolgáltatásnak és a modellnek képkimenetet kell támogatnia. Kikapcsolja a képfordítás külön konfigurálására.</string>
+    <string name="image_translation_use_shared_description">Megosztja a szolgáltatás URL-jét, API-kulcsát, modelljét és egyéni fejléceit. A szolgáltatásnak és a modellnek képkimenetet kell támogatnia. Kikapcsolja a képfordítás külön konfigurálására.</string>
     <string name="plugin_permission_cookie">Olvasd el az %2$s süti a %1$s-ből</string>
     <string name="plugin_ai_create">Létrehozás Flare AI-val</string>
     <string name="plugin_ai_untitled">Új bővítmény</string>
@@ -936,6 +934,8 @@
     <string name="plugin_warning_compatibility">Kompatibilitási figyelmeztetés</string>
     <string name="plugin_install_github">Telepítés GitHub-ből</string>
     <string name="plugin_check_updates">Frissítés ellenőrzése</string>
+    <string name="plugin_local_import">Helyi importálás</string>
+    <string name="plugin_updated_at">Frissítve: %1$s</string>
     <string name="plugin_warning_source_changed">Ez a telepítés megváltoztatja a plugin forrását</string>
     <string name="plugin_warning_tag_moved">Ez a címke most egy másik commitot mutat</string>
     <string name="plugin_unverified_github_warning">Ez az GitHub plugin nem ellenőrzött. Csak akkor telepítse, ha megbízik a szerzőben.</string>

@@ -116,8 +116,6 @@
     <string name="settings_about_telegram_description">Tritt unserer Telegram-Gruppe bei</string>
     <string name="settings_about_discord_description">Tritt unserem Discord-Server bei</string>
     <string name="settings_about_line_description">Tritt unserer Line-Gruppe bei</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Hilf uns, Flare zu übersetzen</string>
     <string name="settings_privacy_policy">Datenschutzrichtlinie</string>
     <string name="settings_side_panel">Seitenleiste anpassen</string>
     <string name="settings_side_panel_description">Die Seitenleiste anpassen</string>
@@ -822,7 +820,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automatisch</string>
     <string name="image_translation_original_file">Originaldatei</string>
-    <string name="image_translation_use_shared_description">Teile die Dienst-URL, den API-Schlüssel und das Modell. Der Dienst und das Modell müssen Bildausgabe unterstützen. Deaktivieren, um die Bildübersetzung separat zu konfigurieren.</string>
+    <string name="image_translation_use_shared_description">Teile die Dienst-URL, den API-Schlüssel, das Modell und die benutzerdefinierten Header. Der Dienst und das Modell müssen Bildausgabe unterstützen. Deaktivieren, um die Bildübersetzung separat zu konfigurieren.</string>
     <string name="plugin_permission_http_origin">Bei der Nutzung des Plugins Anfragen und Daten an %1$s senden</string>
     <string name="plugin_permission_auth_origin">Bei der Anmeldung auf %1$s zugreifen</string>
     <string name="plugin_permission_cookie">Cookie %2$s von %1$s lesen</string>
@@ -947,6 +945,8 @@
     <string name="plugin_install_github">Aus GitHub installieren</string>
     <string name="plugin_github_repository">GitHub Repository-URL</string>
     <string name="plugin_check_updates">Auf Updates prüfen</string>
+    <string name="plugin_local_import">Lokaler Import</string>
+    <string name="plugin_updated_at">Aktualisiert am %1$s</string>
     <string name="plugin_update">Aktualisieren</string>
     <string name="plugin_up_to_date">GitHub Plugins sind aktuell</string>
     <string name="plugin_warning_source_changed">Diese Installation ändert die Plugin-Quelle</string>

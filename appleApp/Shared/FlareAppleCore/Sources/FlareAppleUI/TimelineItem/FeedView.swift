@@ -2,8 +2,17 @@ import SwiftUI
 import KotlinSharedUI
 import FlareAppleCore
 
+#if os(macOS)
+import AppKit
+#endif
+
 struct FeedView: View {
     @Environment(\.openURL) private var openURL
+    #if os(macOS)
+    @ScaledMetric(relativeTo: .footnote) private var metaIconSize = NSFont.preferredFont(forTextStyle: .footnote).pointSize
+    #else
+    @ScaledMetric(relativeTo: .footnote) private var metaIconSize: CGFloat = 13
+    #endif
     let data: UiTimelineV2.Feed
 //    @State private var showDetail = false
     private var descriptionText: String? {
@@ -29,8 +38,7 @@ struct FeedView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 if data.translationDisplayState != .hidden {
-                    TranslateStatusComponent(data: data.translationDisplayState)
-                        .font(.caption)
+                    TranslateStatusComponent(data: data.translationDisplayState, iconSize: metaIconSize)
                         .flareSecondaryText()
                 }
                 if let date = data.actualCreatedAt {

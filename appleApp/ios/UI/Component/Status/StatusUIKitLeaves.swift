@@ -4,6 +4,37 @@ import FlareAppleUI
 import KotlinSharedUI
 import FlareAppleCore
 
+extension UIView {
+    func useSeparatorBorderColor() {
+        updateSeparatorBorderColor()
+        registerForTraitChanges(UITraitCollection.systemTraitsAffectingColorAppearance) { (view: UIView, _) in
+            view.updateSeparatorBorderColor()
+        }
+    }
+
+    private func updateSeparatorBorderColor() {
+        layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
+    }
+}
+
+extension UILabel {
+    func setPostText(_ text: String?, preferredContentSizeCategory: UIContentSizeCategory = .medium,
+                     fontSizeAdjustment: CGFloat = 0) {
+        // Post sizing is driven by appearance; UIKit must not rescale it a second time.
+        adjustsFontForContentSizeCategory = false
+        traitOverrides.preferredContentSizeCategory = preferredContentSizeCategory
+        let preferredFont = UIFont.preferredFont(forTextStyle: .body,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: preferredContentSizeCategory))
+        let bodyFont = fontSizeAdjustment == 0 ? preferredFont : preferredFont.withSize(preferredFont.pointSize + fontSizeAdjustment)
+        font = bodyFont
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = bodyFont.leading + 1
+        paragraph.alignment = textAlignment
+        paragraph.lineBreakMode = lineBreakMode
+        attributedText = text.map { NSAttributedString(string: $0, attributes: [.font: bodyFont, .paragraphStyle: paragraph]) }
+    }
+}
+
 // MARK: - AvatarUIView
 // Mirrors AvatarView.swift (NetworkImage + clipShape by avatarShape).
 final class AvatarUIView: UIView {
@@ -51,6 +82,8 @@ final class AvatarUIView: UIView {
 final class DateTimeUILabel: UILabel {
     var absoluteTimestamp: Bool = false
     var fullTime: Bool = false
+    var postTextContentSizeCategory: UIContentSizeCategory?
+    private var nonPostAppearance: (font: UIFont, color: UIColor)?
 
     private static let fullFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -79,14 +112,34 @@ final class DateTimeUILabel: UILabel {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func set(data: UiDateTime) {
+        if postTextContentSizeCategory == nil, let appearance = nonPostAppearance {
+            attributedText = nil
+            adjustsFontForContentSizeCategory = true
+            traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
+            font = appearance.font
+            textColor = appearance.color
+            nonPostAppearance = nil
+        }
+        guard let date = data.displayDate else {
+            attributedText = nil
+            text = nil
+            return
+        }
         if fullTime {
-            text = Self.fullFormatter.string(from: data.platformValue)
+            text = Self.fullFormatter.string(from: date)
         } else if data.shouldShowFull {
-            text = Self.dateOnlyFormatter.string(from: data.platformValue)
+            text = Self.dateOnlyFormatter.string(from: date)
         } else if absoluteTimestamp {
             text = data.absolute
         } else {
             text = data.relative
+        }
+        if let postTextContentSizeCategory {
+            if nonPostAppearance == nil {
+                nonPostAppearance = (font, textColor)
+            }
+            textColor = .flarePostSecondaryLabel
+            setPostText(text, preferredContentSizeCategory: postTextContentSizeCategory)
         }
     }
 }
@@ -103,7 +156,7 @@ final class StatusVisibilityImageView: UIImageView {
         contentMode = .scaleAspectFit
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
-        tintColor = .secondaryLabel
+        tintColor = .flarePostSecondaryLabel
         isAccessibilityElement = true
     }
     required init(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -146,6 +199,36 @@ final class TranslateStatusStateView: UIView, ManualLayoutMeasurable, TimelineHe
     private let langIcon = UIImageView(image: UIImage(fontAwesome: .language))
     private let stateIcon = UIImageView()
     private let spinner = UIActivityIndicatorView(style: .medium)
+    var iconSize: CGFloat = 16 {
+        didSet {
+            guard iconSize != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    var iconSpacing: CGFloat = 4 {
+        didSet {
+            guard iconSpacing != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    var stateIconMatchesIconSize = false {
+        didSet {
+            guard stateIconMatchesIconSize != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    var isPostContent = false {
+        didSet {
+            tintColor = isPostContent ? .flarePostSecondaryLabel : .secondaryLabel
+            spinner.color = isPostContent ? .flarePostSecondaryLabel : nil
+            guard isPostContent != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -199,14 +282,28 @@ final class TranslateStatusStateView: UIView, ManualLayoutMeasurable, TimelineHe
         setNeedsLayout()
     }
 
+    private var resolvedStateSize: CGFloat {
+        (isPostContent || stateIconMatchesIconSize) ? iconSize : 12
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let size = preferredSize()
         let y = max((bounds.height - size.height) / 2, 0)
-        langIcon.frame = CGRect(x: 0, y: y, width: 16, height: 16)
-        let stateFrame = CGRect(x: 20, y: y + 2, width: 12, height: 12)
+        langIcon.frame = CGRect(x: 0, y: y, width: iconSize, height: iconSize)
+        let stateSize = resolvedStateSize
+        let stateFrame = CGRect(x: iconSize + iconSpacing, y: y + (iconSize - stateSize) / 2,
+                                width: stateSize, height: stateSize)
         stateIcon.frame = stateIcon.isHidden ? .zero : stateFrame
-        spinner.frame = spinner.isHidden ? .zero : stateFrame
+        spinner.transform = .identity
+        if isPostContent || stateIconMatchesIconSize, !spinner.isHidden {
+            let nativeSize = spinner.intrinsicContentSize
+            spinner.bounds = CGRect(origin: .zero, size: nativeSize)
+            spinner.center = CGPoint(x: stateFrame.midX, y: stateFrame.midY)
+            spinner.transform = CGAffineTransform(scaleX: stateSize / nativeSize.width, y: stateSize / nativeSize.height)
+        } else {
+            spinner.frame = spinner.isHidden ? .zero : stateFrame
+        }
     }
 
     override func sizeThatFits(_ size: CGSize) -> CGSize {
@@ -226,12 +323,12 @@ final class TranslateStatusStateView: UIView, ManualLayoutMeasurable, TimelineHe
     }
 
     func timelineHeight(for width: CGFloat) -> CGFloat? {
-        16
+        iconSize
     }
 
     private func preferredSize() -> CGSize {
         let hasState = !stateIcon.isHidden || !spinner.isHidden
-        return CGSize(width: hasState ? 32 : 16, height: 16)
+        return CGSize(width: iconSize + (hasState ? iconSpacing + resolvedStateSize : 0), height: iconSize)
     }
 }
 
@@ -295,7 +392,7 @@ final class UserOnelineUIView: UIView, ManualLayoutMeasurable, TimelineHeightPro
     }
 
     private func preferredSingleLineHeight(width: CGFloat) -> CGFloat {
-        let nameHeight = UIFont.preferredFont(forTextStyle: .body).lineHeight
+        let nameHeight = name.singleLineContentSize().height
         let handleHeight = handleLabel.font?.lineHeight ?? 0
         let fittingWidth = width > 0 ? width : 1
         let trailingHeight = trailingView.map { $0.isHidden ? 0 : childHeight(of: $0, for: fittingWidth) } ?? 0
@@ -315,10 +412,14 @@ final class UserOnelineUIView: UIView, ManualLayoutMeasurable, TimelineHeightPro
                       height: preferredSingleLineHeight(width: width))
     }
 
-    func configure(data: UiProfile, subtitle: String? = nil, trailing: UIView?, onClicked: (() -> Void)?) {
+    func configure(data: UiProfile, subtitle: String? = nil, trailing: UIView?, onClicked: (() -> Void)?,
+                   preferredContentSizeCategory: UIContentSizeCategory = .medium) {
         avatar.set(media: data.avatar)
-        name.text = data.name
-        handleLabel.text = subtitle ?? data.handle.display
+        name.configure(text: data.name, lineLimit: 1, isTextSelectionEnabled: false, onOpenURL: nil,
+                       baseTextWeight: .bold, lineSpacing: 1, baseTextColor: .flarePostLabel,
+                       preferredContentSizeCategory: preferredContentSizeCategory)
+        handleLabel.textColor = .flarePostSecondaryLabel
+        handleLabel.setPostText(subtitle ?? data.handle.display, preferredContentSizeCategory: preferredContentSizeCategory)
         if trailingView !== trailing {
             trailingView?.removeFromSuperview()
             trailingView = trailing
@@ -418,6 +519,7 @@ final class UserCompatUIView: UIStackView {
     private let column = UIStackView()
     private let flexibleSpace = UIView()
     private let trailingContainer = UIStackView()
+    private var avatarSizeConstraints: [NSLayoutConstraint] = []
 
     var onTapped: (() -> Void)?
 
@@ -425,7 +527,7 @@ final class UserCompatUIView: UIStackView {
         super.init(frame: frame)
         axis = .horizontal
         spacing = 8
-        alignment = .top
+        alignment = .center
 
         name.lineLimit = 1
         name.setContentHuggingPriority(.required, for: .horizontal)
@@ -433,10 +535,11 @@ final class UserCompatUIView: UIStackView {
         handleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         handleLabel.setContentCompressionResistancePriority(UILayoutPriority(100), for: .horizontal)
 
-        NSLayoutConstraint.activate([
+        avatarSizeConstraints = [
             avatar.widthAnchor.constraint(equalToConstant: 44),
             avatar.heightAnchor.constraint(equalToConstant: 44),
-        ])
+        ]
+        NSLayoutConstraint.activate(avatarSizeConstraints)
         addArrangedSubview(avatar)
 
         column.axis = .vertical
@@ -469,10 +572,26 @@ final class UserCompatUIView: UIStackView {
     }
     required init(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(data: UiProfile, subtitle: String? = nil, trailing: UIView?, onClicked: (() -> Void)?) {
+    func configure(data: UiProfile, subtitle: String? = nil, trailing: UIView?, onClicked: (() -> Void)?,
+                   postTextContentSizeCategory: UIContentSizeCategory? = nil) {
         avatar.set(media: data.avatar)
-        name.text = data.name
-        handleLabel.text = subtitle ?? data.handle.display
+        if let category = postTextContentSizeCategory {
+            avatarSizeConstraints.forEach { $0.constant = 48 }
+            name.configure(text: data.name, lineLimit: 1, isTextSelectionEnabled: false, onOpenURL: nil,
+                           baseTextWeight: .bold, lineSpacing: 1, baseTextColor: .flarePostLabel,
+                           preferredContentSizeCategory: category)
+            handleLabel.textColor = .flarePostSecondaryLabel
+            handleLabel.setPostText(subtitle ?? data.handle.display, preferredContentSizeCategory: category)
+        } else {
+            avatarSizeConstraints.forEach { $0.constant = 44 }
+            name.configure(text: data.name, lineLimit: 1, isTextSelectionEnabled: false, onOpenURL: nil, baseTextWeight: .bold)
+            handleLabel.attributedText = nil
+            handleLabel.adjustsFontForContentSizeCategory = true
+            handleLabel.traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
+            handleLabel.font = .preferredFont(forTextStyle: .caption1)
+            handleLabel.textColor = .secondaryLabel
+            handleLabel.text = subtitle ?? data.handle.display
+        }
         if let trailing = trailing {
             trailing.setContentHuggingPriority(.required, for: .horizontal)
             trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -488,6 +607,25 @@ final class UserCompatUIView: UIStackView {
     @objc private func onTapFired() { onTapped?() }
 }
 
+private final class StatusTopEndIconButton: UIButton {
+    var minimumHitSize: CGFloat = 24
+
+    private var hitBounds: CGRect {
+        let dx = max(0, (minimumHitSize - bounds.width) / 2)
+        let dy = max(0, (minimumHitSize - bounds.height) / 2)
+        return bounds.insetBy(dx: -dx, dy: -dy)
+    }
+
+    override var accessibilityFrame: CGRect {
+        get { UIAccessibility.convertToScreenCoordinates(hitBounds, in: self) }
+        set { super.accessibilityFrame = newValue }
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        hitBounds.contains(point)
+    }
+}
+
 // MARK: - StatusTopEndView
 // Mirrors `topEndContent` in StatusView.swift — visibility + translation state
 // + optional platform logo + timestamp in an HStack.
@@ -497,8 +635,10 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
     private let platformLogo = UIImageView()
     private var platformIcon: IconType?
     private let time = DateTimeUILabel()
-    private let insightButton = UIButton(type: .system)
+    private let insightButton = StatusTopEndIconButton(type: .system)
     private var onInsightTapped: (() -> Void)?
+    private var iconSize: CGFloat = 16
+    private var insightHitSize: CGFloat { max(24, iconSize + 4) }
 
     private func setPlatformIcon(_ icon: IconType?) {
         guard platformIcon != icon else { return }
@@ -516,7 +656,7 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
             platformLogo.setMedia(
                 UiMediaImage(url: url.url, proxy: ProxyRef.Global.shared),
                 options: [
-                    .processor(ImageDownsamplingProcessor(pixelSize: CGSize(width: 14 * scale, height: 14 * scale), fillsBounds: false)),
+                    .processor(ImageDownsamplingProcessor(pixelSize: CGSize(width: iconSize * scale, height: iconSize * scale), fillsBounds: false)),
                     .scaleFactor(scale), .backgroundDecode, .asyncCacheTypeCheck,
                 ]
             )
@@ -530,14 +670,18 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         platformLogo.contentMode = .scaleAspectFit
-        platformLogo.tintColor = .secondaryLabel
+        platformLogo.tintColor = .flarePostSecondaryLabel
         platformLogo.setContentHuggingPriority(.required, for: .horizontal)
         platformLogo.setContentCompressionResistancePriority(.required, for: .horizontal)
+        translation.isPostContent = true
+        translation.iconSpacing = 4
         translation.setContentHuggingPriority(.required, for: .horizontal)
         translation.setContentCompressionResistancePriority(.required, for: .horizontal)
-        insightButton.tintColor = .secondaryLabel
+        insightButton.tintColor = .flarePostSecondaryLabel
         insightButton.setImage(UIImage(fontAwesome: .robot), for: .normal)
         insightButton.imageView?.contentMode = .scaleAspectFit
+        insightButton.contentHorizontalAlignment = .fill
+        insightButton.contentVerticalAlignment = .fill
         insightButton.accessibilityLabel = String(localized: "status_insight_title")
         insightButton.addAction(
             UIAction { [weak self] _ in
@@ -554,6 +698,12 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
         addSubview(insightButton)
     }
     required init(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) { return true }
+        guard !insightButton.isHidden, insightButton.isUserInteractionEnabled else { return false }
+        return insightButton.point(inside: convert(point, to: insightButton), with: event)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -578,19 +728,19 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
     private func preferredSingleLineHeight() -> CGFloat {
         var height: CGFloat = 0
         if !visibility.isHidden {
-            height = max(height, 14)
+            height = max(height, iconSize)
         }
         if !translation.isHidden {
-            height = max(height, 16)
+            height = max(height, iconSize)
         }
         if !platformLogo.isHidden {
-            height = max(height, 14)
+            height = max(height, iconSize)
         }
         if !time.isHidden {
             height = max(height, time.font?.lineHeight ?? 0)
         }
         if !insightButton.isHidden {
-            height = max(height, 16)
+            height = max(height, iconSize)
         }
         return ceil(height)
     }
@@ -613,9 +763,16 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
         absoluteTimestamp: Bool,
         isDetail: Bool,
         showAgentInsight: Bool,
-        onInsightTapped: (() -> Void)?
+        onInsightTapped: (() -> Void)?,
+        preferredContentSizeCategory: UIContentSizeCategory = .medium
     ) {
         self.onInsightTapped = onInsightTapped
+        let previousIconSize = iconSize
+        iconSize = UIFont.preferredFont(forTextStyle: .body,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: preferredContentSizeCategory)).pointSize
+        if iconSize != previousIconSize { setPlatformIcon(nil) }
+        translation.iconSize = iconSize
+        insightButton.minimumHitSize = insightHitSize
         if let v = post.visibility {
             visibility.isHidden = false
             visibility.set(visibility: v)
@@ -649,6 +806,7 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
             time.isHidden = true
         } else {
             time.isHidden = false
+            time.postTextContentSizeCategory = preferredContentSizeCategory
             time.absoluteTimestamp = absoluteTimestamp
             time.fullTime = false
             time.set(data: post.createdAt)
@@ -666,7 +824,7 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
         for (index, item) in items.enumerated() {
             let size = item.size
             if assignFrames {
-                item.view.frame = CGRect(x: x, y: (height - size.height) / 2, width: size.width, height: size.height).integral
+                item.view.frame = CGRect(x: x, y: (height - size.height) / 2, width: size.width, height: size.height)
             }
             x += size.width
             if index < items.count - 1 {
@@ -687,20 +845,20 @@ final class StatusTopEndView: UIView, ManualLayoutMeasurable, TimelineHeightProv
     private func visibleItems() -> [(view: UIView, size: CGSize)] {
         var items: [(UIView, CGSize)] = []
         if !visibility.isHidden {
-            items.append((visibility, CGSize(width: 14, height: 14)))
+            items.append((visibility, CGSize(width: iconSize, height: iconSize)))
         }
         if !translation.isHidden {
             items.append((translation, translation.sizeThatFits(.zero)))
         }
         if !platformLogo.isHidden {
-            items.append((platformLogo, CGSize(width: 14, height: 14)))
+            items.append((platformLogo, CGSize(width: iconSize, height: iconSize)))
         }
         if !time.isHidden {
             let size = time.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
             items.append((time, CGSize(width: ceil(size.width), height: ceil(size.height))))
         }
         if !insightButton.isHidden {
-            items.append((insightButton, CGSize(width: 16, height: 16)))
+            items.append((insightButton, CGSize(width: iconSize, height: iconSize)))
         }
         return items
     }

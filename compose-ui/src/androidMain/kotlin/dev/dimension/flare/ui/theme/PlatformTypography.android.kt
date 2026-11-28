@@ -60,4 +60,8 @@ internal actual object PlatformTypography {
     actual val body: TextStyle
         @Composable
         get() = MaterialTheme.typography.bodyMedium
+
+    actual val postBody: TextStyle
+        @Composable
+        get() = MaterialTheme.typography.bodyLarge
 }

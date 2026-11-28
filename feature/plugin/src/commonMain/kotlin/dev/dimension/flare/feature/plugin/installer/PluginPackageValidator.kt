@@ -158,7 +158,7 @@ private fun ByteArray.uint32BigEndian(offset: Int): Long =
         (this[offset + 3].toLong() and 0xff)
 
 internal fun PluginManifestV1.requireBackgroundScript(hasScript: Boolean) {
-    require(hasScript || (platform == null && translation == null && platformExtension == null)) {
+    require(hasScript || (platform == null && translation == null && platformExtension == null && timelineProcessor == null)) {
         "Background capabilities require plugin.js"
     }
 }
@@ -177,6 +177,10 @@ private fun PluginManifestV1.localizedKeys(): Set<String> =
         platform?.let { platform ->
             addText(platform.name)
             addText(platform.description)
+            platform.recommendedOrigins.forEach { origin ->
+                addText(origin.name)
+                addText(origin.description)
+            }
             platform.timelines.forEach { addText(it.title) }
             platform.profileTabs.forEach { addText(it.title) }
             platform.loginMethods.forEach { method ->

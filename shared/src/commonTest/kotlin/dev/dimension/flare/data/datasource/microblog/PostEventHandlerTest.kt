@@ -9,6 +9,8 @@ import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbStatus
 import dev.dimension.flare.data.database.createDatabaseDriver
 import dev.dimension.flare.data.datasource.microblog.handler.PostEventHandler
+import dev.dimension.flare.data.repository.SessionChallengeException
+import dev.dimension.flare.data.repository.SessionChallengePromptBus
 import dev.dimension.flare.di.startKoin
 import dev.dimension.flare.di.testSingle
 import dev.dimension.flare.memoryDatabaseBuilder
@@ -67,6 +69,7 @@ class PostEventHandlerTest : RobolectricTest() {
 
     @AfterTest
     fun tearDown() {
+        SessionChallengePromptBus.clearForTesting()
         db.close()
         stopKoin()
     }
@@ -303,6 +306,92 @@ class PostEventHandlerTest : RobolectricTest() {
             assertNull(saved)
             val exists = db.pagingTimelineDao().existsPaging(AccountType.Specific(accountKey), "home")
             assertTrue(!exists)
+        }
+
+    @Test
+    fun sessionChallengeOnMutationRevertsCacheEmitsPromptAndRetriesOnCompletion() =
+        runTest {
+            startKoin {
+                modules(
+                    module {
+                        testSingle { db }
+                        testSingle<CoroutineScope> { this@runTest }
+                        testSingle<PlatformFormatter> { TestFormatter() }
+                    },
+                )
+            }
+
+            val initialBookmarkMenu =
+                semanticPostActionMenu(
+                    postKey = postKey,
+                    action = SemanticPostAction.Bookmark,
+                    actionToken = "tok-1",
+                    count = 3,
+                    accountKey = accountKey,
+                )
+            val updatedMenu =
+                semanticPostActionMenu(
+                    postKey = postKey,
+                    action = SemanticPostAction.Unbookmark,
+                    actionToken = "tok-2",
+                    count = 4,
+                    accountKey = accountKey,
+                )
+            insertPost(createPost(actions = persistentListOf(initialBookmarkMenu)))
+
+            val challenge =
+                SessionChallengeException(
+                    challengeId = "bookmark-challenge-1",
+                    accountKey = accountKey,
+                    platformId = "MangaPlat",
+                    challengeUrl = "https://manga.example/challenge",
+                    displayMessage = "Verify to bookmark",
+                )
+            var attempts = 0
+            handler =
+                PostEventHandler(
+                    accountType = AccountType.Specific(accountKey),
+                    handler =
+                        object : PostEventHandler.Handler {
+                            override suspend fun handle(
+                                event: PostEvent,
+                                updater: DatabaseUpdater,
+                            ) {
+                                attempts++
+                                if (attempts == 1) {
+                                    throw challenge
+                                }
+                                updater.updateActionMenu(postKey, updatedMenu)
+                            }
+                        },
+                )
+
+            val event =
+                PostEvent.Semantic(
+                    postKey = postKey,
+                    action = SemanticPostAction.Bookmark,
+                    actionToken = "tok-1",
+                    count = 3,
+                    accountKey = accountKey,
+                )
+            handler.handleEvent(event)
+            advanceUntilIdle()
+
+            // First attempt failed -> cache reverted to initial unbookmarked state and prompt emitted on bus.
+            val reverted = readPost()
+            assertNotNull(reverted)
+            assertEquals(listOf<ActionMenu>(initialBookmarkMenu), reverted.actions)
+            val prompt = SessionChallengePromptBus.tryReceive()
+            assertNotNull(prompt)
+            assertEquals("bookmark-challenge-1", prompt.exception.challengeId)
+
+            // Completing the challenge retries the mutation and persists the bookmarked state.
+            prompt.complete()
+            advanceUntilIdle()
+            assertEquals(2, attempts)
+            val completed = readPost()
+            assertNotNull(completed)
+            assertEquals(listOf<ActionMenu>(updatedMenu), completed.actions)
         }
 
     private suspend fun insertPost(post: UiTimelineV2.Post) {

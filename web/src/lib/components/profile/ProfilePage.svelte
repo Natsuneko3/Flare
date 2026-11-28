@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { parseAccountType, parseMicroBlogKey } from "$lib/deeplink/accountRoute";
     import { page } from "$app/state";
     import AppBackButton from "$lib/components/AppBackButton.svelte";
     import AppTopBar from "$lib/components/AppTopBar.svelte";
@@ -237,46 +238,6 @@
         };
     }
 
-    function parseAccountType(value: string | null): AccountType {
-        if (!value || value === "guest") return { type: "Guest" };
-        if (value.startsWith("guest@")) {
-            return { type: "GuestHost", host: value.slice("guest@".length) };
-        }
-        return { type: "Specific", accountKey: parseMicroBlogKey(value) };
-    }
-
-    function parseMicroBlogKey(value: string): MicroBlogKey {
-        let escaping = false;
-        let idFinished = false;
-        let id = "";
-        let host = "";
-
-        for (const char of value) {
-            if (escaping) {
-                if (idFinished) host += char;
-                else id += char;
-                escaping = false;
-                continue;
-            }
-
-            if (char === "\\") {
-                escaping = true;
-                continue;
-            }
-
-            if (char === "@" && !idFinished) {
-                idFinished = true;
-                continue;
-            }
-
-            if (char === ",") break;
-
-            if (idFinished) host += char;
-            else id += char;
-        }
-
-        return { id, host };
-    }
     const followButtonOutlined = $derived(
         followButtonState?.type === "Following" ||
             followButtonState?.type === "Requested",
@@ -662,6 +623,7 @@
 
     <nav
         class="profile-tabs-shell border-b border-base-300 bg-base-100"
+        class:single-timeline={profileTabs.length === 1}
         aria-label={m.profileTimelinesAriaLabel()}
     >
         <div class="tabs tabs-border profile-tabs" role="tablist">
@@ -988,13 +950,39 @@
         background: var(--color-base-100);
     }
 
-    @media (max-width: 520px) {
-        .profile-avatar-row {
-            padding-inline: 0.85rem;
+    @media (max-width: 760px) {
+        .profile-header {
+            background: var(--color-base-100);
+        }
+
+        .profile-header:has(+ .profile-tabs-shell.single-timeline) {
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--color-base-300);
+        }
+
+        .profile-tabs-shell.single-timeline {
+            display: none;
         }
 
         .profile-card {
-            margin-inline: 0.85rem;
+            margin-inline: 0;
+            border-radius: 0;
+            background: transparent;
+        }
+
+        .profile-tabs {
+            flex-wrap: nowrap;
+        }
+
+        .profile-tab[aria-selected="true"] {
+            color: var(--color-primary);
+        }
+    }
+
+    @media (max-width: 520px) {
+        .profile-avatar-row,
+        .profile-card {
+            padding-inline: 0.85rem;
         }
 
         .profile-actions {

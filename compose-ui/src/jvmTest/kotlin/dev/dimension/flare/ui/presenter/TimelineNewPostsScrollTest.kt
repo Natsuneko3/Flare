@@ -23,8 +23,9 @@ import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
 import androidx.paging.PagingData
-import androidx.paging.compose.collectAsLazyPagingItems
 import dev.dimension.flare.common.PagingState
+import dev.dimension.flare.common.collectAsPagingItems
+import dev.dimension.flare.common.collectPagingState
 import dev.dimension.flare.common.isRefreshing
 import dev.dimension.flare.common.onSuccess
 import dev.dimension.flare.common.toPagingState
@@ -33,15 +34,19 @@ import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.model.TimelineReadingPosition
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.render.toUi
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 
 class TimelineNewPostsScrollTest {
@@ -53,6 +58,49 @@ class TimelineNewPostsScrollTest {
 
     @Test
     fun scrollingRenderedPostsExcludesTheLeadingHeader() = checkScrolling(leadingHeader = true)
+
+    @Test
+    fun scrollingWithoutNewPostsDoesNotSearchFromTheStartOfThePage() {
+        val posts = posts(0..199).toImmutableList()
+        val lookups = mutableListOf<Int>()
+        val countedPosts =
+            object : ImmutableList<UiTimelineV2> by posts {
+                override fun get(index: Int): UiTimelineV2 {
+                    lookups.add(index)
+                    return posts[index]
+                }
+            }
+        val pages = flowOf(countedPosts)
+        val scroll = LazyStaggeredGridState(initialFirstVisibleItemIndex = 100)
+        lateinit var state: TimelineWithLazyListState
+        composeRule.setContent {
+            val paging by pages.collectPagingState()
+            val base =
+                object : TimelineItemPresenter.State {
+                    override val listState = paging
+                    override val isRefreshing = false
+
+                    override fun refreshSync() = Unit
+
+                    override suspend fun refreshSuspend() = Unit
+                }
+            val timeline = rememberTimelineWithLazyListState(base, scroll)
+            SideEffect { state = timeline }
+            LazyVerticalStaggeredGrid(StaggeredGridCells.Fixed(1), Modifier.size(300.dp, 150.dp), state = scroll) {
+                items(posts.size, key = { posts[it].stableItemKey }) { Box(Modifier.fillMaxWidth().height(100.dp)) }
+            }
+        }
+        composeRule.waitUntil { state.listState is PagingState.Success }
+        composeRule.runOnIdle {
+            lookups.clear()
+            scroll.requestScrollToItem(120)
+        }
+        composeRule.runOnIdle {
+            assertEquals(120, scroll.firstVisibleItemIndex)
+            assertEquals(0, state.newPostsCount)
+            assertTrue(lookups.none { it < 100 }, "Scrolling searched old positions: ${lookups.take(8)}")
+        }
+    }
 
     @Test
     fun returningToADisposedTabRestoresItsIndexAfterMoreCachePagesLoad() = checkReturningTab(PaddingValues(0.dp))
@@ -88,7 +136,7 @@ class TimelineNewPostsScrollTest {
         var header by mutableStateOf(initialHeader)
         lateinit var state: TimelineWithLazyListState
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val base =
                 object : TimelineItemPresenter.State {
                     override val listState = paging
@@ -118,7 +166,7 @@ class TimelineNewPostsScrollTest {
                     .first()
                     .key,
             )
-            assertEquals(TimelineReadingPosition(8, -25.0), reading.currentPosition)
+            assertEquals(TimelineReadingPosition(8, -25.0, "post-5"), reading.currentPosition)
         }
     }
 
@@ -133,7 +181,7 @@ class TimelineNewPostsScrollTest {
         val reading = Reading(TimelineReadingPosition(targetIndex, offset))
         lateinit var state: TimelineWithLazyListState
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val base =
                 object : TimelineItemPresenter.State {
                     override val listState = paging
@@ -181,7 +229,7 @@ class TimelineNewPostsScrollTest {
         val scroll = LazyStaggeredGridState()
         val reading = Reading(TimelineReadingPosition(5, -246.0 / 2.625))
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val base =
                 object : TimelineItemPresenter.State {
                     override val listState = paging
@@ -216,7 +264,7 @@ class TimelineNewPostsScrollTest {
         val scroll = LazyStaggeredGridState()
         val reading = Reading(TimelineReadingPosition(25, -25.0))
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val base =
                 object : TimelineItemPresenter.State {
                     override val listState = paging
@@ -263,7 +311,7 @@ class TimelineNewPostsScrollTest {
         var expectedOffset = 0
         lateinit var scroll: LazyStaggeredGridState
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             if (visible) {
                 val nativeScroll = rememberLazyStaggeredGridState()
                 val base =
@@ -312,13 +360,13 @@ class TimelineNewPostsScrollTest {
     }
 
     @Test
-    fun restoringARealItemWithAHeaderKeepsItsOffsetAcrossRefresh() {
-        val pages = MutableStateFlow(page(0..19))
+    fun restoringAKeyedItemWithAHeaderKeepsItsOffsetAcrossRefresh() {
+        val pages = MutableStateFlow(page(-2..19))
         val scroll = LazyStaggeredGridState()
-        val reading = Reading(TimelineReadingPosition(5, -25.0))
+        val reading = Reading(TimelineReadingPosition(5, -25.0, "post-5"))
         lateinit var state: TimelineWithLazyListState
         composeRule.setContent {
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val base =
                 object : TimelineItemPresenter.State {
                     override val listState = paging
@@ -370,7 +418,7 @@ class TimelineNewPostsScrollTest {
                     .offset.y,
             )
             assertEquals(
-                TimelineReadingPosition(8, -25.0),
+                TimelineReadingPosition(8, -25.0, "post-5"),
                 reading.currentPosition,
                 "A prepend must update the persisted index even without another gesture",
             )
@@ -483,7 +531,7 @@ class TimelineNewPostsScrollTest {
         lateinit var state: TimelineWithLazyListState
         composeRule.setContent {
             scope = rememberCoroutineScope()
-            val paging = pages.collectAsLazyPagingItems().toPagingState()
+            val paging = pages.collectAsPagingItems().toPagingState()
             val base =
                 object : TimelineItemPresenter.State {
                     override val listState = paging
@@ -625,16 +673,19 @@ class TimelineNewPostsScrollTest {
         override fun viewportChanged(
             index: Int,
             offset: Double,
+            itemKey: String?,
         ) {
-            if (restorePosition == null) target = TimelineReadingPosition(index, offset)
+            if (restorePosition == null) target = TimelineReadingPosition(index, offset, itemKey)
         }
 
         override fun positionChanged(
             index: Int,
             offset: Double,
+            itemKey: String?,
         ) {
             saved++
-            target = TimelineReadingPosition(index, offset)
+            target = TimelineReadingPosition(index, offset, itemKey)
+            restorePosition = null
         }
 
         override fun restorationFinished() {
@@ -653,7 +704,7 @@ class TimelineNewPostsScrollTest {
         val scrollState = LazyStaggeredGridState(initialFirstVisibleItemIndex = 5)
         lateinit var state: TimelineWithLazyListState
         composeRule.setContent {
-            val pagingState = pages.collectAsLazyPagingItems().toPagingState()
+            val pagingState = pages.collectAsPagingItems().toPagingState()
             val baseState =
                 object : TimelineItemPresenter.State {
                     override val listState = pagingState
@@ -663,7 +714,7 @@ class TimelineNewPostsScrollTest {
 
                     override suspend fun refreshSuspend() = Unit
                 }
-            val timeline = rememberTimelineWithLazyListState(baseState, scrollState)
+            val timeline = rememberTimelineWithLazyListState(baseState, scrollState, leadingItemCount = if (leadingHeader) 1 else 0)
             SideEffect { state = timeline }
             LazyVerticalStaggeredGrid(
                 columns = StaggeredGridCells.Fixed(1),
@@ -711,18 +762,7 @@ class TimelineNewPostsScrollTest {
 
     private fun page(indices: IntRange): PagingData<UiTimelineV2> =
         PagingData.from(
-            data =
-                indices.map { index ->
-                    UiTimelineV2.Feed(
-                        title = "post-$index",
-                        description = null,
-                        url = "https://example.com/posts/$index",
-                        createdAt = Instant.fromEpochMilliseconds(0).toUi(),
-                        source = UiTimelineV2.Feed.Source(name = "test", icon = null),
-                        accountType = AccountType.Guest,
-                        itemKey = "post-$index",
-                    )
-                },
+            data = posts(indices),
             sourceLoadStates =
                 LoadStates(
                     refresh = LoadState.NotLoading(endOfPaginationReached = false),
@@ -730,4 +770,17 @@ class TimelineNewPostsScrollTest {
                     append = LoadState.NotLoading(endOfPaginationReached = false),
                 ),
         )
+
+    private fun posts(indices: IntRange): List<UiTimelineV2> =
+        indices.map { index ->
+            UiTimelineV2.Feed(
+                title = "post-$index",
+                description = null,
+                url = "https://example.com/posts/$index",
+                createdAt = Instant.fromEpochMilliseconds(0).toUi(),
+                source = UiTimelineV2.Feed.Source(name = "test", icon = null),
+                accountType = AccountType.Guest,
+                itemKey = "post-$index",
+            )
+        }
 }

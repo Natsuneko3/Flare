@@ -36,6 +36,7 @@ import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.datastore.createDataStoreStorage
 import dev.dimension.flare.data.datastore.model.AccountSelectionPreferences
 import dev.dimension.flare.data.io.OkioFileStorage
+import dev.dimension.flare.data.model.IconType
 import dev.dimension.flare.data.model.tab.TimelineResolver
 import dev.dimension.flare.data.repository.AccountRepository
 import dev.dimension.flare.data.repository.LocalFilterRepository
@@ -51,6 +52,7 @@ import dev.dimension.flare.memoryDatabaseBuilder
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformDataSourceContext
+import dev.dimension.flare.model.PlatformMetadata
 import dev.dimension.flare.model.PlatformRegistry
 import dev.dimension.flare.model.PlatformRuntimeData
 import dev.dimension.flare.model.PlatformSpec
@@ -58,6 +60,7 @@ import dev.dimension.flare.testPlatformRegistry
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiHandle
 import dev.dimension.flare.ui.model.UiHashtag
+import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiProfile
 import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.createSampleUser
@@ -67,6 +70,7 @@ import dev.dimension.flare.ui.presenter.dm.DirectMessageUserListPresenter
 import dev.dimension.flare.ui.presenter.home.ActiveAccountPresenter
 import dev.dimension.flare.ui.presenter.home.DiscoverPresenter
 import dev.dimension.flare.ui.presenter.home.DiscoverState
+import dev.dimension.flare.ui.presenter.home.GUEST_PLUGIN_KEY_PREFIX
 import dev.dimension.flare.ui.presenter.home.SearchPresenter
 import dev.dimension.flare.ui.presenter.home.SearchState
 import dev.dimension.flare.ui.presenter.home.SecondaryTabsPresenter
@@ -569,6 +573,105 @@ class DiscoverAccountRestorationTest {
             }
         }
 
+    @Test
+    fun standaloneGuestPluginWithSearchAppearsInDiscoverAndSearchAndRoutesQueriesToGuestDataSource() =
+        withFixture {
+            profileOptional = true
+            insertAccounts()
+            val guestHost = "api.manga.example"
+            val guestAccountType = AccountType.GuestPlugin("MangaPlugin", guestHost)
+            val guestKey = MicroBlogKey("${GUEST_PLUGIN_KEY_PREFIX}MangaPlugin", guestHost)
+            val guestPlatform =
+                object : PlatformSpec by testPlatformRegistry().defaultGuest {
+                    override val platformId = "MangaPlugin"
+                    override val isDefaultGuest = false
+                    override val standaloneGuestHost = guestHost
+                    override val metadata =
+                        PlatformMetadata(
+                            displayName = "Manga Copy",
+                            icon = IconType.Material(UiIcon.World),
+                        )
+
+                    override fun guestDataSource(
+                        host: String,
+                        locale: String,
+                    ): MicroblogDataSource {
+                        assertEquals(guestHost, host)
+                        return GuestPluginSearchSource(guestAccountType)
+                    }
+                }
+            registry.replaceExternal("MangaPlugin", guestPlatform)
+
+            val models = MutableStateFlow<SearchPage?>(null)
+            val page = launchSearchPage(models)
+            try {
+                val initial =
+                    models.filterNotNull().first {
+                        it.discover.isAccountReady &&
+                            it.discover.accounts
+                                .takeSuccess()
+                                ?.size == 3 &&
+                            it.search.accounts
+                                .takeSuccess()
+                                ?.size == 3
+                    }
+                assertEquals(
+                    listOf(firstAccount, savedAccount, guestKey),
+                    initial.discover.accounts
+                        .takeSuccess()!!
+                        .map { it.key },
+                )
+                assertEquals(
+                    listOf(firstAccount, savedAccount, guestKey),
+                    initial.search.accounts
+                        .takeSuccess()!!
+                        .map { it.key },
+                )
+                // Drain initial firstAccount discover requests.
+                repeat(3) { requests.receive() }
+
+                initial.discover.setAccountKey(guestKey)
+                val switched =
+                    models.filterNotNull().first {
+                        it.discover.selectedAccountType == guestAccountType &&
+                            it.discover.selectedAccountKey == guestKey &&
+                            it.discover.selectedAccount?.key == guestKey &&
+                            it.search.selectedAccount?.key == guestKey
+                    }
+                assertEquals(guestAccountType to "statuses", requests.receive())
+
+                switched.search.search("one piece")
+                val searchOps = List(2) { requests.receive() }
+                assertEquals(setOf("searchUsers", "searchStatuses"), searchOps.map { it.second }.toSet())
+                assertEquals(listOf(guestAccountType), searchOps.map { it.first }.distinct())
+                repeat(2) { assertEquals(guestAccountType to "one piece", searchRequests.receive()) }
+
+                // Persisted guest selection restores on reopen and clears when the plugin is uninstalled.
+                assertEquals(
+                    guestKey,
+                    appData.discoverPreferences.data
+                        .first { it.selectedAccountKey == guestKey }
+                        .selectedAccountKey,
+                )
+                registry.replaceExternal("MangaPlugin", null)
+                val afterUninstall =
+                    models.filterNotNull().first {
+                        it.discover.accounts
+                            .takeSuccess()
+                            ?.size == 2 &&
+                            it.discover.selectedAccountType == AccountType.Specific(firstAccount)
+                    }
+                assertEquals(firstAccount, afterUninstall.discover.selectedAccountKey)
+                assertNull(
+                    appData.discoverPreferences.data
+                        .first { it.selectedAccountKey == null }
+                        .selectedAccountKey,
+                )
+            } finally {
+                page.cancelAndJoin()
+            }
+        }
+
     private fun withFixture(block: suspend Fixture.() -> Unit) =
         runBlocking {
             val main = Executors.newSingleThreadExecutor { Thread(it, "discover-ui") }.asCoroutineDispatcher()
@@ -803,6 +906,19 @@ class DiscoverAccountRestorationTest {
             override fun discoverHashtags() = notSupported<UiHashtag>().also { requests.trySend(accountType to "hashtags") }
         }
 
+        inner class GuestPluginSearchSource(
+            accountType: AccountType.GuestPlugin,
+        ) : Source(accountType),
+            DataSourceCapabilityProvider {
+            override val searchOperations: Set<SearchOperation> =
+                setOf(
+                    SearchOperation.Posts,
+                    SearchOperation.Profiles,
+                    SearchOperation.DiscoverPosts,
+                )
+            override val capabilitySet = DataSourceCapabilitySet(search = SearchCapability(this))
+        }
+
         private inner class IdentitySource(
             override val authenticatedAccountKey: MicroBlogKey,
         ) : Source(AccountType.Specific(authenticatedAccountKey)),
@@ -831,6 +947,8 @@ class DiscoverAccountRestorationTest {
                             override val accountKey = authenticatedAccountKey
                             override val directMessageHandler: DirectMessageHandler get() = error("Unused")
                             override val directMessageBadgeCount = Cacheable(fetchSource = {}, cacheSource = { flowOf(0) })
+
+                            override fun cachedCanSendDirectMessage(userKey: MicroBlogKey) = null
                         },
                 )
         }

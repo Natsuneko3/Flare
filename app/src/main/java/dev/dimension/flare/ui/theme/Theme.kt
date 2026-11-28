@@ -76,7 +76,7 @@ private fun ColorScheme.withPureColorDarkMode(): ColorScheme =
         surfaceContainerLowest = MoreColors.Gray900,
         surfaceContainerHighest = MoreColors.Gray900,
         onSurfaceVariant = MoreColors.Gray400,
-        outlineVariant = MoreColors.Gray500,
+        outlineVariant = MoreColors.Gray800,
         outline = MoreColors.Gray500,
     )
 

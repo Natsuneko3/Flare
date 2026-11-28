@@ -104,6 +104,20 @@ internal interface StatusDao {
     @Query("DELETE FROM DbStatus WHERE accountType = :accountType")
     suspend fun deleteByAccountType(accountType: DbAccountType)
 
+    @Query(
+        "SELECT DISTINCT accountType FROM DbStatus " +
+            "UNION SELECT DISTINCT accountType FROM DbUserRelation " +
+            "UNION SELECT DISTINCT accountType FROM DbProfileTabs " +
+            "UNION SELECT DISTINCT accountType FROM DbUserHistory " +
+            "UNION SELECT DISTINCT accountType FROM DbEmojiHistory " +
+            "UNION SELECT DISTINCT accountType FROM DbDirectMessageTimeline " +
+            "UNION SELECT DISTINCT accountType FROM DbList " +
+            "UNION SELECT DISTINCT accountType FROM DbListPaging " +
+            "UNION SELECT DISTINCT accountType FROM DbMangaState " +
+            "UNION SELECT DISTINCT accountType FROM DbMangaChapterProgress",
+    )
+    suspend fun getDistinctAccountTypesAcrossCache(): List<DbAccountType>
+
     @Query("SELECT COUNT(*) FROM DbStatus")
     fun count(): Flow<Long>
 

@@ -53,6 +53,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PluginRuntimePoolTest {
@@ -69,9 +70,12 @@ class PluginRuntimePoolTest {
                         """async function() {
                 return { futurePage: true, olderCursor: "next", items: [
                   { type: "novel", chapter: { id: 1 } },
+                  { type: "post", post: { key: { id: "manga-preview", host: "one.example" },
+                    createdAt: "2026-11-02T00:00:00Z", content: { value: "Manga preview" },
+                    detailType: "manga" } },
                   { type: "post", post: { key: { id: "preview", host: "one.example" },
                     createdAt: "2026-11-02T00:00:00Z", content: { value: "Preview", future: true },
-                    detailType: "manga", media: [{ type: "spatial" }], actions: [{ action: "ReadNovel" }] } }
+                    detailType: "audiobook", media: [{ type: "spatial" }], actions: [{ action: "ReadNovel" }] } }
                 ] };
             }""",
                     ),
@@ -89,7 +93,8 @@ class PluginRuntimePoolTest {
                     }
                     assertEquals("next", page?.olderCursor)
                     assertEquals(TimelineItemV1.Unknown, page?.items?.first())
-                    assertEquals(PostDetailTypeV1.Unknown, (page?.items?.last() as TimelineItemV1.Post).post.detailType)
+                    assertEquals(PostDetailTypeV1.Manga, (page?.items?.get(1) as TimelineItemV1.Post).post.detailType)
+                    assertEquals(PostDetailTypeV1.Unknown, (page.items.last() as TimelineItemV1.Post).post.detailType)
                 }
                 assertTrue(pool.issues.value.isEmpty())
             } finally {
@@ -732,6 +737,333 @@ class PluginRuntimePoolTest {
             }
         }
 
+    @Test
+    fun workerLaneRunsUpToMaxWorkersConcurrentlyAndReusesLowestIdleSlotLazily() =
+        runBlocking {
+            val plugin = install(pageScript(WORKER_PAGE))
+            val barrier = BarrierTransport(requiredConcurrent = 3)
+            val pool = PluginRuntimePool(fileSystem, barrier)
+            val context = accountContext(plugin, "first", "https://one.example", MemoryCredential())
+            val key = PluginRuntimeKeyV1.account(PLUGIN_ID, plugin.installed.packageHash, "https://one.example", "first", "epoch-1")
+            try {
+                // 3 sequential calls lazily reuse slot 0 without spinning up slots 1 or 2
+                repeat(3) { idx ->
+                    val res =
+                        pool
+                            .invokeJsonOnWorkerLane(
+                                plugin = plugin,
+                                key = key,
+                                context = context,
+                                method = PAGE_METHOD,
+                                request = request("instant"),
+                                lane = "manga.pageImage",
+                                maxWorkers = 3,
+                            ).jsonObject
+                    assertEquals(idx + 1, res["count"]!!.jsonPrimitive.int)
+                }
+                val sequentialKeys = pool.holderKeys()
+                assertEquals(1, sequentialKeys.size)
+                assertEquals("manga.pageImage", sequentialKeys.single().workerLane)
+                assertEquals(0, sequentialKeys.single().workerSlot)
+
+                // 3 concurrent calls run in parallel across slots 0, 1, 2 (barrier completes only if 3 execute simultaneously)
+                val concurrentResults =
+                    withTimeout(5_000) {
+                        coroutineScope {
+                            List(3) {
+                                async {
+                                    pool
+                                        .invokeJsonOnWorkerLane(
+                                            plugin = plugin,
+                                            key = key,
+                                            context = context,
+                                            method = PAGE_METHOD,
+                                            request = request("barrier"),
+                                            lane = "manga.pageImage",
+                                            maxWorkers = 3,
+                                        ).jsonObject
+                                }
+                            }.awaitAll()
+                        }
+                    }
+                assertEquals(3, barrier.maxConcurrent.get())
+                assertEquals(setOf(1, 4), concurrentResults.map { it["count"]!!.jsonPrimitive.int }.toSet())
+                assertEquals(setOf(0, 1, 2), pool.holderKeys().map { it.workerSlot }.toSet())
+
+                // 6 concurrent calls queue evenly across all 3 busy slots (2 calls per slot)
+                val queueArrived = AtomicInteger()
+                val threeBusy = CompletableDeferred<Unit>()
+                val queueRelease = CompletableDeferred<Unit>()
+                val queueTransport =
+                    object : CapturingTransport() {
+                        override suspend fun execute(request: PluginTransportRequestV1): PluginTransportResponseV1 {
+                            if (request.url.endsWith("/wait")) {
+                                if (queueArrived.incrementAndGet() == 3) {
+                                    threeBusy.complete(Unit)
+                                }
+                                queueRelease.await()
+                            }
+                            return super.execute(request)
+                        }
+                    }
+                val queuePool = PluginRuntimePool(fileSystem, queueTransport)
+                val queuedResults =
+                    try {
+                        withTimeout(5_000) {
+                            coroutineScope {
+                                val firstBatch =
+                                    List(3) {
+                                        async {
+                                            queuePool
+                                                .invokeJsonOnWorkerLane(
+                                                    plugin = plugin,
+                                                    key = key,
+                                                    context = context,
+                                                    method = PAGE_METHOD,
+                                                    request = request("wait"),
+                                                    lane = "manga.pageImage",
+                                                    maxWorkers = 3,
+                                                ).jsonObject["count"]!!
+                                                .jsonPrimitive.int
+                                        }
+                                    }
+                                threeBusy.await()
+                                val secondBatch =
+                                    List(3) {
+                                        async {
+                                            queuePool
+                                                .invokeJsonOnWorkerLane(
+                                                    plugin = plugin,
+                                                    key = key,
+                                                    context = context,
+                                                    method = PAGE_METHOD,
+                                                    request = request("instant"),
+                                                    lane = "manga.pageImage",
+                                                    maxWorkers = 3,
+                                                ).jsonObject["count"]!!
+                                                .jsonPrimitive.int
+                                        }
+                                    }
+                                // Wait until all 3 queued calls have picked their slots in queuePool before releasing
+                                delay(100)
+                                queueRelease.complete(Unit)
+                                (firstBatch + secondBatch).awaitAll()
+                            }
+                        }
+                    } finally {
+                        queuePool.close()
+                    }
+                assertEquals(listOf(1, 1, 1, 2, 2, 2), queuedResults.sorted())
+
+                // After completion, activeCalls decrements to 0 and closeIdle() reclaims all worker slots
+                pool.closeIdle()
+                assertTrue(pool.holderKeys().isEmpty())
+            } finally {
+                pool.close()
+            }
+        }
+
+    @Test
+    fun workerSlotFatalFailureRetiresOnlyThatSlotAndCleanupReclaimsWorkers() =
+        runBlocking {
+            val plugin = install(pageScript(WORKER_PAGE))
+            val barrier = BarrierTransport(requiredConcurrent = 3)
+            val pool = PluginRuntimePool(fileSystem, barrier)
+            val context1 = accountContext(plugin, "first", "https://one.example", MemoryCredential())
+            val keyEpoch1 = PluginRuntimeKeyV1.account(PLUGIN_ID, plugin.installed.packageHash, "https://one.example", "first", "epoch-1")
+            val keyEpoch2 = PluginRuntimeKeyV1.account(PLUGIN_ID, plugin.installed.packageHash, "https://one.example", "first", "epoch-2")
+            try {
+                // Warm primary runtime (workerLane = null)
+                val initialPrimary =
+                    pool
+                        .invokeJson(
+                            plugin = plugin,
+                            key = keyEpoch1,
+                            context = context1,
+                            method = PAGE_METHOD,
+                            request = request("instant"),
+                        ).jsonObject["count"]!!
+                        .jsonPrimitive.int
+                assertEquals(1, initialPrimary)
+
+                // Warm all 3 worker slots concurrently (counts: slot0=1, slot1=1, slot2=1)
+                withTimeout(5_000) {
+                    coroutineScope {
+                        (0 until 3)
+                            .map {
+                                async {
+                                    pool.invokeJsonOnWorkerLane(
+                                        plugin = plugin,
+                                        key = keyEpoch1,
+                                        context = context1,
+                                        method = PAGE_METHOD,
+                                        request = request("barrier"),
+                                        lane = "manga.pageImage",
+                                        maxWorkers = 3,
+                                    )
+                                }
+                            }.awaitAll()
+                    }
+                }
+                assertEquals(4, pool.holderKeys().size)
+
+                // Occupy slot 0 with a gated request, then make slot 1 crash fatally while primary runtime runs concurrently
+                val slot0Gate = GateTransport()
+                val isolatedPool = PluginRuntimePool(fileSystem, slot0Gate)
+                try {
+                    isolatedPool.invokeJson(plugin, keyEpoch1, context1, PAGE_METHOD, request("instant"))
+                    val slot0Busy =
+                        async {
+                            isolatedPool.invokeJsonOnWorkerLane(
+                                plugin = plugin,
+                                key = keyEpoch1,
+                                context = context1,
+                                method = PAGE_METHOD,
+                                request = request("wait"),
+                                lane = "manga.pageImage",
+                                maxWorkers = 3,
+                            )
+                        }
+                    slot0Gate.started.await()
+
+                    // Slot 0 is busy, so this picks slot 1 and throws fatal error
+                    assertFailsWith<PluginRuntimeUnavailableException> {
+                        isolatedPool.invokeJsonOnWorkerLane(
+                            plugin = plugin,
+                            key = keyEpoch1,
+                            context = context1,
+                            method = PAGE_METHOD,
+                            request = request("throw"),
+                            lane = "manga.pageImage",
+                            maxWorkers = 3,
+                        )
+                    }
+                    assertEquals(1, isolatedPool.issues.value[PLUGIN_ID]?.fatalFailures)
+
+                    // Primary runtime (workerLane = null) is completely unaffected & keeps its state and runs concurrently!
+                    val primaryCount =
+                        isolatedPool
+                            .invokeJson(
+                                plugin = plugin,
+                                key = keyEpoch1,
+                                context = context1,
+                                method = PAGE_METHOD,
+                                request = request("instant"),
+                            ).jsonObject["count"]!!
+                            .jsonPrimitive.int
+                    assertEquals(2, primaryCount)
+
+                    // Slot 1 was evicted, slot 0 is still busy; next worker call recreates slot 1 fresh (count == 1)
+                    val recreatedSlot1 =
+                        isolatedPool
+                            .invokeJsonOnWorkerLane(
+                                plugin = plugin,
+                                key = keyEpoch1,
+                                context = context1,
+                                method = PAGE_METHOD,
+                                request = request("instant"),
+                                lane = "manga.pageImage",
+                                maxWorkers = 3,
+                            ).jsonObject["count"]!!
+                            .jsonPrimitive.int
+                    assertEquals(1, recreatedSlot1)
+
+                    // closeIdle() closes idle slot 1 + primary while keeping active slot 0 alive
+                    isolatedPool.closeIdle()
+                    val remainingKeys = isolatedPool.holderKeys()
+                    assertEquals(1, remainingKeys.size)
+                    assertEquals("manga.pageImage", remainingKeys.single().workerLane)
+                    assertEquals(0, remainingKeys.single().workerSlot)
+
+                    slot0Gate.release.complete(Unit)
+                    slot0Busy.await()
+                } finally {
+                    isolatedPool.close()
+                }
+
+                // Account epoch rotation synchronously reclaims old epoch's primary + worker slots
+                assertEquals(4, pool.holderKeys().count { it.accountEpoch == "epoch-1" })
+                val epoch2Count =
+                    pool
+                        .invokeJsonOnWorkerLane(
+                            plugin = plugin,
+                            key = keyEpoch2,
+                            context = context1,
+                            method = PAGE_METHOD,
+                            request = request("instant"),
+                            lane = "manga.pageImage",
+                            maxWorkers = 3,
+                        ).jsonObject["count"]!!
+                        .jsonPrimitive.int
+                assertEquals(1, epoch2Count)
+                assertFalse(pool.holderKeys().any { it.accountEpoch == "epoch-1" })
+                assertEquals(1, pool.holderKeys().size)
+
+                // retire(plugin) reclaims all remaining primary and worker slots
+                pool.retire(plugin)
+                assertTrue(pool.holderKeys().isEmpty())
+            } finally {
+                pool.close()
+            }
+        }
+
+    @Test
+    fun workerSlotCancellationReleasesActiveCountAndRetiresOnlyCancelledSlot() =
+        runBlocking {
+            val plugin = install(pageScript(WORKER_PAGE))
+            val transport = GateTransport()
+            val pool = PluginRuntimePool(fileSystem, transport)
+            val context = accountContext(plugin, "first", "https://one.example", MemoryCredential())
+            val key = PluginRuntimeKeyV1.account(PLUGIN_ID, plugin.installed.packageHash, "https://one.example", "first", "epoch-1")
+            try {
+                // Warm primary runtime
+                val primaryFirst =
+                    pool
+                        .invokeJson(
+                            plugin = plugin,
+                            key = key,
+                            context = context,
+                            method = PAGE_METHOD,
+                            request = request("instant"),
+                        ).jsonObject["count"]!!
+                        .jsonPrimitive.int
+                assertEquals(1, primaryFirst)
+                // Launch and cancel a worker call on slot 0
+                val job =
+                    launch {
+                        pool.invokeJsonOnWorkerLane(
+                            plugin = plugin,
+                            key = key,
+                            context = context,
+                            method = PAGE_METHOD,
+                            request = request("pendingPromise"),
+                            lane = "manga.pageImage",
+                            maxWorkers = 3,
+                        )
+                    }
+                delay(100)
+                job.cancelAndJoin()
+                assertTrue(pool.issues.value.isEmpty())
+                // Primary runtime kept its state, while cancelled slot 0 was retired cleanly
+                val primarySecond =
+                    pool
+                        .invokeJson(
+                            plugin = plugin,
+                            key = key,
+                            context = context,
+                            method = PAGE_METHOD,
+                            request = request("instant"),
+                        ).jsonObject["count"]!!
+                        .jsonPrimitive.int
+                assertEquals(2, primarySecond)
+                val keys = pool.holderKeys()
+                assertEquals(1, keys.size)
+                assertEquals(null, keys.single().workerLane)
+            } finally {
+                pool.close()
+            }
+        }
+
     private suspend fun install(
         script: String,
         manifest: String = TestFppFactory.validManifest,
@@ -871,6 +1203,31 @@ private class GateTransport : CapturingTransport() {
     }
 }
 
+private class BarrierTransport(
+    private val requiredConcurrent: Int,
+) : CapturingTransport() {
+    private val concurrent = AtomicInteger()
+    private val barrierArrivals = AtomicInteger()
+    val maxConcurrent = AtomicInteger()
+    private val barrierOpen = CompletableDeferred<Unit>()
+
+    override suspend fun execute(request: PluginTransportRequestV1): PluginTransportResponseV1 {
+        val current = concurrent.incrementAndGet()
+        maxConcurrent.updateAndGet { maxOf(it, current) }
+        return try {
+            if (request.url.endsWith("/barrier")) {
+                if (barrierArrivals.incrementAndGet() >= requiredConcurrent) {
+                    barrierOpen.complete(Unit)
+                }
+                barrierOpen.await()
+            }
+            super.execute(request)
+        } finally {
+            concurrent.decrementAndGet()
+        }
+    }
+}
+
 private fun pageScript(pageMethod: String): String =
     """
     defineFlareSocialPlugin({
@@ -940,6 +1297,22 @@ private const val STATEFUL_PAGE =
         };
       }
       return { count: globalThis.__testCount };
+    }"""
+
+private const val WORKER_PAGE =
+    """async function(request) {
+      globalThis.__workerCount = (globalThis.__workerCount || 0) + 1;
+      if (request.mode === "barrier") {
+        await flare.http.request({ url: "https://one.example/barrier" });
+        return { count: globalThis.__workerCount };
+      }
+      if (request.mode === "wait") {
+        await flare.http.request({ url: "https://one.example/wait" });
+        return { count: globalThis.__workerCount };
+      }
+      if (request.mode === "throw") throw new Error("synthetic worker failure");
+      if (request.mode === "pendingPromise") await new Promise(() => {});
+      return { count: globalThis.__workerCount };
     }"""
 
 private const val PAGE_METHOD = "capabilities.timeline.page"

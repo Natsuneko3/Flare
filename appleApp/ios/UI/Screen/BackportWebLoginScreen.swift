@@ -24,9 +24,16 @@ struct BackportWebLoginScreen: View {
                 .task(id: ObjectIdentifier(route)) { [session] in
                     let viewModel = session.viewModel as? BackportWebLoginViewModel
                     guard route.isValid, viewModel?.route !== route else { return }
-                    session.viewModel = BackportWebLoginViewModel(onCookie: { [weak session] cookies in
-                        session?.checkCookies(cookies)
-                    }, url: session.url, route: route)
+                    session.viewModel = BackportWebLoginViewModel(
+                        onCookie: { [weak session] cookies in
+                            session?.checkCookies(cookies)
+                        },
+                        onUserAgent: { [weak session] userAgent in
+                            session?.updateUserAgent(userAgent)
+                        },
+                        url: session.url,
+                        route: route
+                    )
                 }
             }
             .toolbar {
@@ -82,10 +89,15 @@ final class BackportWebLoginViewModel: WebLoginPageModel {
     let route: WebViewProxyRoute
     let url: String
     let onCookie: ([HTTPCookie]) -> Void
+    let onUserAgent: (String?) -> Void
     var currentOrigin: String
+    @ObservationIgnored private var userAgentResolved = false
+    @ObservationIgnored private var evaluatingUserAgent = false
+    @ObservationIgnored private var userAgentTask: Task<Void, Never>?
     @ObservationIgnored private lazy var delegate: WKDelegate = {
         let delegate = WKDelegate(route: route) { [weak self] in
             guard let self else { return }
+            self.triggerUserAgentRefresh()
             route.dataStore.httpCookieStore.getAllCookies { cookies in
                 guard self.route.isValid else { return }
                 self.onCookie(cookies)
@@ -101,25 +113,51 @@ final class BackportWebLoginViewModel: WebLoginPageModel {
         configuration.websiteDataStore = route.dataStore
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
         webView.navigationDelegate = delegate
-        route.onStop { [weak webView] in webView?.navigationDelegate = nil }
+        route.onStop { [weak self, weak webView] in
+            self?.userAgentTask?.cancel()
+            webView?.navigationDelegate = nil
+        }
         route.bind(webView)
         if route.isValid, let requestURL = URL(string: url), webLoginHTTPSOrigin(requestURL) != nil {
             webView.load(URLRequest(url: requestURL))
+        }
+        userAgentTask = Task { @MainActor [weak self, weak webView] in
+            await self?.refreshUserAgent(using: webView)
         }
         return webView
     }()
 
     init(
         onCookie: @escaping ([HTTPCookie]) -> Void,
+        onUserAgent: @escaping (String?) -> Void,
         url: String,
         route: WebViewProxyRoute
     ) {
         self.route = route
         self.onCookie = onCookie
+        self.onUserAgent = onUserAgent
         self.url = url
         self.currentOrigin = webLoginHTTPSOrigin(URL(string: url)) ?? ""
+    }
+
+    private func triggerUserAgentRefresh() {
+        guard !userAgentResolved, !evaluatingUserAgent, route.isValid else { return }
+        userAgentTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshUserAgent(using: self.webView)
+        }
+    }
+
+    func refreshUserAgent(using targetWebView: WKWebView?) async {
+        guard !userAgentResolved, !evaluatingUserAgent, route.isValid, let targetWebView else { return }
+        evaluatingUserAgent = true
+        defer { evaluatingUserAgent = false }
+        guard let ua = try? await targetWebView.evaluateJavaScript("navigator.userAgent") as? String else { return }
+        let trimmed = ua.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        userAgentResolved = true
+        onUserAgent(trimmed)
     }
 
     func getCookies() {
@@ -130,9 +168,11 @@ final class BackportWebLoginViewModel: WebLoginPageModel {
     }
 
     func pollCookies() async {
+        await refreshUserAgent(using: webView)
         while !Task.isCancelled && route.isValid {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled && route.isValid else { return }
+            await refreshUserAgent(using: webView)
             getCookies()
         }
     }

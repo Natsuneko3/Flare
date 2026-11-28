@@ -24,6 +24,7 @@ import dev.dimension.flare.common.Message
 import dev.dimension.flare.compose_notification_error
 import dev.dimension.flare.compose_notification_success
 import dev.dimension.flare.data.repository.LoginExpiredException
+import dev.dimension.flare.data.repository.RequireReLoginException
 import dev.dimension.flare.login_expired_relogin
 import dev.dimension.flare.notification_login_expired
 import dev.dimension.flare.plugin_operation_failed
@@ -88,20 +89,31 @@ internal class ComposeInAppNotification : InAppNotification {
                     success = false,
                     args =
                         listOfNotNull(
-                            if (throwable is LoginExpiredException) {
-                                throwable.accountKey
-                            } else {
-                                null
+                            when (throwable) {
+                                is LoginExpiredException -> throwable.accountKey
+                                is RequireReLoginException -> throwable.accountKey
+                                else -> null
                             },
                         ),
                     reloginTarget =
-                        if (throwable is LoginExpiredException) {
-                            ReloginTarget(
-                                accountKey = throwable.accountKey,
-                                platformId = throwable.platformId,
-                            )
-                        } else {
-                            null
+                        when (throwable) {
+                            is LoginExpiredException -> {
+                                ReloginTarget(
+                                    accountKey = throwable.accountKey,
+                                    platformId = throwable.platformId,
+                                )
+                            }
+
+                            is RequireReLoginException -> {
+                                ReloginTarget(
+                                    accountKey = throwable.accountKey,
+                                    platformId = throwable.platformId,
+                                )
+                            }
+
+                            else -> {
+                                null
+                            }
                         },
                 ),
             )

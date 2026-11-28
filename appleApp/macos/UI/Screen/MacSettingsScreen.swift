@@ -1061,10 +1061,16 @@ private struct MacStorageSettingsPane: View {
 
     private func clearDatabaseCache() {
         isClearingDatabaseCache = true
-        presenter.state.clearCache()
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            isClearingDatabaseCache = false
+            defer { isClearingDatabaseCache = false }
+            do {
+                let reclaimed = try await storagePresenter.clearCacheSuspend()
+                if !reclaimed.boolValue {
+                    notice = MacStorageNotice(title: "storage_title", message: String(localized: "storage_clear_database_cache_busy"))
+                }
+            } catch {
+                notice = MacStorageNotice(title: "error", message: error.localizedDescription)
+            }
         }
     }
 
@@ -1356,13 +1362,6 @@ private struct MacAboutLink: Identifiable {
             subtitle: String(localized: "settings_about_discord_description"),
             icon: .discord,
             url: URL(string: "https://discord.gg/De9NhXBryT")!
-        ),
-        MacAboutLink(
-            id: "localization",
-            titleKey: "settings_about_localization",
-            subtitle: String(localized: "settings_about_localization_description"),
-            icon: .language,
-            url: URL(string: "https://crowdin.com/project/flareapp")!
         ),
         MacAboutLink(
             id: "privacy-policy",

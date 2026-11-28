@@ -6,6 +6,7 @@ import de.cketti.codepoints.deluxe.codePointSequence
 import dev.dimension.flare.common.Locale
 import dev.dimension.flare.common.decodeJson
 import dev.dimension.flare.common.encodeJson
+import dev.dimension.flare.common.isWebPlatform
 import dev.dimension.flare.data.database.cache.mapper.XQTTimeline
 import dev.dimension.flare.data.database.cache.mapper.tweets
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
@@ -52,6 +53,7 @@ import dev.dimension.flare.data.platform.XQT_PLATFORM_ID
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.ReferenceType
+import dev.dimension.flare.model.xqtHost
 import dev.dimension.flare.ui.model.ClickEvent
 import dev.dimension.flare.ui.model.UiArticle
 import dev.dimension.flare.ui.model.UiArticleAuthor
@@ -108,7 +110,7 @@ private val twitterParser by lazy {
     TwitterParser(enableNonAsciiInUrl = false)
 }
 
-private fun TweetUnion.toTweetOrNull(): Tweet? =
+internal fun TweetUnion.toTweetOrNull(): Tweet? =
     when (this) {
         is Tweet -> this
 
@@ -914,6 +916,7 @@ internal fun Tweet.renderStatus(
         poll = poll,
         statusKey = statusKey,
         card = uiCard,
+        communityNote = renderCommunityNote(),
         createdAt = createAt.toUi(),
         emojiReactions = persistentListOf(),
         sourceChannel = null,
@@ -944,6 +947,7 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
             UiHandle(
                 raw = screenName,
                 host = accountKey.host,
+                displayOverride = if (isWebPlatform) null else "@$screenName",
             ),
         banner = legacy.profileBannerUrl.toUiImage(),
         description =
@@ -1036,6 +1040,7 @@ internal fun User.render(accountKey: MicroBlogKey): UiProfile {
             },
         platformId = XQT_PLATFORM_ID,
         platformIcon = UiIcon.X.asType(),
+        url = xqtProfileUrl(legacy.screenName ?: core?.screenName),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1364,9 +1369,11 @@ private fun Admin.render(accountKey: MicroBlogKey): UiProfile {
             UiHandle(
                 raw = twitterScreenName.orEmpty(),
                 host = accountKey.host,
+                displayOverride = if (isWebPlatform) null else "@${twitterScreenName.orEmpty()}",
             ),
         platformId = XQT_PLATFORM_ID,
         platformIcon = UiIcon.X.asType(),
+        url = xqtProfileUrl(twitterScreenName),
         clickEvent =
             ClickEvent.Deeplink(
                 DeeplinkRoute.Profile
@@ -1384,6 +1391,9 @@ private fun Admin.render(accountKey: MicroBlogKey): UiProfile {
         bottomContent = null,
     ).withProxy(ProxyRef.forAccount(accountKey))
 }
+
+private fun xqtProfileUrl(screenName: String?): String? =
+    screenName?.trim()?.takeIf { it.isNotEmpty() }?.let { "https://$xqtHost/$it" }
 
 internal val User.name: String
     get() = legacy.name ?: core?.name ?: "Unknown"

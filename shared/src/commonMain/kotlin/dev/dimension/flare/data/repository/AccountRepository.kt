@@ -2,8 +2,10 @@ package dev.dimension.flare.data.repository
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import dev.dimension.flare.common.Locale
@@ -12,12 +14,17 @@ import dev.dimension.flare.common.encodeJson
 import dev.dimension.flare.data.database.app.AppDatabase
 import dev.dimension.flare.data.database.app.model.DbAccount
 import dev.dimension.flare.data.database.cache.CacheDatabase
+import dev.dimension.flare.data.database.cache.clearGuestPluginData
 import dev.dimension.flare.data.database.cache.clearHomeTimelinesForAccount
 import dev.dimension.flare.data.database.cache.connect
+import dev.dimension.flare.data.database.cache.invalidateGuestPluginCachedContent
+import dev.dimension.flare.data.datasource.microblog.ComposeData
 import dev.dimension.flare.data.datasource.microblog.MicroblogDataSource
 import dev.dimension.flare.data.datasource.microblog.UnavailableMicroblogDataSource
+import dev.dimension.flare.data.datasource.microblog.capabilities
 import dev.dimension.flare.data.datastore.AppDataStore
 import dev.dimension.flare.data.model.IconType
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.model.PlatformCapability
@@ -32,19 +39,27 @@ import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.model.asType
 import dev.dimension.flare.ui.model.collectAsUiState
 import dev.dimension.flare.ui.model.takeSuccess
+import dev.dimension.flare.ui.presenter.compose.ComposeStatus
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
@@ -52,8 +67,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -127,22 +143,58 @@ internal class AccountRepository internal constructor(
             }.distinctUntilChanged()
     }
     private val dataSourceCacheMutex = Mutex()
-    internal val dataSourceRevisions = MutableStateFlow<Map<MicroBlogKey, Long>>(emptyMap())
-    private val dataSourceCache by lazy {
-        mutableMapOf<MicroBlogKey, Pair<PlatformSpec, MicroblogDataSource>>()
+    private val replyPublications =
+        MutableSharedFlow<Pair<MicroBlogKey, MicroBlogKey>>(extraBufferCapacity = 32, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    internal val publishedReplies = replyPublications.asSharedFlow()
+
+    // A replacement becomes available after its old source closes. Deleted accounts stay unavailable until restored.
+    internal val dataSourceRevisions = MutableStateFlow<Map<MicroBlogKey, Deferred<Boolean>>>(emptyMap())
+    private val dataSourceCache = MutableStateFlow<Map<MicroBlogKey, Pair<PlatformSpec, AccountMicroblogDataSource>>>(emptyMap())
+
+    private fun removeDataSource(
+        key: MicroBlogKey,
+        revision: Deferred<Boolean>? = null,
+    ): MicroblogDataSource? {
+        val previous = dataSourceCache.value[key]?.second?.dataSource
+        dataSourceCache.value -= key
+        if (revision != null) dataSourceRevisions.value += key to revision
+        return previous
     }
+
+    internal fun peekDataSource(accountType: AccountType): MicroblogDataSource? =
+        when (accountType) {
+            AccountType.Guest -> {
+                platformRegistry.defaultGuest.guestDataSource(
+                    host = "mastodon.social",
+                    locale = Locale.language,
+                )
+            }
+
+            is AccountType.GuestHost -> {
+                platformRegistry.defaultGuest.guestDataSource(
+                    host = accountType.host,
+                    locale = Locale.language,
+                )
+            }
+
+            // Guest plugin availability follows the registry, including updates and uninstall.
+            is AccountType.GuestPlugin -> {
+                null
+            }
+
+            is AccountType.Specific -> {
+                dataSourceCache.value[accountType.accountKey]?.let { (spec, service) ->
+                    service.dataSource.takeIf { platformRegistry.get(spec.platformId) === spec }
+                }
+            }
+        }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     internal val allAccountServices: Flow<ImmutableList<AccountMicroblogDataSource>> by lazy {
         combine(allAccounts, platformRegistry.platforms, dataSourceRevisions) { accounts, platforms, _ ->
             accounts.filter { account -> platforms.any { it.platformId == account.platformId } }
         }.mapLatest { accounts ->
-            accounts
-                .mapNotNull { account ->
-                    val record = appDatabase.accountDao().getAccount(account.accountKey) ?: return@mapNotNull null
-                    val dataSource = getOrCreateDataSource(account)
-                    AccountMicroblogDataSource(account.accountKey, account.platformId, dataSource, record.session_id)
-                }.toImmutableList()
+            accounts.mapNotNull { getOrCreateAccountService(it) }.toImmutableList()
         }.distinctUntilChanged()
     }
 
@@ -178,6 +230,21 @@ internal class AccountRepository internal constructor(
         return accountMutationMutex.withLock { block() }
     }
 
+    internal suspend fun <T> refreshAccountCache(
+        accountType: AccountType,
+        fetch: suspend () -> T,
+        save: suspend (T) -> Unit,
+    ) {
+        if (accountType !is AccountType.Specific) return save(fetch())
+        val key = accountType.accountKey
+        val sessionId = appDatabase.accountDao().getSessionId(key) ?: throw NoActiveAccountException
+        val result = fetch()
+        withAccountChanges {
+            if (!isSessionActive(key, sessionId)) throw NoActiveAccountException
+            save(result)
+        }
+    }
+
     internal suspend fun <T> restoreAccounts(
         keys: List<MicroBlogKey>,
         block: suspend () -> T,
@@ -197,13 +264,6 @@ internal class AccountRepository internal constructor(
                         }
                     }
                 }
-            }.also {
-                dataSourceCacheMutex.withLock {
-                    keys.forEach { key ->
-                        (dataSourceCache.remove(key)?.second as? AutoCloseable)?.close()
-                        dataSourceRevisions.update { it + (key to (it[key] ?: 0) + 1) }
-                    }
-                }
             }
         }
 
@@ -215,8 +275,29 @@ internal class AccountRepository internal constructor(
         keys.distinct().filter { it.toString() in removed }.forEach { deleteAccount(it) }
         // A failed settings write rolls back the DB; cancellation cannot split restoration from commit.
         return withContext(NonCancellable) {
-            appDatabase.connect {
-                block().also { if (keys.isNotEmpty()) proxyRepository.restoreAccounts(keys) }
+            val available = CompletableDeferred<Boolean>()
+            var retired = emptyList<MicroblogDataSource>()
+            try {
+                appDatabase.connect {
+                    block().also {
+                        if (keys.isNotEmpty()) {
+                            proxyRepository.restoreAccounts(keys)
+                            val challenges =
+                                org.koin.mp.KoinPlatformTools
+                                    .defaultContext()
+                                    .getOrNull()
+                                    ?.getOrNull<SessionChallengeCoordinator>()
+                            keys.forEach { key -> challenges?.invalidateAccountChallenges(key) }
+                            retired = dataSourceCacheMutex.withLock { keys.mapNotNull { key -> removeDataSource(key, available) } }
+                        }
+                    }
+                }
+            } finally {
+                try {
+                    retired.forEach { (it as? AutoCloseable)?.close() }
+                } finally {
+                    available.complete(true)
+                }
             }
         }
     }
@@ -262,12 +343,6 @@ internal class AccountRepository internal constructor(
             }
             if (existingAccount == null) {
                 check(accountChangeChannel.trySend(AccountChange.Added(account)).isSuccess)
-            } else {
-                dataSourceCacheMutex.withLock {
-                    val dataSource = dataSourceCache.remove(account.accountKey)?.second
-                    if (dataSource is AutoCloseable) dataSource.close()
-                    dataSourceRevisions.update { it + (account.accountKey to (it[account.accountKey] ?: 0) + 1) }
-                }
             }
         }
     }
@@ -329,23 +404,60 @@ internal class AccountRepository internal constructor(
         beforeDelete: suspend () -> Unit,
     ): Unit =
         withAccountChanges {
-            val accounts =
+            val guestHost = platformRegistry.get(platformId)?.standaloneGuestHost
+            val platformAccounts =
                 appDatabase
                     .accountDao()
                     .allAccounts()
                     .first()
-                    .filter { it.platformId == platformId && ownsCredential(it.credential_json) }
+                    .filter { it.platformId == platformId }
+            val accounts = platformAccounts.filter { ownsCredential(it.credential_json) }
             beforeDelete()
             accounts.forEach { proxyRepository.removeAccount(it.account_key) }
             accounts.forEach { deleteAccount(it.account_key) }
+            if (accounts.size == platformAccounts.size) {
+                val preservedHosts =
+                    appDatabase
+                        .accountDao()
+                        .allAccounts()
+                        .first()
+                        .mapTo(hashSetOf()) { it.account_key.host }
+                cacheDatabase.clearGuestPluginData(
+                    platformId = platformId,
+                    additionalHosts = setOfNotNull(guestHost),
+                    preservedHosts = preservedHosts,
+                    nonCursorPagingKeys = setOf(STATUS_HISTORY_PAGING_KEY),
+                )
+            }
         }
 
+    internal suspend fun clearRemovedGuestPlatform(platformId: String) {
+        val preservedHosts =
+            appDatabase
+                .accountDao()
+                .allAccounts()
+                .first()
+                .mapTo(hashSetOf()) { it.account_key.host }
+        cacheDatabase.clearGuestPluginData(
+            platformId = platformId,
+            preservedHosts = preservedHosts,
+            nonCursorPagingKeys = setOf(STATUS_HISTORY_PAGING_KEY),
+        )
+    }
+
     private suspend fun deleteAccount(accountKey: MicroBlogKey) {
+        val previous = dataSourceCacheMutex.withLock { removeDataSource(accountKey, CompletableDeferred(false)) }
+        (previous as? AutoCloseable)?.close()
         org.koin.mp.KoinPlatformTools
             .defaultContext()
             .getOrNull()
             ?.getOrNull<dev.dimension.flare.data.translation.image.ImageTranslationRepository>()
             ?.removeOwner(accountKey)
+        org.koin.mp.KoinPlatformTools
+            .defaultContext()
+            .getOrNull()
+            ?.getOrNull<SessionChallengeCoordinator>()
+            ?.invalidateAccountChallenges(accountKey)
         appDataStore.composeConfigData.updateData {
             it.copy(
                 lastAccounts = it.lastAccounts.filterNot { key -> key == accountKey },
@@ -353,12 +465,6 @@ internal class AccountRepository internal constructor(
         }
         if (appDatabase.accountDao().getAccount(accountKey) != null) {
             check(accountChangeChannel.trySend(AccountChange.Removed(accountKey)).isSuccess)
-        }
-        dataSourceCacheMutex.withLock {
-            val datasource = dataSourceCache.remove(accountKey)?.second
-            if (datasource is AutoCloseable) {
-                datasource.close()
-            }
         }
         cacheDatabase.connect {
             val accountType = AccountType.Specific(accountKey)
@@ -371,11 +477,15 @@ internal class AccountRepository internal constructor(
             cacheDatabase.listDao().deletePagingByAccountType(accountType)
             cacheDatabase.listDao().deleteByAccountType(accountType)
             cacheDatabase.userDao().deleteRelationsByAccountType(accountType)
+            cacheDatabase.userDao().deleteProfileTabsByAccountType(accountType)
             cacheDatabase.translationDao().deleteByAccountType(accountType)
             cacheDatabase.statusReferenceDao().deleteByAccountType(accountType)
             cacheDatabase.pagingTimelineDao().deletePresentationReferencesByAccountType(accountType)
+            cacheDatabase.pluginPostWidgetDao().deleteByAccountType(accountType)
+            cacheDatabase.mangaProgressDao().deleteByAccountType(accountType)
             invalidateCachedContent(accountKey)
         }
+        timelineProcessorServiceOrNull()?.clearAccount(AccountType.Specific(accountKey))
         appDatabase.connect {
             draftRepository.deleteAccount(accountKey)
             appDatabase.accountDao().delete(accountKey)
@@ -455,46 +565,82 @@ internal class AccountRepository internal constructor(
                 .first()
                 .filter { it.platformId == platformId }
         accounts.forEach { account ->
-            val previous = dataSourceCacheMutex.withLock { dataSourceCache.remove(account.account_key)?.second }
+            val previous = dataSourceCacheMutex.withLock { removeDataSource(account.account_key) }
             if (previous is AutoCloseable) previous.close()
             invalidateCachedContent(account.account_key)
         }
+        cacheDatabase.invalidateGuestPluginCachedContent(
+            platformId = platformId,
+            nonCursorPagingKeys = setOf(STATUS_HISTORY_PAGING_KEY),
+        )
     }
 
-    internal suspend fun getOrCreateDataSource(account: UiAccount): MicroblogDataSource {
-        val spec = platformRegistry.require(account.platformId)
-        val (revision, existing) =
-            dataSourceCacheMutex.withLock { dataSourceRevisions.value[account.accountKey] to dataSourceCache[account.accountKey] }
-        if (existing?.first === spec) return existing.second
-        val dbAccount =
-            appDatabase.connect {
-                val stored =
-                    appDatabase.accountDao().getAccount(account.accountKey)
-                        ?: throw NoSuchElementException("Account not found: ${account.accountKey}")
-                val prepared = spec.prepareCredential(stored.credential_json)
-                if (prepared != stored.credential_json) appDatabase.accountDao().setCredential(account.accountKey, prepared)
-                stored.copy(credential_json = prepared)
-            }
-        val created =
-            spec.createDataSource(
-                RepositoryPlatformDataSourceContext(account.accountKey, dbAccount.credential_json, dbAccount.session_id, spec, revision),
-            )
-        val cached =
-            dataSourceCacheMutex.withLock {
-                if (platformRegistry.get(account.platformId) !== spec || dataSourceRevisions.value[account.accountKey] != revision) {
-                    return@withLock null
+    internal suspend fun publish(
+        account: UiAccount,
+        data: ComposeData,
+        progress: () -> Unit,
+    ) {
+        val compose =
+            getOrCreateDataSource(account).capabilities.compose
+                ?: error("Account does not support compose: ${account.accountKey}")
+        compose.compose(data, progress)
+        val reply = data.referenceStatus?.composeStatus as? ComposeStatus.Reply
+        if (reply != null) {
+            val post = if (reply is ComposeStatus.VVOComment) reply.statusKey.copy(id = reply.rootId) else reply.statusKey
+            replyPublications.tryEmit(account.accountKey to post)
+        }
+    }
+
+    internal suspend fun getOrCreateDataSource(account: UiAccount): MicroblogDataSource =
+        getOrCreateAccountService(account)?.dataSource ?: run {
+            platformRegistry.require(account.platformId)
+            throw NoSuchElementException("Account not found: ${account.accountKey}")
+        }
+
+    internal suspend fun getOrCreateAccountService(account: UiAccount): AccountMicroblogDataSource? {
+        val key = account.accountKey
+        while (true) {
+            val spec = platformRegistry.get(account.platformId) ?: return null
+            val (revision, existing) = dataSourceCacheMutex.withLock { dataSourceRevisions.value[key] to dataSourceCache.value[key] }
+            if (revision?.await() == false) return null
+            if (existing?.first === spec) return existing.second
+            val dbAccount =
+                appDatabase.connect {
+                    val stored =
+                        appDatabase.accountDao().getAccount(key)?.takeIf { it.platformId == spec.platformId } ?: return@connect null
+                    val prepared = spec.prepareCredential(stored.credential_json)
+                    if (prepared != stored.credential_json) appDatabase.accountDao().setCredential(key, prepared)
+                    stored.copy(credential_json = prepared)
+                } ?: return null
+            val source =
+                spec.createDataSource(
+                    RepositoryPlatformDataSourceContext(key, dbAccount.credential_json, dbAccount.session_id, spec, revision),
+                )
+            var toClose: MicroblogDataSource? = source
+            try {
+                val cached =
+                    dataSourceCacheMutex.withLock {
+                        if (platformRegistry.get(account.platformId) !== spec || dataSourceRevisions.value[key] !== revision) {
+                            return@withLock null
+                        }
+                        val current = dataSourceCache.value[key]
+                        if (current?.first === spec) {
+                            current.second
+                        } else {
+                            val service = AccountMicroblogDataSource(key, spec.platformId, source, dbAccount.session_id)
+                            dataSourceCache.value += key to (spec to service)
+                            toClose = current?.second?.dataSource
+                            service
+                        }
+                    }
+                if (cached != null) {
+                    if (toClose === cached.dataSource) toClose = null
+                    return cached
                 }
-                val current = dataSourceCache[account.accountKey]
-                if (current?.first === spec) {
-                    current.second
-                } else {
-                    (current?.second as? AutoCloseable)?.close()
-                    dataSourceCache[account.accountKey] = spec to created
-                    created
-                }
+            } finally {
+                (toClose as? AutoCloseable)?.close()
             }
-        if (cached !== created && created is AutoCloseable) created.close()
-        return cached ?: getOrCreateDataSource(account)
+        }
     }
 
     private inner class RepositoryPlatformDataSourceContext(
@@ -502,7 +648,7 @@ internal class AccountRepository internal constructor(
         private val credentialJson: String,
         private val sessionId: String,
         private val spec: PlatformSpec,
-        private val revision: Long?,
+        private val revision: Deferred<Boolean>?,
     ) : PlatformDataSourceContext {
         override fun <T : Any> credential(serializer: KSerializer<T>): T = credentialJson.decodeJson(serializer)
 
@@ -541,20 +687,23 @@ internal class AccountRepository internal constructor(
         }
 
         override suspend fun invalidateDataSource() {
-            val previous =
-                appDatabase.connect {
-                    val record = appDatabase.accountDao().getAccount(accountKey)
-                    if (record?.session_id != sessionId) throw CancellationException("Account session was replaced")
-                    dataSourceCacheMutex.withLock {
-                        if (platformRegistry.get(spec.platformId) !== spec || dataSourceRevisions.value[accountKey] != revision) {
-                            return@withLock null
+            val available = CompletableDeferred<Boolean>()
+            try {
+                val previous =
+                    appDatabase.connect {
+                        val record = appDatabase.accountDao().getAccount(accountKey)
+                        if (record?.session_id != sessionId) throw CancellationException("Account session was replaced")
+                        dataSourceCacheMutex.withLock {
+                            if (platformRegistry.get(spec.platformId) !== spec || dataSourceRevisions.value[accountKey] !== revision) {
+                                return@withLock null
+                            }
+                            removeDataSource(accountKey, available)
                         }
-                        val cached = dataSourceCache.remove(accountKey)?.second
-                        dataSourceRevisions.update { it + (accountKey to ((it[accountKey] ?: 0) + 1)) }
-                        cached
                     }
-                }
-            (previous as? AutoCloseable)?.close()
+                (previous as? AutoCloseable)?.close()
+            } finally {
+                available.complete(true)
+            }
         }
     }
 
@@ -563,7 +712,7 @@ internal class AccountRepository internal constructor(
         sessionId: String,
     ): Boolean =
         accountKey.toString() !in proxyRepository.settings.first().removedAccounts &&
-            appDatabase.accountDao().getAccount(accountKey)?.session_id == sessionId
+            appDatabase.accountDao().getSessionId(accountKey) == sessionId
 }
 
 private fun DbAccount.toUi(platformRegistry: PlatformRegistry): UiAccount {
@@ -602,6 +751,15 @@ public data class RequireReLoginException(
     val platformId: String,
 ) : Exception("Login required.")
 
+@Immutable
+public data class SessionChallengeException(
+    val challengeId: String,
+    val accountKey: MicroBlogKey,
+    val platformId: String,
+    val challengeUrl: String,
+    val displayMessage: String,
+) : Exception(displayMessage)
+
 @Composable
 internal fun accountProvider(
     accountType: AccountType,
@@ -614,6 +772,7 @@ internal fun accountProvider(
         when (accountType) {
             AccountType.Guest,
             is AccountType.GuestHost,
+            is AccountType.GuestPlugin,
             -> {
                 flowOf(
                     UiState.Error(
@@ -634,21 +793,47 @@ internal fun accountProvider(
 internal fun accountServiceProvider(
     accountType: AccountType,
     repository: AccountRepository,
-): UiState<MicroblogDataSource> =
-    remember(
-        accountType,
-    ) {
-        accountServiceFlow(
-            accountType = accountType,
-            repository = repository,
-        )
-    }.collectAsUiState().value
+): UiState<MicroblogDataSource> {
+    val peeked =
+        remember(accountType, repository) {
+            repository.peekDataSource(accountType)
+        }
+    if (accountType !is AccountType.Specific && peeked != null) {
+        return UiState.Success(peeked)
+    }
+    val initialState = peeked?.let { UiState.Success(it) } ?: UiState.Loading()
+    val state =
+        remember(accountType, repository) {
+            mutableStateOf(initialState)
+        }
+    val flow =
+        remember(accountType, repository) {
+            accountServiceStateFlow(
+                accountType = accountType,
+                repository = repository,
+            )
+        }
+    LaunchedEffect(state, flow) {
+        flow
+            .catch {
+                state.value = UiState.Error(it)
+            }.collect {
+                state.value = it?.let { service -> UiState.Success(service) } ?: UiState.Loading()
+            }
+    }
+    return state.value
+}
 
-@OptIn(ExperimentalCoroutinesApi::class)
 internal fun accountServiceFlow(
     accountType: AccountType,
     repository: AccountRepository,
-): Flow<MicroblogDataSource> =
+): Flow<MicroblogDataSource> = accountServiceStateFlow(accountType, repository).filterNotNull().distinctUntilChanged()
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private fun accountServiceStateFlow(
+    accountType: AccountType,
+    repository: AccountRepository,
+): Flow<MicroblogDataSource?> =
     when (accountType) {
         AccountType.Guest -> {
             flowOf(
@@ -668,16 +853,49 @@ internal fun accountServiceFlow(
             )
         }
 
+        is AccountType.GuestPlugin -> {
+            repository.platformRegistry.platforms
+                .map { specs -> specs.firstOrNull { it.platformId == accountType.platformId } }
+                .distinctUntilChanged()
+                .map { spec ->
+                    if (spec == null) {
+                        UnavailableMicroblogDataSource
+                    } else {
+                        try {
+                            spec.guestDataSource(accountType.host, Locale.language)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: IllegalArgumentException) {
+                            UnavailableMicroblogDataSource
+                        } catch (_: UnsupportedOperationException) {
+                            UnavailableMicroblogDataSource
+                        }
+                    }
+                }.distinctUntilChanged()
+        }
+
         is AccountType.Specific -> {
             repository
                 .getFlow(accountType.accountKey)
-                .mapNotNull { it.takeSuccess() }
+                .map { it.takeSuccess() }
+                .distinctUntilChangedBy { it?.platformId }
                 .combine(repository.platformRegistry.platforms) { account, platforms ->
-                    account to platforms.firstOrNull { it.platformId == account.platformId }
+                    if (account == null) null else account to platforms.firstOrNull { it.platformId == account.platformId }
                 }.distinctUntilChanged()
-                .combine(repository.dataSourceRevisions.map { it[accountType.accountKey] }.distinctUntilChanged()) { account, _ -> account }
-                .mapLatest { (account, spec) ->
-                    if (spec == null) UnavailableMicroblogDataSource else repository.getOrCreateDataSource(account)
+                .combine(repository.dataSourceRevisions.map { it[accountType.accountKey] }.distinctUntilChanged()) { selected, revision ->
+                    selected to revision
+                }.transformLatest { (selected, revision) ->
+                    if (selected == null || repository.peekDataSource(accountType) == null) emit(null)
+                    if (selected != null && revision?.await() != false) {
+                        val (account, spec) = selected
+                        if (spec == null) {
+                            emit(UnavailableMicroblogDataSource)
+                        } else {
+                            emit(repository.getOrCreateAccountService(account)?.dataSource)
+                        }
+                    }
+                }.onStart {
+                    repository.peekDataSource(accountType)?.let { emit(it) }
                 }.distinctUntilChanged()
         }
     }

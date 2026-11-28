@@ -41,7 +41,7 @@
 	const emojiShortcodesText = $derived(emojiShortcodes.join('\u001f'));
 	const emojiByShortcode = $derived(new Map(emojis.map((emoji) => [emoji.shortcode, emoji])));
 	const emojiHistory = useReactiveRetainedPresenter(
-		() => `emoji-history:${accountTypeKey(accountType)}:${emojiShortcodesText}`,
+		() => `emoji-history:${JSON.stringify(accountType)}:${emojiShortcodesText}`,
 		() => createEmojiHistoryPresenterController(accountType, emojiShortcodesText),
 		{ ttlMs: 0 }
 	);
@@ -87,18 +87,6 @@
 	function selectEmoji(emoji: UiEmoji): void | Promise<void> {
 		emojiHistory.addHistory(emoji.shortcode);
 		return onSelect(emoji);
-	}
-
-	function accountTypeKey(value: AccountType | null): string {
-		if (!value) return 'none';
-		switch (value.type) {
-			case 'Specific':
-				return `specific:${value.accountKey.host}:${value.accountKey.id}`;
-			case 'GuestHost':
-				return `guest-host:${value.host}`;
-			case 'Guest':
-				return 'guest';
-		}
 	}
 </script>
 

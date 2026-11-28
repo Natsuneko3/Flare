@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { accountSegment } from '$lib/deeplink/accountRoute';
 	import { goto } from '$app/navigation';
 	import AppTopBar from '$lib/components/AppTopBar.svelte';
 	import DiscoverSection from '$lib/components/discover/DiscoverSection.svelte';
@@ -9,8 +10,6 @@
 	import { useRetainedPresenter } from '$lib/presenter/presenterStore.svelte';
 	import {
 		createDiscoverPresenterController,
-		type AccountType,
-		type MicroBlogKey,
 		type PagingState as DiscoverPagingState,
 		type UiHashtag,
 		type UiProfile as DiscoverUiProfile,
@@ -32,8 +31,7 @@
 	let showAccountMenu = $state(false);
 	const accounts = $derived(discover.accounts.type === 'Success' ? discover.accounts.data : []);
 	const canSwitchAccount = $derived(discover.canSwitchAccount);
-	const accountKey = $derived(accountTypeKey(discover.selectedAccountType));
-
+	const accountKey = $derived(accountSegment(discover.selectedAccountType));
 
 	$effect(() => {
 		if (!pendingQuery || !discover.isAccountReady) return;
@@ -68,36 +66,6 @@
 			q: nextQuery,
 		});
 		return `/search?${params.toString()}`;
-	}
-
-	function accountSegment(accountType: AccountType): string {
-		switch (accountType.type) {
-			case 'Specific':
-				return accountSegmentFromKey(accountType.accountKey);
-			case 'GuestHost':
-				return `guest@${accountType.host}`;
-			case 'Guest':
-				return 'guest';
-		}
-	}
-
-	function accountSegmentFromKey(key: MicroBlogKey): string {
-		return key.host ? `${escapeMicroBlogKeyPart(key.id)}@${escapeMicroBlogKeyPart(key.host)}` : key.id;
-	}
-
-	function escapeMicroBlogKeyPart(value: string): string {
-		return value.replace(/[\\@,]/g, (char) => `\\${char}`);
-	}
-
-	function accountTypeKey(accountType: AccountType): string {
-		switch (accountType.type) {
-			case 'Specific':
-				return `specific:${accountType.accountKey.host}:${accountType.accountKey.id}`;
-			case 'GuestHost':
-				return `guest-host:${accountType.host}`;
-			case 'Guest':
-				return 'guest';
-		}
 	}
 
 	function indexes<T>(state: DiscoverPagingState<T>, limit: number): number[] {

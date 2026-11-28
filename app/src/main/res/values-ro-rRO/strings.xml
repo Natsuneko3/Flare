@@ -117,8 +117,6 @@
     <string name="settings_about_telegram_description">Alătură-te grupului nostru de Telegram</string>
     <string name="settings_about_discord_description">Alătură-te serverului nostru de Discord</string>
     <string name="settings_about_line_description">Alătură-te grupului nostru de Line</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Ajută-ne să traducem Flare</string>
     <string name="settings_privacy_policy">Politică de Confidențialitate</string>
     <string name="settings_side_panel">Personalizare panou lateral</string>
     <string name="settings_side_panel_description">Personalizează panoul lateral</string>
@@ -814,7 +812,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automat</string>
     <string name="image_translation_original_file">Fișier original</string>
-    <string name="image_translation_use_shared_description">Distribuie URL-ul serviciului, cheia API și modelul. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat.</string>
+    <string name="image_translation_use_shared_description">Distribuie URL-ul serviciului, cheia API, modelul și anteturile personalizate. Serviciul și modelul trebuie să suporte ieșirea de imagini. Dezactivează pentru a configura traducerea imaginilor separat.</string>
     <string name="plugin_permission_cookie">Citește cookie-ul %2$s din %1$s</string>
     <string name="plugin_ai_create">Creează cu AI Flare</string>
     <string name="plugin_ai_untitled">Plugin nou</string>
@@ -919,6 +917,8 @@
     <string name="plugin_warning_compatibility">Avertisment de compatibilitate</string>
     <string name="plugin_install_github">Instalează din GitHub</string>
     <string name="plugin_check_updates">Verifică actualizări</string>
+    <string name="plugin_local_import">Import local</string>
+    <string name="plugin_updated_at">Actualizat la %1$s</string>
     <string name="plugin_add">Adaugă plugin</string>
     <string name="settings_ai_config_context_window_hint">Lăsați gol pentru a folosi limita cunoscută a modelului. Modelele necunoscute folosesc un buget estimat de 8192 tokeni. Introduceți cel puțin 1024 tokeni pentru a anula.</string>
     <string name="plugin_large_repository_title">Descărcare de depozitar mare?</string>

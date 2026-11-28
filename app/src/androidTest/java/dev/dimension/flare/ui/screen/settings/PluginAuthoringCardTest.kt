@@ -1,8 +1,10 @@
 package dev.dimension.flare.ui.screen.settings
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
@@ -13,24 +15,31 @@ import androidx.compose.ui.ComposeUiFlags
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.hasAnyDescendant
-import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.dimension.flare.R
@@ -47,6 +56,7 @@ import dev.dimension.flare.ui.component.LocalGlobalAppearance
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.model.UiText
 import dev.dimension.flare.ui.theme.FlareTheme
+import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -58,6 +68,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
+import java.util.Locale
 
 @OptIn(ExperimentalComposeUiApi::class)
 class PluginAuthoringCardTest {
@@ -123,9 +134,9 @@ class PluginAuthoringCardTest {
         }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val error = compose.onNodeWithText("${context.getString(R.string.plugin_operation_failed)}: Import failed")
-        val authoredRow = compose.onNode(hasClickAction() and hasAnyDescendant(hasText("AI plugin")), useUnmergedTree = true)
-        val githubRow = compose.onNode(hasClickAction() and hasAnyDescendant(hasText("GitHub plugin")), useUnmergedTree = true)
-        val fileRow = compose.onNode(hasClickAction() and hasAnyDescendant(hasText("File plugin")), useUnmergedTree = true)
+        val authoredRow = compose.onNodeWithText("AI plugin", useUnmergedTree = true).onParent()
+        val githubRow = compose.onNodeWithText("GitHub plugin", useUnmergedTree = true).onParent()
+        val fileRow = compose.onNodeWithText("File plugin", useUnmergedTree = true).onParent()
         assertTrue(error.fetchSemanticsNode().boundsInRoot.bottom <= authoredRow.fetchSemanticsNode().boundsInRoot.top)
         val inset = with(compose.density) { 4.dp.roundToPx() }
         val first = authoredRow.captureToImage().toPixelMap()
@@ -148,11 +159,15 @@ class PluginAuthoringCardTest {
         assertEquals(1, titleStarts.distinct().size)
         compose.onNodeWithText(authored.id).assertDoesNotExist()
         compose.onNodeWithText(context.getString(R.string.plugin_ai_source_revision, authored.revision)).assertIsDisplayed()
-        compose.onNodeWithText("GitHub · 1.0.0").assertIsDisplayed()
-        compose.onNodeWithText("File · 1.0.0").assertIsDisplayed()
-        compose.onNodeWithText("${context.getString(R.string.plugin_update)} v1.1.0").assertIsDisplayed().performClick()
+        compose.onNodeWithText("example/plugin").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.plugin_local_import)).assertIsDisplayed()
+        compose.onAllNodesWithText("v1.0.0").assertCountEquals(3)
+        compose.onNodeWithText(context.getString(R.string.plugin_update)).assertIsDisplayed().performClick()
         assertEquals(github.pluginId, updated)
         screenshot("flare-plugins-grouped-android.png")
+        compose.onNodeWithText("file.plugin").assertDoesNotExist()
+        compose.onNodeWithContentDescription("${context.getString(R.string.more)}: File plugin").performClick()
+        compose.onNodeWithText("file.plugin").assertIsDisplayed().assertIsNotEnabled()
     }
 
     @Test
@@ -211,34 +226,164 @@ class PluginAuthoringCardTest {
     }
 
     @Test
-    fun pendingActionsFitNarrowCard() {
+    fun enlargedTextWrapsTheRepositoryAndKeepsBothActionsOnANarrowScreen() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "Example plugin with a long name"
+        val plugin =
+            PluginManagementItemV1(
+                pluginId = "example.plugin",
+                platformId = "example",
+                nameText = UiText.Raw(name),
+                iconPath = "",
+                version = "1.0.0",
+                sourceUrl = "https://github.com/example/flare-plugins?path=/plugins/example",
+                availableUpdate = GitHubPluginVersionV1("bundle", "1.1.0", "b".repeat(40)),
+                sourceCommitSha = "a".repeat(40),
+            )
+        var updated = false
+        var openedUrl: String? = null
+        val uriHandler =
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    openedUrl = uri
+                }
+            }
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(
+                    LocalDensity provides Density(LocalDensity.current.density, fontScale = 2f),
+                    LocalUriHandler provides uriHandler,
+                ) {
+                    Box(Modifier.width(260.dp).padding(horizontal = screenHorizontalPadding)) {
+                        PluginItem(
+                            plugin = plugin,
+                            busy = false,
+                            shapesIndex = 0,
+                            shapesCount = 1,
+                            onSettings = {},
+                            onCancelUpdate = {},
+                            onUninstall = {},
+                            onUpdate = { updated = true },
+                        )
+                    }
+                }
+            }
+        }
+        val update = context.getString(R.string.plugin_update)
+        val more = "${context.getString(R.string.more)}: $name"
+        compose.assertPluginActionRow(name, update, more, "example/flare-plugins/plugins/example", "v1.0.0")
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(name, useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertTrue(layouts.single().lineCount > 1 && !layouts.single().hasVisualOverflow)
+        layouts.clear()
+        val link = compose.onNodeWithText("example/flare-plugins/plugins/example", useUnmergedTree = true)
+        assertTrue(link.fetchSemanticsNode().boundsInRoot.width >= with(compose.density) { 72.dp.toPx() })
+        link.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertTrue(layouts.single().lineCount > 1)
+        assertTrue(!layouts.single().hasVisualOverflow)
+        link.performFirstLinkClick()
+        compose.runOnIdle {
+            assertEquals("https://github.com/example/flare-plugins/tree/${plugin.sourceCommitSha}/plugins/example", openedUrl)
+        }
+        compose.onNodeWithText(update).assertIsDisplayed().performClick()
+        compose.runOnIdle { assertTrue(updated) }
+        compose.onNodeWithContentDescription(more).assertIsDisplayed().performClick()
+        compose.onNodeWithText(context.getString(R.string.plugin_uninstall)).assertIsDisplayed()
+    }
+
+    @Test
+    fun timelinePermissionLabelTogglesOnlyItsOwnSwitch() {
+        val plugin =
+            PluginManagementItemV1(
+                pluginId = "example.plugin",
+                platformId = "example",
+                nameText = UiText.Raw("Example"),
+                version = "1.0",
+                iconPath = "",
+                sourceUrl = "https://github.com/example/plugin",
+                availableUpdate = null,
+                hasTimelineProcessor = true,
+            )
+        val opened = mutableListOf<String>()
+        val uriHandler =
+            object : UriHandler {
+                override fun openUri(uri: String) {
+                    opened += uri
+                }
+            }
+        var enabled by mutableStateOf(false)
         var busy by mutableStateOf(false)
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                    PluginItem(
+                        plugin = plugin.copy(timelineProcessorEnabled = enabled),
+                        busy = busy,
+                        shapesIndex = 0,
+                        shapesCount = 1,
+                        onSettings = {},
+                        onCancelUpdate = {},
+                        onUninstall = {},
+                        onUpdate = {},
+                        onToggleTimelineProcessor = { _, checked -> enabled = checked },
+                    )
+                }
+            }
+        }
+        val label = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.plugin_timeline_processor_toggle)
+        val toggle = compose.onNode(hasText(label) and isToggleable())
+        val labelText = compose.onNodeWithText(label, useUnmergedTree = true)
+        toggle.assertIsOff()
+        labelText.performTouchInput { click() }
+        toggle.assertIsOn().performClick()
+        toggle.assertIsOff()
+        compose.runOnIdle { busy = true }
+        toggle.assertIsNotEnabled()
+        labelText.performTouchInput { click() }
+        compose.runOnIdle {
+            assertTrue(opened.isEmpty())
+            assertEquals(false, enabled)
+        }
+    }
+
+    @Test
+    fun pendingActionsFitNarrowCard() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val configuration = Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag("ca-ES")) }
+        val resources = context.createConfigurationContext(configuration).resources
+        var busy by mutableStateOf(false)
+        var canceled = false
         var uninstalls = 0
         compose.setContent {
             MaterialTheme {
-                Box(Modifier.width(320.dp)) {
-                    PluginItem(
-                        plugin =
-                            PluginManagementStateV1(
-                                authoredPlugins =
-                                    listOf(
-                                        AuthoredPlugin(
-                                            "local.ai.example",
-                                            "Pixelfed",
-                                            phase = PluginAuthoringPhase.WaitingForOperations,
-                                            revision = 1,
-                                            running = true,
+                CompositionLocalProvider(
+                    LocalResources provides resources,
+                    LocalDensity provides Density(LocalDensity.current.density, fontScale = 2f),
+                ) {
+                    Box(Modifier.width(260.dp).padding(horizontal = screenHorizontalPadding)) {
+                        PluginItem(
+                            plugin =
+                                PluginManagementStateV1(
+                                    authoredPlugins =
+                                        listOf(
+                                            AuthoredPlugin(
+                                                "local.ai.example",
+                                                "Pixelfed",
+                                                phase = PluginAuthoringPhase.WaitingForOperations,
+                                                revision = 1,
+                                                running = true,
+                                            ),
                                         ),
-                                    ),
-                            ).items.single(),
-                        shapesIndex = 0,
-                        shapesCount = 1,
-                        busy = busy,
-                        onSettings = {},
-                        onCancelUpdate = {},
-                        onUninstall = { uninstalls++ },
-                        onUpdate = {},
-                    )
+                                ).items.single(),
+                            shapesIndex = 0,
+                            shapesCount = 1,
+                            busy = busy,
+                            onSettings = {},
+                            onCancelUpdate = { canceled = true },
+                            onUninstall = { uninstalls++ },
+                            onUpdate = {},
+                        )
+                    }
                 }
             }
         }
@@ -246,19 +391,25 @@ class PluginAuthoringCardTest {
         compose.onNodeWithText("Allow and continue").assertDoesNotExist()
         compose
             .onNodeWithText(
-                InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.plugin_ai_source_revision, 1L),
+                resources.getString(R.string.plugin_ai_source_revision, 1L),
             ).assertIsDisplayed()
         compose.onNodeWithText("The current version is running").assertDoesNotExist()
         val layouts = mutableListOf<TextLayoutResult>()
-        val cancelLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.plugin_ai_stop)
+        val cancelLabel = resources.getString(R.string.plugin_ai_stop)
+        val more = "${resources.getString(R.string.more)}: Pixelfed"
+        compose.assertPluginActionRow("Pixelfed", cancelLabel, more, resources.getString(R.string.plugin_ai_source_revision, 1L))
         compose
             .onNodeWithText(cancelLabel, useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-        assertTrue("Cancel update must remain readable", layouts.single().lineCount <= 2)
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val uninstall = context.getString(R.string.plugin_uninstall)
+        assertTrue(
+            "The long Catalan label must wrap without clipping",
+            layouts.single().lineCount > 1 && !layouts.single().hasVisualOverflow,
+        )
+        compose.onNodeWithText(cancelLabel).performClick()
+        compose.runOnIdle { assertTrue(canceled) }
+        val uninstall = resources.getString(R.string.plugin_uninstall)
         compose.onNodeWithText(uninstall).assertDoesNotExist()
-        compose.onNodeWithContentDescription("${context.getString(R.string.more)}: Pixelfed").performClick()
+        compose.onNodeWithContentDescription(more).performClick()
         compose.onNodeWithText(uninstall).assertIsDisplayed()
         compose.runOnIdle { busy = true }
         compose.onNodeWithText(uninstall).assertIsNotEnabled()

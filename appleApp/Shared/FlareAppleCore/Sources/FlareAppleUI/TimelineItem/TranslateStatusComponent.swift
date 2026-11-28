@@ -4,27 +4,54 @@ import FlareAppleCore
 
 public struct TranslateStatusComponent: View {
     private let data: TranslationDisplayState
+    private let iconSize: CGFloat?
 
-    public init(data: TranslationDisplayState) {
+    public init(data: TranslationDisplayState, iconSize: CGFloat? = nil) {
         self.data = data
+        self.iconSize = iconSize
     }
 
     public var body: some View {
         HStack(spacing: 4) {
-            Image(fontAwesome: .language)
+            icon(.language)
             switch data {
-            case .failed: Image(fontAwesome: .circleExclamation)
-            case .translating: ProgressView()
-                    .progressViewStyle(.circular)
-                #if os(macOS)
-                    .scaleEffect(0.5)
-                #endif
-                    .scaledToFit()
-                    .frame(width: 12, height: 12)
+            case .failed: icon(.circleExclamation)
+            case .translating:
+                let progress = ProgressView().progressViewStyle(.circular)
+                if let iconSize {
+                    progress
+                    #if os(macOS)
+                        .controlSize(.small)
+                        .scaleEffect(iconSize / 16)
+                    #else
+                        .scaleEffect(iconSize / 20)
+                    #endif
+                        .frame(width: iconSize, height: iconSize)
+                } else {
+                    progress
+                    #if os(macOS)
+                        .scaleEffect(0.5)
+                    #endif
+                        .scaledToFit()
+                        .frame(width: 12, height: 12)
+                }
             default: EmptyView()
             }
         }
+        .frame(height: iconSize)
         .accessibilityLabel(Text(verbatim: accessibilityLabel))
+    }
+
+    @ViewBuilder
+    private func icon(_ value: FontAwesomeIcon) -> some View {
+        if let iconSize {
+            Image(fontAwesome: value)
+                .resizable()
+                .scaledToFit()
+                .frame(width: iconSize, height: iconSize)
+        } else {
+            Image(fontAwesome: value)
+        }
     }
 
     private var accessibilityLabel: String {

@@ -15,14 +15,19 @@ internal object PluginUrlPolicy {
         return url.origin()
     }
 
-    fun requireRequestUrl(
-        value: String,
-        approvedOrigins: Set<String>,
-    ): Url {
+    fun requireHttpsUrl(value: String): Url {
         require(value.length <= MAX_URL_LENGTH) { "URL is too long" }
         val url = parseUrl(value) ?: error("Invalid HTTPS URL")
         validateHttps(url)
         require(url.fragment.isEmpty()) { "HTTP URLs must not contain fragments" }
+        return url
+    }
+
+    fun requireRequestUrl(
+        value: String,
+        approvedOrigins: Set<String>,
+    ): Url {
+        val url = requireHttpsUrl(value)
         require(url.origin() in approvedOrigins) { "HTTP origin is not approved" }
         return url
     }

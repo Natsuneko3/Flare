@@ -12,10 +12,12 @@ public object PluginAbiV1 {
     public const val ACCOUNT_ORIGIN: String = "\$accountOrigin"
 
     internal val capabilityIdPattern = Regex("[a-z0-9.-]+/[a-z0-9.-]+")
+    internal val postContextTabOperations = setOf("contextTabs", "contextPage")
 
     public object Capabilities {
         public const val ACCOUNT_CAPABILITIES: String = "flare.datasource.account-capabilities/v1"
         public const val ACCOUNT_HTTP: String = "flare.datasource.account-http/v1"
+        public const val SESSION_CHALLENGE: String = "flare.datasource.session-challenge/v1"
         public const val TIMELINE_PAGE: String = "flare.datasource.timeline-page/v1"
         public const val TIMELINE: String = "flare.datasource.timeline/v1"
         public const val SEARCH: String = "flare.datasource.search/v1"
@@ -30,6 +32,7 @@ public object PluginAbiV1 {
         public const val DIRECT_MESSAGE: String = "flare.datasource.direct-message/v1"
         public const val ARTICLE: String = "flare.datasource.article/v1"
         public const val GALLERY: String = "flare.datasource.gallery/v1"
+        public const val MANGA: String = "flare.datasource.manga/v1"
         public const val TAB_CATALOG: String = "flare.datasource.tab-catalog/v1"
     }
 
@@ -38,6 +41,7 @@ public object PluginAbiV1 {
         mapOf(
             Capabilities.ACCOUNT_CAPABILITIES to setOf("negotiate"),
             Capabilities.ACCOUNT_HTTP to setOf("authenticate"),
+            Capabilities.SESSION_CHALLENGE to setOf("complete"),
             Capabilities.TIMELINE_PAGE to setOf("load"),
             Capabilities.TIMELINE to setOf("page"),
             Capabilities.SEARCH to
@@ -49,7 +53,7 @@ public object PluginAbiV1 {
                     "discoverHashtags",
                 ),
             Capabilities.PROFILE to setOf("byId", "byHandle", "timeline", "following", "followers"),
-            Capabilities.POST to setOf("detail", "context", "delete", "mutate"),
+            Capabilities.POST to setOf("detail", "context", "delete", "mutate") + postContextTabOperations,
             Capabilities.RELATION to setOf("state", "mutate"),
             Capabilities.COMPOSE_V1 to setOf("publish"),
             Capabilities.COMPOSE to setOf("publish"),
@@ -82,6 +86,7 @@ public object PluginAbiV1 {
                 ),
             Capabilities.ARTICLE to setOf("detail", "comments"),
             Capabilities.GALLERY to setOf("detail", "comments", "recommendations", "ugoiraMetadata"),
+            Capabilities.MANGA to setOf("detail", "pages", "pageImage", "comments", "recommendations"),
             Capabilities.TAB_CATALOG to setOf("page"),
         )
 
@@ -93,6 +98,7 @@ public object PluginAbiV1 {
                 Capabilities.POST -> setOf("detail")
                 Capabilities.NOTIFICATION, Capabilities.SEARCH -> emptySet()
                 Capabilities.GALLERY -> setOf("detail", "comments", "recommendations")
+                Capabilities.MANGA -> setOf("detail", "pages")
                 else -> operations
             }
         }
@@ -100,7 +106,21 @@ public object PluginAbiV1 {
     public fun hasRequiredOperations(
         capabilityId: String,
         operations: Set<String>,
-    ): Boolean = requiredCapabilityOperations[capabilityId]?.let(operations::containsAll) == true && operations.isNotEmpty()
+    ): Boolean =
+        operations.isNotEmpty() &&
+            requiredCapabilityOperations[capabilityId]?.let(operations::containsAll) == true &&
+            (capabilityId != Capabilities.POST || hasPairedPostContextTabOperations(operations))
+
+    internal fun hasValidCapabilityOperations(
+        capabilityId: String,
+        operations: Set<String>,
+        apiVersion: Int,
+    ): Boolean =
+        hasRequiredOperations(capabilityId, operations) ||
+            (apiVersion >= 2 && capabilityId == Capabilities.POST && operations == setOf("mutate"))
+
+    internal fun hasPairedPostContextTabOperations(operations: Set<String>): Boolean =
+        operations.none { it in postContextTabOperations } || operations.containsAll(postContextTabOperations)
 
     internal fun knownCapabilities(capabilities: Map<String, Set<String>>): Map<String, Set<String>> {
         return capabilities
@@ -128,6 +148,7 @@ public object PluginAbiV1 {
             when (capabilityId) {
                 Capabilities.ACCOUNT_CAPABILITIES -> "accountCapabilities"
                 Capabilities.ACCOUNT_HTTP -> "accountHttp"
+                Capabilities.SESSION_CHALLENGE -> "sessionChallenge"
                 Capabilities.TIMELINE_PAGE -> "timelinePage"
                 Capabilities.TIMELINE -> "timeline"
                 Capabilities.SEARCH -> "search"
@@ -141,6 +162,7 @@ public object PluginAbiV1 {
                 Capabilities.DIRECT_MESSAGE -> "directMessage"
                 Capabilities.ARTICLE -> "article"
                 Capabilities.GALLERY -> "gallery"
+                Capabilities.MANGA -> "manga"
                 Capabilities.TAB_CATALOG -> "tabCatalog"
                 else -> return null
             }
@@ -158,6 +180,7 @@ public object PluginAbiV1 {
             Capabilities.DIRECT_MESSAGE,
             Capabilities.ARTICLE,
             Capabilities.GALLERY,
+            Capabilities.MANGA,
             Capabilities.TAB_CATALOG,
         )
 }

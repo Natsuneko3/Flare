@@ -61,14 +61,22 @@ API on a build that implements the capability.
 | Plugin feature | Host `apiVersion` |
 | --- | --- |
 | Social adapter using API v1 features | `1` |
-| Application response headers, manual redirects, credential revisions or V2 WebCookie state and metadata | `2` |
+| Application response headers, manual redirects, credential revisions or V2 WebCookie state, `userAgent` and metadata | `2` |
+| Native HTML extraction and entity decoding (`flare.html.{extract,query,decodeEntities}`) | `2` |
+| Static recommended origins and single-site origin restriction (`platform.recommendedOrigins`, `allowCustomOrigin: false`) | `2` |
+| Interactive WebView session challenge recovery (`flare.datasource.session-challenge/v1`) | `2` |
 | QR login (`QrCode`) | `2` |
+| Configurable post detail tabs (`contextTabs` and `contextPage`) | `2` |
 | Plugin storage, text translation or offline settings | `2` |
 | Existing-account actions or `flare.datasource.account-http/v1` | `2` |
 | Temporary timelines using `flare.datasource.timeline-page/v1` | `2` |
+| Timeline post processing (`timelineProcessor`) | `2` |
+| Manga detail and reader using `flare.datasource.manga/v1` | `2` |
+| Standalone guest plugin origin (`platform.guest.origin`) | `2` |
+| `post.mutate` without `post.detail` | `2` |
 
-Within Host API v2, `translation.apiVersion`, `platformExtension.apiVersion`
-and `settings.bridgeVersion` are each `1`. See [V1 migration](../ABI.md#migrate-an-api-v1-plugin)
+Within Host API v2, `translation.apiVersion`, `platformExtension.apiVersion`,
+`timelineProcessor.apiVersion` and `settings.bridgeVersion` are each `1`. See [V1 migration](../ABI.md#migrate-an-api-v1-plugin)
 for existing accounts and upgrade validation.
 
 ## Root object
@@ -87,10 +95,11 @@ for existing accounts and upgrade validation.
 | `platform` | Omitted or `null` | One social platform object, when providing social capabilities |
 | `translation` | Omitted or `null` | [Text translation provider](storage-and-settings.md#text-translation) on Host API v2 |
 | `platformExtension` | Omitted or `null` | [Authorized account actions](platform-extensions.md) on Host API v2 |
+| `timelineProcessor` | Omitted or `null` | [Timeline post processor](#timeline-processor) on Host API v2 |
 | `settings` | Omitted or `null` | [Packaged settings page](storage-and-settings.md#offline-settings-page) on Host API v2 |
 
-Provide at least one of `platform`, `translation`, `platformExtension` or `settings`; any combination
-is allowed. `platform`, `translation` and `platformExtension` require a background `plugin.js`.
+Provide at least one of `platform`, `translation`, `platformExtension`, `timelineProcessor` or `settings`; any combination
+is allowed. `platform`, `translation`, `platformExtension` and `timelineProcessor` require a background `plugin.js`.
 A settings-only package needs no platform, login methods or background registration.
 See the [storage, translation and settings contract](storage-and-settings.md) for
 cache dependencies, page resources and a minimal settings-only manifest.
@@ -105,7 +114,7 @@ runtime `WireTextV1`; see [localization](recipes.md#localization).
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `authOrigins` | `[]` | Up to 16 additional exact HTTPS origins for login, e.g. `https://login.example.org` |
-| `httpOrigins` | `[]` | Up to 16 exact HTTPS origins for translation, settings and ordinary extension HTTP, or additional origins for login/account/guest HTTP |
+| `httpOrigins` | `[]` | Up to 16 exact HTTPS origins for translation, timelineProcessor, settings and ordinary extension HTTP, or additional origins for login/account/guest HTTP |
 | `mediaNetwork` | `false` | Allows automatic remote media loading, including avatars, HTML images, audio/video, and covers |
 
 Auth and HTTP origins have no paths, trailing slash, query, fragment, wildcard, or URL
@@ -135,7 +144,9 @@ version omits the platform; see [update compatibility](publishing.md#updates-and
 | `deepLinks` | `[]` | Up to 64 structured rules; see [Deep Links](recipes.md#deep-links) |
 | `composeDefaults` | Omitted | Required conservative defaults when declaring `compose.publish` |
 | `composeDefaultsV3` | Omitted | Required defaults with visibility when declaring `composeV3.publish` |
-| `guest` | Omitted | `{ "enabled": true }` enables guest datasource access; object defaults enabled to true |
+| `guest` | Omitted | `{ "enabled": true, "origin": "https://api.example.org" }`; `enabled` defaults true; optional exact HTTPS `origin` (API v2) enables standalone no-login guest tabs, search, and detail routing (must be in `recommendedOrigins` when `allowCustomOrigin: false`) |
+| `recommendedOrigins` | `[]` | API v2: up to 8 unique exact HTTPS origins (`{ "origin", "name"?, "description"? }`), shown in the service selector and matched statically at priority `0` without launching JS |
+| `allowCustomOrigin` | `true` | API v2 when `false`: whether users may enter custom origins beyond `recommendedOrigins`; `false` requires nonempty `recommendedOrigins` and disables custom detector/login origins |
 | `credentialSchemaVersion` | `1` | Integer 1..1000000; changing it requires existing accounts to log in again |
 | `timelineSchemaVersion` | `1` | Integer 1..1000000; changes timeline identity; see [upgrades](publishing.md#updates-and-compatibility) |
 
@@ -156,7 +167,9 @@ each at most 4096 characters. Plugin/platform IDs have their separate rules abov
 An operation configuration is an object, not a function name or boolean.
 `directions` defaults to `[]`, which the current loader treats as unrestricted;
 declare the actually supported directions explicitly. Non-paging operations use
-`{}`. The [capability matrix](capabilities.md) defines exact names and required
+`{}` (on `flare.datasource.manga/v1`, only `comments` and `recommendations` may
+declare `directions`; `detail`, `pages`, and `pageImage` must leave `directions` empty).
+The [capability matrix](capabilities.md) defines exact names and required
 sets. Known capability declarations with missing methods/operations fail
 installation. Unknown capability IDs and operations are silently ignored before
 their payloads are decoded, including during login and account restoration.
@@ -177,6 +190,16 @@ Host API v2 `flare.datasource.account-http/v1` requires `authenticate` and
 capabilities cannot declare authentication origins. It is account-only and must
 be negotiated at login; it is not a displayable entry. See
 [account HTTP providers](platform-extensions.md#supplying-authentication-from-a-social-plugin).
+
+Host API v2 `flare.datasource.session-challenge/v1` requires `complete` and
+`challengeProbes`: `1..16` Cookie probes on `$accountOrigin` or
+`permissions.authOrigins` (`1..32` unique Cookie names per probe). Placing
+`challengeProbes` on any other capability is invalid, and `httpOrigins` alone
+does not grant challenge probe origins. All `challengeProbes` entries are
+audited as `Cookie` permissions during installation and upgrades, and the
+capability is never auto-granted to existing accounts on upgrade; pair it with
+`flare.datasource.account-capabilities/v1` so saved accounts can negotiate it
+without re-login. See [session challenge recovery](authentication.md#session-challenge-recovery-api-v2).
 
 ### Timelines and profile tabs
 
@@ -335,3 +358,26 @@ read [existing-platform actions](platform-extensions.md). Extensions require Hos
 Account-only `flare.datasource.account-capabilities/v1` declares `negotiate` on
 runtime APIs 1 and 2. It adds no permissions and enables optional
 [capability renegotiation without login](authentication.md#account-capability-renegotiation).
+
+## Timeline processor
+
+Declare `timelineProcessor` on Host API v2 and register `defineFlareTimelineProcessorPlugin({ processBatch })`
+in `plugin.js`. See [timeline post processing](../ABI.md#timeline-post-processing) for the Wire contract.
+
+| Field | Default | Contract |
+| --- | --- | --- |
+| `apiVersion` | `1` | Timeline processor interface version, currently `1` |
+| `maxBatchSize` | `20` | Integer `1..50` controlling maximum posts sent per `processBatch` call |
+| `filter` | Omitted or `null` | Optional native pre-filter; when omitted, all posts are eligible |
+| `filter.containsAny` | `[]` | `0..32` non-blank case-insensitive substrings, each at most 256 UTF-8 bytes |
+| `filter.regex` | Omitted or `null` | Non-blank pattern up to 512 characters. Use portable literals, character classes, anchors, alternation and repetition. Shorthand classes and word boundaries use the ASCII rules below. Apple limits each match to 10 ms. |
+| `filter.linkHosts` | `[]` | `0..32` canonical lowercase hostnames (no scheme, port, or leading/trailing dot); matches exact host or subdomains |
+| `filter.requireLinks` | `false` | When `true`, requires at least one HTTPS link on the post or preview card |
+| `cache.storageNamespaces` | `null` | Watch changes to `0..16` distinct storage namespaces, or all namespaces when `null`. Writes made by this plugin’s `processBatch` preserve its timeline cache. Settings and other invocation methods invalidate it when they change a watched namespace. |
+
+All non-empty fields inside `filter` combine with logical AND.
+
+`\d` matches `[0-9]`, `\w` matches `[A-Za-z0-9_]`, and `\s` matches space, tab, line feed, form feed or carriage return.
+`\D`, `\W` and `\S` match their complements. Word boundaries (`\b` and `\B`) use that same ASCII word alphabet.
+POSIX classes such as `[[:digit:]]` also use ASCII ranges. To match decimal digits in all scripts, use `\p{Nd}`.
+For example, `^\d+$` matches `42` and `^\p{Nd}+$` matches both `42` and `٤٢`.

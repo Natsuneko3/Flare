@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { parseMicroBlogKey } from '$lib/deeplink/accountRoute';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import EmojiPicker from '$lib/components/emoji/EmojiPicker.svelte';
@@ -226,39 +227,6 @@
 			default:
 				return null;
 		}
-	}
-
-	function parseMicroBlogKey(value: string): MicroBlogKey {
-		let escaping = false;
-		let idFinished = false;
-		let id = '';
-		let host = '';
-
-		for (const char of value) {
-			if (escaping) {
-				if (idFinished) host += char;
-				else id += char;
-				escaping = false;
-				continue;
-			}
-
-			if (char === '\\') {
-				escaping = true;
-				continue;
-			}
-
-			if (char === '@' && !idFinished) {
-				idFinished = true;
-				continue;
-			}
-
-			if (char === ',') break;
-
-			if (idFinished) host += char;
-			else id += char;
-		}
-
-		return { id, host };
 	}
 
 	function referencePost(value: UiTimelineV2 | null): UiTimelineV2Post | null {

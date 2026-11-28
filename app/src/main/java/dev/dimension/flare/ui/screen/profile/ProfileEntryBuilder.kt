@@ -76,6 +76,14 @@ internal fun EntryProviderScope<NavKey>.profileEntryBuilder(
                     )
                 )
             },
+            onProfileShareClick = {
+                navigate(
+                    Route.Profile.ShareSheet(
+                        accountType = args.accountType,
+                        userKey = it,
+                    )
+                )
+            },
         )
     }
     entry<Route.Profile.User> { args ->
@@ -137,6 +145,14 @@ internal fun EntryProviderScope<NavKey>.profileEntryBuilder(
             onProfileInsightClick = {
                 navigate(
                     Route.Profile.Insight(
+                        accountType = args.accountType,
+                        userKey = it,
+                    )
+                )
+            },
+            onProfileShareClick = {
+                navigate(
+                    Route.Profile.ShareSheet(
                         accountType = args.accountType,
                         userKey = it,
                     )
@@ -204,6 +220,14 @@ internal fun EntryProviderScope<NavKey>.profileEntryBuilder(
                     )
                 )
             },
+            onProfileShareClick = {
+                navigate(
+                    Route.Profile.ShareSheet(
+                        accountType = args.accountType,
+                        userKey = it,
+                    )
+                )
+            },
         )
     }
     
@@ -246,6 +270,18 @@ internal fun EntryProviderScope<NavKey>.profileEntryBuilder(
             accountType = args.accountType,
             userKey = args.userKey,
             navigate = navigate,
+        )
+    }
+
+    entry<Route.Profile.ShareSheet>(
+        metadata = BottomSheetSceneStrategy.bottomSheet(
+            expandFully = true,
+        )
+    ) { args ->
+        ProfileShareSheet(
+            userKey = args.userKey,
+            accountType = args.accountType,
+            onBack = onBack,
         )
     }
 

@@ -305,8 +305,6 @@
     <string name="settings_about_telegram">Telegram</string>
     <string name="settings_about_telegram_description">Sluit by ons Telegram-groep aan</string>
     <string name="settings_about_discord_description">Sluit by ons Discord-bediener aan</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Help ons om Flare te vertaal</string>
     <string name="settings_privacy_policy">Privaatheidsbeleid</string>
     <string name="users">Gebruikers</string>
     <string name="statues">Plasings</string>
@@ -765,7 +763,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Outomaties</string>
     <string name="image_translation_original_file">Oorspronklike lêer</string>
-    <string name="image_translation_use_shared_description">Deel die diens-URL, API-sleutel en model. Die diens en model moet beelduitvoer ondersteun. Skakel af om beeldvertaling afsonderlik te konfigureer.</string>
+    <string name="image_translation_use_shared_description">Deel die diens-URL, API-sleutel, model en pasgemaakte opskrifte. Die diens en model moet beelduitvoer ondersteun. Skakel af om beeldvertaling afsonderlik te konfigureer.</string>
     <string name="plugin_permission_cookie">Lees koekie %2$s van %1$s</string>
     <string name="plugin_ai_create">Skep met Flare KI</string>
     <string name="plugin_ai_untitled">Nuwe plugin</string>
@@ -846,6 +844,8 @@
     <string name="plugin_install_github">Installeer van GitHub</string>
     <string name="plugin_github_repository">GitHub repositorium URL</string>
     <string name="plugin_check_updates">Soek na opdaterings</string>
+    <string name="plugin_local_import">Plaaslik ingevoer</string>
+    <string name="plugin_updated_at">Bygewerk op %1$s</string>
     <string name="plugin_update">Opdateer</string>
     <string name="plugin_up_to_date">GitHub plugins is op datum</string>
     <string name="plugin_warning_source_changed">Hierdie installasie verander die plugin-bron</string>

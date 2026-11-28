@@ -56,6 +56,8 @@ import compose.icons.fontawesomeicons.solid.Pen
 import compose.icons.fontawesomeicons.solid.UserPlus
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.ui.component.AvatarComponent
+import dev.dimension.flare.ui.component.CardExpanderItem
+import dev.dimension.flare.ui.component.Expander
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareScrollBar
 import dev.dimension.flare.ui.component.InAppNotificationComponent
@@ -80,12 +82,12 @@ import dev.dimension.flare.ui.presenter.invoke
 import dev.dimension.flare.ui.route.Route
 import dev.dimension.flare.ui.route.Router
 import dev.dimension.flare.ui.route.TopLevelBackStack
+import dev.dimension.flare.ui.screen.manga.DesktopMangaReaderWindowCoordinator
+import dev.dimension.flare.ui.screen.manga.LocalDesktopMangaReaderWindowCoordinator
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.background.Layer
 import io.github.composefluent.component.Badge
 import io.github.composefluent.component.Button
-import io.github.composefluent.component.CardExpanderItem
-import io.github.composefluent.component.Expander
 import io.github.composefluent.component.FlyoutContainer
 import io.github.composefluent.component.FlyoutPlacement
 import io.github.composefluent.component.Icon
@@ -100,7 +102,13 @@ import org.jetbrains.compose.resources.stringResource
 @Composable
 internal fun WindowScope.FlareApp(backButtonState: NavigationBackButtonState) {
     val uriHandler = LocalUriHandler.current
-    val state by producePresenter { presenter(uriHandler = uriHandler) }
+    val mangaReaderCoordinator = LocalDesktopMangaReaderWindowCoordinator.current
+    val state by producePresenter {
+        presenter(
+            uriHandler = uriHandler,
+            mangaReaderCoordinator = mangaReaderCoordinator,
+        )
+    }
     state.tabs.onSuccess { tabs ->
         state.topLevelBackStack.onSuccess { topLevelBackStack ->
             LaunchedEffect(topLevelBackStack) {
@@ -618,101 +626,131 @@ private val HomeTabsPresenter.State.HomeTabs.icon: ImageVector
         }
 
 @Composable
-private fun presenter(uriHandler: UriHandler) =
-    run {
-        val activeAccountPresenter =
-            remember {
-                dev.dimension.flare.ui.presenter.home
-                    .ActiveAccountPresenter()
-            }.invoke()
-        val secondaryTabsPresenter = remember { SecondaryTabsPresenter() }.invoke()
-        val loginState = remember { LoggedInPresenter() }.invoke()
-        val canComposeState = remember { CanComposePresenter() }.invoke()
-        val tabState = remember { HomeTabsPresenter() }.invoke()
-        val allNotificationState = remember { AllNotificationBadgePresenter() }.invoke()
-        val scrollToTopRegistry =
-            remember {
-                ScrollToTopRegistry()
+private fun presenter(
+    uriHandler: UriHandler,
+    mangaReaderCoordinator: DesktopMangaReaderWindowCoordinator?,
+) = run {
+    val currentMangaReaderCoordinator by rememberUpdatedState(mangaReaderCoordinator)
+    val activeAccountPresenter =
+        remember {
+            dev.dimension.flare.ui.presenter.home
+                .ActiveAccountPresenter()
+        }.invoke()
+    val secondaryTabsPresenter = remember { SecondaryTabsPresenter() }.invoke()
+    val loginState = remember { LoggedInPresenter() }.invoke()
+    val canComposeState = remember { CanComposePresenter() }.invoke()
+    val tabState = remember { HomeTabsPresenter() }.invoke()
+    val allNotificationState = remember { AllNotificationBadgePresenter() }.invoke()
+    val scrollToTopRegistry =
+        remember {
+            ScrollToTopRegistry()
+        }
+    val topLevelBackStack =
+        remember(tabState.tabs) {
+            tabState.tabs.map {
+                TopLevelBackStack(
+                    getRoute(it.first()),
+                    topLevelRoutes = it.map { getRoute(it) },
+                )
             }
-        val topLevelBackStack =
-            remember(tabState.tabs) {
-                tabState.tabs.map {
-                    TopLevelBackStack(
-                        getRoute(it.first()),
-                        topLevelRoutes = it.map { getRoute(it) },
-                    )
-                }
-            }
-        val deeplinkPresenter =
-            remember(topLevelBackStack) {
-                DeepLinkPresenter(
-                    onRoute = {
-                        val route = Route.from(it)
-                        if (route != null) {
-                            when (route) {
-                                is Route.UrlRoute -> {
-                                    uriHandler.openUri(route.url)
-                                }
+        }
+    val deeplinkPresenter =
+        remember(topLevelBackStack) {
+            DeepLinkPresenter(
+                onRoute = {
+                    val route = Route.from(it)
+                    if (route != null) {
+                        when (route) {
+                            is Route.UrlRoute -> {
+                                uriHandler.openUri(route.url)
+                            }
 
-                                else -> {
+                            is Route.Manga.Reader -> {
+                                val coordinator = currentMangaReaderCoordinator
+                                if (coordinator != null) {
+                                    coordinator.open(route)
+                                } else {
                                     topLevelBackStack.takeSuccess()?.push(route)
                                 }
                             }
+
+                            else -> {
+                                topLevelBackStack.takeSuccess()?.push(route)
+                            }
                         }
-                    },
-                    onLink = {
-                        uriHandler.openUri(it)
-                    },
-                )
-            }.invoke()
-
-        object :
-            LoggedInState by loginState,
-            HomeTabsPresenter.State by tabState,
-            SecondaryTabsPresenter.State by secondaryTabsPresenter,
-            UserState by activeAccountPresenter {
-            val notificationState = allNotificationState
-            val canComposeState = canComposeState.canCompose
-            val scrollToTopRegistry = scrollToTopRegistry
-            val deeplinkPresenter = deeplinkPresenter
-            val topLevelBackStack = topLevelBackStack
-
-            fun navigate(route: Route) {
-                when (route) {
-                    is Route.UrlRoute -> {
-                        uriHandler.openUri(route.url)
                     }
+                },
+                onLink = {
+                    uriHandler.openUri(it)
+                },
+            )
+        }.invoke()
 
-                    else -> {
+    object :
+        LoggedInState by loginState,
+        HomeTabsPresenter.State by tabState,
+        SecondaryTabsPresenter.State by secondaryTabsPresenter,
+        UserState by activeAccountPresenter {
+        val notificationState = allNotificationState
+        val canComposeState = canComposeState.canCompose
+        val scrollToTopRegistry = scrollToTopRegistry
+        val deeplinkPresenter = deeplinkPresenter
+        val topLevelBackStack = topLevelBackStack
+
+        fun navigate(route: Route) {
+            when (route) {
+                is Route.UrlRoute -> {
+                    uriHandler.openUri(route.url)
+                }
+
+                is Route.Manga.Reader -> {
+                    val coordinator = currentMangaReaderCoordinator
+                    if (coordinator != null) {
+                        coordinator.open(route)
+                    } else {
                         topLevelBackStack.takeSuccess()?.push(route)
                     }
                 }
-            }
 
-            fun navigate(shortcut: SecondaryTabsPresenter.Tab) {
-                val route = getDirection(shortcut)
-                if (route != null) {
-                    navigate(route)
+                else -> {
+                    topLevelBackStack.takeSuccess()?.push(route)
                 }
             }
+        }
 
-            fun replace(route: Route) {
-                when (route) {
-                    is Route.UrlRoute -> {
-                        uriHandler.openUri(route.url)
-                    }
+        fun navigate(shortcut: SecondaryTabsPresenter.Tab) {
+            val route = getDirection(shortcut)
+            if (route != null) {
+                navigate(route)
+            }
+        }
 
-                    else -> {
+        fun replace(route: Route) {
+            when (route) {
+                is Route.UrlRoute -> {
+                    uriHandler.openUri(route.url)
+                }
+
+                is Route.Manga.Reader -> {
+                    val coordinator = currentMangaReaderCoordinator
+                    if (coordinator != null) {
+                        coordinator.open(route)
+                    } else {
                         topLevelBackStack.takeSuccess()?.replace(route)
                     }
                 }
-            }
 
-            fun goBack() {
-                topLevelBackStack.takeSuccess()?.pop()
+                else -> {
+                    topLevelBackStack.takeSuccess()?.replace(route)
+                }
             }
         }
+
+        fun goBack() {
+            topLevelBackStack.takeSuccess()?.pop()
+        }
     }
+}
 
 private class ScrollToTopRegistry {
     private val callbacks = mutableSetOf<() -> Unit>()

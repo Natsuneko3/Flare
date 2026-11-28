@@ -108,8 +108,6 @@
     <string name="settings_about_telegram_description">Sluit je aan bij onze Telegram-groep</string>
     <string name="settings_about_discord_description">Sluit je aan bij onze Discord-server</string>
     <string name="settings_about_line_description">Sluit je aan bij onze Line-groep</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Help ons Flare te vertalen</string>
     <string name="settings_privacy_policy">Privacybeleid</string>
     <string name="settings_side_panel">Zijpaneel aanpassen</string>
     <string name="settings_side_panel_description">Pas het zijpaneel aan</string>
@@ -813,7 +811,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">Automatisch</string>
     <string name="image_translation_original_file">Origineel bestand</string>
-    <string name="image_translation_use_shared_description">De service-URL, API-sleutel en het model delen. De service en het model moeten beeldoutput ondersteunen. Schakel uit om beeldvertaling afzonderlijk in te stellen.</string>
+    <string name="image_translation_use_shared_description">De service-URL, de API-sleutel, het model en de aangepaste headers delen. De service en het model moeten beeldoutput ondersteunen. Schakel uit om beeldvertaling afzonderlijk in te stellen.</string>
     <string name="plugin_permission_cookie">Cookie %2$s lezen van %1$s</string>
     <string name="plugin_ai_create">Creëren met Flare AI</string>
     <string name="plugin_ai_untitled">Nieuwe plugin</string>
@@ -935,6 +933,8 @@
     <string name="plugin_warning_compatibility">Compatibiliteitswaarschuwing</string>
     <string name="plugin_install_github">Installeer vanaf GitHub</string>
     <string name="plugin_check_updates">Op updates controleren</string>
+    <string name="plugin_local_import">Lokale import</string>
+    <string name="plugin_updated_at">Bijgewerkt op %1$s</string>
     <string name="plugin_warning_source_changed">Deze installatie wijzigt de plugin-bron</string>
     <string name="plugin_warning_tag_moved">Dit tag verwijst nu naar een andere commit</string>
     <string name="plugin_unverified_github_warning">Deze GitHub plugin is niet geverifieerd. Installeer deze alleen als u de auteur vertrouwt.</string>

@@ -1,6 +1,5 @@
 # Flare
 [![license](https://img.shields.io/github/license/flaresocialapp/Flare)](https://github.com/flaresocialapp/Flare/blob/master/LICENSE)
-[![Crowdin](https://badges.crowdin.net/flareapp/localized.svg)](https://crowdin.com/project/flareapp)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/flaresocialapp/Flare)
 [![Telegram](https://img.shields.io/badge/-telegram-blue?logo=telegram&color=white)](https://t.me/+fEJ2UYnOlVM0NmM1)
 [![Discord](https://img.shields.io/badge/-discord-blue?logo=discord&color=white)](https://discord.gg/De9NhXBryT)

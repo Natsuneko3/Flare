@@ -1,33 +1,6 @@
+import Foundation
 import KotlinSharedUI
 import SwiftUI
-
-final class MacComposePrefill: Hashable {
-    let id = UUID()
-    let text: String
-    let cursorPosition: Int
-    let imageData: Data
-    let fileName: String
-
-    init(
-        text: String,
-        cursorPosition: Int,
-        imageData: Data,
-        fileName: String
-    ) {
-        self.text = text
-        self.cursorPosition = cursorPosition
-        self.imageData = imageData
-        self.fileName = fileName
-    }
-
-    static func == (lhs: MacComposePrefill, rhs: MacComposePrefill) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-}
 
 struct MacComposeWindowRequest: Identifiable {
     let id: UUID

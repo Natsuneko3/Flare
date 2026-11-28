@@ -109,6 +109,7 @@ public data class HttpResponseV1(
 @Serializable
 public enum class PluginErrorCodeV1 {
     AuthenticationRequired,
+    ChallengeRequired,
     NotFound,
     Validation,
     RateLimited,
@@ -120,9 +121,16 @@ public enum class PluginErrorCodeV1 {
 }
 
 @Serializable
+public data class PluginChallengeV1(
+    val url: String,
+    val seedCookies: List<HttpCookieV1> = emptyList(),
+)
+
+@Serializable
 public data class PluginErrorV1(
     val code: PluginErrorCodeV1,
     val message: WireTextV1,
     val retryAfterSeconds: Long? = null,
     val remoteCode: String? = null,
+    val challenge: PluginChallengeV1? = null,
 )

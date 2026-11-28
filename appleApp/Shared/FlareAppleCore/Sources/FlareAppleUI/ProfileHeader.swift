@@ -27,6 +27,7 @@ private extension FollowButtonState {
 
 public struct CommonProfileHeader: View {
     @Environment(\.timelineAppearance.timelineDisplayMode) private var timelineDisplayMode
+    @Environment(\.profileUsesPlainStyle) private var profileUsesPlainStyle
     @Environment(\.openURL) private var openURL
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -37,6 +38,7 @@ public struct CommonProfileHeader: View {
     private let followButtonState: UiState<FollowButtonState>
     private let isMe: UiState<KotlinBoolean>
     private let bannerTopInset: CGFloat
+    private let showsFollowButton: Bool
     private let onFollowClick: (FollowButtonState) -> Void
     private let onFollowingClick: () -> Void
     private let onFansClick: () -> Void
@@ -47,6 +49,7 @@ public struct CommonProfileHeader: View {
         followButtonState: UiState<FollowButtonState>,
         isMe: UiState<KotlinBoolean>,
         bannerTopInset: CGFloat = 0,
+        showsFollowButton: Bool = true,
         onFollowClick: @escaping (FollowButtonState) -> Void,
         onFollowingClick: @escaping () -> Void,
         onFansClick: @escaping () -> Void
@@ -56,6 +59,7 @@ public struct CommonProfileHeader: View {
         self.followButtonState = followButtonState
         self.isMe = isMe
         self.bannerTopInset = bannerTopInset
+        self.showsFollowButton = showsFollowButton
         self.onFollowClick = onFollowClick
         self.onFollowingClick = onFollowingClick
         self.onFansClick = onFansClick
@@ -142,7 +146,7 @@ public struct CommonProfileHeader: View {
                     VStack {
                         Spacer()
                             .frame(height: headerHeight)
-                        if case .success(let data) = onEnum(of: isMe), !data.data.boolValue {
+                        if showsFollowButton, case .success(let data) = onEnum(of: isMe), !data.data.boolValue {
                             switch onEnum(of: followButtonState) {
                             case .success(let buttonState):
                                 VStack(spacing: 4) {
@@ -188,10 +192,11 @@ public struct CommonProfileHeader: View {
     }
 
     private var shouldWrapContentInCard: Bool {
+        guard !profileUsesPlainStyle else { return false }
         #if os(iOS)
-        horizontalSizeClass == .compact && timelineDisplayMode != .plain
+        return horizontalSizeClass == .compact && timelineDisplayMode != .plain
         #else
-        timelineDisplayMode != .plain
+        return timelineDisplayMode != .plain
         #endif
     }
 
@@ -224,8 +229,8 @@ public struct CommonProfileHeader: View {
             alignment: .leading,
             spacing: 8
         ) {
-            RichText(text: user.name)
-                .font(.headline)
+            RichText(text: user.name, usesDisplayNameFont: true)
+                .font(.title2.weight(.bold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             HStack {
@@ -258,6 +263,7 @@ public struct CommonProfileHeader: View {
             }
             if let desc = user.description_ {
                 RichText(text: desc)
+                    .lineSpacing(1)
                     .textSelection(.enabled)
             }
 
@@ -488,6 +494,7 @@ public struct FieldsView: View {
                         .flareSecondaryText()
                     if let richText = fields[key] {
                         RichText(text: richText)
+                            .lineSpacing(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .font(.body)
                     }

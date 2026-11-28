@@ -33,6 +33,51 @@ final class TimelineReadingScrollViewTests: XCTestCase {
         })
     }
 
+    func testRepliesKeepTheirOffsetAsThePostMovesBetweenPanes() async throws {
+        _ = NSApplication.shared
+        let model = Model(columns: 1)
+        model.rows = (1..<30).map { post($0) }
+        let header = post(0)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 360),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: AdaptiveSplitContainer(
+            isUnfoldedSplitEligible: { $0.width >= 840 },
+            primaryWidthStrategy: .postDetailDefault,
+            separator: { _ in Color.clear },
+            primaryPane: { _ in Color.clear },
+            secondaryPane: { mode in
+                let items = mode.isSplit ? model.rows : [header] + model.rows
+                TimelineReadingScrollView(itemKeys: items.map(\.stableItemKey), gaps: [], isEmpty: false) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(items, id: \.stableItemKey) { item in
+                            Color.clear.frame(height: item == header ? 180 : 100)
+                                .timelineReadingItem(item)
+                                .background {
+                                    if item.stableItemKey == "post-8" { AnchorProbe { model.anchorView = $0 } }
+                                }
+                        }
+                    }
+                }
+            }
+        ))
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        await settle(window)
+        let scroll = try XCTUnwrap(descendants(try XCTUnwrap(window.contentView)).compactMap { $0 as? NSScrollView }.first)
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 910))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        await settle(window)
+        let offset = try XCTUnwrap(model.displayedOffset)
+        XCTAssertEqual(offset, -30, accuracy: 1)
+
+        for width: CGFloat in [900, 800] {
+            window.setContentSize(CGSize(width: width, height: 360))
+            await settle(window)
+            XCTAssertEqual(try XCTUnwrap(model.displayedOffset), offset, accuracy: 1)
+        }
+    }
+
     private func checkGap(closesGap: Bool = false, userScroll: Bool = false,
                           replacesWindow: Bool = false, emptyWindow: Bool = false, clearsList: Bool = false,
                           columns: Int = 1, insertedCount: Int = 2,
@@ -198,8 +243,8 @@ final class TimelineReadingScrollViewTests: XCTestCase {
         var restorePosition: TimelineReadingPosition?
         let hasNewContent = false
         let isAtLatest = false
-        func viewportChanged(index: Int32, offset: Double) {}
-        func positionChanged(index: Int32, offset: Double) {}
+        func viewportChanged(index: Int32, offset: Double, itemKey: String?) {}
+        func positionChanged(index: Int32, offset: Double, itemKey: String?) {}
         func restorationFinished() { restorePosition = nil }
         func restoreCurrentPosition() {}
         func savePosition() {}

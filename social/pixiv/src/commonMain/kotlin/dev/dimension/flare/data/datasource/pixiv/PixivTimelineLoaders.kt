@@ -137,6 +137,22 @@ internal class PixivUserTimelineLoader(
     }
 }
 
+internal class PixivUserBookmarkTimelineLoader(
+    service: PixivService,
+    accountKey: MicroBlogKey,
+    private val userKey: MicroBlogKey,
+) : PixivTimelineLoader(service, accountKey) {
+    override val pagingKey: String = "pixiv_user_bookmark_public_${userKey}_$accountKey"
+
+    override suspend fun loadFirstPage(pageSize: Int): PixivIllustListResponse {
+        val userId = userKey.id.toLongOrNull() ?: return PixivIllustListResponse()
+        return service.userBookmarkedIllusts(
+            userId = userId,
+            restrict = PixivRestrict.Public,
+        )
+    }
+}
+
 internal class PixivStatusDetailLoader(
     private val service: PixivService,
     private val accountKey: MicroBlogKey,

@@ -34,7 +34,11 @@ final class FeedUIView: UIView, ManualLayoutMeasurable, TimelineHeightProviding 
         return l
     }()
 
-    private let translation = TranslateStatusStateView()
+    private let translation: TranslateStatusStateView = {
+        let v = TranslateStatusStateView()
+        v.stateIconMatchesIconSize = true
+        return v
+    }()
 
     private let dateLabel: DateTimeUILabel = {
         let l = DateTimeUILabel()
@@ -81,6 +85,19 @@ final class FeedUIView: UIView, ManualLayoutMeasurable, TimelineHeightProviding 
         let tap = UITapGestureRecognizer(target: self, action: #selector(onTap))
         addGestureRecognizer(tap)
         isAccessibilityElement = true
+        syncTranslationIconSize()
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: FeedUIView, _) in
+            view.syncTranslationIconSize()
+            view.invalidateIntrinsicContentSize()
+            view.setNeedsLayout()
+        }
+    }
+
+    private func syncTranslationIconSize() {
+        let footnote = UIFont.preferredFont(forTextStyle: .footnote, compatibleWith: traitCollection)
+        translation.iconSize = footnote.pointSize
+        translation.invalidateIntrinsicContentSize()
+        translation.setNeedsLayout()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -331,6 +348,7 @@ final class FeedUIView: UIView, ManualLayoutMeasurable, TimelineHeightProviding 
 
         if data.translationDisplayState != .hidden {
             translation.isHidden = false
+            syncTranslationIconSize()
             translation.set(state: data.translationDisplayState)
         } else {
             translation.isHidden = true

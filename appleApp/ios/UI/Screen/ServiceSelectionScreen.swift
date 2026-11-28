@@ -462,8 +462,13 @@ private struct LoginFlowView: View {
                 if webCookie.probes.isEmpty, webLogin?.url == webCookie.url { continue }
                 closeWebLogin()
                 let presenter = presenter
-                webLogin = WebLoginSession(url: webCookie.url, cookieCheck: webCookieCheck) { cookies in
-                    let snapshot = loginCookieSnapshot(cookies: cookies, probes: webCookie.probes, fallbackUrl: webCookie.url)
+                webLogin = WebLoginSession(url: webCookie.url, cookieCheck: webCookieCheck) { cookies, userAgent in
+                    let snapshot = loginCookieSnapshot(
+                        cookies: cookies,
+                        probes: webCookie.probes,
+                        fallbackUrl: webCookie.url,
+                        userAgent: userAgent
+                    )
                     return (try? await presenter.state.checkCookies(snapshot: snapshot)) == true
                 }
             }

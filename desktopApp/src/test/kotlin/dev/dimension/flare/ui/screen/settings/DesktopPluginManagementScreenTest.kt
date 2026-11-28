@@ -12,11 +12,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -27,11 +33,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.common.FileSystemUtilsExt
@@ -49,8 +58,12 @@ import dev.dimension.flare.feature.plugin.PluginSubsystemV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginRepositoryV1
 import dev.dimension.flare.feature.plugin.github.GitHubPluginVersionV1
 import dev.dimension.flare.feature.plugin.management.PluginManagementItemV1
+import dev.dimension.flare.feature.plugin.management.PluginManagementPresenterV1
 import dev.dimension.flare.feature.plugin.management.PluginManagementStateV1
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplace
+import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceCatalogV1
+import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceEntryV1
+import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplaceStateV1
 import dev.dimension.flare.ui.component.LocalExternalTextResolver
 import dev.dimension.flare.ui.component.LocalTimelineAppearance
 import dev.dimension.flare.ui.model.UiText
@@ -66,6 +79,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -74,9 +88,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.koin.core.context.stopKoin
 import org.koin.plugin.module.dsl.startKoin
+import java.awt.Color
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Locale
 import javax.imageio.ImageIO
 
 class DesktopPluginManagementScreenTest {
@@ -93,6 +109,21 @@ class DesktopPluginManagementScreenTest {
             "png",
             File(System.getProperty("java.io.tmpdir"), "flare-marketplace-desktop-$page.png"),
         )
+    }
+
+    private fun waitForIcon(
+        name: String,
+        path: String,
+    ) {
+        val original = ImageIO.read(File(path))
+        val expected = Color(original.getRGB(original.width / 3, original.height / 3))
+        val node = compose.onNodeWithContentDescription(name)
+        compose.waitUntil(timeoutMillis = 5_000) {
+            val image = node.captureToImage().toAwtImage()
+            val actual = Color(image.getRGB(image.width / 3, image.height / 3))
+            // This opaque part of each logo distinguishes Coil's decoded image from the initial empty frame.
+            actual.green in expected.green - 8..expected.green + 8
+        }
     }
 
     @Before
@@ -164,7 +195,20 @@ class DesktopPluginManagementScreenTest {
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodes(hasText("知乎")).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Install").assertIsDisplayed()
+        val install =
+            compose
+                .onNodeWithText("Install")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        val menu = compose.onNodeWithContentDescription("More: 知乎").fetchSemanticsNode().boundsInRoot
+        assertTrue(install.right <= menu.left)
+        assertEquals(install.center.y, menu.center.y, 1f)
+        compose.onNodeWithText("anamaxlec/flare-zhihu-plugin").assertIsDisplayed().performFirstLinkClick()
+        compose.runOnIdle {
+            assertEquals("https://github.com/anamaxlec/flare-zhihu-plugin", openedUrl)
+            openedUrl = null
+        }
         compose.onNodeWithText("View repository").assertDoesNotExist()
         compose.onNodeWithContentDescription("More: 知乎").performClick()
         compose.onNodeWithText("View repository").performClick()
@@ -188,6 +232,198 @@ class DesktopPluginManagementScreenTest {
         compose.onNodeWithContentDescription("Go back").performClick()
         compose.onNodeWithText("No plugins installed").assertIsDisplayed()
         compose.onNodeWithContentDescription("Marketplace").assertIsDisplayed()
+    }
+
+    @Test
+    fun storeAndInstalledShowTheirOwnReleaseAndLocalProvenance() {
+        val commit = "90887cc6ebd88415d3b1b75037bee489fade7fcd"
+        val latest =
+            PluginMarketplaceEntryV1(
+                id = "dev.maxlec.zhihu",
+                name = "知乎",
+                description = "知乎热榜、推荐、关注动态与回答/文章详情",
+                repository = "https://github.com/anamaxlec/flare-zhihu-plugin",
+                icon = "https://raw.githubusercontent.com/anamaxlec/flare-zhihu-plugin/$commit/assets/icon.png",
+                version = "0.1.11",
+                updatedAt = "2026-11-11",
+                commitSha = commit,
+            )
+        val icon = File("../feature/plugin/test-fixtures/marketplace/zhihu.png").readBytes()
+        val catalog = Json.encodeToString(PluginMarketplaceCatalogV1(1, listOf(latest)))
+        val market =
+            PluginMarketplace(
+                koinGet<AppFileStore>(),
+                MockEngine { request ->
+                    if (request.url.toString() == latest.icon) respond(icon) else respond(catalog)
+                },
+            )
+        val presenter = PluginManagementPresenterV1(subsystem, scope, marketplace = market)
+        val oldLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.SIMPLIFIED_CHINESE)
+            presenter.loadMarketplace()
+            val state = runBlocking { withTimeout(5_000) { presenter.state.first { it.marketplace.loaded } } }
+            val installed =
+                PluginManagementItemV1(
+                    pluginId = latest.id,
+                    platformId = "Zhihu",
+                    nameText = UiText.Raw(latest.name),
+                    version = "0.1.8",
+                    updatedAt = "2026-11-09",
+                    sourceUrl = latest.repository,
+                    sourceCommitSha = "557b6195db413fecc65468195c6646c668b64d64",
+                    availableUpdate = GitHubPluginVersionV1("v0.1.11", "0.1.11", commit),
+                    iconPath = runBlocking { requireNotNull(presenter.marketplaceIcon(latest.id)) },
+                )
+            val local =
+                PluginManagementItemV1(
+                    pluginId = "dev.dimension.flare.sample.pixelfed",
+                    platformId = "Pixelfed",
+                    nameText = UiText.Raw("Pixelfed 示例插件"),
+                    version = "0.1.0",
+                    sourceUrl = null,
+                    availableUpdate = null,
+                    iconPath = File("../feature/plugin/sdk/skill/flare-plugin/examples/pixelfed/assets/icon.png").absolutePath,
+                )
+            val screenState = state.copy(plugins = listOf(installed, local))
+            var marketplace by mutableStateOf(true)
+            compose.setContent {
+                if (visible) {
+                    CompositionLocalProvider(
+                        LocalComposeWindow provides null,
+                        LocalTimelineAppearance provides TimelineAppearance.Default,
+                    ) {
+                        FlareTheme(isDarkTheme = false) {
+                            Box(Modifier.width(660.dp).height(434.dp)) {
+                                DesktopPluginManagementContent(
+                                    screenState,
+                                    presenter,
+                                    subsystem,
+                                    onBack = { marketplace = false },
+                                    onCreateWithAI = {},
+                                    onOpenMarketplace = { marketplace = true },
+                                    marketplace = marketplace,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            compose.onNodeWithText(latest.repositoryFullName).assertIsDisplayed()
+            val release = compose.onNodeWithText("v0.1.11 · 更新于 2026年11月11日").assertIsDisplayed()
+            val title = compose.onNodeWithText(latest.name).fetchSemanticsNode().boundsInRoot
+            val manage = compose.onNodeWithText("管理").fetchSemanticsNode().boundsInRoot
+            val storeMore = compose.onNodeWithContentDescription("更多: 知乎").fetchSemanticsNode().boundsInRoot
+            assertTrue("Manage must precede More", manage.right <= storeMore.left)
+            assertEquals(manage.center.y, storeMore.center.y, 1f)
+            val releaseBounds = release.fetchSemanticsNode().boundsInRoot
+            assertTrue(releaseBounds.right < manage.left)
+            assertEquals((title.top + releaseBounds.bottom) / 2, storeMore.center.y, 1f)
+            compose.onNodeWithText("v0.1.8", substring = true).assertDoesNotExist()
+            waitForIcon(latest.name, installed.iconPath)
+            screenshot("catalog-release")
+            compose.onNodeWithText("管理").performClick()
+            compose.onRoot().performMouseInput { moveTo(bottomCenter) }
+            compose.onNodeWithText("更新").assertIsDisplayed()
+            compose.onNodeWithText("v0.1.8 · 更新于 2026年11月9日").assertIsDisplayed()
+            compose.onNodeWithText("v0.1.11", substring = true).assertDoesNotExist()
+            compose.onNodeWithText("本地导入").assertIsDisplayed()
+            compose.onNodeWithText("v0.1.0").assertIsDisplayed()
+            val update = compose.onNodeWithText("更新").fetchSemanticsNode().boundsInRoot
+            val remoteMore = compose.onNodeWithContentDescription("更多: 知乎").fetchSemanticsNode().boundsInRoot
+            val localMore = compose.onNodeWithContentDescription("更多: Pixelfed 示例插件").fetchSemanticsNode().boundsInRoot
+            assertTrue("Update must precede More", update.right <= remoteMore.left)
+            assertEquals(update.center.y, remoteMore.center.y, 1f)
+            assertEquals(remoteMore.right, localMore.right, 1f)
+            waitForIcon(latest.name, installed.iconPath)
+            waitForIcon("Pixelfed 示例插件", local.iconPath)
+            screenshot("installed-release")
+        } finally {
+            compose.runOnIdle { visible = false }
+            presenter.close()
+            market.close()
+            Locale.setDefault(oldLocale)
+        }
+    }
+
+    @Test
+    fun marketplaceDisambiguatesDuplicateNamesAndWrapsLongTitlesOnNarrowWindow() {
+        val notice =
+            "Plugins in the marketplace are created by third-party community developers and are not official. Review the source repository before installing."
+        val first =
+            PluginMarketplaceEntryV1(
+                id = "dev.maxlec.zhihu",
+                name = "知乎",
+                description = "知乎热榜、推荐、关注动态与回答/文章详情",
+                repository = "https://github.com/anamaxlec/flare-zhihu-plugin",
+                icon = "",
+            )
+        val second =
+            first.copy(
+                id = "dev.alice.zhihu",
+                description = "轻量只读版知乎时间线",
+                repository = "https://github.com/alice/flare-plugins?path=/plugins/zhihu-lite",
+            )
+        val longNamed =
+            first.copy(
+                id = "dev.bob.long",
+                name = "Super Long Community Plugin Title That Wraps Cleanly On Narrow Screens",
+                repository = "https://github.com/bob-developer/super-long-plugin",
+            )
+        var query by mutableStateOf("")
+        var state by mutableStateOf(
+            PluginManagementStateV1(
+                authoredPlugins = listOf(AuthoredPlugin(first.id, first.name)),
+                marketplace =
+                    PluginMarketplaceStateV1(
+                        plugins = listOf(first, second, longNamed),
+                        loaded = true,
+                    ),
+            ),
+        )
+        compose.setContent {
+            if (visible) {
+                FlareTheme(isDarkTheme = false) {
+                    Box(Modifier.width(448.dp).height(700.dp)) {
+                        PluginMarketplaceList(
+                            state = state,
+                            onInstall = {},
+                            onManage = {},
+                            onRefresh = {},
+                            onIcon = { null },
+                            query = query,
+                        )
+                    }
+                }
+            }
+        }
+        compose.onNodeWithText(notice).assertIsDisplayed()
+        compose.onNodeWithText("anamaxlec/flare-zhihu-plugin").assertIsDisplayed()
+        compose.onNodeWithText("alice/flare-plugins/plugins/zhihu-lite").assertIsDisplayed()
+        compose.onNodeWithText("bob-developer/super-long-plugin").assertIsDisplayed()
+        compose.onNodeWithText("Manage").assertIsDisplayed()
+        compose.onNodeWithText("Local plugin").assertIsDisplayed()
+        compose.onNodeWithContentDescription("More: ${longNamed.name}").assertIsDisplayed()
+        screenshot("store-duplicates")
+
+        compose.runOnIdle { query = "@alice" }
+        compose.onNodeWithText(notice).assertDoesNotExist()
+        compose.onNodeWithText("alice/flare-plugins/plugins/zhihu-lite").assertIsDisplayed()
+        compose.onNodeWithText("anamaxlec/flare-zhihu-plugin").assertDoesNotExist()
+
+        compose.runOnIdle {
+            query = ""
+            state =
+                state.copy(
+                    marketplace =
+                        PluginMarketplaceStateV1(
+                            plugins = emptyList(),
+                            loaded = true,
+                        ),
+                )
+        }
+        compose.onNodeWithText(notice).assertDoesNotExist()
+        compose.onNodeWithText("No plugins available yet").assertIsDisplayed()
     }
 
     @Test
@@ -263,14 +499,26 @@ class DesktopPluginManagementScreenTest {
         assertTrue(githubRow.bottom < fileRow.top)
         assertEquals(authoredRow.left, githubRow.left)
         assertEquals(githubRow.left, fileRow.left)
+        val localMenu = compose.onNodeWithContentDescription("More: File plugin").fetchSemanticsNode().boundsInRoot
+        listOf("Cancel update" to "More: AI plugin", "Update" to "More: GitHub plugin").forEach { (label, menuDescription) ->
+            val action = compose.onNodeWithText(label).fetchSemanticsNode().boundsInRoot
+            val menu = compose.onNodeWithContentDescription(menuDescription).fetchSemanticsNode().boundsInRoot
+            assertTrue(action.right <= menu.left)
+            assertEquals(action.center.y, menu.center.y, 1f)
+            assertEquals(localMenu.right, menu.right, 1f)
+        }
         compose.onNodeWithText(authored.id).assertDoesNotExist()
         compose.onNodeWithText("Local AI-generated plugin · Revision 0").assertIsDisplayed()
-        compose.onNodeWithText("GitHub · 1.0.0").assertIsDisplayed()
-        compose.onNodeWithText("File · 1.0.0").assertIsDisplayed()
-        compose.onNodeWithText("Update v1.1.0").assertIsDisplayed().performClick()
+        compose.onNodeWithText("example/plugin").assertIsDisplayed()
+        compose.onNodeWithText("Local import").assertIsDisplayed()
+        assertEquals(3, compose.onAllNodes(hasText("v1.0.0")).fetchSemanticsNodes().size)
+        compose.onNodeWithText("Update").assertIsDisplayed().performClick()
         assertEquals(github.pluginId, updated)
         compose.onNodeWithText("Cancel update").assertIsDisplayed().performClick()
         assertEquals(authored.id, cancelled)
+        compose.onNodeWithText("file.plugin").assertDoesNotExist()
+        compose.onNodeWithContentDescription("More: File plugin").performClick()
+        compose.onNodeWithText("file.plugin").assertIsDisplayed().assertIsNotEnabled()
     }
 
     @Test
@@ -484,6 +732,9 @@ class DesktopPluginManagementScreenTest {
     @Test
     fun localizedPluginNameAndActionsRemainVisibleWithLongRepositoryUrl() {
         val repository = GitHubPluginRepositoryV1(1, "Tlaster", "flare-plugin-github-e2e-20261028")
+        val path = "plugins/long-plugin-subdirectory-with-a-distinct-name"
+        val installedCommit = "a".repeat(40)
+        var openedUrl: String? = null
         val plugin =
             PluginManagementItemV1(
                 pluginId = "fixture.plugin",
@@ -491,7 +742,8 @@ class DesktopPluginManagementScreenTest {
                 nameText = UiText.ExternalRef("fixture.plugin", "name", "Fixture plugin"),
                 version = "1.0.0",
                 iconPath = root.resolve("missing-icon.png").toString(),
-                sourceUrl = repository.url,
+                sourceUrl = "${repository.url}?path=/$path",
+                sourceCommitSha = installedCommit,
                 availableUpdate = GitHubPluginVersionV1("v1.1.0", "1.1.0", "b".repeat(40)),
             )
         var removed: String? = null
@@ -499,8 +751,16 @@ class DesktopPluginManagementScreenTest {
         compose.setContent {
             if (visible) {
                 FlareTheme(isDarkTheme = false) {
-                    CompositionLocalProvider(LocalExternalTextResolver provides { "Localized plugin" }) {
-                        Box(Modifier.width(448.dp).height(800.dp).clipToBounds()) {
+                    CompositionLocalProvider(
+                        LocalExternalTextResolver provides { "Localized plugin" },
+                        LocalUriHandler provides
+                            object : UriHandler {
+                                override fun openUri(uri: String) {
+                                    openedUrl = uri
+                                }
+                            },
+                    ) {
+                        Box(Modifier.width(448.dp).clipToBounds()) {
                             PluginItem(
                                 plugin = plugin,
                                 busy = false,
@@ -515,7 +775,23 @@ class DesktopPluginManagementScreenTest {
         }
         compose.onNodeWithText("Localized plugin").assertIsDisplayed()
         compose.onNodeWithContentDescription("Localized plugin").assertExists()
-        compose.onNodeWithText("Update v1.1.0").assertIsDisplayed().performClick()
+        val source = compose.onNodeWithText("Tlaster/${repository.name}/$path")
+        val layouts = mutableListOf<TextLayoutResult>()
+        source.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertTrue(layouts.single().lineCount > 1)
+        assertTrue(!layouts.single().hasVisualOverflow)
+        val updateBounds = compose.onNodeWithText("Update").fetchSemanticsNode().boundsInRoot
+        val moreBounds = compose.onNodeWithContentDescription("More: Localized plugin").fetchSemanticsNode().boundsInRoot
+        assertTrue("The repository must end before Update", source.fetchSemanticsNode().boundsInRoot.right < updateBounds.left)
+        assertTrue(updateBounds.right <= moreBounds.left)
+        assertEquals(updateBounds.center.y, moreBounds.center.y, 1f)
+        val row = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        assertEquals(row.center.y, moreBounds.center.y, 1f)
+        source.assertIsDisplayed().performFirstLinkClick()
+        assertEquals("${repository.url}/tree/$installedCommit/$path", openedUrl)
+        val updateButton = compose.onNodeWithText("Update").assertIsDisplayed()
+        updateButton.performSemanticsAction(SemanticsActions.RequestFocus)
+        updateButton.performKeyInput { pressKey(Key.Enter) }
         assertEquals(plugin.pluginId, updated)
         compose.onNodeWithText("Uninstall").assertDoesNotExist()
         compose.onNodeWithContentDescription("More: Localized plugin").assertIsDisplayed().performClick()
@@ -546,6 +822,171 @@ class DesktopPluginManagementScreenTest {
         compose.onNodeWithText("GitHub repository URL").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithText("GitHub repository URL").assertDoesNotExist()
+    }
+
+    @Test
+    fun installReviewShowsDefaultTabsCheckboxOnlyForFreshGuestPluginsAndForwardsSelection() {
+        val confirmations = mutableListOf<Boolean>()
+        var review by mutableStateOf(
+            dev.dimension.flare.feature.plugin.management.PluginInstallReviewV1(
+                pluginId = "guest.manga.plugin",
+                platformId = "MangaGuest",
+                name = "Manga Guest",
+                version = "1.0.0",
+                capabilities = emptyList(),
+                permissions = emptyList(),
+                warnings = emptyList(),
+                sourceUrl = null,
+                defaultGuestTabTitles = listOf("Popular", "Latest"),
+            ),
+        )
+        compose.setContent {
+            if (visible) {
+                FlareTheme(isDarkTheme = false) {
+                    PluginInstallReviewDialog(
+                        review = review,
+                        busy = false,
+                        onConfirm = { confirmations += it },
+                        onCancel = {},
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Automatically add default tabs after installing").assertIsDisplayed()
+        compose.onNodeWithText("Popular, Latest").assertIsDisplayed()
+        compose.onNodeWithText("Install").performClick()
+        compose.runOnIdle { assertEquals(listOf(true), confirmations) }
+
+        compose.onNodeWithText("Automatically add default tabs after installing").performClick()
+        compose.onNodeWithText("Install").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(true, false), confirmations)
+            review = review.copy(pluginId = "non.guest.plugin", defaultGuestTabTitles = emptyList())
+        }
+        compose.onNodeWithText("Automatically add default tabs after installing").assertDoesNotExist()
+    }
+
+    @Test
+    fun installReviewDisclosesTimelinePostAccessPermission() {
+        compose.setContent {
+            if (visible) {
+                FlareTheme(isDarkTheme = false) {
+                    PluginInstallReviewDialog(
+                        review =
+                            dev.dimension.flare.feature.plugin.management.PluginInstallReviewV1(
+                                pluginId = "fixture.timeline",
+                                platformId = "",
+                                name = "Timeline Enricher",
+                                version = "1.0.0",
+                                capabilities = listOf("flare.timeline-processor/v1: processBatch"),
+                                warnings = emptyList(),
+                                sourceUrl = null,
+                                permissions =
+                                    listOf(
+                                        dev.dimension.flare.data.model.PluginPermission(
+                                            dev.dimension.flare.data.model.PluginPermissionType.TimelinePostAccess,
+                                            "*",
+                                        ),
+                                    ),
+                            ),
+                        busy = false,
+                        onConfirm = {},
+                        onCancel = {},
+                    )
+                }
+            }
+        }
+        compose
+            .onNodeWithText(
+                "• Read displayed timeline posts to attach widgets, which may send post content to permitted network origins",
+            ).assertIsDisplayed()
+    }
+
+    @Test
+    fun timelineProcessorToggleReflectsStateAndUpdatesPresenter() {
+        val pluginId =
+            runBlocking {
+                val authoring = koinGet<PluginAuthoring>()
+                val draft = authoring.create("timeline-processor-ui-fixture")
+                authoring.write(
+                    draft.id,
+                    draft.revision,
+                    mapOf(
+                        "manifest.json" to
+                            """
+                            {
+                              "apiVersion": 2,
+                              "id": "${draft.id}",
+                              "version": "1.0.0",
+                              "name": "Score Widgets",
+                              "permissions": {
+                                "httpOrigins": ["https://api.example.com"]
+                              },
+                              "timelineProcessor": {
+                                "apiVersion": 1
+                              }
+                            }
+                            """.trimIndent(),
+                        "plugin.js" to
+                            """
+                            defineFlareTimelineProcessorPlugin({
+                              async processBatch() { return { results: [] }; }
+                            });
+                            """.trimIndent(),
+                    ),
+                )
+                withTimeout(10_000) {
+                    subsystem.running.first { running -> draft.id in running.plugins }
+                }
+                draft.id
+            }
+
+        compose.setContent {
+            if (visible) {
+                CompositionLocalProvider(
+                    LocalComposeWindow provides null,
+                    LocalTimelineAppearance provides TimelineAppearance.Default,
+                ) {
+                    FlareTheme(isDarkTheme = false) {
+                        Box(Modifier.width(520.dp).height(660.dp)) {
+                            DesktopPluginManagementScreen(onBack = {})
+                        }
+                    }
+                }
+            }
+        }
+
+        compose.onNodeWithText("Score Widgets").assertIsDisplayed()
+        assertEquals(
+            1,
+            compose
+                .onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
+                .fetchSemanticsNodes()
+                .size,
+        )
+        // AI-authored timeline processors start disabled until explicitly toggled on.
+        val toggleNode = compose.onNodeWithText("Timeline post widgets")
+        toggleNode.assertIsDisplayed().assertIsOff()
+
+        toggleNode.performClick()
+        runBlocking {
+            withTimeout(5_000) {
+                koinGet<SettingsRepository>().appSettings.first {
+                    it.enabledTimelineProcessorPlugins[pluginId] == setOf("https://api.example.com")
+                }
+            }
+        }
+        toggleNode.assertIsOn()
+
+        toggleNode.performClick()
+        runBlocking {
+            withTimeout(5_000) {
+                koinGet<SettingsRepository>().appSettings.first {
+                    pluginId !in it.enabledTimelineProcessorPlugins
+                }
+            }
+        }
+        toggleNode.assertIsOff()
     }
 }
 

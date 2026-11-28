@@ -24,9 +24,16 @@ struct WebLoginScreen: View {
                 .task(id: ObjectIdentifier(route)) { [session] in
                     let viewModel = session.viewModel as? WebLoginViewModel
                     guard route.isValid, viewModel?.route !== route else { return }
-                    session.viewModel = WebLoginViewModel(onCookie: { [weak session] cookies in
-                        session?.checkCookies(cookies)
-                    }, url: session.url, route: route)
+                    session.viewModel = WebLoginViewModel(
+                        onCookie: { [weak session] cookies in
+                            session?.checkCookies(cookies)
+                        },
+                        onUserAgent: { [weak session] userAgent in
+                            session?.updateUserAgent(userAgent)
+                        },
+                        url: session.url,
+                        route: route
+                    )
                 }
             }
             .toolbar {
@@ -44,6 +51,7 @@ struct WebLoginScreen: View {
 @available(iOS 26.0, *)
 struct NavigationDecider: WebPage.NavigationDeciding {
     let onCookie: ([HTTPCookie]) -> Void
+    let onNavigationResponse: @MainActor () -> Void
     let route: WebViewProxyRoute
     func decidePolicy(for action: WebPage.NavigationAction, preferences: inout WebPage.NavigationPreferences) async -> WKNavigationActionPolicy {
         guard route.isValid else { return .cancel }
@@ -52,6 +60,7 @@ struct NavigationDecider: WebPage.NavigationDeciding {
     }
     func decidePolicy(for response: WebPage.NavigationResponse) async -> WKNavigationResponsePolicy {
         guard route.isValid else { return .cancel }
+        onNavigationResponse()
         getCookies()
         return webLoginHTTPSOrigin(response.response.url) == nil ? .cancel : .allow
     }
@@ -64,25 +73,43 @@ struct NavigationDecider: WebPage.NavigationDeciding {
 }
 
 @available(iOS 26.0, *)
+private final class WebLoginResponseCallback {
+    var handler: (@MainActor () -> Void)?
+}
+
+@available(iOS 26.0, *)
 final class WebLoginViewModel: WebLoginPageModel {
     let route: WebViewProxyRoute
     let page: WebPage
     private let decider: NavigationDecider
     private let navigationTask: Task<Void, Never>
+    private let onUserAgent: (String?) -> Void
+    private let responseCallback = WebLoginResponseCallback()
+    private var userAgentResolved = false
+    private var evaluatingUserAgent = false
+    private var userAgentTask: Task<Void, Never>?
 
     init(
         onCookie: @escaping ([HTTPCookie]) -> Void,
+        onUserAgent: @escaping (String?) -> Void,
         url: String,
         route: WebViewProxyRoute
     ) {
         self.route = route
+        self.onUserAgent = onUserAgent
         var conf = WebPage.Configuration()
         conf.defaultNavigationPreferences.allowsContentJavaScript = true
         conf.websiteDataStore = route.dataStore
-        self.decider = .init(onCookie: onCookie, route: route)
+        let responseCallback = self.responseCallback
+        self.decider = .init(
+            onCookie: onCookie,
+            onNavigationResponse: {
+                responseCallback.handler?()
+            },
+            route: route
+        )
         let page = WebPage(configuration: conf, navigationDecider: decider)
         self.page = page
-        page.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
         navigationTask = Task {
             guard !Task.isCancelled, route.isValid else { return }
             let navigations = page.navigations
@@ -95,8 +122,13 @@ final class WebLoginViewModel: WebLoginPageModel {
                 if !Task.isCancelled { route.report(error) }
             }
         }
+        responseCallback.handler = { [weak self] in
+            self?.triggerUserAgentRefresh()
+        }
+        triggerUserAgentRefresh()
         route.onStop { [weak self, weak page] in
             self?.navigationTask.cancel()
+            self?.userAgentTask?.cancel()
             page?.stopLoading()
             page?.load(html: "")
         }
@@ -104,10 +136,30 @@ final class WebLoginViewModel: WebLoginPageModel {
 
     deinit { navigationTask.cancel() }
 
+    private func triggerUserAgentRefresh() {
+        guard !userAgentResolved, !evaluatingUserAgent, route.isValid else { return }
+        userAgentTask = Task { @MainActor [weak self] in
+            await self?.refreshUserAgent()
+        }
+    }
+
+    func refreshUserAgent() async {
+        guard !userAgentResolved, !evaluatingUserAgent, route.isValid else { return }
+        evaluatingUserAgent = true
+        defer { evaluatingUserAgent = false }
+        guard let ua = try? await page.callJavaScript("return navigator.userAgent") as? String else { return }
+        let trimmed = ua.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        userAgentResolved = true
+        onUserAgent(trimmed)
+    }
+
     func pollCookies() async {
+        await refreshUserAgent()
         while !Task.isCancelled && route.isValid {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled && route.isValid else { return }
+            await refreshUserAgent()
             decider.getCookies()
         }
     }

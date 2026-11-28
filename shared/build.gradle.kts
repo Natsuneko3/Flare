@@ -61,6 +61,7 @@ kotlin {
             dependencies {
                 implementation(dependencies.platform(libs.compose.bom))
                 implementation(libs.compose.runtime)
+                implementation(libs.androidx.collection)
                 implementation(libs.bundles.kotlinx)
                 implementation(dependencies.platform(libs.koin.bom))
                 implementation(libs.koin.core)
@@ -97,11 +98,6 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.test)
                 implementation(libs.paging.testing)
                 implementation(libs.ktor.client.mock)
-            }
-        }
-        val jvmTest by getting {
-            dependencies {
-                implementation(projects.social.pixiv)
             }
         }
         val androidJvmMain by getting {

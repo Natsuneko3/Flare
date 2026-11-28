@@ -84,6 +84,105 @@ interface PlatformExtensionPluginDefinitionV1 {
   actions: Record<string, (request: PlatformExtensionRequestV1, context: PluginInvocationContextV1) => MaybePromise<PlatformExtensionResultV1>>;
 }
 
+type TimelineProcessTriggerV1 = "auto" | "manualRefresh";
+interface TimelineProcessInputItemV1 {
+  itemId: string;
+  platformId: string;
+  postKey: EntityKeyV1;
+  createdAt: string;
+  author?: { handle: string; displayName: string } | null;
+  contentPlain: string;
+  contentWarningPlain?: string | null;
+  links: string[];
+  card?: { url: string; title?: string | null; description?: string | null } | null;
+  sourceLanguages: string[];
+}
+interface TimelineProcessBatchRequestV1 {
+  locale: string;
+  trigger: TimelineProcessTriggerV1;
+  items: TimelineProcessInputItemV1[];
+}
+type WidgetCachePolicyV1 = "disk" | "memoryOnly" | "none";
+interface TimelineProcessCacheOptionsV1 {
+  policy?: WidgetCachePolicyV1;
+  /** Seconds before expiration (clamped to 15..604800). Omit or null to cache until post or plugin state changes. */
+  ttlSeconds?: number | null;
+}
+type WidgetToneV1 = "neutral" | "accent" | "positive" | "negative" | "warning";
+type WidgetGapV1 = "xs" | "sm" | "md";
+type WidgetAlignV1 = "start" | "center" | "end" | "spaceBetween";
+type WidgetTextStyleV1 = "title" | "subtitle" | "body" | "caption" | "code";
+type WidgetButtonStyleV1 = "secondary" | "primary";
+type WidgetCornerStyleV1 = "rounded" | "circle";
+type WidgetSparklineHeightV1 = "sm" | "md";
+type WidgetActionV1 =
+  | { type: "openUrl"; url: string }
+  | { type: "copy"; text: string; label?: string | null }
+  | { type: "refresh" };
+interface WidgetBadgeV1 {
+  text: string;
+  tone?: WidgetToneV1;
+}
+interface WidgetButtonV1 {
+  label: string;
+  tone?: WidgetToneV1;
+  style?: WidgetButtonStyleV1;
+  action: WidgetActionV1;
+}
+interface WidgetMatchupSideV1 {
+  name: string;
+  subtitle?: string | null;
+  /** HTTPS URL without credentials; requires permissions.mediaNetwork. */
+  iconUrl?: string | null;
+  score?: string | null;
+}
+interface WidgetBarSegmentV1 {
+  label: string;
+  valueText?: string | null;
+  weight: number;
+  tone?: WidgetToneV1;
+}
+interface WidgetKeyValueItemV1 {
+  label: string;
+  value: string;
+  tone?: WidgetToneV1;
+  action?: WidgetActionV1 | null;
+}
+type WidgetNodeV1 =
+  | { type: "text"; text: string; style?: WidgetTextStyleV1; tone?: WidgetToneV1; maxLines?: number | null; copyable?: boolean }
+  | { type: "row"; children: WidgetNodeV1[]; gap?: WidgetGapV1; align?: WidgetAlignV1; weight?: number | null }
+  | { type: "column"; children: WidgetNodeV1[]; gap?: WidgetGapV1; align?: WidgetAlignV1; weight?: number | null }
+  | { type: "stat"; label: string; value: string; delta?: string | null; deltaTone?: WidgetToneV1; subtext?: string | null; weight?: number | null }
+  | { type: "matchup"; left: WidgetMatchupSideV1; right: WidgetMatchupSideV1; status?: string | null; statusTone?: WidgetToneV1 }
+  | { type: "sparkline"; points: number[]; tone?: WidgetToneV1; minLabel?: string | null; maxLabel?: string | null; height?: WidgetSparklineHeightV1; weight?: number | null }
+  | { type: "segmentedBar"; segments: WidgetBarSegmentV1[] }
+  | { type: "keyValue"; items: WidgetKeyValueItemV1[] }
+  | { type: "badgeRow"; badges: WidgetBadgeV1[] }
+  | { type: "image"; url: string; alt?: string | null; aspectRatio?: number | null; cornerStyle?: WidgetCornerStyleV1; weight?: number | null }
+  | { type: "collapsible"; id: string; summary: string; defaultExpanded?: boolean; children: WidgetNodeV1[] }
+  | { type: "divider" };
+interface PluginWidgetCardV1 {
+  id: string;
+  title?: string | null;
+  badge?: WidgetBadgeV1 | null;
+  accentTone?: WidgetToneV1;
+  refreshable?: boolean;
+  cardAction?: WidgetActionV1 | null;
+  body: WidgetNodeV1[];
+  actions?: WidgetButtonV1[];
+}
+interface TimelineProcessItemResultV1 {
+  itemId: string;
+  cards: PluginWidgetCardV1[];
+  cache?: TimelineProcessCacheOptionsV1 | null;
+}
+interface TimelineProcessBatchResponseV1 {
+  results: TimelineProcessItemResultV1[];
+}
+interface TimelineProcessorPluginDefinitionV1 {
+  processBatch(request: TimelineProcessBatchRequestV1, context: PluginInvocationContextV1): MaybePromise<TimelineProcessBatchResponseV1>;
+}
+
 interface SocialPluginDefinitionV1 {
   detector?: { detect(request: DetectorRequestV1, context: PluginInvocationContextV1): MaybePromise<DetectorResultV1> };
   login?: Record<string, LoginServiceV1>;
@@ -91,6 +190,10 @@ interface SocialPluginDefinitionV1 {
     /** Optional read-only renegotiation using saved credentials, without invoking login. */
     accountCapabilities?: { negotiate(request: AccountCapabilitiesRequestV1, context: PluginInvocationContextV1): MaybePromise<AccountCapabilitiesV1> };
     accountHttp?: { authenticate(request: AccountHttpAuthenticationRequestV1, context: PluginInvocationContextV1): MaybePromise<Record<string, string>> };
+    /** API v2: account-only interactive WebView challenge recovery.
+     * Strongly recommended to pair with accountCapabilities so existing accounts can adopt it after upgrade without re-login.
+     */
+    sessionChallenge?: { complete(request: SessionChallengeCompleteRequestV1, context: PluginInvocationContextV1): MaybePromise<SessionChallengeResultV1> };
     /** API v2: transient native lists, independent of home timelines and tabCatalog. */
     timelinePage?: { load(request: TimelinePageLoadRequestV2, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>> };
     timeline?: { page(request: TimelinePageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>> };
@@ -106,6 +209,8 @@ interface SocialPluginDefinitionV1 {
     directMessage?: Partial<DirectMessageServiceV1>;
     article?: Partial<ArticleServiceV1>;
     gallery?: Partial<GalleryServiceV1>;
+    /** API v2: manga detail and chapter page loading. */
+    manga?: Partial<MangaServiceV1>;
     tabCatalog?: { page(request: PageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineSectionV1>> };
   };
 }
@@ -146,6 +251,10 @@ interface ProfileServiceV1 {
 interface PostServiceV1 {
   detail(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<TimelinePostV1>;
   context(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
+  /** API v2. Declare and negotiate contextTabs and contextPage together. */
+  contextTabs?(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<PostContextTabsV2>;
+  /** API v2. Return the tab rows. The current post and its parents come from detail. */
+  contextPage?(request: PostContextPageRequestV2, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
   delete(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<DeleteResultV1>;
   mutate(request: MutationRequestV1, context: PluginInvocationContextV1): MaybePromise<PostMutationResultV1>;
 }
@@ -191,6 +300,18 @@ interface GalleryServiceV1 {
   comments(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
   recommendations(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
 }
+/** API v2. Required: detail and pages. Optional: pageImage (image or gif only), comments, recommendations.
+ * Up to 3 manga.pageImage calls execute in parallel across isolated worker VMs (workerLane);
+ * store cross-page or cross-chunk state (such as ptoken tables) in flare.storage rather than JS module globals.
+ */
+interface MangaServiceV1 {
+  detail(request: EntityRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaV1>;
+  pages(request: MangaPagesRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaPagesV1>;
+  /** Executed across up to 3 parallel isolated worker VMs; use flare.storage for cross-page shared state, not module globals. */
+  pageImage?(request: MangaPageImageRequestV1, context: PluginInvocationContextV1): MaybePromise<MangaPageMediaV1>;
+  comments?(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
+  recommendations?(request: EntityPageRequestV1, context: PluginInvocationContextV1): MaybePromise<PageV1<TimelineItemV1>>;
+}
 
 interface DetectorRequestV1 { origin: string }
 type DetectorMatchV1 = "none" | "compatible" | "exact";
@@ -235,7 +356,21 @@ interface CookieCheckRequestV1 {
   cookies: { cookies: CookieValueV1[] };
   /** API v2: latest Pending payload for this flow; survives runtime eviction, not app restart. */
   pendingPayload?: JsonValue;
+  /** API v2: normalized WebView User-Agent (1..1024 non-control characters), when available. Omitted in API v1. */
+  userAgent?: string;
 }
+/** API v2 account-only interactive WebView challenge completion request. */
+interface SessionChallengeCompleteRequestV1 {
+  challengeUrl: string;
+  cookies: { cookies: CookieValueV1[] };
+  /** Normalized WebView User-Agent (1..1024 non-control characters), when available. */
+  userAgent?: string;
+  /** Latest pending payload returned by a previous "pending" result in this challenge attempt. */
+  pendingPayload?: JsonValue;
+}
+type SessionChallengeResultV1 =
+  | { type: "pending"; /** Whole replacement, omitted/null clears; at most 64 KiB JSON. */ pendingPayload?: JsonValue }
+  | { type: "completed" };
 interface QrPollRequestV2 {
   methodId: string;
   origin: string;
@@ -349,7 +484,7 @@ interface ActionDescriptorV1 {
   actionToken?: string;
 }
 /** Known authoring values; compatible older Hosts make unfamiliar string values inert. */
-type PostDetailTypeV1 = "post" | "article" | "gallery" | "link";
+type PostDetailTypeV1 = "post" | "article" | "gallery" | "manga" | "link";
 interface PostV1 {
   key: EntityKeyV1;
   /** Defaults to null. When present, the complete ProfileV1 contract still applies. */
@@ -411,7 +546,8 @@ interface PostPresentationV1 {
 }
 type NavigationTargetV1 =
   | { type: "timelinePage"; pageId: string; title: WireTextV1; parameters?: Record<string, string> }
-  | { type: "post" | "profile" | "article" | "gallery"; key: EntityKeyV1 }
+  | { type: "post" | "profile" | "article" | "gallery" | "manga"; key: EntityKeyV1 }
+  | { type: "mangaChapter"; key: EntityKeyV1; chapterId: string }
   | { type: "link"; url: string };
 interface FeedV1 {
   url: string;
@@ -507,6 +643,22 @@ interface SearchRequestV1 { query: string; page: PageRequestV1 }
 /** entityToken is opaque entity context (at most 8192 characters), not a paging cursor. */
 interface EntityRequestV1 { key: EntityKeyV1; entityToken?: string }
 interface EntityPageRequestV1 { key: EntityKeyV1; page: PageRequestV1; entityToken?: string }
+interface PostContextTabsV2 {
+  /** Ordered tabs for this post. An empty list renders the post and its parents alone. */
+  tabs: PostContextTabV2[];
+  /** ID of the declared tab that supplies replies for sharing when legacy context is unavailable. */
+  replyTabId?: string;
+}
+interface PostContextTabV2 { id: string; title: WireTextV1; filter?: PostContextFilterV2 }
+interface PostContextFilterV2 { options: PostContextFilterOptionV2[]; defaultOptionId: string }
+interface PostContextFilterOptionV2 { id: string; title: WireTextV1 }
+interface PostContextPageRequestV2 {
+  key: EntityKeyV1;
+  tabId: string;
+  /** Absent when the tab has no filter group. */
+  filterId?: string;
+  page: PageRequestV1;
+}
 interface HandleRequestV1 { handle: string; host: string }
 interface ProfileTimelineRequestV1 {
   profile: EntityKeyV1;
@@ -617,6 +769,101 @@ interface GalleryV1 {
   orientation?: "horizontal" | "vertical";
   entityToken?: string;
   actions?: ActionDescriptorV1[];
+}
+type MangaStatusV1 = "ongoing" | "completed" | "hiatus" | "cancelled";
+type MangaReadingDirectionV1 = "rtl" | "ltr" | "webtoon";
+interface MangaTagV1 { name: string; target?: NavigationTargetV1 }
+interface MangaTagGroupV1 { id: string; title: WireTextV1; tags: MangaTagV1[] }
+interface MangaChapterV1 {
+  /** Unique across the entire MangaV1 (1..512 characters). */
+  id: string;
+  title: string;
+  subtitle?: string;
+  uploadedAt?: string;
+  locked?: boolean;
+  url?: string;
+  entityToken?: string;
+}
+interface MangaChapterGroupV1 {
+  id: string;
+  title: WireTextV1;
+  /** Ascending reading order: index 0 is the first chapter, index i + 1 is the next chapter. */
+  chapters: MangaChapterV1[];
+}
+interface MangaV1 {
+  key: EntityKeyV1;
+  title: string;
+  altTitles?: string[];
+  /** Image media only; requires permissions.mediaNetwork. */
+  cover?: MediaV1 & { type: "image" };
+  author?: ProfileV1;
+  authors?: string[];
+  artists?: string[];
+  status?: MangaStatusV1;
+  content?: RichTextV1;
+  /** Canonical HTTPS URL; required when any locked chapter omits chapter.url. */
+  url?: string;
+  updatedAt?: string;
+  readingDirection?: MangaReadingDirectionV1;
+  /** Mutually exclusive: supply either flat tags or grouped tagGroups. */
+  tags?: MangaTagV1[];
+  tagGroups?: MangaTagGroupV1[];
+  /** Mutually exclusive: supply either ascending chapters or grouped chapterGroups. */
+  chapters?: MangaChapterV1[];
+  chapterGroups?: MangaChapterGroupV1[];
+  entityToken?: string;
+  actions?: ActionDescriptorV1[];
+  sourceLanguages?: string[];
+}
+interface MangaPagesRequestV1 {
+  key: EntityKeyV1;
+  chapterId: string;
+  entityToken?: string;
+  chapterToken?: string;
+  /** Optional range paging start index (>= 0); mutually exclusive with cursor. */
+  offset?: number;
+  /** Optional requested chunk size (1..2000). */
+  limit?: number;
+  /** Optional cursor for sequential chunk paging; mutually exclusive with offset. */
+  cursor?: string;
+}
+type MangaPageMediaV1 = MediaV1 & { type: "image" | "gif" };
+interface MangaPageV1 {
+  id: string;
+  /** Image or GIF media only; mutually exclusive with pageToken. */
+  media?: MangaPageMediaV1;
+  /** Allowed only when manga.pageImage is declared and negotiated. */
+  pageToken?: string;
+  previewUrl?: string;
+  width?: number;
+  height?: number;
+  customHeaders?: Record<string, string>;
+}
+interface MangaPagesV1 {
+  /** 1..2000 pages per chunk. */
+  pages: MangaPageV1[];
+  /** Starting page index of this chunk (>= 0). Initial response must be 0 when present; range chunks at offset > 0 must cover requested offset. */
+  offset?: number;
+  /** Total chapter page count (1..50000) for range mode; must stay constant across chunks and cannot be combined with cursor requests. */
+  totalCount?: number;
+  /** Required when endReached is false (1..4096 non-blank characters). */
+  nextCursor?: string;
+  /** Defaults to true when omitted. */
+  endReached?: boolean;
+}
+type MangaPageImageReasonV1 = "initial" | "resolveRetry" | "imageLoadFailed";
+interface MangaPageImageRequestV1 {
+  key: EntityKeyV1;
+  chapterId: string;
+  pageId: string;
+  pageToken: string;
+  entityToken?: string;
+  chapterToken?: string;
+  /** Retry attempt index (0..100). */
+  attempt?: number;
+  reason?: MangaPageImageReasonV1;
+  /** Failing HTTPS image URL; provided only when reason is "imageLoadFailed". */
+  failedUrl?: string;
 }
 type HostIconV1 =
   | "Home" | "Notification" | "Search" | "Profile" | "Local" | "World" | "Featured"
@@ -734,20 +981,70 @@ interface HttpResponseV1 {
 }
 interface CredentialSnapshotV2 { value: JsonValue; revision: string }
 
+type HtmlExtractModeV1 = "text" | "ownText" | "html" | "outerHtml" | "attr" | "exists";
+/** Exactly one of extract or fields is required. Top-level nodes and all: true require selector.
+ * name (1..128 non-blank chars) and absoluteUrl are allowed only when extract is "attr";
+ * absoluteUrl: true requires HTTPS baseUrl (non-HTTP(S) or blank resolved values return null).
+ * all: true forbids extract: "exists".
+ */
+interface HtmlNodeSpecV1 {
+  /** CSS selector (1..512 non-blank chars). Required on top-level nodes and when all is true. */
+  selector?: string;
+  all?: boolean;
+  /** Maximum matches when all is true (1..2000; defaults to 500). */
+  limit?: number;
+  extract?: HtmlExtractModeV1;
+  /** Attribute name (1..128 non-blank chars); allowed and required only when extract is "attr". */
+  name?: string;
+  /** Resolve relative URL against baseUrl; allowed only when extract is "attr". */
+  absoluteUrl?: boolean;
+  /** 1..64 fields per level; max nesting depth 4, max 128 spec nodes total. */
+  fields?: Record<string, HtmlNodeSpecV1>;
+}
+interface HtmlExtractRequestV1 {
+  /** HTML input (max 4 MiB UTF-8; 8 MiB max bridge request envelope). */
+  html: string;
+  /** Optional HTTPS base URL; required when any spec node sets absoluteUrl: true. */
+  baseUrl?: string;
+  /** 1..64 top-level fields; each must provide selector. */
+  spec: Record<string, HtmlNodeSpecV1>;
+}
+interface HtmlQueryRequestV1 {
+  /** HTML input (max 4 MiB UTF-8; 8 MiB max bridge request envelope). */
+  html: string;
+  /** Optional HTTPS base URL; required when any field node sets absoluteUrl: true. */
+  baseUrl?: string;
+  /** CSS selector (1..512 non-blank chars) selecting items to extract. */
+  selector: string;
+  /** Maximum matched items (1..2000; defaults to 500). */
+  limit?: number;
+  /** 1..64 fields per level; max nesting depth 3 inside fields (depth 4 total), max 128 spec nodes total. */
+  fields: Record<string, HtmlNodeSpecV1>;
+}
+
 type PluginErrorCodeV1 =
-  | "AuthenticationRequired" | "NotFound" | "Validation" | "RateLimited" | "Network"
+  | "AuthenticationRequired" | "ChallengeRequired" | "NotFound" | "Validation" | "RateLimited" | "Network"
   | "Remote" | "Unsupported" | "InvalidResponse" | "Cancelled";
+interface PluginChallengeV1 {
+  /** Approved HTTPS challenge URL on $accountOrigin or permissions.authOrigins (no whitespace, control chars, or fragment). */
+  url: string;
+  /** Optional seed cookies (max 32 entries, 64 KiB aggregate UTF-8 name+value bytes). */
+  seedCookies?: { name: string; value: string }[];
+}
 /** Exactly one of value/key; localized key requires fallback.
  * args accepts finite numbers, booleans, or strings; omit null arguments.
  * Manifest text instead uses a string or { key, fallback }.
  */
 interface WireTextV1 { value?: string; key?: string; fallback?: string; args?: Record<string, JsonPrimitive> }
-/** Throw flare.error(value) for recoverable failures; retryAfterSeconds is 0..604800. */
+/** Throw flare.error(value) for recoverable failures; retryAfterSeconds is 0..604800.
+ * challenge is required when code is "ChallengeRequired" and forbidden for all other codes.
+ */
 interface PluginErrorV1 {
   code: PluginErrorCodeV1;
   message: WireTextV1;
   retryAfterSeconds?: number;
   remoteCode?: string;
+  challenge?: PluginChallengeV1;
 }
 
 interface PluginStorageSnapshotV1 { values: Record<string, JsonValue>; revision: string }
@@ -777,6 +1074,15 @@ interface FlareHostV1 {
     /** MD5 of UTF-8 input (at most 1 MiB). Returns lowercase hex for legacy protocol compatibility. */
     md5(value: string): Promise<string>;
   };
+  /** API v2 across all scopes: native HTML extraction, list query, and entity decoding (4 MiB HTML / 4 MiB output / 20000 visited nodes).
+   * Invalid requests, selectors, or exceeded limits reject with host.invalid-request (catchable with try/catch without retiring the runtime).
+   */
+  readonly html: {
+    extract(request: HtmlExtractRequestV1): Promise<Record<string, JsonValue>>;
+    query(request: HtmlQueryRequestV1): Promise<Record<string, JsonValue>[]>;
+    /** Decodes HTML entities in a UTF-8 string up to 1 MiB. */
+    decodeEntities(value: string): Promise<string>;
+  };
   readonly locale: { current(): Promise<string> };
   error(value: PluginErrorV1): Error;
 }
@@ -792,3 +1098,6 @@ declare function defineFlareTranslatePlugin(plugin: TranslatePluginDefinitionV1)
 
 /** Register actions for existing built-in or plugin-provided accounts once; may coexist with other plugin definitions. */
 declare function defineFlarePlatformExtensionPlugin(plugin: PlatformExtensionPluginDefinitionV1): void;
+
+/** Register timeline post processing once; runs in plugin scope and may coexist with other plugin definitions. */
+declare function defineFlareTimelineProcessorPlugin(plugin: TimelineProcessorPluginDefinitionV1): void;

@@ -10,6 +10,7 @@ enum MacWindowID {
     static let main = "main"
     static let compose = "compose"
     static let media = "media"
+    static let mangaReader = MacMangaReaderWindowCoordinator.windowID
     static let rssManagement = "rss-management"
     static let pluginMarketplace = "plugin-marketplace"
     static let agentHistory = "agent-history"
@@ -70,6 +71,15 @@ struct FlareApp: App {
         }
         .defaultSize(width: 960, height: 720)
         .mediaWindowPlacement()
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .disableRestorationBehavior()
+
+        WindowGroup("Manga Reader", id: MacWindowID.mangaReader, for: MacMangaReaderWindowValue.self) { value in
+            FlareTheme {
+                MacMangaReaderWindowRoot(value: value.wrappedValue).ugoiraExportStatus()
+            }
+        }
+        .defaultSize(width: 960, height: 820)
         .windowToolbarStyle(.unified(showsTitle: false))
         .disableRestorationBehavior()
 

@@ -16,6 +16,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
@@ -214,7 +215,9 @@ import dev.dimension.flare.compose.ui.timeline_retry_missing_posts
 import dev.dimension.flare.compose.ui.vvo_notification_like
 import dev.dimension.flare.data.datasource.microblog.ActionMenu
 import dev.dimension.flare.data.model.PostActionStyle
+import dev.dimension.flare.data.model.TimelineDisplayMode
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.model.vvoHost
 import dev.dimension.flare.ui.component.AvatarComponentDefaults
 import dev.dimension.flare.ui.component.FAIcon
 import dev.dimension.flare.ui.component.FlareDividerDefaults
@@ -242,12 +245,14 @@ internal fun UiTimelineComponent(
     modifier: Modifier = Modifier,
     detailStatusKey: MicroBlogKey? = null,
 ) {
+    val isGallery = LocalEffectiveTimelineDisplayMode.current == TimelineDisplayMode.Gallery
+    val horizontalPadding = if (isGallery) screenHorizontalPadding else StatusComponentDefaults.horizontalPadding
     when (item) {
         is UiTimelineV2.Gap -> {
             PlatformButton(
                 onClick = { item.onActivate?.invoke {} },
                 enabled = !item.loading,
-                modifier = modifier.fillMaxWidth().padding(8.dp),
+                modifier = modifier.fillMaxWidth().padding(horizontal = if (isGallery) 8.dp else horizontalPadding, vertical = 8.dp),
             ) {
                 dev.dimension.flare.ui.component.platform.PlatformText(
                     stringResource(
@@ -281,9 +286,7 @@ internal fun UiTimelineComponent(
             UserContent(
                 item,
                 modifier =
-                    Modifier
-                        .padding(horizontal = screenHorizontalPadding)
-                        .padding(vertical = 8.dp),
+                    modifier.padding(horizontal = horizontalPadding, vertical = 8.dp),
             )
         }
 
@@ -291,9 +294,7 @@ internal fun UiTimelineComponent(
             UserListContent(
                 data = item,
                 modifier =
-                    Modifier
-                        .padding(horizontal = screenHorizontalPadding)
-                        .padding(vertical = 8.dp),
+                    modifier.padding(horizontal = horizontalPadding, vertical = 8.dp),
             )
         }
 
@@ -309,9 +310,8 @@ internal fun UiTimelineComponent(
                 data = item,
                 topMessageOnly = true,
                 modifier =
-                    Modifier
-                        .padding(horizontal = screenHorizontalPadding)
-                        .padding(vertical = 8.dp)
+                    modifier
+                        .padding(horizontal = horizontalPadding, vertical = 8.dp)
                         .fillMaxWidth(),
             )
         }
@@ -486,7 +486,7 @@ private fun UserListContent(
                                 shape = PlatformTheme.shapes.medium,
                             ).clip(
                                 shape = PlatformTheme.shapes.medium,
-                            ).padding(8.dp),
+                            ).padding(StatusComponentDefaults.quotePadding),
                     isQuote = true,
                 )
             }
@@ -523,12 +523,15 @@ private fun StatusContent(
                                     item = it.displayPost,
                                     quotes = it.presentation.quotes,
                                     isDetail = false,
+                                    showReplyTo = false,
                                     allowMediaCarousel = true,
-                                    carouselOuterHorizontalPadding = screenHorizontalPadding,
+                                    carouselOuterHorizontalPadding = StatusComponentDefaults.horizontalPadding,
                                     modifier =
                                         Modifier.padding(
-                                            horizontal = screenHorizontalPadding,
-                                            vertical = 8.dp,
+                                            start = StatusComponentDefaults.horizontalPadding,
+                                            top = StatusComponentDefaults.topPadding,
+                                            end = StatusComponentDefaults.horizontalPadding,
+                                            bottom = 8.dp,
                                         ),
                                 )
                             }
@@ -539,14 +542,14 @@ private fun StatusContent(
                             Modifier
                                 .zIndex(-1f)
                                 .padding(
-                                    start = screenHorizontalPadding,
+                                    start = StatusComponentDefaults.horizontalPadding,
                                 ).padding(
-                                    start = AvatarComponentDefaults.size / 2,
+                                    start = StatusComponentDefaults.avatarSize / 2,
                                 ).padding(
-                                    top = AvatarComponentDefaults.size / 2,
+                                    top = StatusComponentDefaults.avatarSize / 2,
                                 ).let {
                                     if (presentation.message == null) {
-                                        it.offset(y = AvatarComponentDefaults.size / 2)
+                                        it.offset(y = StatusComponentDefaults.avatarSize / 2)
                                     } else {
                                         it
                                     }
@@ -584,25 +587,30 @@ private fun StatusContent(
                 TopMessageComponent(
                     data = message,
                     topMessageOnly = false,
+                    isPost = true,
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
+                            .padding(top = StatusComponentDefaults.topPadding)
                             .padding(
-                                horizontal = screenHorizontalPadding,
+                                horizontal = StatusComponentDefaults.horizontalPadding,
                             ),
                 )
             }
             CommonStatusComponent(
                 item = post,
                 isDetail = post.statusKey == detailStatusKey,
+                maxLines = Int.MAX_VALUE.takeIf { detailStatusKey?.host == vvoHost },
+                showReplyTo = presentation.inlineParents.isEmpty(),
                 allowMediaCarousel = true,
-                carouselOuterHorizontalPadding = screenHorizontalPadding,
+                carouselOuterHorizontalPadding = StatusComponentDefaults.horizontalPadding,
                 modifier =
                     Modifier
                         .padding(
-                            horizontal = screenHorizontalPadding,
-                            vertical = 8.dp,
+                            horizontal = StatusComponentDefaults.horizontalPadding,
+                        ).padding(
+                            top = if (presentation.message == null) StatusComponentDefaults.topPadding else 2.dp,
+                            bottom = 8.dp,
                         ),
                 quotes = presentation.quotes,
             )
@@ -615,8 +623,11 @@ private fun TopMessageComponent(
     data: UiTimelineV2.Message,
     topMessageOnly: Boolean,
     modifier: Modifier = Modifier,
+    isPost: Boolean = false,
 ) {
     val appearance = LocalTimelineAppearance.current
+    val isGallery = LocalEffectiveTimelineDisplayMode.current == TimelineDisplayMode.Gallery
+    val usePostStyle = isPost || !isGallery
     val uriHandler = LocalUriHandler.current
     val icon = data.icon.toImageVector()
     val text: String? =
@@ -748,18 +759,25 @@ private fun TopMessageComponent(
         }
 
     if (text != null) {
+        val iconColor =
+            when {
+                usePostStyle -> StatusComponentDefaults.secondaryColor
+                topMessageOnly -> PlatformContentColor.current
+                else -> PlatformTheme.colorScheme.caption
+            }
         StatusRetweetHeaderComponent(
             icon = icon,
             user = data.user,
             text = text,
-            color =
-                if (topMessageOnly) {
-                    PlatformContentColor.current
-                } else {
-                    PlatformTheme.colorScheme.caption
-                },
+            isPost = usePostStyle,
+            standalone = topMessageOnly && usePostStyle,
+            isAbovePost = isPost && !isGallery,
+            iconColor = iconColor,
+            textColor = if (topMessageOnly && !isGallery) StatusComponentDefaults.contentColor else iconColor,
             textStyle =
-                if (topMessageOnly) {
+                if (usePostStyle) {
+                    PlatformTheme.typography.postBody
+                } else if (topMessageOnly) {
                     PlatformTextStyle.current
                 } else {
                     PlatformTheme.typography.caption
@@ -777,13 +795,24 @@ private fun TopMessageComponent(
                     }.let {
                         if (!appearance.fullWidthPost && !topMessageOnly) {
                             it.padding(
-                                start = AvatarComponentDefaults.size - PlatformTheme.typography.caption.fontSize.value.dp,
+                                start =
+                                    if (usePostStyle) {
+                                        val iconSize =
+                                            with(LocalDensity.current) {
+                                                PlatformTheme.typography.postBody.fontSize
+                                                    .toDp()
+                                            }
+                                        val avatarSize = if (isPost) StatusComponentDefaults.avatarSize else AvatarComponentDefaults.size
+                                        (avatarSize - iconSize).coerceAtLeast(0.dp)
+                                    } else {
+                                        AvatarComponentDefaults.size - PlatformTheme.typography.caption.fontSize.value.dp
+                                    },
                             )
                         } else {
                             it
                         }
-                    }.fillMaxWidth()
-                    .then(modifier),
+                    }.then(modifier)
+                    .fillMaxWidth(),
         )
     }
 }

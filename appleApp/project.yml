@@ -60,7 +60,7 @@ packages:
     exactVersion: 1.7.0
   Firebase:
     url: https://github.com/firebase/firebase-ios-sdk.git
-    exactVersion: 12.19.3
+    exactVersion: 13.2.0
   GSPlayer:
     url: https://github.com/wxxsw/GSPlayer
     from: 0.2.30
@@ -69,7 +69,7 @@ packages:
     exactVersion: 1.0.5
   Kingfisher:
     url: https://github.com/onevcat/Kingfisher.git
-    exactVersion: 8.15.0
+    exactVersion: 8.16.0
   LazyPager:
     # Temporary 1.2.1 fork: create the selected page before the first layout.
     # Return to upstream once it includes the initial-page flash fix.
@@ -251,6 +251,7 @@ targets:
       - path: ios/UI/Component/Status/StatusMediaCarouselLayout.swift
       - path: ios/UI/Component/TimelineLayoutPolicy.swift
       - path: ios/UI/Component/TimelineHostedAccessoryView.swift
+      - path: Shared/FlareAppleCore/Sources/FlareAppleUI/AdaptiveSplitLayout.swift
       - path: Shared/FlareAppleCore/Sources/FlareAppleUI/TimelineAutoplayPolicy.swift
       - path: Shared/FlareAppleCore/Sources/FlareAppleUI/TimelinePlaybackCoordinator.swift
       - path: Shared/FlareAppleCore/Sources/FlareAppleUI/VideoPlaybackArbiter.swift
@@ -291,7 +292,11 @@ targets:
       - path: macosTests
       - path: macos
         includes:
+          - App/MacMangaReaderWindowCoordinator.swift
           - UI/Component/TimelineReadingScrollView.swift
+          - UI/Navigation/Route.swift
+          - UI/Screen/MangaDetailScreen.swift
+          - UI/Screen/MangaReaderScreen.swift
     dependencies:
       - target: FlareAppleCore
       - target: FlareAppleUI
@@ -310,6 +315,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: dev.dimension.flare.mac-timeline-tests
         INFOPLIST_FILE: ""
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FLARE_MAC_UNIT_TESTS"
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
 
   TimelineUnitTestHost:

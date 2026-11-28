@@ -45,6 +45,8 @@ private data class StoredPluginData(
     val schemaVersion: Int = 1,
     val epoch: String,
     val namespaces: Map<String, PluginStorageSnapshotV1> = emptyMap(),
+    // Older files and plugins without processor writes use the ordinary namespace revisions.
+    val timelineInputRevisions: Map<String, String>? = null,
 )
 
 /** Namespace and key names are opaque strings, never filesystem paths. */
@@ -93,14 +95,17 @@ public class PluginStorageV1(
     internal fun token(
         pluginId: String,
         namespaces: List<String>?,
+        forTimelineProcessor: Boolean = false,
     ): String {
         val record = record(pluginId)
-        val names = namespaces ?: record.namespaces.keys.sorted()
+        val timelineRevisions = if (forTimelineProcessor) record.timelineInputRevisions else null
+        val names = namespaces ?: timelineRevisions?.keys ?: record.namespaces.keys
         return buildString {
             append(record.epoch)
             names.sorted().forEach { name ->
                 append('|').append(name.encodeUtf8().sha256().hex()).append(':')
-                append(record.namespaces[name]?.revision ?: "empty")
+                val revision = if (timelineRevisions == null) record.namespaces[name]?.revision else timelineRevisions[name]
+                append(revision ?: "empty")
             }
         }.encodeUtf8().sha256().hex()
     }
@@ -147,6 +152,7 @@ public class PluginStorageV1(
         namespace: String,
         changes: PluginStorageChangesV1,
         expectedRevision: String?,
+        fromTimelineProcessor: Boolean = false,
         ensureActive: () -> Unit,
     ): PluginStorageSnapshotV1 =
         mutex.withLock {
@@ -161,7 +167,13 @@ public class PluginStorageV1(
             val values = (previous.values - changes.remove + changes.set).toMap()
             if (values == previous.values) return@withLock previous
             val snapshot = PluginStorageSnapshotV1(values, platformUuid())
-            val updated = before.copy(namespaces = before.namespaces + (namespace to snapshot))
+            val timelineRevisions =
+                if (fromTimelineProcessor) {
+                    before.timelineInputRevisions ?: before.namespaces.mapValues { it.value.revision }
+                } else {
+                    before.timelineInputRevisions?.plus(namespace to snapshot.revision)
+                }
+            val updated = before.copy(namespaces = before.namespaces + (namespace to snapshot), timelineInputRevisions = timelineRevisions)
             validate(updated)
             ensureActive()
             withContext(NonCancellable) {
@@ -210,6 +222,9 @@ public class PluginStorageV1(
                 validateName(key)
                 validateValue(value)
             }
+        }
+        record.timelineInputRevisions?.forEach { (name, revision) ->
+            require(name in record.namespaces && revision.isNotBlank() && revision.length <= 128)
         }
         if (utf8Size(PluginJsonV1.encodeToString(record)) > MAX_PLUGIN_BYTES) fail("quota", "Plugin storage quota exceeded")
     }
@@ -267,7 +282,11 @@ public class PluginStorageAccessV1 internal constructor(
     private val storage: PluginStorageV1,
     private val pluginId: String,
     private val ensureActive: () -> Unit,
+    private val fromTimelineProcessor: Boolean = false,
 ) {
+    internal fun forTimelineProcessor(): PluginStorageAccessV1 =
+        PluginStorageAccessV1(storage, pluginId, ensureActive, fromTimelineProcessor = true)
+
     public suspend fun read(
         namespace: String,
         keys: Set<String>? = null,
@@ -277,5 +296,5 @@ public class PluginStorageAccessV1 internal constructor(
         namespace: String,
         changes: PluginStorageChangesV1,
         expectedRevision: String? = null,
-    ): PluginStorageSnapshotV1 = storage.write(pluginId, namespace, changes, expectedRevision, ensureActive)
+    ): PluginStorageSnapshotV1 = storage.write(pluginId, namespace, changes, expectedRevision, fromTimelineProcessor, ensureActive)
 }

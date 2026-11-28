@@ -16,13 +16,13 @@ import androidx.paging.Pager
 import androidx.paging.PagingData
 import androidx.paging.RemoteMediator
 import androidx.paging.cachedIn
-import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.filter
 import androidx.paging.map
 import dev.dimension.flare.common.InAppNotification
 import dev.dimension.flare.common.Message
 import dev.dimension.flare.common.PagingState
 import dev.dimension.flare.common.PlatformDispatchers
+import dev.dimension.flare.common.collectAsPagingItems
 import dev.dimension.flare.common.emptyFlow
 import dev.dimension.flare.common.onEmpty
 import dev.dimension.flare.common.onError
@@ -53,6 +53,8 @@ import dev.dimension.flare.data.model.tab.TimelineFilterConfig
 import dev.dimension.flare.data.model.tab.TimelinePostContent
 import dev.dimension.flare.data.model.tab.TimelinePostKind
 import dev.dimension.flare.data.model.tab.TimelinePresenterFactory
+import dev.dimension.flare.data.plugin.TimelineProcessorService
+import dev.dimension.flare.data.plugin.timelineProcessorServiceOrNull
 import dev.dimension.flare.data.repository.KeywordFilterPattern
 import dev.dimension.flare.data.repository.LocalFilterRepository
 import dev.dimension.flare.data.repository.LoginExpiredException
@@ -68,6 +70,8 @@ import dev.dimension.flare.ui.model.UiTimelineV2
 import dev.dimension.flare.ui.model.asTimelinePostItem
 import dev.dimension.flare.ui.presenter.PresenterBase
 import dev.dimension.flare.ui.presenter.TimelineReadingState
+import dev.dimension.flare.ui.presenter.bindPluginWidgets
+import dev.dimension.flare.ui.presenter.submitPluginPosts
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -123,6 +127,9 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
 
     private val localFilterRepository: LocalFilterRepository by koinInject()
     private val inAppNotification: InAppNotification by koinInject()
+    private val timelineProcessorService: TimelineProcessorService? by lazy {
+        timelineProcessorServiceOrNull()
+    }
 
     private val filterFlow: Flow<List<KeywordFilterPattern>> by lazy {
         localFilterRepository.getFlow(forTimeline = true)
@@ -193,6 +200,8 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
 
     internal open fun allowLongTextTranslationDisplay(loader: RemoteLoader<UiTimelineV2>): Boolean =
         options.allowLongTextTranslationDisplay(loader)
+
+    internal open fun keepContextAnchor(item: UiTimelineV2): Boolean = false
 
     @OptIn(ExperimentalCoroutinesApi::class)
     internal fun createPager(scope: CoroutineScope): Flow<PagingData<UiTimelineV2>> =
@@ -280,12 +289,12 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                             }.flatMapLatest { pager ->
                                 visibility.map { visible ->
                                     pager
-                                        .filter { visible.isVisible(it) && (enabled || it !is UiTimelineV2.Gap) }
+                                        .filter { (keepContextAnchor(it) || visible.isVisible(it)) && (enabled || it !is UiTimelineV2.Gap) }
                                         .map {
                                             if (it is UiTimelineV2.Gap) it else transform(it)
                                         }
                                 }
-                            },
+                            }.bindPluginWidgets(timelineProcessorService, sourceScope),
                         )
                     }
                 }
@@ -453,6 +462,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                 onInserted(emptyList())
                 return@launch
             }
+            viewport.value?.cancelRestoration()
             gapActivity.update { it + (gap.stableItemKey to LoadState.Loading) }
             try {
                 val result = withContext(PlatformDispatchers.IO) { mediator.loadGap(gap) }
@@ -546,7 +556,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
         val items =
             remember {
                 createPager(scope)
-            }.collectAsLazyPagingItems()
+            }.collectAsPagingItems()
         val contextLoadStates by remember {
             contextMediator.flatMapLatest { it?.loadStates ?: flowOf(null) }
         }.collectAsState(null)
@@ -593,7 +603,12 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
                     if (!queued || items.loadState.source.hasError) items.retry()
                 }
             }
-        val listState = items.toPagingState(contextLoadStates, retry)
+        val onItemAccessed =
+            remember {
+                timelineProcessorService?.let { service -> { item: UiTimelineV2 -> item.submitPluginPosts(service) } }
+            }
+        val listState = items.toPagingState(contextLoadStates, retry, onItemAccessed)
+        val publishedTarget = target
         return object : TimelineState {
             override val listState = listState
             override val supportsRecommendationRefresh = recommendationContext != null
@@ -617,23 +632,27 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
             override val reading =
                 reading?.let { value ->
                     object : TimelineReadingState {
-                        override val restorePosition = target
+                        // UIKit and Compose can still hold this model after a gap tap cancels its bookmark.
+                        override val restorePosition
+                            get() = publishedTarget?.takeIf { it === value.target.value }
                         override val hasNewContent = newContent
                         override val isAtLatest = atLatest
 
                         override fun viewportChanged(
                             index: Int,
                             offset: Double,
-                        ) = value.viewportChanged(index, offset)
+                            itemKey: String?,
+                        ) = value.viewportChanged(index, offset, itemKey)
 
                         override fun positionChanged(
                             index: Int,
                             offset: Double,
-                        ) = value.positionChanged(index, offset)
+                            itemKey: String?,
+                        ) = value.positionChanged(index, offset, itemKey)
 
                         override fun savePosition() = value.savePosition()
 
-                        override fun restorationFinished() = value.restorationFinished(target)
+                        override fun restorationFinished() = value.restorationFinished(publishedTarget)
 
                         override fun restoreCurrentPosition() = value.restoreCurrentPosition()
 
@@ -648,6 +667,7 @@ public open class TimelinePresenter : PresenterBase<TimelineState> {
             }
 
             override suspend fun refresh() {
+                timelineProcessorService?.clearFailureCooldowns()
                 listState
                     .onSuccess {
                         refreshSuspend()

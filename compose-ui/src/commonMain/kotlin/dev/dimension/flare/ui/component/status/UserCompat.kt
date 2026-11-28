@@ -8,16 +8,22 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.profile_open_user
+import dev.dimension.flare.data.model.TimelineDisplayMode
 import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.component.AvatarComponent
 import dev.dimension.flare.ui.component.AvatarComponentDefaults
 import dev.dimension.flare.ui.component.RichText
 import dev.dimension.flare.ui.component.platform.PlatformText
+import dev.dimension.flare.ui.component.platform.PlatformTextStyle
 import dev.dimension.flare.ui.model.UiProfile
+import dev.dimension.flare.ui.theme.PlatformContentColor
 import dev.dimension.flare.ui.theme.PlatformTheme
 import org.jetbrains.compose.resources.stringResource
 
@@ -30,6 +36,7 @@ public fun UserCompat(
     nameModifier: Modifier = Modifier,
     handleModifier: Modifier = Modifier,
     subtitle: String = user.handle.display,
+    isPost: Boolean = false,
     leading: @Composable (RowScope.() -> Unit)? = {
         Box(avatarModifier, propagateMinConstraints = true) {
             AvatarComponent(
@@ -67,14 +74,16 @@ public fun UserCompat(
             ) {
                 RichText(
                     text = name,
+                    color = profileNameColor(isPost),
+                    textStyle = profileNameTextStyle(isPost),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.alignByBaseline().then(nameModifier),
                 )
                 PlatformText(
                     text = subtitle,
-                    style = PlatformTheme.typography.caption,
-                    color = PlatformTheme.colorScheme.caption,
+                    style = if (isPost) PlatformTheme.typography.postBody else PlatformTheme.typography.caption,
+                    color = if (isPost) StatusComponentDefaults.secondaryColor else PlatformTheme.colorScheme.caption,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.alignByBaseline().then(handleModifier),
@@ -82,5 +91,26 @@ public fun UserCompat(
             }
             trailing.invoke(this)
         }
+    }
+}
+
+@Composable
+internal fun profileNameTextStyle(isPost: Boolean): TextStyle {
+    val style = if (isPost) PlatformTheme.typography.postBody else PlatformTextStyle.current
+    val weight =
+        if (LocalEffectiveTimelineDisplayMode.current == TimelineDisplayMode.Gallery) {
+            if (isPost) FontWeight.ExtraBold else style.fontWeight
+        } else {
+            FontWeight.Bold
+        }
+    return style.copy(fontWeight = weight)
+}
+
+@Composable
+internal fun profileNameColor(isPost: Boolean): Color {
+    if (isPost) return StatusComponentDefaults.contentColor
+    return when (LocalEffectiveTimelineDisplayMode.current) {
+        TimelineDisplayMode.Plain, TimelineDisplayMode.Card -> PlatformTheme.colorScheme.text
+        else -> PlatformContentColor.current
     }
 }

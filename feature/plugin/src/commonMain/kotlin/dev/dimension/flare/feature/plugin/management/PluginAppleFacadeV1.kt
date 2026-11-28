@@ -4,9 +4,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import dev.dimension.flare.common.Locale
+import dev.dimension.flare.data.repository.SessionChallengeCheckResult
+import dev.dimension.flare.data.repository.SessionChallengeCookieSnapshot
+import dev.dimension.flare.data.repository.SessionChallengeCoordinator
+import dev.dimension.flare.data.repository.SessionChallengeHandle
 import dev.dimension.flare.di.koinGet
 import dev.dimension.flare.feature.plugin.PluginSubsystemV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthCallbackCoordinatorV1
+import dev.dimension.flare.feature.plugin.manifest.normalizePluginInvocationLocale
+import dev.dimension.flare.model.MicroBlogKey
 import dev.dimension.flare.ui.presenter.PresenterBase
 import kotlinx.coroutines.CoroutineScope
 
@@ -113,8 +119,8 @@ public class PluginAppleFacadeV1 : PresenterBase<PluginManagementStateV1>() {
     }
 
     @Throws(Exception::class)
-    public suspend fun confirmInstall() {
-        presenter.confirmInstall()
+    public suspend fun confirmInstall(addDefaultTabs: Boolean = true) {
+        presenter.confirmInstall(addDefaultTabs)
     }
 
     @Throws(Exception::class)
@@ -141,6 +147,13 @@ public class PluginAppleFacadeV1 : PresenterBase<PluginManagementStateV1>() {
     public suspend fun rebuildIndex() {
         presenter.rebuildIndex()
     }
+
+    public fun setTimelineProcessorEnabled(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
+        presenter.setTimelineProcessorEnabled(pluginId, enabled)
+    }
 }
 
 /** Swift-facing entry point for OAuth callbacks delivered after the login UI or process disappeared. */
@@ -151,7 +164,7 @@ public class PluginOAuthCallbackFacadeV1 {
 
     @Throws(Exception::class)
     public suspend fun handle(url: String) {
-        check(coordinator.handle(url, Locale.language)) { "Unsupported plugin OAuth callback" }
+        check(coordinator.handle(url, normalizePluginInvocationLocale(Locale.language))) { "Unsupported plugin OAuth callback" }
     }
 }
 
@@ -164,5 +177,42 @@ public class PluginRuntimeLifecycleFacadeV1 {
     @Throws(Exception::class)
     public suspend fun onMemoryPressure() {
         koinGet<PluginSubsystemV1>().onMemoryPressure()
+    }
+}
+
+/** Swift-facing entry point for interactive session challenge recovery. */
+public class PluginSessionChallengeFacadeV1 {
+    private val coordinator = koinGet<SessionChallengeCoordinator>()
+
+    @Throws(Exception::class)
+    public suspend fun beginSession(challengeId: String): SessionChallengeHandle? = coordinator.beginSession(challengeId)
+
+    @Throws(Exception::class)
+    public suspend fun check(
+        handle: SessionChallengeHandle,
+        snapshot: SessionChallengeCookieSnapshot,
+    ): SessionChallengeCheckResult = handle.check(snapshot)
+
+    public fun cancel(handle: SessionChallengeHandle) {
+        handle.cancel()
+    }
+
+    public fun close(handle: SessionChallengeHandle) {
+        handle.close()
+    }
+
+    public fun invalidateTicket(challengeId: String) {
+        coordinator.invalidateTicket(challengeId)
+    }
+
+    public fun invalidateAccountChallenges(accountKey: MicroBlogKey) {
+        coordinator.invalidateAccountChallenges(accountKey)
+    }
+
+    public fun invalidateSiblingTickets(
+        accountKey: MicroBlogKey,
+        excludeChallengeId: String,
+    ) {
+        coordinator.invalidateSiblingTickets(accountKey, excludeChallengeId)
     }
 }

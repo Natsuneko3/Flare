@@ -2,6 +2,8 @@ package dev.dimension.flare.ui.screen.settings
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import dev.dimension.flare.data.database.app.model.SubscriptionType
 import dev.dimension.flare.data.model.IconType
@@ -11,14 +13,15 @@ import dev.dimension.flare.data.model.tab.SubscriptionTimelineData
 import dev.dimension.flare.data.model.tab.UiTimelineTabItem
 import dev.dimension.flare.data.model.tab.toUiTimelineTabItem
 import dev.dimension.flare.data.platform.RssTimelineSpecs
+import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.AccountType
 import dev.dimension.flare.model.MicroBlogKey
+import dev.dimension.flare.model.PlatformRegistry
 import dev.dimension.flare.ui.model.UiIcon
 import dev.dimension.flare.ui.model.UiProfile
 import dev.dimension.flare.ui.model.UiRssSource
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.UiText
-import dev.dimension.flare.ui.model.asText
 import dev.dimension.flare.ui.model.isSuccess
 import dev.dimension.flare.ui.model.map
 import dev.dimension.flare.ui.model.takeSuccess
@@ -26,6 +29,7 @@ import dev.dimension.flare.ui.presenter.PresenterBase
 import dev.dimension.flare.ui.presenter.home.rss.RssSourcesPresenter
 import dev.dimension.flare.ui.presenter.list.PinnableTimelineTabPresenter
 import dev.dimension.flare.ui.presenter.settings.AccountsPresenter
+import dev.dimension.flare.web.shared.WebIgnore
 import dev.dimension.flare.web.shared.WebPresenter
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -33,6 +37,8 @@ import kotlinx.collections.immutable.toImmutableList
 
 @WebPresenter("allTabs")
 public class AllTabsPresenter : PresenterBase<AllTabsPresenter.State>() {
+    private val platformRegistry: PlatformRegistry by koinInject()
+
     @Composable
     override fun body(): State {
         val accountState = remember { AccountsPresenter() }.body()
@@ -102,10 +108,26 @@ public class AllTabsPresenter : PresenterBase<AllTabsPresenter.State>() {
                 ).toImmutableList()
             }
 
+        val platforms by platformRegistry.platforms.collectAsState()
+        val guestPluginTabs =
+            remember(platforms) {
+                platforms
+                    .filter { it.guestTimelineTabs.isNotEmpty() }
+                    .map { spec ->
+                        State.GuestPluginTabGroup(
+                            platformId = spec.platformId,
+                            title = spec.metadata.displayNameText,
+                            icon = spec.metadata.icon,
+                            tabs = spec.guestTimelineTabs.map { it.toUiTimelineTabItem() }.toImmutableList(),
+                        )
+                    }.toImmutableList()
+            }
+
         return object : State {
             override val accountTabs = accountTabs
             override val flattenedAccountTabs = flattenedAccountTabs
             override val rssTabs = rssTabs
+            override val guestPluginTabs = guestPluginTabs
         }
     }
 
@@ -120,8 +142,21 @@ public class AllTabsPresenter : PresenterBase<AllTabsPresenter.State>() {
     @Immutable
     public interface State {
         public val rssTabs: ImmutableList<UiTimelineTabItem>
+
+        @WebIgnore
+        public val guestPluginTabs: ImmutableList<GuestPluginTabGroup>
+            get() = persistentListOf()
+
         public val accountTabs: UiState<ImmutableList<AccountTabs>>
         public val flattenedAccountTabs: UiState<ImmutableList<FlattenedAccountTabs>>
+
+        @Immutable
+        public data class GuestPluginTabGroup(
+            val platformId: String,
+            val title: UiText,
+            val icon: IconType,
+            val tabs: ImmutableList<UiTimelineTabItem>,
+        )
 
         @Immutable
         public data class AccountTabs(

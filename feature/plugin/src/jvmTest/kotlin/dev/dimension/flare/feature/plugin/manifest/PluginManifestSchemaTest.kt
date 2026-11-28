@@ -64,6 +64,7 @@ class PluginManifestSchemaTest {
             "localizedText" to PluginTextV1.Localized.serializer().descriptor,
             "detector" to DetectorManifestV1.serializer().descriptor,
             "guest" to GuestManifestV1.serializer().descriptor,
+            "recommendedOrigin" to RecommendedOriginManifestV1.serializer().descriptor,
             "capability" to CapabilityManifestV1.serializer().descriptor,
             "platformExtension" to PluginPlatformExtensionManifestV1.serializer().descriptor,
             "operation" to CapabilityOperationManifestV1.serializer().descriptor,
@@ -81,7 +82,19 @@ class PluginManifestSchemaTest {
             "composeVisibility" to ComposeConfigV2.VisibilityConfigV1.serializer().descriptor,
             "composePoll" to ComposeConfigV2.PollConfigV1.serializer().descriptor,
             "composeLanguage" to ComposeConfigV2.LanguageConfigV1.serializer().descriptor,
+            "timelineProcessor" to PluginTimelineProcessorManifestV1.serializer().descriptor,
+            "timelineFilter" to PluginTimelineFilterManifestV1.serializer().descriptor,
         ).forEach { (name, descriptor) -> checkObject(definitions.getValue(name).jsonObject, descriptor) }
+        checkObject(
+            definitions
+                .getValue("timelineProcessor")
+                .jsonObject
+                .getValue("properties")
+                .jsonObject
+                .getValue("cache")
+                .jsonObject,
+            PluginTranslationCacheManifestV1.serializer().descriptor,
+        )
         val extension =
             definitions
                 .getValue("platformExtension")
@@ -169,7 +182,20 @@ class PluginManifestSchemaTest {
                     .getValue("operations")
                     .jsonObject
             assertEquals(operations, declared.getValue("properties").jsonObject.keys, id)
-            assertEquals(PluginAbiV1.requiredCapabilityOperations.getValue(id), declared.strings("required"), id)
+            val expectedRequired =
+                if (id == PluginAbiV1.Capabilities.POST) {
+                    emptySet()
+                } else {
+                    PluginAbiV1.requiredCapabilityOperations.getValue(id)
+                }
+            assertEquals(expectedRequired, declared.strings("required"), id)
+            if (id == PluginAbiV1.Capabilities.POST) {
+                val dependencies = declared.getValue("dependencies").jsonObject
+                assertEquals(setOf("detail"), dependencies.strings("context"))
+                assertEquals(setOf("detail"), dependencies.strings("delete"))
+                assertEquals(setOf("detail", "contextPage"), dependencies.strings("contextTabs"))
+                assertEquals(setOf("detail", "contextTabs"), dependencies.strings("contextPage"))
+            }
         }
     }
 

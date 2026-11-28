@@ -441,8 +441,8 @@ private struct LoginFlowView: View {
         )) {
             if let webCookieUrl {
                 NavigationStack {
-                    MacOSWebLoginScreen(onCookie: { cookies in
-                        checkCookies(cookies, sourceUrl: webCookieUrl)
+                    MacOSWebLoginScreen(onCookie: { cookies, userAgent in
+                        checkCookies(cookies, sourceUrl: webCookieUrl, userAgent: userAgent)
                     }, url: webCookieUrl)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -479,8 +479,13 @@ private struct LoginFlowView: View {
         }
     }
 
-    private func checkCookies(_ cookies: [HTTPCookie], sourceUrl: String) {
-        let snapshot = loginCookieSnapshot(cookies: cookies, probes: webCookieProbes, fallbackUrl: sourceUrl)
+    private func checkCookies(_ cookies: [HTTPCookie], sourceUrl: String, userAgent: String?) {
+        let snapshot = loginCookieSnapshot(
+            cookies: cookies,
+            probes: webCookieProbes,
+            fallbackUrl: sourceUrl,
+            userAgent: userAgent
+        )
         Task {
             if (try? await presenter.state.checkCookies(snapshot: snapshot)) == true {
                 webCookieUrl = nil
@@ -728,11 +733,11 @@ private struct LoginAgreementView: View {
 private struct MacOSWebLoginScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: MacOSWebLoginViewModel?
-    private let onCookie: ([HTTPCookie]) -> Void
+    private let onCookie: ([HTTPCookie], String?) -> Void
     private let url: String
 
     init(
-        onCookie: @escaping ([HTTPCookie]) -> Void,
+        onCookie: @escaping ([HTTPCookie], String?) -> Void,
         url: String
     ) {
         self.url = url
@@ -754,6 +759,7 @@ private struct MacOSWebLoginScreen: View {
                         MacOSWebView(url: URL(string: url), configuration: viewModel.configuration) { webView in
                             webView.navigationDelegate = viewModel.delegate
                             route.bind(webView)
+                            viewModel.attach(webView)
                         }
                     }
                     .task { await viewModel.pollCookies() }
@@ -829,18 +835,24 @@ private final class MacOSCookieNavigationDelegate: NSObject, WKNavigationDelegat
 
 }
 
+@MainActor
 @Observable
 private final class MacOSWebLoginViewModel {
     let route: WebViewProxyRoute
     var currentOrigin: String
 
-    private let onCookie: ([HTTPCookie]) -> Void
+    private let onCookie: ([HTTPCookie], String?) -> Void
+    @ObservationIgnored private weak var webView: WKWebView?
+    @ObservationIgnored private var userAgent: String?
+    @ObservationIgnored private var evaluatingUserAgent = false
+    @ObservationIgnored private var userAgentTask: Task<Void, Never>?
     @ObservationIgnored lazy var delegate: MacOSCookieNavigationDelegate = {
         let delegate = MacOSCookieNavigationDelegate(route: route) { [weak self] in
             guard let self else { return }
+            self.triggerUserAgentRefresh()
             route.dataStore.httpCookieStore.getAllCookies { cookies in
                 guard self.route.isValid else { return }
-                self.onCookie(cookies)
+                self.onCookie(cookies, self.userAgent)
             }
         }
         delegate.onOriginChange = { [weak self] origin in
@@ -850,13 +862,17 @@ private final class MacOSWebLoginViewModel {
     }()
 
     init(
-        onCookie: @escaping ([HTTPCookie]) -> Void,
+        onCookie: @escaping ([HTTPCookie], String?) -> Void,
         url: String,
         route: WebViewProxyRoute
     ) {
         self.route = route
         self.onCookie = onCookie
         self.currentOrigin = macWebLoginHTTPSOrigin(URL(string: url)) ?? ""
+        route.onStop { [weak self] in
+            self?.userAgentTask?.cancel()
+            self?.webView = nil
+        }
     }
 
     var configuration: WKWebViewConfiguration {
@@ -866,21 +882,47 @@ private final class MacOSWebLoginViewModel {
         return configuration
     }
 
+    func attach(_ webView: WKWebView) {
+        self.webView = webView
+        triggerUserAgentRefresh()
+    }
+
     func clearCookie() {
+        userAgentTask?.cancel()
+        webView = nil
         clearMacWebLoginDataStore(dataStore: route.dataStore)
+    }
+
+    private func triggerUserAgentRefresh() {
+        guard userAgent == nil, !evaluatingUserAgent, route.isValid, webView != nil else { return }
+        userAgentTask = Task { @MainActor [weak self] in
+            await self?.refreshUserAgent()
+        }
+    }
+
+    private func refreshUserAgent() async {
+        guard userAgent == nil, !evaluatingUserAgent, route.isValid, let webView else { return }
+        evaluatingUserAgent = true
+        defer { evaluatingUserAgent = false }
+        guard let ua = try? await webView.evaluateJavaScript("navigator.userAgent") as? String else { return }
+        let trimmed = ua.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        userAgent = trimmed
     }
 
     private func getCookies() {
         route.dataStore.httpCookieStore.getAllCookies { cookies in
             guard self.route.isValid else { return }
-            self.onCookie(cookies)
+            self.onCookie(cookies, self.userAgent)
         }
     }
 
     func pollCookies() async {
+        await refreshUserAgent()
         while !Task.isCancelled && route.isValid {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled && route.isValid else { return }
+            await refreshUserAgent()
             getCookies()
         }
     }

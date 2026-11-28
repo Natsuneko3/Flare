@@ -15,22 +15,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.feed_open_article
 import dev.dimension.flare.ui.component.DateTimeText
 import dev.dimension.flare.ui.component.LocalTimelineCarouselItem
-import dev.dimension.flare.ui.component.TimelineCarouselItem
 import dev.dimension.flare.ui.component.NetworkImage
+import dev.dimension.flare.ui.component.TimelineCarouselItem
 import dev.dimension.flare.ui.component.accessibleDescription
 import dev.dimension.flare.ui.component.platform.PlatformText
 import dev.dimension.flare.ui.model.ClickContext
@@ -41,7 +42,6 @@ import dev.dimension.flare.ui.model.instagramMedia
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.PlatformTheme
-import dev.dimension.flare.ui.theme.screenHorizontalPadding
 import kotlinx.collections.immutable.ImmutableList
 import org.jetbrains.compose.resources.stringResource
 
@@ -60,7 +60,7 @@ internal fun FeedComponent(
                         ClickContext(uriHandler::openUri),
                     )
                 }.padding(
-                    horizontal = screenHorizontalPadding,
+                    horizontal = StatusComponentDefaults.horizontalPadding,
                     vertical = 8.dp,
                 ).then(modifier),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -82,9 +82,16 @@ internal fun FeedComponent(
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
             )
+            val captionIconSize =
+                with(LocalDensity.current) {
+                    PlatformTheme.typography.caption.fontSize
+                        .toDp()
+                }
             AnimatedVisibility(data.translationDisplayState != TranslationDisplayState.Hidden) {
                 TranslationDisplayBadge(
                     state = data.translationDisplayState,
+                    iconSize = captionIconSize,
+                    color = PlatformTheme.colorScheme.caption,
                 )
             }
             data.actualCreatedAt?.let {

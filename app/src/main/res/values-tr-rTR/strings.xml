@@ -72,8 +72,6 @@
     <string name="settings_about_telegram_description">Telegram grubumuza katılın</string>
     <string name="settings_about_discord_description">Discord sunucumuza katılın</string>
     <string name="settings_about_line_description">Line grubumuza katılın</string>
-    <string name="settings_about_localization">Crowdin</string>
-    <string name="settings_about_localization_description">Flare\'i çevirmemize yardımcı olun</string>
     <string name="settings_privacy_policy">Gizlilik Politikası</string>
     <string name="settings_side_panel">Yan Panel özelleştirme</string>
     <string name="settings_side_panel_description">Yan paneli özelleştir</string>
@@ -813,7 +811,7 @@
     <string name="image_translation_lite">Lite</string>
     <string name="image_translation_automatic">API anahtarı</string>
     <string name="image_translation_original_file">Orijinal dosya</string>
-    <string name="image_translation_use_shared_description">Hizmet URL\'sini, API anahtarını ve modeli paylaşın. Hizmet ve modelin görsel çıktı desteklemesi gerekir. Görsel çeviriyi ayrı yapılandırmak için kapatın.</string>
+    <string name="image_translation_use_shared_description">Hizmet URL\'sini, API anahtarını, modeli ve özel başlıkları paylaşın. Hizmet ve modelin görsel çıktı desteklemesi gerekir. Görsel çeviriyi ayrı yapılandırmak için kapatın.</string>
     <string name="plugin_permission_cookie">%2$s için kimlik doğrulamalı hesap istekleri: %1$s</string>
     <string name="plugin_ai_create">Flare Yapay Zeka ile oluştur</string>
     <string name="plugin_ai_untitled">Yeni eklenti</string>
@@ -936,6 +934,8 @@
     <string name="plugin_warning_compatibility">Uyumluluk uyarısı</string>
     <string name="plugin_install_github">GitHub\'ten yükle</string>
     <string name="plugin_check_updates">Güncelleme kontrol et</string>
+    <string name="plugin_local_import">Yerel içe aktarma</string>
+    <string name="plugin_updated_at">Güncellenme tarihi: %1$s</string>
     <string name="plugin_warning_source_changed">Bu kurulum eklenti kaynağını değiştiriyor</string>
     <string name="plugin_warning_tag_moved">Bu etiket artık farklı bir commit\'i işaret ediyor</string>
     <string name="plugin_unverified_github_warning">Bu GitHub eklentisi doğrulanmadı. Yalnızca yazarına güvendiğinizde kurun.</string>

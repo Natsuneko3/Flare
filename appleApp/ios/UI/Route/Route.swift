@@ -22,6 +22,18 @@ enum Route: Hashable, Identifiable {
                 lhsPlatformId == rhsPlatformId
         case (.composeCrossPost(let lhs), .composeCrossPost(let rhs)):
             return lhs == rhs
+        case (.mangaDetail(let lAccount, let lKey), .mangaDetail(let rAccount, let rKey)):
+            return lAccount == rAccount && lKey == rKey
+        case (
+            .mangaReader(let lAccount, let lKey, let lChapter, let lPage),
+            .mangaReader(let rAccount, let rKey, let rChapter, let rPage)
+        ):
+            return lAccount == rAccount &&
+                lKey == rKey &&
+                lChapter == rChapter &&
+                lPage == rPage
+        case (.mangaComments(let lAccount, let lKey), .mangaComments(let rAccount, let rKey)):
+            return lAccount == rAccount && lKey == rKey
         default:
             return lhs.hashValue == rhs.hashValue
         }
@@ -45,6 +57,20 @@ enum Route: Hashable, Identifiable {
         case .composeCrossPost(let prefill):
             hasher.combine("composeCrossPost")
             hasher.combine(prefill)
+        case .mangaDetail(let accountType, let mangaKey):
+            hasher.combine("mangaDetail")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            hasher.combine("mangaReader")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
+            hasher.combine(chapterId)
+            hasher.combine(initialPage)
+        case .mangaComments(let accountType, let mangaKey):
+            hasher.combine("mangaComments")
+            hasher.combine(accountType)
+            hasher.combine(mangaKey)
         default:
             hasher.combine(String(describing: self))
         }
@@ -83,13 +109,27 @@ enum Route: Hashable, Identifiable {
             GalleryDetailScreen(accountType: accountType, statusKey: statusKey, onNavigate: onNavigate)
         case .galleryComments(let accountType, let statusKey):
             GalleryCommentsScreen(accountType: accountType, statusKey: statusKey)
+        case .mangaDetail(let accountType, let mangaKey):
+            MangaDetailScreen(accountType: accountType, mangaKey: mangaKey, onNavigate: onNavigate)
+        case .mangaReader(let accountType, let mangaKey, let chapterId, let initialPage):
+            MangaReaderScreen(
+                accountType: accountType,
+                mangaKey: mangaKey,
+                chapterId: chapterId,
+                initialPage: initialPage,
+                onNavigate: onNavigate,
+                goBack: goBack
+            )
+        case .mangaComments(let accountType, let mangaKey):
+            MangaCommentsScreen(accountType: accountType, mangaKey: mangaKey)
         case .profileUser(let accountType, let userKey):
             ProfileScreen(
                 accountType: accountType,
                 userKey: userKey,
                 onFollowingClick: { key in onNavigate(.userFollowing(accountType, key)) },
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
-                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) }
+                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
+                onProfileShare: { key in onNavigate(.profileShareSheet(accountType, key)) }
             )
         case .settings:
             SettingsScreen()
@@ -129,7 +169,8 @@ enum Route: Hashable, Identifiable {
                 accountType: accountType,
                 onFollowingClick: { key in onNavigate(.userFollowing(accountType, key)) },
                 onFansClick: { key in onNavigate(.userFans(accountType, key)) },
-                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) }
+                onProfileInsight: { key in onNavigate(.profileInsight(accountType, key)) },
+                onProfileShare: { key in onNavigate(.profileShareSheet(accountType, key)) }
             )
         case .appearanceTheme:
             AppearanceThemeScreen()
@@ -195,8 +236,6 @@ enum Route: Hashable, Identifiable {
                     )
                 }
             )
-        case .statusVVOStatus(let accountType, let statusKey):
-            VVOStatusScreen(accountType: accountType, statusKey: statusKey)
         case .statusShareSheet(let accountType, let statusKey, let shareUrl, let fxShareUrl, let fixvxShareUrl):
             StatusShareSheet(
                 statusKey: statusKey,
@@ -208,8 +247,6 @@ enum Route: Hashable, Identifiable {
                     onNavigate(.composeCrossPost(prefill))
                 }
             )
-        case .statusVVOComment(let accountType, let statusKey):
-            VVOCommentScreen(accountType: accountType, statusKey: statusKey)
         case .statusBlueskyReport(let accountType, let statusKey):
             BlueskyReportSheet(accountType: accountType, statusKey: statusKey)
         case .statusMisskeyReport(let accountType, let userKey, let statusKey):
@@ -220,6 +257,14 @@ enum Route: Hashable, Identifiable {
             StatusInsightSheet(accountType: accountType, statusKey: statusKey, onNavigate: onNavigate)
         case .profileInsight(let accountType, let userKey):
             ProfileInsightSheet(accountType: accountType, userKey: userKey, onNavigate: onNavigate)
+        case .profileShareSheet(let accountType, let userKey):
+            ProfileShareSheet(
+                userKey: userKey,
+                accountType: accountType,
+                onCrossPost: { prefill in
+                    onNavigate(.composeCrossPost(prefill))
+                }
+            )
         case .userFans(let account, let userKey):
             UserListScreen(accountType: account, userKey: userKey, isFollowing: false)
         case .userFollowing(let account, let userKey):
@@ -312,6 +357,7 @@ enum Route: Hashable, Identifiable {
     case profileUser(AccountType, MicroBlogKey)
     case profileUserNameWithHost(AccountType, String, String)
     case profileInsight(AccountType, MicroBlogKey)
+    case profileShareSheet(AccountType, MicroBlogKey)
     case rssDetail(String, String?, String?, String?)
     case article(AccountType, MicroBlogKey)
     case search(AccountType, String)
@@ -322,11 +368,12 @@ enum Route: Hashable, Identifiable {
     case statusDetail(AccountType, MicroBlogKey)
     case galleryDetail(AccountType, MicroBlogKey)
     case galleryComments(AccountType, MicroBlogKey)
+    case mangaDetail(AccountType, MicroBlogKey)
+    case mangaReader(AccountType, MicroBlogKey, String, Int?)
+    case mangaComments(AccountType, MicroBlogKey)
     case statusInsight(AccountType, MicroBlogKey)
     case statusMastodonReport(AccountType, MicroBlogKey, MicroBlogKey?)
     case statusMisskeyReport(AccountType, MicroBlogKey, MicroBlogKey?)
-    case statusVVOComment(AccountType, MicroBlogKey)
-    case statusVVOStatus(AccountType, MicroBlogKey)
     case statusShareSheet(AccountType, MicroBlogKey, String, String?, String?)
     case serviceSelect
     case relogin(MicroBlogKey, String)
@@ -421,6 +468,20 @@ enum Route: Hashable, Identifiable {
             return Route.galleryDetail(data.accountType, data.statusKey)
         }
     }
+
+    fileprivate static func fromManga(_ manga: DeeplinkRoute.Manga) -> Route? {
+        switch onEnum(of: manga) {
+        case .detail(let data):
+            return Route.mangaDetail(data.accountType, data.mangaKey)
+        case .reader(let data):
+            return Route.mangaReader(
+                data.accountType,
+                data.mangaKey,
+                data.chapterId,
+                data.initialPage?.intValue
+            )
+        }
+    }
     
     fileprivate static func fromProfile(_ profile: DeeplinkRoute.Profile) -> Route? {
         switch onEnum(of: profile) {
@@ -449,10 +510,6 @@ enum Route: Hashable, Identifiable {
             return Route.statusMastodonReport(data.accountType, data.userKey, data.statusKey)
         case .misskeyReport(let data):
             return Route.statusMisskeyReport(data.accountType, data.userKey, data.statusKey)
-        case .vVOComment(let data):
-            return Route.statusVVOComment(data.accountType, data.commentKey)
-        case .vVOStatus(let data):
-            return Route.statusVVOStatus(data.accountType, data.statusKey)
         case .shareSheet(let data):
             return Route.statusShareSheet(data.accountType, data.statusKey, data.shareUrl, data.fxShareUrl, data.fixvxShareUrl)
         }
@@ -474,6 +531,8 @@ enum Route: Hashable, Identifiable {
             return fromMedia(media)
         case .gallery(let gallery):
             return fromGallery(gallery)
+        case .manga(let manga):
+            return fromManga(manga)
         case .profile(let profile):
             return fromProfile(profile)
         case .rss(let rss):

@@ -7,6 +7,7 @@ import dev.dimension.flare.data.database.cache.model.DbPagingTimeline
 import dev.dimension.flare.data.database.cache.model.DbPagingTimelineWithStatus
 import dev.dimension.flare.data.database.cache.model.DbStatus
 import dev.dimension.flare.data.database.cache.model.DbStatusReference
+import dev.dimension.flare.data.database.cache.model.DbStatusWithReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationReference
 import dev.dimension.flare.data.database.cache.model.DbTimelineItemPresentationType
 import dev.dimension.flare.model.ReferenceType
@@ -20,13 +21,33 @@ internal suspend fun saveToDatabase(
     saveToDatabaseInTransaction(database, items)
 }
 
+internal suspend fun saveMissingStatuses(
+    database: CacheDatabase,
+    statuses: List<DbStatusWithReference>,
+) = database.connect {
+    val missing = loadChangedStatuses(database, statuses.map { it.status.data }).inserted
+    if (missing.isNotEmpty()) {
+        val ids = missing.mapTo(mutableSetOf()) { it.id }
+        database.upsertStatusUsers(missing)
+        database.statusDao().insertNew(missing)
+        syncStatusReferences(
+            database = database,
+            rootStatusIds = ids.toList(),
+            incoming =
+                statuses
+                    .filter { it.status.data.id in ids }
+                    .flatMap { it.references }
+                    .map { it.reference },
+        )
+    }
+}
+
 private suspend fun saveToDatabaseInTransaction(
     database: CacheDatabase,
     items: List<DbPagingTimelineWithStatus>,
 ) {
     val statuses = collectStatuses(items)
-    val users = statuses.flatMap { it.content.usersInContent() }.distinctBy { it.key }
-    database.upsertUsers(users.map { it.toDbUser() })
+    database.upsertStatusUsers(statuses)
     val statusChanges = loadChangedStatuses(database, statuses)
     if (statusChanges.inserted.isNotEmpty()) {
         database.statusDao().insertNew(statusChanges.inserted)
@@ -93,6 +114,11 @@ private suspend fun saveToDatabaseInTransaction(
 }
 
 private const val SQL_IN_BATCH_SIZE = 500
+
+private suspend fun CacheDatabase.upsertStatusUsers(statuses: List<DbStatus>) {
+    val users = statuses.flatMap { it.content.usersInContent() }.distinctBy { it.key }
+    upsertUsers(users.map { it.toDbUser() })
+}
 
 private data class DbChanges<T>(
     val inserted: List<T>,

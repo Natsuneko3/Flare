@@ -4,14 +4,24 @@ import FlareAppleUI
 
 /// UIKit port of `ListErrorView`.
 ///
-/// Matches the three cases of the SwiftUI implementation:
+/// Matches the four cases of the SwiftUI implementation:
 ///   * `LoginExpiredException` → login-expired prompt with account key
 ///   * `RequireReLoginException` → permission-denied prompt
+///   * `SessionChallengeException` → interactive challenge verification prompt
 ///   * everything else → generic error with retry + message
 final class ListErrorUIView: UIView {
     var onOpenURL: ((URL) -> Void)?
+    var onSessionChallenge: ((SessionChallengeException, @escaping () -> Void) -> Void)? {
+        didSet {
+            if mode == .sessionChallenge {
+                button.setTitle(sessionChallengeButtonTitle, for: .normal)
+                secondaryButton.isHidden = onSessionChallenge == nil
+            }
+        }
+    }
     private var onRetry: (() -> Void)?
     private var actionURL: URL?
+    private var challengeException: SessionChallengeException?
 
     private let iconView: UIImageView = {
         let iv = UIImageView()
@@ -43,6 +53,15 @@ final class ListErrorUIView: UIView {
         let b = UIButton(configuration: cfg)
         return b
     }()
+    private let secondaryButton: UIButton = {
+        var cfg = UIButton.Configuration.bordered()
+        cfg.cornerStyle = .capsule
+        let b = UIButton(configuration: cfg)
+        b.setTitle(String(localized: "action_retry"), for: .normal)
+        b.accessibilityIdentifier = "list_error_challenge_retry"
+        b.isHidden = true
+        return b
+    }()
     private let detailLabel: UILabel = {
         let l = UILabel()
         l.font = .preferredFont(forTextStyle: .caption1)
@@ -64,6 +83,7 @@ final class ListErrorUIView: UIView {
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(messageLabel)
         stack.addArrangedSubview(button)
+        stack.addArrangedSubview(secondaryButton)
         stack.addArrangedSubview(detailLabel)
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -76,24 +96,37 @@ final class ListErrorUIView: UIView {
             stack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 16),
         ])
         button.addAction(UIAction { [weak self] _ in self?.handleButtonTap() }, for: .touchUpInside)
+        secondaryButton.addAction(UIAction { [weak self] _ in self?.onRetry?() }, for: .touchUpInside)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    enum Mode {
+    enum Mode: Equatable {
         case retry
         case openLogin
+        case sessionChallenge
     }
     private var mode: Mode = .retry
+    var currentModeForTesting: Mode { mode }
+
+    private var sessionChallengeButtonTitle: String {
+        onSessionChallenge != nil
+            ? String(localized: "session_challenge_complete_verification")
+            : String(localized: "action_retry")
+    }
 
     func configure(error: KotlinThrowable, onRetry: @escaping () -> Void) {
         self.onRetry = onRetry
+        actionURL = nil
+        challengeException = nil
         detailLabel.isHidden = true
         messageLabel.isHidden = true
+        secondaryButton.isHidden = true
 
         if let expired = error as? LoginExpiredException {
             iconView.image = UIImage(systemName: "person.badge.shield.exclamationmark")
             titleLabel.text = String(format: String(localized: "error_login_expired %@"), "\(expired.accountKey)")
             button.setTitle(String(localized: "error_login_expired_action"), for: .normal)
+            button.accessibilityIdentifier = nil
             actionURL = reloginURL(accountKey: expired.accountKey, platformId: expired.platformId)
             mode = .openLogin
         } else if let reloginError = error as? RequireReLoginException {
@@ -102,12 +135,25 @@ final class ListErrorUIView: UIView {
             messageLabel.text = String(localized: "permission_denied_message")
             messageLabel.isHidden = false
             button.setTitle(String(localized: "error_login_expired_action"), for: .normal)
+            button.accessibilityIdentifier = nil
             actionURL = reloginURL(accountKey: reloginError.accountKey, platformId: reloginError.platformId)
             mode = .openLogin
+        } else if let challengeError = error as? SessionChallengeException {
+            iconView.image = UIImage(systemName: "exclamationmark.shield")
+            let trimmed = challengeError.displayMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            titleLabel.text = trimmed.isEmpty
+                ? String(localized: "session_challenge_required_message")
+                : trimmed
+            button.setTitle(sessionChallengeButtonTitle, for: .normal)
+            button.accessibilityIdentifier = "list_error_challenge_verify"
+            secondaryButton.isHidden = onSessionChallenge == nil
+            challengeException = challengeError
+            mode = .sessionChallenge
         } else {
             iconView.image = UIImage(systemName: "exclamationmark.triangle.text.page")
             titleLabel.text = String(localized: "error")
             button.setTitle(String(localized: "action_retry"), for: .normal)
+            button.accessibilityIdentifier = nil
             actionURL = nil
             mode = .retry
             if let message = error.message {
@@ -123,6 +169,15 @@ final class ListErrorUIView: UIView {
             onRetry?()
         case .openLogin:
             if let url = actionURL { onOpenURL?(url) }
+        case .sessionChallenge:
+            if let challengeException, let onSessionChallenge {
+                let retry = onRetry
+                onSessionChallenge(challengeException) {
+                    retry?()
+                }
+            } else {
+                onRetry?()
+            }
         }
     }
 

@@ -36,6 +36,7 @@ public data class UiProfile public constructor(
     public val bottomContent: BottomContent?,
     public val pluginId: String? = null,
     internal val clearedMarks: SerializableImmutableList<Mark> = persistentListOf(),
+    public val url: String? = null,
 ) {
     public constructor(
         key: MicroBlogKey,
@@ -52,6 +53,7 @@ public data class UiProfile public constructor(
         matrices: Matrices,
         mark: SerializableImmutableList<Mark>,
         bottomContent: BottomContent?,
+        url: String? = null,
     ) : this(
         key = key,
         handle = handle,
@@ -67,6 +69,7 @@ public data class UiProfile public constructor(
         matrices = matrices,
         mark = mark,
         bottomContent = bottomContent,
+        url = url,
     )
 
     // If name is blank, use handle without @ as display name
@@ -102,6 +105,7 @@ public data class UiProfile public constructor(
             bottomContent = bottomContent.mergeWith(existing.bottomContent),
             pluginId = pluginId,
             clearedMarks = clearedMarks,
+            url = url?.takeIf { it.isNotBlank() } ?: existing.url?.takeIf { it.isNotBlank() },
         )
     }
 

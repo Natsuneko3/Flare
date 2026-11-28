@@ -17,7 +17,6 @@ import dev.dimension.flare.ui.route.Route.Compose.New
 import dev.dimension.flare.ui.route.Route.Compose.Quote
 import dev.dimension.flare.ui.route.Route.Compose.Reply
 import dev.dimension.flare.ui.route.Route.Compose.VVOReplyComment
-import dev.dimension.flare.ui.route.Route.VVO.CommentDetail
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.serialization.Serializable
@@ -99,18 +98,6 @@ internal sealed interface Route : NavKey {
         val statusKey: MicroBlogKey,
     ) : ScreenRoute
 
-    data object VVO {
-        data class StatusDetail(
-            val accountType: AccountType,
-            val statusKey: MicroBlogKey,
-        ) : ScreenRoute
-
-        data class CommentDetail(
-            val accountType: AccountType,
-            val statusKey: MicroBlogKey,
-        ) : ScreenRoute
-    }
-
     data class AddReaction(
         val accountType: AccountType,
         val statusKey: MicroBlogKey,
@@ -160,6 +147,11 @@ internal sealed interface Route : NavKey {
         val userKey: MicroBlogKey,
     ) : FloatingRoute
 
+    data class ProfileShareSheet(
+        val accountType: AccountType,
+        val userKey: MicroBlogKey,
+    ) : FloatingRoute
+
     data class Search(
         val accountType: AccountType,
         val keyword: String,
@@ -174,6 +166,25 @@ internal sealed interface Route : NavKey {
         data class Comments(
             val accountType: AccountType,
             val statusKey: MicroBlogKey,
+        ) : ScreenRoute
+    }
+
+    data object Manga {
+        data class Detail(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
+        ) : ScreenRoute
+
+        data class Reader(
+            val mangaKey: MicroBlogKey,
+            val chapterId: String,
+            val initialPage: Int? = null,
+            val accountType: AccountType,
+        ) : ScreenRoute
+
+        data class Comments(
+            val mangaKey: MicroBlogKey,
+            val accountType: AccountType,
         ) : ScreenRoute
     }
 
@@ -192,7 +203,7 @@ internal sealed interface Route : NavKey {
 
     data object Compose {
         data class CrossPost(
-            val shareUrl: String,
+            val shareUrl: String? = null,
             val imagePath: String,
         ) : FloatingRoute
 
@@ -498,6 +509,22 @@ internal sealed interface Route : NavKey {
                     )
                 }
 
+                is DeeplinkRoute.Manga.Detail -> {
+                    Manga.Detail(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        accountType = deeplinkRoute.accountType,
+                    )
+                }
+
+                is DeeplinkRoute.Manga.Reader -> {
+                    Manga.Reader(
+                        mangaKey = deeplinkRoute.mangaKey,
+                        chapterId = deeplinkRoute.chapterId,
+                        initialPage = deeplinkRoute.initialPage,
+                        accountType = deeplinkRoute.accountType,
+                    )
+                }
+
                 is DeeplinkRoute.Status.AltText -> {
                     AltText(text = deeplinkRoute.text)
                 }
@@ -553,20 +580,6 @@ internal sealed interface Route : NavKey {
                         shareUrl = deeplinkRoute.shareUrl,
                         fxShareUrl = deeplinkRoute.fxShareUrl,
                         fixvxShareUrl = deeplinkRoute.fixvxShareUrl,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOComment -> {
-                    CommentDetail(
-                        accountType = deeplinkRoute.accountType,
-                        statusKey = deeplinkRoute.commentKey,
-                    )
-                }
-
-                is DeeplinkRoute.Status.VVOStatus -> {
-                    VVO.StatusDetail(
-                        accountType = deeplinkRoute.accountType,
-                        statusKey = deeplinkRoute.statusKey,
                     )
                 }
 

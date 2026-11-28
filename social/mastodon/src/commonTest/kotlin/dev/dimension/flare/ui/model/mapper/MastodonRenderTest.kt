@@ -25,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -101,6 +102,43 @@ class MastodonRenderTest {
                 .first()
                 .content.original.innerText,
         )
+    }
+
+    @Test
+    fun accountRenderPopulatesCanonicalProfileUrl() {
+        val withExplicitUrl =
+            Account(
+                id = "1",
+                username = "alice",
+                acct = "alice@remote.example",
+                url = " https://remote.example/users/alice ",
+            ).render(accountKey = accountKey, host = accountKey.host)
+        val fallbackToAcctHost =
+            Account(
+                id = "2",
+                username = "bob",
+                acct = "bob@fed.example",
+                url = null,
+            ).render(accountKey = accountKey, host = accountKey.host)
+        val fallbackOnBlankUrl =
+            Account(
+                id = "3",
+                username = "carol",
+                acct = "carol",
+                url = "   ",
+            ).render(accountKey = accountKey, host = accountKey.host)
+        val blankUsername =
+            Account(
+                id = "4",
+                username = "  ",
+                acct = "",
+                url = null,
+            ).render(accountKey = accountKey, host = accountKey.host)
+
+        assertEquals("https://remote.example/users/alice", withExplicitUrl.url)
+        assertEquals("https://fed.example/@bob", fallbackToAcctHost.url)
+        assertEquals("https://mastodon.social/@carol", fallbackOnBlankUrl.url)
+        assertNull(blankUsername.url)
     }
 
     @Test

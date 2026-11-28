@@ -63,6 +63,9 @@ class PluginGitHubManagementTest {
     private val archives = mutableMapOf<String, ByteArray>()
     private var downloads = 0
     private var treeRequests = 0
+    private var historyDate: String? = null
+    private var historyRequests = 0
+    private var marketplaceRelease = """"version":"1.0.0","updatedAt":"2026-11-09","commitSha":"$FIRST_SHA","""
     private var reportedArchiveSize: Long? = null
     private var blocked = false
     private val downloadStarted = CompletableDeferred<Unit>()
@@ -109,6 +112,15 @@ class PluginGitHubManagementTest {
                                     reportedArchiveSize?.let { headersOf(HttpHeaders.ContentLength, it.toString()) } ?: headersOf(),
                             )
                         }
+                    }
+
+                    "/commits/" in request.url.encodedPath -> {
+                        historyRequests++
+                        val date = historyDate ?: return@MockEngine respond("{}", HttpStatusCode.NotFound)
+                        val sha = request.url.encodedPath.substringAfterLast('/')
+                        respond(
+                            """{"sha":"$sha","parents":[],"commit":{"committer":{"date":"${date}T12:00:00Z"}},"files":[{"filename":"plugin.js","status":"added","changes":1}]}""",
+                        )
                     }
 
                     else -> {
@@ -811,6 +823,12 @@ class PluginGitHubManagementTest {
                 assertEquals("3.2.0", second.version)
                 assertEquals("plugins/second", (second.source as PluginInstallSourceV1.GitHub).path)
                 assertEquals(
+                    "$REPOSITORY_URL/tree/$FIRST_SHA/plugins/second",
+                    presenter.state.value.plugins
+                        .single { it.pluginId == second.pluginId }
+                        .repositoryWebUrl,
+                )
+                assertEquals(
                     "/plugins/second",
                     Url(
                         presenter.state.value.plugins
@@ -930,6 +948,56 @@ class PluginGitHubManagementTest {
         }
 
     @Test
+    fun marketplaceInstallsTheAdvertisedSnapshotEvenAfterANewerTagIsPublished() =
+        runBlocking {
+            archives[SECOND_SHA] = archive("2.0.0")
+            tags = listOf("v2.0.0" to SECOND_SHA, "v1.0.0" to FIRST_SHA)
+            withPresenter { subsystem, presenter ->
+                loadMarketplace(presenter)
+                presenter.inspectMarketplace(PLUGIN_ID)
+                assertEquals(
+                    "1.0.0",
+                    presenter.state.value.pendingInstall
+                        ?.version,
+                )
+                presenter.confirmInstall()
+                val installed =
+                    subsystem.stateStore.desired.value.plugins
+                        .getValue(PLUGIN_ID)
+                assertEquals(FIRST_SHA, assertIs<PluginInstallSourceV1.GitHub>(installed.source).commitSha)
+                assertEquals("2026-11-09", installed.updatedAt)
+            }
+        }
+
+    @Test
+    fun listingWithoutReleaseMetadataCanStillInstallTheLatestStableVersion() =
+        runBlocking {
+            marketplaceRelease = ""
+            archives[SECOND_SHA] = archive("2.0.0")
+            tags = listOf("v1.0.0" to FIRST_SHA, "v2.0.0" to SECOND_SHA)
+            withPresenter { _, presenter ->
+                loadMarketplace(presenter)
+                presenter.inspectMarketplace(PLUGIN_ID)
+                assertEquals("2.0.0", assertNotNull(presenter.state.value.pendingInstall).version)
+            }
+        }
+
+    @Test
+    fun movedSnapshotAndMismatchedManifestCannotBeInstalledFromTheListing() =
+        runBlocking {
+            withPresenter { _, presenter ->
+                loadMarketplace(presenter)
+                tags = listOf("v1.0.0" to SECOND_SHA)
+                assertFails { presenter.inspectMarketplace(PLUGIN_ID) }
+                assertEquals(0, downloads)
+                tags = listOf("v1.0.0" to FIRST_SHA)
+                archives[FIRST_SHA] = archive("2.0.0")
+                assertFails { presenter.inspectMarketplace(PLUGIN_ID) }
+                assertNull(presenter.state.value.pendingInstall)
+            }
+        }
+
+    @Test
     fun marketplaceInstallationUsesTheExistingReviewAndUpdatesInstalledState() =
         runBlocking {
             withPresenter { subsystem, presenter ->
@@ -952,6 +1020,13 @@ class PluginGitHubManagementTest {
                         .any { it.pluginId == PLUGIN_ID },
                 )
                 assertEquals(
+                    "2026-11-09",
+                    presenter.state.value.plugins
+                        .single()
+                        .updatedAt,
+                )
+                assertEquals(0, historyRequests)
+                assertEquals(
                     PLUGIN_ID,
                     presenter.state.value.marketplace.plugins
                         .single()
@@ -965,6 +1040,79 @@ class PluginGitHubManagementTest {
                         .single()
                         .id,
                 )
+            }
+        }
+
+    @Test
+    fun backfillsAnOldInstallationAndKeepsItsDateUntilAnotherSnapshotIsInstalled() =
+        runBlocking {
+            withPresenter { _, presenter ->
+                presenter.inspectGitHub(REPOSITORY_URL)
+                presenter.confirmInstall()
+                assertNull(
+                    presenter.state.value.plugins
+                        .single()
+                        .updatedAt,
+                )
+                loadMarketplace(presenter)
+                catalogStatus = HttpStatusCode.ServiceUnavailable
+                presenter.checkUpdates()
+                assertEquals(
+                    "2026-11-09",
+                    presenter.state.value.plugins
+                        .single()
+                        .updatedAt,
+                )
+
+                archives[SECOND_SHA] = archive("1.1.0")
+                catalogStatus = null
+                tags = listOf("v3.0.0" to SECOND_SHA)
+                historyDate = "2026-11-11"
+                presenter.checkUpdates()
+                assertEquals(
+                    "2026-11-09",
+                    presenter.state.value.plugins
+                        .single()
+                        .updatedAt,
+                )
+                presenter.inspectGitHubUpdate(PLUGIN_ID)
+                presenter.confirmInstall()
+            }
+            withPresenter { _, presenter ->
+                val installed =
+                    presenter.state.value.plugins
+                        .single()
+                assertEquals("1.1.0", installed.version)
+                assertEquals("2026-11-11", installed.updatedAt)
+            }
+        }
+
+    @Test
+    fun concurrentDateBackfillKeepsAnUpdateCheckForTheSameSnapshot() =
+        runBlocking {
+            withPresenter { subsystem, presenter ->
+                install(presenter)
+                val installed =
+                    subsystem.stateStore.desired.value.plugins
+                        .getValue(PLUGIN_ID)
+                archives[SECOND_SHA] = archive("1.1.0")
+                tags = listOf("v3.0.0" to SECOND_SHA)
+                catalogStarted = CompletableDeferred()
+                catalogRelease = CompletableDeferred()
+                val check = launch { presenter.checkUpdates() }
+                try {
+                    withTimeout(10_000) { catalogStarted!!.await() }
+                    subsystem.stateStore.recordUpdateDate(installed, "2026-11-09")
+                    catalogRelease!!.complete(Unit)
+                    check.join()
+                    val item =
+                        presenter.state.value.plugins
+                            .single()
+                    assertEquals("2026-11-09", item.updatedAt)
+                    assertEquals("v3.0.0", item.availableUpdate?.tag)
+                } finally {
+                    check.cancelAndJoin()
+                }
             }
         }
 
@@ -1165,7 +1313,7 @@ class PluginGitHubManagementTest {
                 subsystem.appFiles,
                 MockEngine {
                     respond(
-                        """{"schemaVersion":1,"plugins":[{"id":"$PLUGIN_ID","name":"Test","description":"Test plugin","repository":"$REPOSITORY_URL","icon":"https://raw.githubusercontent.com/owner/repo/$FIRST_SHA/icon.png"}]}""",
+                        """{"schemaVersion":1,"plugins":[{"id":"$PLUGIN_ID","name":"Test","description":"Test plugin","repository":"$REPOSITORY_URL",$marketplaceRelease"icon":"https://raw.githubusercontent.com/owner/repo/$FIRST_SHA/icon.png"}]}""",
                     )
                 },
             )

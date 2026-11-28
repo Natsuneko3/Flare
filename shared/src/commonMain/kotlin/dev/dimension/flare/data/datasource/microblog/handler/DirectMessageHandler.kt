@@ -1,5 +1,6 @@
 package dev.dimension.flare.data.datasource.microblog.handler
 
+import androidx.collection.LruCache
 import androidx.paging.ExperimentalPagingApi
 import androidx.paging.Pager
 import androidx.paging.PagingData
@@ -7,6 +8,7 @@ import androidx.paging.cachedIn
 import androidx.paging.map
 import dev.dimension.flare.common.CacheData
 import dev.dimension.flare.common.Cacheable
+import dev.dimension.flare.common.FileItem
 import dev.dimension.flare.data.database.cache.CacheDatabase
 import dev.dimension.flare.data.database.cache.connect
 import dev.dimension.flare.data.database.cache.mapper.toDbUser
@@ -35,6 +37,9 @@ import dev.dimension.flare.ui.model.UiDMRoom
 import dev.dimension.flare.ui.model.UiState
 import dev.dimension.flare.ui.model.withProxy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -55,6 +60,7 @@ public class DirectMessageHandler(
     private val database: CacheDatabase by koinInject()
     private val accountType = AccountType.Specific(accountKey)
     private val inMemoryBadgeCount = MutableStateFlow<Int?>(null)
+    private val canSendCache = LruCache<MicroBlogKey, Boolean>(maxSize = 128)
 
     public fun list(scope: CoroutineScope): Flow<PagingData<UiDMRoom>> =
         Pager(
@@ -138,7 +144,7 @@ public class DirectMessageHandler(
     public fun roomInfo(roomKey: MicroBlogKey): CacheData<UiDMRoom> =
         Cacheable(
             fetchSource = {
-                saveRooms(listOf(loader.fetchRoomInfo(roomKey)))
+                loader.fetchRoomInfo(roomKey)?.let { saveRooms(listOf(it)) }
             },
             cacheSource = {
                 database
@@ -215,6 +221,17 @@ public class DirectMessageHandler(
         }
     }
 
+    public suspend fun sendImage(
+        roomKey: MicroBlogKey,
+        image: FileItem,
+    ) {
+        coroutineScope
+            .async {
+                val sentMessage = loader.sendImage(roomKey, image.uploadMedia())
+                saveMessagesAndUpdateRoom(roomKey, listOf(sentMessage))
+            }.await()
+    }
+
     public fun delete(
         roomKey: MicroBlogKey,
         messageKey: MicroBlogKey,
@@ -238,7 +255,11 @@ public class DirectMessageHandler(
     }
 
     public suspend fun fetchNew(roomKey: MicroBlogKey) {
-        val cursor = database.messageDao().getLatestMessage(roomKey)?.remoteCursor
+        val cursor =
+            database.messageDao().getLatestRemoteCursor(
+                roomKey,
+                requireNonNull = loader.useLatestNonNullRemoteCursor,
+            )
         saveDelta(
             roomKey = roomKey,
             delta = loader.fetchNewMessages(roomKey, cursor),
@@ -289,7 +310,13 @@ public class DirectMessageHandler(
             }
         }
 
-    public suspend fun canSend(userKey: MicroBlogKey): Boolean = loader.canSend(userKey)
+    public fun cachedCanSend(userKey: MicroBlogKey): Boolean? = canSendCache[userKey]
+
+    public suspend fun canSend(userKey: MicroBlogKey): Boolean =
+        loader.canSend(userKey).also { result ->
+            currentCoroutineContext().ensureActive()
+            canSendCache.put(userKey, result)
+        }
 
     private suspend fun saveDelta(
         roomKey: MicroBlogKey,
@@ -321,12 +348,11 @@ public class DirectMessageHandler(
         val lastMessages = rooms.mapNotNull { it.lastMessage }
         val users = rooms.flatMap { it.users } + lastMessages.map { it.user }
         database.upsertUsers(users.map { it.toDbUser(host = accountKey.host) })
-        val lastMessageItems =
-            rooms.mapNotNull { room ->
-                room.lastMessage?.toDbMessageItem(room.key)
+        if (loader.persistRoomLastMessage) {
+            val lastMessageItems = rooms.mapNotNull { room -> room.lastMessage?.toDbMessageItem(room.key) }
+            if (lastMessageItems.isNotEmpty()) {
+                database.messageDao().insertMessages(lastMessageItems)
             }
-        if (lastMessageItems.isNotEmpty()) {
-            database.messageDao().insertMessages(lastMessageItems)
         }
         database.messageDao().insertReferences(
             rooms.flatMap { room ->
@@ -343,7 +369,7 @@ public class DirectMessageHandler(
                 DbMessageRoom(
                     roomKey = room.key,
                     platformId = loader.platformId,
-                    messageKey = room.lastMessage?.key,
+                    messageKey = room.lastMessage?.key?.takeIf { loader.persistRoomLastMessage },
                 )
             },
         )

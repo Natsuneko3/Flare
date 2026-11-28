@@ -2,7 +2,9 @@ package dev.dimension.flare.feature.plugin
 
 import dev.dimension.flare.data.datastore.PlatformOAuthPendingRepository
 import dev.dimension.flare.data.io.AppFileStore
+import dev.dimension.flare.data.plugin.TimelineProcessorService
 import dev.dimension.flare.data.repository.AccountService
+import dev.dimension.flare.data.repository.SettingsRepository
 import dev.dimension.flare.di.koinGet
 import dev.dimension.flare.feature.plugin.adapter.PluginPlatformSpecSourceV1
 import dev.dimension.flare.feature.plugin.authoring.PluginAuthoringServiceV1
@@ -20,7 +22,10 @@ import dev.dimension.flare.feature.plugin.login.PlatformOAuthPluginPendingStoreV
 import dev.dimension.flare.feature.plugin.login.PluginFormLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthLoginCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginOAuthPendingStoreV1
+import dev.dimension.flare.feature.plugin.login.PluginSessionChallengeCoordinatorV1
 import dev.dimension.flare.feature.plugin.login.PluginWebCookieLoginCoordinatorV1
+import dev.dimension.flare.feature.plugin.manifest.PluginManifestV1
+import dev.dimension.flare.feature.plugin.manifest.PluginPermissionsV1
 import dev.dimension.flare.feature.plugin.marketplace.PluginMarketplace
 import dev.dimension.flare.feature.plugin.runtime.PluginRuntimePool
 import dev.dimension.flare.feature.plugin.storage.PluginStorageV1
@@ -28,11 +33,23 @@ import dev.dimension.flare.model.PlatformRegistry
 import dev.dimension.flare.model.PlatformSpecSource
 import dev.dimension.flare.ui.model.PluginMediaPermissions
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.native.HiddenFromObjC
 
 /** Process-scoped plugin services and bounded, plugin-owned persistent storage. */
@@ -40,8 +57,13 @@ import kotlin.native.HiddenFromObjC
 public class PluginSubsystemV1 internal constructor(
     internal val appFiles: AppFileStore,
     pendingStore: PluginOAuthPendingStoreV1,
+    private val registryProvider: () -> PlatformRegistry = { koinGet() },
+    private val accountsProvider: () -> AccountService = { koinGet() },
+    private val scopeProvider: () -> CoroutineScope = { koinGet() },
+    internal val timelineGrants: PluginTimelineGrantStoreV1 = PluginTimelineGrantStoreV1(),
 ) {
     internal val mutationMutex = Mutex()
+    private val timelineProcessorCleaners = MutableStateFlow<Set<(String) -> Unit>>(emptySet())
 
     public constructor(
         appFiles: AppFileStore,
@@ -95,11 +117,44 @@ public class PluginSubsystemV1 internal constructor(
             )
         }
     public val development: PluginDevelopmentSessionV1 by lazy {
-        PluginDevelopmentSessionV1(this, koinGet<PlatformRegistry>(), koinGet<AccountService>(), koinGet<CoroutineScope>())
+        PluginDevelopmentSessionV1(this, registryProvider(), accountsProvider(), scopeProvider())
     }
 
     internal val authoring: PluginAuthoringServiceV1 by lazy {
-        PluginAuthoringServiceV1(this, { koinGet<PlatformRegistry>() }, { koinGet<AccountService>() }, { koinGet<CoroutineScope>() })
+        PluginAuthoringServiceV1(this, registryProvider, accountsProvider, scopeProvider)
+    }
+
+    internal fun registerTimelineProcessorCleaner(cleaner: (String) -> Unit): () -> Unit {
+        timelineProcessorCleaners.update { it + cleaner }
+        return { timelineProcessorCleaners.update { it - cleaner } }
+    }
+
+    internal fun clearTimelineProcessor(pluginId: String) {
+        val cleaners = timelineProcessorCleaners.value
+        if (cleaners.isNotEmpty()) {
+            cleaners.forEach { it(pluginId) }
+        } else {
+            runCatching { koinGet<TimelineProcessorService>() }.getOrNull()?.clearPlugin(pluginId)
+        }
+    }
+
+    internal suspend fun applyConfirmedTimelineProcessorGrant(
+        existingManifest: PluginManifestV1?,
+        nextManifest: PluginManifestV1,
+    ) {
+        val pluginId = nextManifest.id
+        if (nextManifest.timelineProcessor == null) {
+            clearTimelineProcessor(pluginId)
+            timelineGrants.updateSuspend { it - pluginId }
+            return
+        }
+        timelineGrants.updateSuspend { grants ->
+            if (existingManifest?.timelineProcessor != null && pluginId !in grants) {
+                grants
+            } else {
+                grants + (pluginId to nextManifest.permissions.timelineProcessorGrant)
+            }
+        }
     }
 
     internal fun replaceRunning(
@@ -118,7 +173,14 @@ public class PluginSubsystemV1 internal constructor(
                 ?.mediaNetwork == true,
         )
         mutableRunning.value = mutableRunning.value.copy(plugins = plugins)
+        sessionChallenge.invalidatePlugin(pluginId)
         mutableSourceIssues.update { issues -> issues.filterNot { it.pluginId == pluginId } }
+        if (plugin == null || plugin.installed.manifest.timelineProcessor == null) {
+            clearTimelineProcessor(pluginId)
+            timelineGrants.setEnabledAsync(pluginId, null, runCatching { scopeProvider() }.getOrNull())
+        } else if (timelineGrants.isHydrated && !timelineGrants.isEnabled(pluginId, plugin.installed.manifest)) {
+            clearTimelineProcessor(pluginId)
+        }
     }
 
     private val mutableSourceIssues = MutableStateFlow(stateStore.running.issues)
@@ -141,6 +203,11 @@ public class PluginSubsystemV1 internal constructor(
         )
     public val form: PluginFormLoginCoordinatorV1 = PluginFormLoginCoordinatorV1(runtimePool)
     public val webCookie: PluginWebCookieLoginCoordinatorV1 = PluginWebCookieLoginCoordinatorV1(runtimePool)
+    public val sessionChallenge: PluginSessionChallengeCoordinatorV1 =
+        PluginSessionChallengeCoordinatorV1(
+            runtimePool = runtimePool,
+            runningPlugin = { pluginId -> running.value.plugins[pluginId] },
+        )
 
     public fun platformSource(scope: CoroutineScope): PlatformSpecSource =
         PluginPlatformSpecSourceV1(
@@ -151,6 +218,7 @@ public class PluginSubsystemV1 internal constructor(
             webCookie = webCookie,
             coroutineScope = scope,
             onIssue = { issue -> mutableSourceIssues.value = (mutableSourceIssues.value + issue).distinct() },
+            sessionChallenge = sessionChallenge,
         )
 
     public suspend fun onMemoryPressure() {
@@ -159,5 +227,227 @@ public class PluginSubsystemV1 internal constructor(
 
     private companion object {
         const val STORAGE_NAMESPACE = "social-plugins-v3"
+    }
+}
+
+internal interface TimelineProcessorSettingsBacking {
+    val enabledPlugins: Flow<Map<String, Set<String>>>
+
+    suspend fun updateEnabledPlugins(transform: (Map<String, Set<String>>) -> Map<String, Set<String>>): Map<String, Set<String>>
+}
+
+internal class SettingsRepositoryTimelineBacking(
+    private val settingsRepository: SettingsRepository,
+) : TimelineProcessorSettingsBacking {
+    override val enabledPlugins: Flow<Map<String, Set<String>>>
+        get() = settingsRepository.appSettings.map { it.enabledTimelineProcessorPlugins }.distinctUntilChanged()
+
+    override suspend fun updateEnabledPlugins(
+        transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+    ): Map<String, Set<String>> {
+        var updatedMap: Map<String, Set<String>> = emptyMap()
+        settingsRepository.updateAppSettings {
+            val next = transform(enabledTimelineProcessorPlugins)
+            updatedMap = next
+            if (next == enabledTimelineProcessorPlugins) {
+                this
+            } else {
+                copy(enabledTimelineProcessorPlugins = next)
+            }
+        }
+        return updatedMap
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+internal class PluginTimelineGrantStoreV1(
+    private val backing: () -> TimelineProcessorSettingsBacking? = {
+        runCatching { koinGet<SettingsRepository>() }.getOrNull()?.let(::SettingsRepositoryTimelineBacking)
+    },
+    private val scope: () -> CoroutineScope? = {
+        runCatching { koinGet<CoroutineScope>() }.getOrNull()
+    },
+) {
+    private val state = MutableStateFlow(GrantSnapshot())
+    private val writeMutex = Mutex()
+    private val boundBacking = MutableStateFlow<TimelineProcessorSettingsBacking?>(null)
+    private val boundScope = MutableStateFlow<CoroutineScope?>(null)
+
+    val current: Map<String, Set<String>>
+        get() = state.value.effective
+
+    val isHydrated: Boolean
+        get() {
+            val activeBacking = boundBacking.value ?: backing()
+            return activeBacking == null || state.value.hydrated
+        }
+
+    fun bind(
+        settingsBacking: TimelineProcessorSettingsBacking,
+        coroutineScope: CoroutineScope,
+    ) {
+        val previous = boundBacking.value
+        boundScope.value = coroutineScope
+        if (previous !== settingsBacking) {
+            if (previous != null) {
+                state.update { it.copy(hydrated = false) }
+            }
+            boundBacking.value = settingsBacking
+        }
+    }
+
+    suspend fun awaitCurrent(): Map<String, Set<String>> {
+        val activeBacking = boundBacking.value ?: backing() ?: return state.value.effective
+        if (!state.value.hydrated) {
+            val persisted = activeBacking.enabledPlugins.first()
+            state.update { current ->
+                if (current.hydrated) {
+                    current
+                } else {
+                    current.copy(persisted = persisted, hydrated = true)
+                }
+            }
+        }
+        return state.value.effective
+    }
+
+    fun isEnabled(
+        pluginId: String,
+        manifest: PluginManifestV1,
+        grants: Map<String, Set<String>> = current,
+    ): Boolean =
+        manifest.timelineProcessor != null &&
+            grants[pluginId]?.containsAll(manifest.permissions.timelineProcessorGrant) == true
+
+    fun observedGrants(): Flow<Map<String, Set<String>>> =
+        boundBacking
+            .flatMapLatest { explicit ->
+                val activeBacking = explicit ?: backing()
+                if (activeBacking == null) {
+                    state.map { it.effective }
+                } else {
+                    combine(
+                        state,
+                        activeBacking.enabledPlugins.onEach { persisted ->
+                            state.update { current ->
+                                if (!current.hydrated || (current.activeWrites == 0 && current.pendingQueue.isEmpty())) {
+                                    current.copy(persisted = persisted, hydrated = true)
+                                } else {
+                                    current
+                                }
+                            }
+                        },
+                    ) { _, _ ->
+                        state.value.effective
+                    }
+                }
+            }.distinctUntilChanged()
+
+    fun setEnabledAsync(
+        pluginId: String,
+        permissions: PluginPermissionsV1?,
+        fallbackScope: CoroutineScope? = null,
+    ) {
+        val transform: (Map<String, Set<String>>) -> Map<String, Set<String>> =
+            if (permissions == null) {
+                { it - pluginId }
+            } else {
+                { it + (pluginId to permissions.timelineProcessorGrant) }
+            }
+        val activeBacking = boundBacking.value ?: backing()
+        val activeScope = boundScope.value ?: scope() ?: fallbackScope
+        if (activeBacking == null || activeScope == null) {
+            state.update { current ->
+                current.copy(
+                    persisted = transform(current.persisted),
+                    hydrated = true,
+                )
+            }
+            return
+        }
+        enqueueTransform(transform)
+        activeScope.launch {
+            drainPendingWrites(activeBacking)
+        }
+    }
+
+    suspend fun updateSuspend(transform: (Map<String, Set<String>>) -> Map<String, Set<String>>) {
+        val activeBacking = boundBacking.value ?: backing()
+        if (activeBacking == null) {
+            state.update { current ->
+                current.copy(
+                    persisted = transform(current.persisted),
+                    hydrated = true,
+                )
+            }
+            return
+        }
+        val targetId = enqueueTransform(transform)
+        drainPendingWrites(activeBacking, untilTransformId = targetId)
+    }
+
+    private fun enqueueTransform(transform: (Map<String, Set<String>>) -> Map<String, Set<String>>): Long {
+        var assignedId = 0L
+        state.update { current ->
+            assignedId = current.nextTransformId
+            current.copy(
+                nextTransformId = assignedId + 1L,
+                pendingQueue = current.pendingQueue + PendingGrantTransform(assignedId, transform),
+            )
+        }
+        return assignedId
+    }
+
+    private suspend fun drainPendingWrites(
+        activeBacking: TimelineProcessorSettingsBacking,
+        untilTransformId: Long = Long.MAX_VALUE,
+    ) {
+        writeMutex.withLock {
+            while (true) {
+                val head =
+                    state.value.pendingQueue
+                        .firstOrNull()
+                        ?.takeIf { untilTransformId == Long.MAX_VALUE || it.id <= untilTransformId }
+                        ?: break
+                state.update { it.copy(activeWrites = it.activeWrites + 1) }
+                try {
+                    withContext(NonCancellable) {
+                        val persisted = activeBacking.updateEnabledPlugins(head.transform)
+                        state.update { current ->
+                            current.copy(
+                                persisted = persisted,
+                                hydrated = true,
+                                activeWrites = (current.activeWrites - 1).coerceAtLeast(0),
+                                pendingQueue = current.pendingQueue.filterNot { it.id == head.id },
+                            )
+                        }
+                    }
+                } catch (error: Throwable) {
+                    state.update { current ->
+                        current.copy(
+                            activeWrites = (current.activeWrites - 1).coerceAtLeast(0),
+                            pendingQueue = current.pendingQueue.filterNot { it.id == head.id },
+                        )
+                    }
+                    throw error
+                }
+            }
+        }
+    }
+
+    private data class PendingGrantTransform(
+        val id: Long,
+        val transform: (Map<String, Set<String>>) -> Map<String, Set<String>>,
+    )
+
+    private data class GrantSnapshot(
+        val persisted: Map<String, Set<String>> = emptyMap(),
+        val hydrated: Boolean = false,
+        val nextTransformId: Long = 1L,
+        val activeWrites: Int = 0,
+        val pendingQueue: List<PendingGrantTransform> = emptyList(),
+    ) {
+        val effective: Map<String, Set<String>> =
+            pendingQueue.fold(persisted) { acc, item -> item.transform(acc) }
     }
 }
