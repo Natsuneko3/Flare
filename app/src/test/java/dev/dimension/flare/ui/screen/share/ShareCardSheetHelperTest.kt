@@ -1,5 +1,6 @@
 package dev.dimension.flare.ui.screen.share
 
+import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import dev.dimension.flare.common.MediaFileNamePolicy
@@ -15,7 +16,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], manifest = Config.NONE)
+@Config(sdk = [35], manifest = Config.NONE, application = Application::class)
 class ShareCardSheetHelperTest {
     @Test
     fun `crossPostInitialText formats valid url and stays empty for null blank or invalid urls`() {
