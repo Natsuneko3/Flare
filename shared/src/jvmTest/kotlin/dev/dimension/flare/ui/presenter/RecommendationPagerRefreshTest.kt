@@ -144,10 +144,10 @@ class RecommendationPagerRefreshTest {
             awaitModel(models, "Initial recommendation batch did not load") { it.ids().firstOrNull() == "1" }
             withContext(Dispatchers.Main) {
                 val state = assertNotNull(models.value)
-                state.reading?.restorationFinished()
-                if (remember) state.reading?.positionChanged(12, -17.5)
-                state.markRecommendationsViewed(listOf(post(1)))
                 val items = state.listState as PagingState.Success
+                state.reading?.restorationFinished()
+                if (remember) state.reading?.positionChanged(12, -17.5, items.peek(12)?.stableItemKey)
+                state.markRecommendationsViewed(listOf(post(1)))
                 items[items.itemCount - 1]
             }
             awaitModel(models, "Old append never reached the expected terminal state") {
