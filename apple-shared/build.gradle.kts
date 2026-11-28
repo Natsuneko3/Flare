@@ -2,6 +2,7 @@ import co.touchlab.skie.configuration.DefaultArgumentInterop
 import dev.dimension.flare.buildlogic.FlarePlatform
 import dev.dimension.flare.buildlogic.flare
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
 
 plugins {
     id("dev.dimension.flare.multiplatform-library")
@@ -10,6 +11,8 @@ plugins {
     alias(libs.plugins.koin.compiler)
     alias(libs.plugins.skie)
 }
+
+val iosReleaseLlvmLtoPasses = providers.gradleProperty("flare.ios.release.llvmLtoPasses")
 
 kotlin {
     flare {
@@ -45,6 +48,15 @@ kotlin {
             appleTarget.binaries.framework {
                 baseName = "KotlinSharedUI"
                 isStatic = true
+
+                if (appleTarget.name == "iosArm64" && buildType == NativeBuildType.RELEASE) {
+                    iosReleaseLlvmLtoPasses.orNull?.let { passes ->
+                        freeCompilerArgs += listOf(
+                            "-Xllvm-lto-passes=$passes",
+                            "-Xverbose-phases=ModuleBitcodeOptimization,LTOBitcodeOptimization",
+                        )
+                    }
+                }
 
                 if (appleTarget.name.startsWith("macos")) {
                     linkerOpts.add("-lsqlite3")
