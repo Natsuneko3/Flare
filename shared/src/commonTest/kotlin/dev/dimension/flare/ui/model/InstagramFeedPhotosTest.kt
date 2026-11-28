@@ -37,20 +37,37 @@ class InstagramFeedPhotosTest {
 
     @Test
     fun cachedPostPreservesAlbumOrderDimensionsAndRequestContext() {
-        val photos = feed.instagramPhotos()
+        val photos = feed.instagramMedia()
         assertEquals(listOf(first, "https://images.example/two.jpg"), photos.map { it.url })
-        assertEquals(0.75f, photos.first().aspectRatio)
+        assertEquals(0.75f, (photos.first() as UiMedia.Image).aspectRatio)
         assertEquals("two", photos.last().description)
         assertEquals(cover.customHeaders, photos.last().customHeaders)
         assertEquals(cover.proxy, photos.last().proxy)
-        assertEquals(listOf(cover), feed.copy(descriptionHtml = null).instagramPhotos())
+        assertEquals(cover, feed.copy(descriptionHtml = null).instagramMedia().single())
+    }
+
+    @Test
+    fun videoSourcesAppearInAlbumOrderAndVideoOnlyPostsNeedNoCover() {
+        val clip = "https://example.org/clip.mp4"
+        val video = """<video poster="$first" width="720"><source src="$clip" type="video/mp4"><img src="$first"></video>"""
+        val mixed = feed.copy(descriptionHtml = """<img src="$first">$video<img src="/last.jpg">""").instagramMedia()
+        assertEquals(listOf(first, clip, "https://www.instagram.com/last.jpg"), mixed.map { it.url })
+        val parsed = mixed[1] as UiMedia.Video
+        assertEquals(first, parsed.thumbnailUrl)
+        assertEquals(1f, parsed.aspectRatio)
+        assertEquals(cover.customHeaders, parsed.customHeaders)
+        assertEquals(cover.proxy, parsed.proxy)
+        val direct = feed.copy(descriptionHtml = """<video src="$clip" width="1080" height="1920"></video>""").instagramMedia()
+        assertEquals(1080f / 1920f, (direct.single() as UiMedia.Video).aspectRatio)
+        val videoOnly = feed.copy(media = null, descriptionHtml = video).instagramMedia()
+        assertEquals(listOf(clip), videoOnly.map { it.url })
     }
 
     @Test
     fun otherArticlesAndPluginFeedsKeepTheirOwnPresentation() {
         for (link in listOf("https://news.example/p/abc", "https://instagram.com.example/p/abc", "https://instagram.com/about/")) {
-            assertTrue(feed.copy(url = link).instagramPhotos().isEmpty())
+            assertTrue(feed.copy(url = link).instagramMedia().isEmpty())
         }
-        assertTrue(feed.copy(pluginId = "sample").instagramPhotos().isEmpty())
+        assertTrue(feed.copy(pluginId = "sample").instagramMedia().isEmpty())
     }
 }

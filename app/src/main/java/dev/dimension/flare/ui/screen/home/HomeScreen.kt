@@ -28,6 +28,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.material3.rememberWideNavigationRailState
 import androidx.compose.runtime.Composable
+import dev.dimension.flare.ui.component.status.LocalOpenRssMedia
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -523,6 +524,9 @@ internal fun HomeScreen(afterInit: () -> Unit) {
                                     }
                                 }
                             },
+                        LocalOpenRssMedia provides { items, index ->
+                            state.navigate(Route.Media.RawMedia(medias = items, index = index, preview = items[index].preview?.url))
+                        },
                         LocalScrollToTopRegistry provides state.scrollToTopRegistry,
                     ) {
                         Router(

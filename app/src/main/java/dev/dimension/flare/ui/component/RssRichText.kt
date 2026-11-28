@@ -42,6 +42,12 @@ import dev.dimension.flare.ui.model.toUiImage
 import dev.dimension.flare.ui.render.resolvedHref
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.layout.ContentScale
+import dev.dimension.flare.ui.component.status.LocalOpenRssMedia
+import dev.dimension.flare.ui.component.status.MediaItem
+import dev.dimension.flare.ui.model.rssVideo
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.ImmutableMap
 
 private val lightLinkColor = Color(0xff0066cc)
@@ -229,6 +235,23 @@ private fun RichTextScope.RenderElement(
                         RenderNode(context, it)
                     }
                 }
+            }
+        }
+
+        "video" -> {
+            val video = remember(element, context.imageHeader) { element.rssVideo(context.imageHeader, ProxyRef.Global) }
+            if (video != null) {
+                with(context) { RenderTextAndReset() }
+                val openGallery = LocalOpenRssMedia.current
+                val uriHandler = LocalUriHandler.current
+                MediaItem(
+                    media = video,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(video.aspectRatio.coerceIn(0.6f, 2.4f)).clickable {
+                        if (openGallery != null) openGallery(persistentListOf(video), 0) else uriHandler.openUri(video.url)
+                    },
+                    keepAspectRatio = false,
+                    contentScale = ContentScale.Fit,
+                )
             }
         }
 

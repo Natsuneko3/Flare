@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
 import dev.dimension.flare.compose.ui.feed_open_article
 import dev.dimension.flare.ui.component.DateTimeText
+import dev.dimension.flare.ui.component.LocalTimelineCarouselItem
+import dev.dimension.flare.ui.component.TimelineCarouselItem
 import dev.dimension.flare.ui.component.NetworkImage
 import dev.dimension.flare.ui.component.accessibleDescription
 import dev.dimension.flare.ui.component.platform.PlatformText
@@ -32,7 +37,7 @@ import dev.dimension.flare.ui.model.ClickContext
 import dev.dimension.flare.ui.model.TranslationDisplayState
 import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiTimelineV2
-import dev.dimension.flare.ui.model.instagramPhotos
+import dev.dimension.flare.ui.model.instagramMedia
 import dev.dimension.flare.ui.route.DeeplinkRoute
 import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.PlatformTheme
@@ -96,12 +101,12 @@ internal fun FeedComponent(
                 style = PlatformTheme.typography.title,
             )
         }
-        val photos = remember(data.url, data.descriptionHtml, data.media, data.pluginId) { data.instagramPhotos() }
-        if (photos.isNotEmpty()) {
+        val media = remember(data.url, data.descriptionHtml, data.media, data.source.proxy, data.pluginId) { data.instagramMedia() }
+        if (media.isNotEmpty()) {
             data.description?.takeIf { it.isNotBlank() && it != data.title }?.let {
                 PlatformText(text = it, style = PlatformTheme.typography.caption, maxLines = 5)
             }
-            InstagramPhotoGallery(photos)
+            InstagramMediaGallery(media)
         } else {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -144,37 +149,49 @@ internal fun FeedComponent(
     }
 }
 
+public val LocalOpenRssMedia: ProvidableCompositionLocal<((ImmutableList<UiMedia>, Int) -> Unit)?> = compositionLocalOf { null }
+
 @Composable
-private fun InstagramPhotoGallery(photos: ImmutableList<UiMedia.Image>) {
+private fun InstagramMediaGallery(items: ImmutableList<UiMedia>) {
     val uriHandler = LocalUriHandler.current
-    val frame =
-        Modifier
-            .fillMaxWidth()
-            .aspectRatio(photos.first().aspectRatio.coerceIn(0.75f, 2.4f))
-            .clip(PlatformTheme.shapes.medium)
-    val showPhoto: @Composable (UiMedia.Image) -> Unit = { photo ->
-        MediaItem(
-            media = photo,
-            modifier =
-                Modifier.fillMaxSize().clickable {
-                    uriHandler.openUri(
-                        DeeplinkRoute.Media.Image(photo.url, photo.previewUrl, photo.customHeaders, photo.proxy).toUri(),
-                    )
-                },
-            keepAspectRatio = false,
-            contentScale = ContentScale.Fit,
-        )
+    val openGallery = LocalOpenRssMedia.current
+    val ratio = when (val first = items.first()) {
+        is UiMedia.Image -> first.aspectRatio
+        is UiMedia.Video -> first.aspectRatio
+        else -> 1f
     }
-    if (photos.size == 1) {
-        Box(frame) { showPhoto(photos.first()) }
+    val frame = Modifier.fillMaxWidth().aspectRatio(ratio.coerceIn(0.75f, 2.4f)).clip(PlatformTheme.shapes.medium)
+    val group = remember(items) { Any() }
+    val showItem: @Composable (Int, Boolean) -> Unit = { index, selected ->
+        val item = items[index]
+        CompositionLocalProvider(LocalTimelineCarouselItem provides TimelineCarouselItem(group, index, selected, items.size > 1)) {
+            MediaItem(
+                media = item,
+                modifier =
+                    Modifier.fillMaxSize().clickable {
+                        if (openGallery != null) {
+                            openGallery(items, index)
+                        } else if (item is UiMedia.Image) {
+                            uriHandler.openUri(DeeplinkRoute.Media.Image(item.url, item.previewUrl, item.customHeaders, item.proxy).toUri())
+                        } else {
+                            uriHandler.openUri(item.url)
+                        }
+                    },
+                keepAspectRatio = false,
+                contentScale = ContentScale.Fit,
+            )
+        }
+    }
+    if (items.size == 1) {
+        Box(frame) { showItem(0, true) }
     } else {
-        val pager = rememberPagerState { photos.size }
+        val pager = rememberPagerState { items.size }
         Box(frame) {
-            HorizontalPager(state = pager, modifier = Modifier.matchParentSize(), key = { photos[it].url }) { index ->
-                showPhoto(photos[index])
+            HorizontalPager(state = pager, modifier = Modifier.matchParentSize(), key = { items[it].url }) { index ->
+                showItem(index, index == pager.currentPage)
             }
             PlatformText(
-                text = "${pager.currentPage + 1}/${photos.size}",
+                text = "${pager.currentPage + 1}/${items.size}",
                 style = PlatformTheme.typography.caption,
                 modifier =
                     Modifier
