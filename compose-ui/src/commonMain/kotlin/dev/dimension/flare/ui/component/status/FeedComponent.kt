@@ -1,16 +1,25 @@
 package dev.dimension.flare.ui.component.status
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.dimension.flare.compose.ui.Res
@@ -21,9 +30,14 @@ import dev.dimension.flare.ui.component.accessibleDescription
 import dev.dimension.flare.ui.component.platform.PlatformText
 import dev.dimension.flare.ui.model.ClickContext
 import dev.dimension.flare.ui.model.TranslationDisplayState
+import dev.dimension.flare.ui.model.UiMedia
 import dev.dimension.flare.ui.model.UiTimelineV2
+import dev.dimension.flare.ui.model.instagramPhotos
+import dev.dimension.flare.ui.route.DeeplinkRoute
+import dev.dimension.flare.ui.route.toUri
 import dev.dimension.flare.ui.theme.PlatformTheme
 import dev.dimension.flare.ui.theme.screenHorizontalPadding
+import kotlinx.collections.immutable.ImmutableList
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -82,42 +96,94 @@ internal fun FeedComponent(
                 style = PlatformTheme.typography.title,
             )
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            data.description?.let {
-                PlatformText(
-                    text = it,
-                    style = PlatformTheme.typography.caption,
-                    maxLines = 5,
-                    color = PlatformTheme.colorScheme.caption,
-                    modifier =
-                        Modifier.let {
-                            if (data.media != null) {
-                                it.weight(1f)
-                            } else {
-                                it
-                            }
-                        },
-                )
+        val photos = remember(data.url, data.descriptionHtml, data.media, data.pluginId) { data.instagramPhotos() }
+        if (photos.isNotEmpty()) {
+            data.description?.takeIf { it.isNotBlank() && it != data.title }?.let {
+                PlatformText(text = it, style = PlatformTheme.typography.caption, maxLines = 5)
             }
-            data.media?.let {
-                NetworkImage(
-                    model = it,
-                    contentDescription = it.accessibleDescription(),
-                    modifier =
-                        Modifier
-                            .let {
-                                if (data.description != null) {
-                                    it.size(80.dp)
+            InstagramPhotoGallery(photos)
+        } else {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                data.description?.let {
+                    PlatformText(
+                        text = it,
+                        style = PlatformTheme.typography.caption,
+                        maxLines = 5,
+                        color = PlatformTheme.colorScheme.caption,
+                        modifier =
+                            Modifier.let {
+                                if (data.media != null) {
+                                    it.weight(1f)
                                 } else {
-                                    it.aspectRatio(16f / 9f)
+                                    it
                                 }
-                            }.clip(
-                                PlatformTheme.shapes.medium,
-                            ),
-                )
+                            },
+                    )
+                }
+                data.media?.let {
+                    NetworkImage(
+                        model = it,
+                        contentDescription = it.accessibleDescription(),
+                        modifier =
+                            Modifier
+                                .let {
+                                    if (data.description != null) {
+                                        it.size(80.dp)
+                                    } else {
+                                        it.aspectRatio(16f / 9f)
+                                    }
+                                }.clip(
+                                    PlatformTheme.shapes.medium,
+                                ),
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun InstagramPhotoGallery(photos: ImmutableList<UiMedia.Image>) {
+    val uriHandler = LocalUriHandler.current
+    val frame =
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(photos.first().aspectRatio.coerceIn(0.75f, 2.4f))
+            .clip(PlatformTheme.shapes.medium)
+    val showPhoto: @Composable (UiMedia.Image) -> Unit = { photo ->
+        MediaItem(
+            media = photo,
+            modifier =
+                Modifier.fillMaxSize().clickable {
+                    uriHandler.openUri(
+                        DeeplinkRoute.Media.Image(photo.url, photo.previewUrl, photo.customHeaders, photo.proxy).toUri(),
+                    )
+                },
+            keepAspectRatio = false,
+            contentScale = ContentScale.Fit,
+        )
+    }
+    if (photos.size == 1) {
+        Box(frame) { showPhoto(photos.first()) }
+    } else {
+        val pager = rememberPagerState { photos.size }
+        Box(frame) {
+            HorizontalPager(state = pager, modifier = Modifier.matchParentSize(), key = { photos[it].url }) { index ->
+                showPhoto(photos[index])
+            }
+            PlatformText(
+                text = "${pager.currentPage + 1}/${photos.size}",
+                style = PlatformTheme.typography.caption,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .clip(PlatformTheme.shapes.small)
+                        .background(PlatformTheme.colorScheme.card)
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
         }
     }
 }
