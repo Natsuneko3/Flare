@@ -29,17 +29,25 @@ class InstagramLoginTest {
     }
 
     @Test
-    fun cookieImportUsesAMaskedFieldAndRequiresInput() {
-        val handler = InstagramPlatformSpec.createHandler(LoginContext("instagram.com", LoginMethodType.CredentialImport, {}))
-        val field = handler.state.value.fields.single()
-        assertEquals(LoginFieldType.PasswordInput, field.type)
-        assertFalse(handler.state.value.actions.single().enabled)
-        assertFalse(handler.canResume(header))
-        handler.updateField(field.id, header)
-        assertTrue(handler.state.value.actions.single().enabled)
-        handler.clear()
-        assertEquals("", handler.state.value.fields.single().value)
-    }
+    fun cookieImportRequiresThreeSeparateMaskedValues() =
+        runTest {
+            val handler = InstagramPlatformSpec.createHandler(LoginContext("instagram.com", LoginMethodType.CredentialImport, {}))
+            val fields = handler.state.value.fields
+            assertEquals(listOf("sessionid", "csrftoken", "ds_user_id"), fields.map { it.id })
+            assertTrue(fields.all { it.type == LoginFieldType.PasswordInput })
+            assertFalse(handler.canResume(header))
+            handler.updateField("sessionid", "123%3Aabc")
+            handler.updateField("csrftoken", "csrf")
+            assertFalse(handler.state.value.actions.single().enabled)
+            handler.updateField("ds_user_id", "123")
+            assertTrue(handler.state.value.actions.single().enabled)
+            handler.updateField("csrftoken", "csrf; mid=other")
+            handler.perform(handler.state.value.actions.single().id)
+            assertTrue(handler.state.value.error != null)
+            handler.close()
+            assertTrue(handler.state.value.fields.all { it.value.isEmpty() })
+            assertFalse(handler.state.value.actions.single().enabled)
+        }
 
     @Test
     fun deepLinkShortcodesResolveToTheOriginalMediaIdWithoutOverflow() {

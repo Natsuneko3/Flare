@@ -7,6 +7,7 @@ import dev.dimension.flare.data.platform.INSTAGRAM_HOST
 import dev.dimension.flare.data.platform.INSTAGRAM_PLATFORM_ID
 import dev.dimension.flare.data.platform.InstagramCredential
 import dev.dimension.flare.data.platform.extractInstagramCredential
+import dev.dimension.flare.data.platform.validInstagramCookieValue
 import dev.dimension.flare.data.repository.AccountService
 import dev.dimension.flare.di.koinInject
 import dev.dimension.flare.model.MicroBlogKey
@@ -19,7 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.sync.Mutex
 
-private const val COOKIE_FIELD = "cookie"
+private val cookieFields = listOf("sessionid", "csrftoken", "ds_user_id")
 private const val LOGIN_ACTION = "login"
 
 internal class InstagramCookieLoginHandler(
@@ -27,7 +28,8 @@ internal class InstagramCookieLoginHandler(
 ) : LoginMethodHandler {
     private val accountService: AccountService by koinInject()
     private val verification = Mutex()
-    private var input = ""
+    private val inputs = mutableMapOf<String, String>()
+    private val complete: Boolean get() = cookieFields.all { !inputs[it].isNullOrBlank() }
     private val mutableState = MutableStateFlow(form())
     override val state = mutableState.asStateFlow()
     override val effects = emptyFlow<LoginEffect>()
@@ -36,16 +38,22 @@ internal class InstagramCookieLoginHandler(
         id: String,
         value: String,
     ) {
-        if (id != COOKIE_FIELD || state.value.loading) return
-        input = value
+        if (id !in cookieFields || state.value.loading) return
+        inputs[id] = value
         mutableState.value = form()
     }
 
     override suspend fun perform(actionId: String) {
-        if (actionId != LOGIN_ACTION || state.value.loading || input.isBlank()) return
-        val credential = extractInstagramCredential(input)
+        if (actionId != LOGIN_ACTION || state.value.loading || !complete) return
+        val values = inputs.mapValues { it.value.trim() }
+        val invalidField = cookieFields.firstOrNull { !validInstagramCookieValue(values.getValue(it)) }
+        if (invalidField != null) {
+            mutableState.value = form(error = "Check the value of $invalidField.")
+            return
+        }
+        val credential = extractInstagramCredential(cookieFields.joinToString("; ") { "$it=${values.getValue(it)}" })
         if (credential == null) {
-            mutableState.value = form(error = "The cookie must include sessionid, csrftoken and ds_user_id.")
+            mutableState.value = form(error = "Check that sessionid and ds_user_id belong to the same Instagram account.")
             return
         }
         verify(credential)
@@ -107,7 +115,7 @@ internal class InstagramCookieLoginHandler(
     }
 
     override fun clear() {
-        input = ""
+        inputs.clear()
         mutableState.value = form()
     }
 
@@ -118,8 +126,11 @@ internal class InstagramCookieLoginHandler(
         error: String? = null,
     ): LoginFlowState =
         LoginFlowState(
-            fields = listOf(LoginField(COOKIE_FIELD, LoginFieldType.PasswordInput, UiText.Raw("Instagram Cookie"), value = input)),
-            actions = listOf(LoginAction(LOGIN_ACTION, UiStrings.Login, enabled = !loading && input.isNotBlank())),
+            fields =
+                cookieFields.map { name ->
+                    LoginField(name, LoginFieldType.PasswordInput, UiText.Raw(name), value = inputs[name].orEmpty())
+                },
+            actions = listOf(LoginAction(LOGIN_ACTION, UiStrings.Login, enabled = !loading && complete)),
             loading = loading,
             error = error,
         )
